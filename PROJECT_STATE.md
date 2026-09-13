@@ -261,6 +261,7 @@ The medium and low findings are numeric alignment, quick-entry field order and a
 
 - Independent review `docs/reviews/2026-09-13-ux-a11y-review-icons.md`: UXI-1 (Serious: Escape in a picker inside a dialog closed the dialog) fixed — `escapeBelongsToControl()` in `app/js/ui/modal.js`, Escape on an open picker toggle — and verified with a real key press in Edge (`scripts/dev/screenshot.mjs --interact iconpickesc`). UXI-2 type-ahead and paging in the shared picker; UXI-3 compact grouped category rows on full-width cards with colour-tinted icon previews; UXI-4 refund/reversal text for screen readers (`amountWithDirection` moved to `components.js`); UXI-5 focus restore and a named fieldset in the site catalogue; UXI-6, UXI-8 (artwork and labels; Transport merchant default Train), UXI-9 fixed; UXI-7 and UXI-10 accepted with reasons; UXI-11 partly.
 - **Evidence:** `npm test` 8/8 repository, 171/171 API, 52/52 app; `npm run validate` ok (21 routes); full-page screenshots of Workspace, My settings and Dashboard.
+- **Preview verified at `bce2e1a`** (includes checkpoints I–K): `deploy.ps1 -Environment preview` exited 0; `/api/site-settings` reports `bce2e1a1e493634438cebd74fe0cbd4cc4bced32`; anonymous `/api/icons` is 401. Signed-in checks still wait for the preview Google redirect URI (Terry).
 
 ## Checks run this checkpoint
 
