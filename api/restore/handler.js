@@ -43,15 +43,15 @@ async function preview(ctx, req) {
   return {
     body: {
       archive: { archiveId, createdAt: opened.header.createdAt, reason: opened.header.reason, schemaVersion: opened.header.schemaVersion },
-      attachments: { total: opened.attachments.length, verified: opened.attachments.length },
       ...summary, expectedEtag: etag, canExecute: summary.blockers.length === 0,
       confirmation: mode === 'replace' ? 'Send confirm: "REPLACE" with expectedEtag to execute.' : undefined,
     },
   };
 }
 
-async function writeAttachments(ctx, wsId, attachments) {
+async function writeAttachments(ctx, wsId, attachments, referenced) {
   for (const a of attachments) {
+    if (!referenced.has(a.sha256)) continue;
     try { await ctx.storage.putBytes(store.paths.attachment(wsId, a.sha256), Buffer.from(a.base64, 'base64'), { ifNoneMatch: '*' }); } catch (e) {
       if (!(e instanceof PreconditionFailed)) throw e;
     }
@@ -74,10 +74,10 @@ async function execute(ctx, req) {
       if (k) user.idempotency[k] = { id, at: nowIso };
       return id;
     });
-    const { summary, next } = backup.plan({ current: doc, archived: opened.doc, mode, principal: ctx.principal, member, nowIso, newWorkspaceId: newWsId });
+    const { summary, next, attachments } = backup.plan({ current: doc, archived: opened.doc, mode, principal: ctx.principal, member, nowIso, newWorkspaceId: newWsId });
     backup.ensureRestorable(summary);
     const finalDoc = backup.finalize(next, { actor: ctx.principal.subject, nowIso, archiveId, mode });
-    await writeAttachments(ctx, newWsId, opened.attachments);
+    await writeAttachments(ctx, newWsId, opened.attachments, attachments);
     try { await ctx.storage.putJson(store.paths.workspace(newWsId), finalDoc, { ifNoneMatch: '*' }); } catch (e) { if (!(e instanceof PreconditionFailed)) throw e; }
     await store.mutateUser(ctx, (user) => {
       if ((user.workspaceIds || []).includes(newWsId)) return undefined;
@@ -92,13 +92,13 @@ async function execute(ctx, req) {
     throw conflict('The workspace changed since the preview. Preview again before restoring.', 'stale_preview');
   }
   if (mode === 'replace' && body.confirm !== 'REPLACE') throw badRequest('Replacing requires confirm: "REPLACE".', 'confirm_required');
-  const { summary, next } = backup.plan({ current: doc, archived: opened.doc, mode, principal: ctx.principal, member, nowIso });
+  const { summary, next, attachments } = backup.plan({ current: doc, archived: opened.doc, mode, principal: ctx.principal, member, nowIso });
   backup.ensureRestorable(summary);
   // 1. Recovery point of the current state. If this fails, nothing else happens.
   const { entry, sourceEtag } = await backups.createBackup(ctx, wsId, { reason: 'pre-restore', actor: ctx.principal.subject });
   if (sourceEtag !== etag) throw conflict('The workspace changed while preparing the restore. Nothing was changed.', 'stale_preview');
   // 2. Attachments are immutable and content-addressed; writing them first changes no record.
-  await writeAttachments(ctx, wsId, opened.attachments);
+  await writeAttachments(ctx, wsId, opened.attachments, attachments);
   // 3. One conditional write. A concurrent change makes it fail without effect.
   const finalDoc = backup.finalize(next, { actor: ctx.principal.subject, nowIso, archiveId, mode });
   try { await ctx.storage.putJson(store.paths.workspace(wsId), finalDoc, { ifMatch: etag }); } catch (e) {

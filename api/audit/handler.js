@@ -11,12 +11,13 @@ const model = require('../_shared/workspace-model');
 
 async function list(ctx, req) {
   const wsId = requireId(query(req, 'workspaceId'), 'workspaceId');
-  const { doc } = await store.loadWorkspace(ctx, wsId);
+  const { doc, member } = await store.loadWorkspace(ctx, wsId);
   const now = ctx.now();
   const accounts = new Map((doc.accounts || []).map((a) => [a.id, a]));
   const visible = (entry) => {
     const scope = String(entry.scope || 'members');
     if (scope === 'members') return true;
+    if (scope === 'managers') return member.role === 'owner' || member.role === 'manager';
     if (scope.startsWith('self:')) return scope.slice(5) === ctx.principal.subject;
     if (scope.startsWith('account:')) {
       const account = accounts.get(scope.slice(8));

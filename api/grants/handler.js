@@ -28,6 +28,7 @@ async function whoCanSee(ctx, req) {
   const { doc, member } = await store.loadWorkspace(ctx, wsId);
   const now = ctx.now();
   const account = findAccount(doc, ctx.principal, accountId, now);
+  const manage = can(doc, ctx.principal, account, 'change-permissions', now);
   const people = [];
   for (const m of model.activeMembers(doc)) {
     const caps = [...capabilitiesFor(doc, { subject: m.subject }, account, now)].sort();
@@ -35,9 +36,11 @@ async function whoCanSee(ctx, req) {
     let source = 'grant';
     if (account.visibility === 'shared') source = `role:${m.role}`;
     else if (account.ownerSubject === m.subject) source = 'owner';
+    // A grantee of a private account sees the owner and their own access, not other grantees
+    // (security review finding 5). Shared-account access follows visible workspace roles.
+    if (account.visibility === 'private' && !manage && source === 'grant' && m.subject !== ctx.principal.subject) continue;
     people.push({ member: model.memberView(m, member), source, capabilities: caps });
   }
-  const manage = can(doc, ctx.principal, account, 'change-permissions', now);
   const grants = manage
     ? (doc.grants || []).filter((g) => g.resourceId === account.id).map((g) => ({
       id: g.id, memberId: (model.memberBySubject(doc, g.subject) || {}).id || null, capabilities: g.capabilities,
@@ -104,7 +107,7 @@ async function revoke(ctx, req) {
     g.revokedBy = me.subject;
     audit.record(doc, { actor: me.subject, action: 'grant.revoke', targetType: 'account', targetId: g.resourceId, scope: `account:${g.resourceId}`, at: ctx.nowIso() });
     return { revoked: g.id };
-  });
+  }, { allowHeadroom: true });
   return { body: result };
 }
 

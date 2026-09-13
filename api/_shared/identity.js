@@ -68,10 +68,14 @@ function requirePrincipal(req, env) {
 
 // Site administration is OPERATIONAL authority only. It is re-read from configuration on every
 // request (so revocation is immediate) and is never an input to financial authorization.
-function isSiteAdmin(principal, env) {
+// `subjectOnly` is used by the anonymous rolesSource endpoint: matching a caller-supplied email
+// there would let anyone confirm which addresses are site administrators (security review
+// finding 7). Provider subjects are opaque, so matching them discloses nothing useful.
+function isSiteAdmin(principal, env, { subjectOnly = false } = {}) {
   if (!principal) return false;
   const entries = listSetting(env, 'BT_SITE_ADMINS').map((s) => s.toLowerCase());
-  return entries.includes(principal.subject.toLowerCase()) || entries.includes(principal.email);
+  if (entries.includes(String(principal.subject).toLowerCase())) return true;
+  return !subjectOnly && entries.includes(principal.email);
 }
 
 // Storage key for one person's document: a hash, so a provider id or email never forms a path.

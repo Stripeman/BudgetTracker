@@ -55,7 +55,10 @@ function resolvePayee(doc, principal, body, account, visibleTxns, nowIso) {
   const existing = ledger.visiblePayees(doc, principal, visibleTxns)
     .find((p) => p.name.toLowerCase() === key || (p.aliases || []).some((a) => a.toLowerCase() === key));
   if (existing) return existing.id;
-  const payee = { id: newId('pay'), name, aliases: [], visibility: account.visibility, ownerSubject: principal.subject, defaultCategoryId: null, notes: '', createdAt: nowIso, deletedAt: null };
+  // On a private account the payee belongs to the ACCOUNT OWNER, not to a grantee who typed it, so
+  // it does not outlive a revoked grant in the grantee's hands (security review finding 9).
+  const owner = account.visibility === 'private' ? account.ownerSubject : principal.subject;
+  const payee = { id: newId('pay'), name, aliases: [], visibility: account.visibility, ownerSubject: owner, defaultCategoryId: null, notes: '', createdAt: nowIso, createdBy: principal.subject, deletedAt: null };
   doc.payees = [...(doc.payees || []), payee];
   return payee.id;
 }
@@ -119,9 +122,8 @@ async function list(ctx, req) {
     if (f.ref && t.responsibleRef !== f.ref) return false;
     if (f.from && t.date < f.from) return false;
     if (f.to && t.date > f.to) return false;
-    const abs = Math.abs(t.amountMinor);
-    if (f.min !== undefined && abs < money.parseDecimal(f.min, t.currency, 'Minimum')) return false;
-    if (f.max !== undefined && abs > money.parseDecimal(f.max, t.currency, 'Maximum')) return false;
+    if (f.min !== undefined && money.compareAbsToDecimal(t.amountMinor, t.currency, f.min) < 0) return false;
+    if (f.max !== undefined && money.compareAbsToDecimal(t.amountMinor, t.currency, f.max) > 0) return false;
     if (f.q) {
       const payee = t.payeeId && payees.get(t.payeeId);
       const hay = `${payee ? payee.name : ''} ${(payee && payee.aliases || []).join(' ')} ${t.notes || ''} ${(t.tags || []).join(' ')}`.toLowerCase();
@@ -130,15 +132,23 @@ async function list(ctx, req) {
     return true;
   });
   txns.sort((a, b) => (a.date === b.date ? String(b.createdAt).localeCompare(String(a.createdAt)) : b.date.localeCompare(a.date)));
-  // Merchant-style summary: gross purchases, refunds and net are reported separately.
+  // Merchant-style summary: gross spending, refunds and net are reported separately. Advances and
+  // reimbursements (receivables) and adjustments have their own buckets and are never counted as
+  // spending or income. With a category filter, split entries contribute only matching lines.
   const summary = {};
   for (const t of txns) {
-    if (t.deletedAt || t.kind === 'transfer') continue;
-    const s = summary[t.currency] || (summary[t.currency] = { gross: 0, refunds: 0, income: 0, count: 0 });
+    const bucket = ledger.classify(t.kind);
+    if (t.deletedAt || bucket === 'transfer') continue;
+    let amount = t.amountMinor;
+    if (f.categoryId && (t.splits || []).length) amount = money.sum(t.splits.filter((s) => s.categoryId === f.categoryId).map((s) => s.amountMinor));
+    const s = summary[t.currency] || (summary[t.currency] = { gross: 0, refunds: 0, income: 0, adjustments: 0, advances: 0, reimbursements: 0, count: 0 });
     s.count += 1;
-    if (ledger.OUTFLOW.has(t.kind) || (t.kind === 'adjustment' && t.amountMinor < 0)) s.gross = money.sum([s.gross, -t.amountMinor]);
-    else if (t.kind === 'refund') s.refunds = money.sum([s.refunds, t.amountMinor]);
-    else s.income = money.sum([s.income, t.amountMinor]);
+    if (bucket === 'spending') s.gross = money.sum([s.gross, -amount]);
+    else if (bucket === 'refund') s.refunds = money.sum([s.refunds, amount]);
+    else if (bucket === 'income') s.income = money.sum([s.income, amount]);
+    else if (bucket === 'adjustment') s.adjustments = money.sum([s.adjustments, amount]);
+    else if (bucket === 'advance') s.advances = money.sum([s.advances, -amount]);
+    else if (bucket === 'reimbursement') s.reimbursements = money.sum([s.reimbursements, amount]);
   }
   const limit = Math.min(Math.max(parseInt(query(req, 'limit') || '200', 10) || 200, 1), 1000);
   const offset = Math.max(parseInt(query(req, 'offset') || '0', 10) || 0, 0);
@@ -157,6 +167,8 @@ async function list(ctx, req) {
       summary: Object.entries(summary).map(([currency, s]) => ({
         currency, count: s.count, gross: money.toDecimal(s.gross, currency), refunds: money.toDecimal(s.refunds, currency),
         net: money.toDecimal(money.sum([s.gross, -s.refunds]), currency), income: money.toDecimal(s.income, currency),
+        adjustments: money.toDecimal(s.adjustments, currency), advances: money.toDecimal(s.advances, currency),
+        reimbursements: money.toDecimal(s.reimbursements, currency),
       })),
     },
   };
@@ -206,6 +218,8 @@ async function create(ctx, req) {
       history(legOut, member.subject, nowIso, ['create']);
       history(legIn, member.subject, nowIso, ['create']);
       doc.transactions = [...(doc.transactions || []), legOut, legIn];
+      ledger.assertLedgerInRange(doc);
+      ledger.assertMemberQuota(doc, member, ctx.env);
       audit.record(doc, { actor: member.subject, action: 'transaction.create', targetType: 'transaction', targetId: legOut.id, scope: `account:${account.id}`, at: nowIso });
       audit.record(doc, { actor: member.subject, action: 'transaction.create', targetType: 'transaction', targetId: legIn.id, scope: `account:${dest.id}`, at: nowIso });
       const look = lookups(doc);
@@ -223,9 +237,11 @@ async function create(ctx, req) {
     };
     history(txn, member.subject, nowIso, ['create']);
     doc.transactions = [...(doc.transactions || []), txn];
+    ledger.assertLedgerInRange(doc);
+    ledger.assertMemberQuota(doc, member, ctx.env);
     audit.record(doc, { actor: member.subject, action: 'transaction.create', targetType: 'transaction', targetId: txn.id, scope: `account:${account.id}`, at: nowIso });
     return { transactions: [ledger.transactionView(doc, txn, ctx.principal, now, lookups(doc))] };
-  }, { idempotencyKey: header(req, 'idempotency-key') || undefined });
+  }, { idempotencyKey: header(req, 'idempotency-key') || undefined, idempotencyScope: 'transactions.create', requestHash: store.requestHash({ q: wsId, body }) });
   return { status: 201, body: result };
 }
 
@@ -273,10 +289,20 @@ async function patch(ctx, req) {
         changed.push('amount');
       }
       if (body.toAmount !== undefined) {
+        // Same-currency transfers always mirror; a separate other-side amount would unbalance the
+        // pair and destroy money (financial review finding 1).
+        if (pair.currency === t.currency) throw badRequest('Both sides of a same-currency transfer are always equal. Change amount instead.', 'invalid_transfer_edit');
         const other = money.parseDecimal(body.toAmount, pair.currency, 'Other side amount');
         if (other <= 0) throw badRequest('Amount must be greater than zero.', 'invalid_amount');
         pair.amountMinor = pair.amountMinor < 0 ? -other : other;
         changed.push('toAmount');
+      }
+      // The receiving leg's exchange context must describe the amounts actually recorded now;
+      // a stale rate would misstate history (financial review finding 6).
+      if (pair.currency !== t.currency && (body.amount !== undefined || body.toAmount !== undefined)) {
+        const incoming = t.amountMinor > 0 ? t : pair;
+        const outgoing = incoming === t ? pair : t;
+        incoming.original = { amountMinor: -outgoing.amountMinor, currency: outgoing.currency, rate: null, rateSource: 'bank-posted', rateDate: incoming.date };
       }
       for (const k of ['date', 'postedDate']) if (body[k] !== undefined) { t[k] = fields.date(body[k], k, { required: k === 'date' }); pair[k] = t[k]; changed.push(k); }
     } else {
@@ -312,6 +338,8 @@ async function patch(ctx, req) {
     if (body.tags !== undefined) { t.tags = fields.tags(body.tags); changed.push('tags'); }
     if (body.notes !== undefined) { t.notes = fields.text(body.notes, { field: 'Notes', max: 5000, multiline: true }); changed.push('notes'); }
     if (!changed.length) return { transactions: [ledger.transactionView(doc, t, ctx.principal, now, lookups(doc))] };
+    ledger.assertLedgerInRange(doc);
+    if (body.notes !== undefined || body.splits !== undefined) ledger.assertMemberQuota(doc, member, ctx.env);
     for (const x of pair ? [t, pair] : [t]) {
       x.revision += 1;
       x.updatedAt = nowIso;
@@ -350,8 +378,9 @@ function setDeleted(deleted) {
         history(x, member.subject, nowIso, [deleted ? 'delete' : 'restore']);
         audit.record(doc, { actor: member.subject, action: deleted ? 'transaction.delete' : 'transaction.restore', targetType: 'transaction', targetId: x.id, scope: `account:${x.accountId}`, at: nowIso });
       }
+      if (!deleted) ledger.assertLedgerInRange(doc);
       return { changed: legs.map((x) => x.id) };
-    });
+    }, { allowHeadroom: deleted });
     return { body: result };
   };
 }

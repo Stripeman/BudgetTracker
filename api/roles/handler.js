@@ -13,7 +13,7 @@ async function post(ctx, req) {
   const userId = typeof body.userId === 'string' ? body.userId : '';
   const email = normalizeEmail(body.userDetails);
   if (!provider || !userId || !email) return { body: { roles: [] } };
-  const roles = isSiteAdmin({ subject: `${provider}:${userId}`, email }, ctx.env) ? ['siteadmin'] : [];
+  const roles = isSiteAdmin({ subject: `${provider}:${userId}`, email }, ctx.env, { subjectOnly: true }) ? ['siteadmin'] : [];
   return { body: { roles } };
 }
 

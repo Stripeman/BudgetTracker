@@ -15,6 +15,7 @@ const store = require('../_shared/store');
 const model = require('../_shared/workspace-model');
 const fields = require('../_shared/fields');
 const audit = require('../_shared/audit');
+const site = require('../_shared/site');
 
 const indexPath = (wsId) => `workspaces/${wsId}/index.json`;
 const archivePath = (wsId, archiveId) => `workspaces/${wsId}/${archiveId}.btbk`;
@@ -43,7 +44,9 @@ async function list(ctx, req) {
   const { value } = await ctx.backupStorage().getJson(indexPath(wsId));
   const archives = ((value && value.archives) || []).slice().reverse().map((e) => {
     const by = model.memberBySubject(doc, e.createdBy);
-    return { archiveId: e.archiveId, createdAt: e.createdAt, reason: e.reason, bytes: e.bytes, createdBy: by ? by.name || 'Member' : 'Former member', counts: { accounts: e.counts.accounts, transactions: e.counts.transactions, attachments: e.counts.attachments } };
+    // No record counts: whole-workspace counts would reveal other members' private activity
+    // (security review finding 3).
+    return { archiveId: e.archiveId, createdAt: e.createdAt, reason: e.reason, createdBy: by ? by.name || 'Member' : 'Former member' };
   });
   return { body: { archives, policy: 'Backups are encrypted, kept in separate storage and never downloadable. Restores are limited to what you may manage.' } };
 }
@@ -54,12 +57,14 @@ async function create(ctx, req) {
   const reason = fields.oneOf(body.reason, ['on-demand', 'before-change'], 'Reason', 'on-demand');
   const { member } = await store.loadWorkspace(ctx, wsId);
   if (!roleAtLeast(member.role, 'manager')) throw forbidden('Only owners and managers can create backups.');
+  const { site: siteDoc } = await site.readSite(ctx.storage);
+  if (siteDoc.backupPolicy && siteDoc.backupPolicy.onDemand === false) throw forbidden('On-demand backups are disabled by the site administrator.');
   const { entry } = await createBackup(ctx, wsId, { reason, actor: member.subject });
   await store.mutateWorkspace(ctx, wsId, (doc, me) => {
-    audit.record(doc, { actor: me.subject, action: 'backup.create', targetType: 'backup', targetId: entry.archiveId, at: ctx.nowIso() });
+    audit.record(doc, { actor: me.subject, action: 'backup.create', targetType: 'backup', targetId: entry.archiveId, scope: 'managers', at: ctx.nowIso() });
     return { ok: true };
-  });
-  return { status: 201, body: { archive: { archiveId: entry.archiveId, createdAt: entry.createdAt, reason: entry.reason, bytes: entry.bytes } } };
+  }, { allowHeadroom: true });
+  return { status: 201, body: { archive: { archiveId: entry.archiveId, createdAt: entry.createdAt, reason: entry.reason } } };
 }
 
 module.exports = { GET: list, POST: create, createBackup, archivePath, indexPath };

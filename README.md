@@ -74,4 +74,8 @@ Never connect any of this to real financial data.
 
 **Remote controls.** `main` is protected: a PR is required, the `secret-scan` and `foundation-tests` checks must pass, the rule is enforced for admins, and force-push and deletion are blocked. Dependabot security updates are enabled.
 
+**Deployment.** See [Deployment](docs/DEPLOYMENT.md): one BudgetTracker Static Web App with an isolated preview environment. Production and the `budget.remsik.org` DNS require Terry's explicit authorization.
+
+**Local runtime.** Never use or stop ports 4280, 7071 or 10000–10002; they belong to another local application. BudgetTracker's local dev server binds 127.0.0.1 on its own port.
+
 **Further documentation.** The [foundation design](docs/FOUNDATION_DESIGN.md), [recovery procedure](docs/RECOVERY_RUNBOOK.md), [TaskTracker inventory](docs/TASKTRACKER_REUSE.md) and [Word comparison](docs/BRIEF_RECONCILIATION.md) record decisions and gaps. See PROJECT_STATE.md for current status and next steps.

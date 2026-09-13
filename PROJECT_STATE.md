@@ -97,6 +97,40 @@
 
 **Not operational (pending Staging).** Scheduled backups, immutable retention, Key Vault custody, monitoring and alerts, a measured RPO/RTO drill, and service-level disaster restore into live storage.
 
+## Milestone reviews and remediation (2026-09-13)
+
+Independent read-only reviews of `be22642`:
+- **Security:** PARTIAL. No path was found to another workspace's data or to another member's private records. Nine findings.
+- **Financial:** PARTIAL. The money arithmetic was verified with 20,000 random allocation cases and precision checks. Twelve findings, plus an informational note on allocation.
+
+All findings are fixed with regression tests in `api/test/remediation.test.js`, and they are recorded in `docs/REQUIREMENTS.md` as BT-001-04 and BT-006-02:
+- Security S1–S9: per-member quota plus headroom for administrative writes, restores limited to referenced attachments, count-free listings and previews, manager-only backup audit, grantee visibility, enforced site policies, subject-only roles endpoint, cross-scope transfer blocker, name-only payee references with no ownership transfer.
+- Financial F1–F12.
+- F13 (strict percentage allocation, fair residuals, multiple payers) is deferred to BT-009.
+
+Result: `npm test` 7/7 repository tests plus 75/75 API tests; `npm run validate` ok (17 routes).
+
+## Azure (Terry's decisions, 2026-09-13)
+
+**Terry's choices.**
+- One BudgetTracker Static Web App: TerryRemsiksSubscription, resource group `budget-tracker`, East US 2.
+- A preview environment is allowed. Production stays empty until he explicitly authorizes it.
+- `budget.remsik.org` is to be documented only.
+- Do not touch the other app's local ports (4280, 7071, 10000–10002).
+
+**Provisioned** with `scripts/deploy/provision.ps1` (explicit tenant check, idempotent, deletes nothing):
+- SWA `budget-tracker` (Standard)
+- Log Analytics `log-budget-tracker`
+- Application Insights `appi-budget-tracker`
+- preview storage `stbudgetpv01` (data) and `stbudgetbkpv01` (backup), both StorageV2 / LRS, TLS 1.2, HTTPS only, no public blob access, with versioning and soft delete
+
+Resource providers `Microsoft.OperationalInsights` and `Microsoft.Insights` were registered in the subscription as part of this. The IDs live only in the ignored `.local/deploy-target.json`. Design and procedures are in `docs/DEPLOYMENT.md`.
+
+**Not done.**
+- No application deployed and no app settings configured.
+- Production storage not created and DNS not changed.
+- Google OAuth client pending: Terry must create BudgetTracker's own client and set `GOOGLE_CLIENT_ID`/`GOOGLE_CLIENT_SECRET` himself (see `docs/DEPLOYMENT.md`). Until then, preview sign-in fails closed.
+
 ## Checks run this checkpoint
 
 - `node --test test/*.test.cjs`: 7 passed, 0 failed (Node v22.23.1).

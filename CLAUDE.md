@@ -111,6 +111,14 @@ assumptions.
   fallback, archived-member reactivation, permanent deletion without safeguards, historical
   deployment exceptions, stale infrastructure facts, or forged-identity seed scripts.
 
+## 7a. Local runtime and ports
+
+Other applications run locally on this machine. BudgetTracker must never bind, stop, kill or
+otherwise manipulate these ports or their processes: 4280 (SWA CLI), 7071 (Functions host),
+10000–10002 (Azurite). BudgetTracker's local dev server binds 127.0.0.1 only on its own port
+(default 4380; see `README.md`) and uses file storage under the ignored `.local/`, so it needs no
+Azurite. Choose another free port rather than freeing an occupied one.
+
 ## 8. Agents
 
 - Role text lives in `scripts/setup-project-agents.py`, generated to `.codex/agents/*.toml`

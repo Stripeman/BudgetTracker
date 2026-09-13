@@ -18,6 +18,7 @@ const store = require('../_shared/store');
 const model = require('../_shared/workspace-model');
 const fields = require('../_shared/fields');
 const audit = require('../_shared/audit');
+const site = require('../_shared/site');
 
 const TTL_MS = 7 * 24 * 60 * 60 * 1000;
 
@@ -47,8 +48,10 @@ async function create(ctx, req) {
   const email = fields.email(body.email, 'Email', { required: true });
   const role = fields.oneOf(body.role, ROLES, 'Role', 'member');
   const token = newToken();
+  const { site: siteDoc } = await site.readSite(ctx.storage);
   const { result } = await store.mutateWorkspace(ctx, wsId, (doc, me) => {
     if (!canWorkspace(doc, ctx.principal, 'invite')) throw forbidden('Only owners and managers can invite people.');
+    if (siteDoc.invitationPolicy === 'owners-only' && me.role !== 'owner') throw forbidden('Site policy allows only workspace owners to invite people.');
     // An inviter can offer at most their own role; only an owner can invite an owner.
     if (!roleAtLeast(me.role, role)) throw forbidden('You cannot invite someone with a higher role than your own.');
     if (model.activeMembers(doc).some((m) => m.email === email)) throw conflict('That person is already a member.', 'already_member');

@@ -3,7 +3,9 @@
 // exact build. api/version.json must equal the root version.json (checked by the validator).
 const { version, channel } = require('../version.json');
 
-const ENVIRONMENTS = ['local', 'staging', 'production'];
+// "preview" is the named preview environment of the single BudgetTracker Static Web App (fictional
+// data, its own storage accounts). A separate Staging instance can be added later as "staging".
+const ENVIRONMENTS = ['local', 'preview', 'staging', 'production'];
 
 function appInfo(env) {
   const environment = ENVIRONMENTS.includes(env.BT_ENVIRONMENT) ? env.BT_ENVIRONMENT : 'unconfigured';

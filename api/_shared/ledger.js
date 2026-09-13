@@ -21,6 +21,51 @@ const TX_KINDS = Object.freeze(['expense', 'income', 'transfer', 'refund', 'fee'
 const OUTFLOW = new Set(['expense', 'fee', 'advance', 'interest']);
 const INFLOW = new Set(['income', 'refund', 'reimbursement']);
 const TX_STATUSES = Object.freeze(['pending', 'cleared', 'reconciled']);
+// Liabilities whose opening balance is money OWED and therefore never positive. Cards may open
+// with a credit (overpayment), so they are not in this set.
+const NEVER_POSITIVE_OPENING = new Set(['loan', 'mortgage', 'other-liability']);
+
+// THE one classification every summary, report and payee statistic uses. An advance is money
+// lent (a receivable) and a reimbursement repays it — neither is spending or ordinary income
+// (financial review finding 4; the brief's EUR 300 dinner rule). Transfers are movements.
+function classify(kind) {
+  if (kind === 'transfer') return 'transfer';
+  if (kind === 'expense' || kind === 'fee' || kind === 'interest') return 'spending';
+  if (kind === 'refund') return 'refund';
+  if (kind === 'income') return 'income';
+  if (kind === 'adjustment') return 'adjustment';
+  if (kind === 'advance') return 'advance';
+  if (kind === 'reimbursement') return 'reimbursement';
+  return 'other';
+}
+
+function openingBalance(type, text, currency) {
+  const minor = text === undefined ? 0 : money.parseDecimal(text, currency, 'Opening balance');
+  if (NEVER_POSITIVE_OPENING.has(type) && minor > 0) {
+    throw badRequest('A loan or other liability opens with the amount owed, entered as a negative number (for example "-20000.00").', 'invalid_opening_balance');
+  }
+  return minor;
+}
+
+// Refuses any write that would push an account balance or a per-currency workspace total beyond
+// what the money module can represent exactly (financial review finding 2). Checked on the whole
+// candidate document so a single oversized entry cannot make the workspace unreadable.
+function assertLedgerInRange(doc) {
+  const limit = BigInt(money.MAX_MINOR);
+  const perCurrency = new Map();
+  const balances = new Map((doc.accounts || []).map((a) => [a.id, BigInt(a.openingBalanceMinor || 0)]));
+  for (const t of doc.transactions || []) {
+    if (!t.deletedAt && balances.has(t.accountId)) balances.set(t.accountId, balances.get(t.accountId) + BigInt(t.amountMinor));
+  }
+  for (const a of doc.accounts || []) {
+    const b = balances.get(a.id);
+    const total = (perCurrency.get(a.currency) || 0n) + (a.deletedAt ? 0n : b);
+    perCurrency.set(a.currency, total);
+    if (b > limit || b < -limit || total > limit || total < -limit) {
+      throw badRequest('This change would make a balance or total larger than BudgetTracker can record exactly.', 'balance_out_of_range');
+    }
+  }
+}
 
 const RATE_PERCENT_RE = /^\d{1,3}(\.\d{1,4})?$/;
 
@@ -98,7 +143,7 @@ function accountView(doc, principal, account, now) {
     institution: account.institution || '', maskedNumber: account.maskedNumber || '',
     openingDate: account.openingDate, status: account.status || 'open', deletedAt: account.deletedAt || null,
     ownedBySelf: account.visibility === 'private' && account.ownerSubject === principal.subject,
-    capabilities: [...caps].sort(), notes: account.notes || '',
+    capabilities: [...caps].sort(), notes: account.notes || '', revision: account.revision || 1,
   };
   if (caps.has('view-balances')) {
     out.openingBalance = money.toDecimal(account.openingBalanceMinor, account.currency);
@@ -169,7 +214,30 @@ function visiblePayees(doc, principal, visibleTxns) {
   return (doc.payees || []).filter((p) => !p.deletedAt && (p.visibility === 'shared' || p.ownerSubject === principal.subject || referenced.has(p.id)));
 }
 
+// Per-member quota on records a non-owner member adds (security review finding 1): one member
+// cannot consume the whole workspace document and lock everyone else out. Counted as the
+// serialized size of their private accounts, the entries on them and the entries they created on
+// shared accounts. Owners are exempt (it is their workspace); the document cap still applies.
+const PRIVATE_QUOTA_BYTES = 2 * 1024 * 1024;
+function assertMemberQuota(doc, member, env) {
+  if (member.role === 'owner') return;
+  const configured = Number(env && env.BT_MEMBER_QUOTA_BYTES);
+  const limit = Number.isSafeInteger(configured) && configured > 0 && configured < PRIVATE_QUOTA_BYTES ? configured : PRIVATE_QUOTA_BYTES;
+  const own = new Set((doc.accounts || []).filter((a) => a.visibility === 'private' && a.ownerSubject === member.subject).map((a) => a.id));
+  let bytes = 0;
+  for (const a of doc.accounts || []) if (own.has(a.id)) bytes += Buffer.byteLength(JSON.stringify(a));
+  for (const t of doc.transactions || []) {
+    if (own.has(t.accountId) || t.createdBy === member.subject) bytes += Buffer.byteLength(JSON.stringify(t));
+  }
+  if (bytes > limit) {
+    const e = badRequest('You have reached your storage allowance in this workspace. Archive or remove older entries, or ask the owner.', 'member_quota_exceeded');
+    e.status = 409;
+    throw e;
+  }
+}
+
 module.exports = {
-  ACCOUNT_TYPES, LIABILITY_TYPES, TX_KINDS, OUTFLOW, INFLOW, TX_STATUSES, validateTerms, maskedNumber,
-  balanceOf, accountView, signedAmount, validateSplits, transactionView, visiblePayees,
+  assertMemberQuota,
+  ACCOUNT_TYPES, LIABILITY_TYPES, TX_KINDS, OUTFLOW, INFLOW, TX_STATUSES, NEVER_POSITIVE_OPENING, validateTerms, maskedNumber,
+  balanceOf, accountView, signedAmount, validateSplits, transactionView, visiblePayees, classify, openingBalance, assertLedgerInRange,
 };

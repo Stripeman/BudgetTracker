@@ -21,10 +21,14 @@ function aliases(value) {
   return [...new Set(value.map((a) => fields.text(a, { field: 'Alias', max: 80, required: true })))];
 }
 
+// A private payee that is visible only because it appears on an entry the viewer can see shows
+// its NAME only — not the owner's notes, aliases or default category (security review finding 9).
 function view(p, principal, stats) {
+  const full = p.visibility === 'shared' || p.ownerSubject === principal.subject;
   return {
-    id: p.id, name: p.name, aliases: p.aliases || [], visibility: p.visibility, defaultCategoryId: p.defaultCategoryId || null,
-    notes: p.notes || '', ownedBySelf: p.ownerSubject === principal.subject, stats: stats || [],
+    id: p.id, name: p.name, aliases: full ? p.aliases || [] : [], visibility: p.visibility,
+    defaultCategoryId: full ? p.defaultCategoryId || null : null, notes: full ? p.notes || '' : '',
+    ownedBySelf: p.ownerSubject === principal.subject, referenceOnly: !full, stats: stats || [],
   };
 }
 
@@ -41,11 +45,13 @@ async function list(ctx, req) {
   const byPayee = new Map();
   for (const t of txns) {
     if (!t.payeeId) continue;
+    const bucket = ledger.classify(t.kind);
+    if (bucket !== 'spending' && bucket !== 'refund') continue;
     const perCurrency = byPayee.get(t.payeeId) || new Map();
     const s = perCurrency.get(t.currency) || { count: 0, gross: 0, refunds: 0, last: null };
     s.count += 1;
-    if (t.kind === 'refund') s.refunds = money.sum([s.refunds, t.amountMinor]);
-    else if (t.amountMinor < 0) s.gross = money.sum([s.gross, -t.amountMinor]);
+    if (bucket === 'refund') s.refunds = money.sum([s.refunds, t.amountMinor]);
+    else s.gross = money.sum([s.gross, -t.amountMinor]);
     if (!s.last || t.date > s.last) s.last = t.date;
     perCurrency.set(t.currency, s);
     byPayee.set(t.payeeId, perCurrency);

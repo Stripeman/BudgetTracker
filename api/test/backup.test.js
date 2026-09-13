@@ -36,7 +36,7 @@ describe('BT-002 archives', () => {
     }
     const listing = (await h.call('backups', 'GET', { as: 'alice', query: f.q })).body;
     assert.equal(listing.archives.length, 1);
-    assert.deepEqual(Object.keys(listing.archives[0]).sort(), ['archiveId', 'bytes', 'counts', 'createdAt', 'createdBy', 'reason']);
+    assert.deepEqual(Object.keys(listing.archives[0]).sort(), ['archiveId', 'createdAt', 'createdBy', 'reason']);
     assert.equal((await h.call('backups', 'GET', { as: 'bob', query: f.q })).status, 403, 'members cannot list');
     assert.equal((await h.call('backups', 'GET', { as: 'dave', query: f.q })).status, 404, 'site admin has no route in');
   });
@@ -101,7 +101,7 @@ describe('BT-002 restore previews', () => {
     assert.equal(snapshotFiles(h.storage), before, 'no storage writes');
     const text = JSON.stringify(res.body);
     for (const hidden of ['Secret Jeweller', 'Bob Card', f.bobCard.id, f.secret.id, '-250.00']) assert.equal(text.includes(hidden), false, hidden);
-    assert.equal(res.body.excluded.otherMembersPrivateAccounts, 1);
+    assert.equal(res.body.excluded.otherMembersPrivateRecords, true);
     assert.equal(res.body.scope.accounts, 2, 'Joint and Alice Savings');
     // Totals for in-scope accounts only: 917.60 + 5000.00.
     assert.deepEqual(res.body.totalsAfter, [{ currency: 'EUR', amount: '5917.60' }]);
@@ -245,7 +245,7 @@ describe('BT-002 merge and create-new', () => {
     const id = await backupNow(h, f);
     const pv = (await preview(h, f, 'bob', id, 'create-new')).body;
     assert.equal(pv.scope.accounts, 1);
-    assert.equal(pv.excluded.archivedGrants, 1);
+    assert.equal(pv.excluded.archivedAccessIgnored, true);
     const res = await execute(h, f, 'bob', { archiveId: id, mode: 'create-new' });
     assert.equal(res.status, 201, JSON.stringify(res.body));
     const nq = { workspaceId: res.body.workspace.id };

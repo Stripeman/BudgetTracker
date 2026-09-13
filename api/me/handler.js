@@ -22,7 +22,9 @@ async function get(ctx) {
   const stored = user.preferences || {};
   return {
     body: {
-      user: { name: user.name || '', email: user.email, siteAdmin: ctx.siteAdmin },
+      // `subject` is the caller's own provider subject, shown so an operator can list it in
+      // BT_SITE_ADMINS (the edge siteadmin role matches subjects only).
+      user: { name: user.name || '', email: user.email, subject: ctx.principal.subject, siteAdmin: ctx.siteAdmin },
       workspaces,
       preferences: { stored, ...prefs._resolve(stored, siteDoc) },
       site: site.publicView(siteDoc, true),

@@ -69,13 +69,27 @@ function toDecimal(minor, currency) {
   return `${negative ? '-' : ''}${whole}${frac}`;
 }
 
+// Accumulates exactly in BigInt and range-checks once, so the result never depends on the order
+// of the inputs (financial review finding 12).
 function sum(values) {
-  let total = 0;
-  for (const v of values) {
-    total += requireMinor(normalizeZero(v));
-    if (!isMinor(total)) throw badRequest('The total is out of range.', 'amount_overflow');
-  }
-  return total === 0 ? 0 : total;
+  let total = 0n;
+  for (const v of values) total += BigInt(requireMinor(normalizeZero(v)));
+  const n = Number(total);
+  if (total > BigInt(MAX_MINOR) || total < -BigInt(MAX_MINOR)) throw badRequest('The total is out of range.', 'amount_overflow');
+  return n === 0 ? 0 : n;
+}
+
+// Compares |minor| of `currency` with a user-supplied decimal filter value exactly, whatever the
+// currency's precision (so "10.50" is a valid filter even when a JPY entry is present).
+// Returns -1, 0 or 1.
+function compareAbsToDecimal(minor, currency, text) {
+  const m = typeof text === 'string' ? /^(\d{1,16})(?:\.(\d{1,12}))?$/.exec(text.trim()) : null;
+  if (!m) throw badRequest('Amount filter is not a valid positive decimal.', 'invalid_amount');
+  const frac = m[2] || '';
+  const filter = BigInt(m[1] + frac);
+  const left = BigInt(Math.abs(requireMinor(normalizeZero(minor)))) * 10n ** BigInt(frac.length);
+  const right = filter * 10n ** BigInt(precisionOf(currency));
+  return left === right ? 0 : left > right ? 1 : -1;
 }
 
 // Deterministic largest-remainder allocation. `weights` are non-negative integers (percent
@@ -137,6 +151,6 @@ function convert(minor, from, to, rateText) {
 }
 
 module.exports = {
-  MAX_MINOR, isCurrency, precisionOf, isMinor, requireMinor, parseDecimal, toDecimal, sum,
+  MAX_MINOR, isCurrency, precisionOf, isMinor, requireMinor, parseDecimal, toDecimal, sum, compareAbsToDecimal,
   allocate, parseRate, convert, roundHalfEven, currencies: () => [...PRECISION.keys()].sort(),
 };

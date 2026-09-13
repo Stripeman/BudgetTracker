@@ -38,7 +38,7 @@ async function changeRole(ctx, req) {
     target.role = role;
     audit.record(doc, { actor: me.subject, action: 'member.role', targetType: 'member', targetId: target.id, at: ctx.nowIso(), fields: ['role'] });
     return { member: model.memberView(target, me) };
-  });
+  }, { allowHeadroom: true });
   return { body: result };
 }
 
@@ -74,7 +74,7 @@ async function remove(ctx, req) {
     const revoked = revokeFor(doc, target.subject, nowIso, me.subject);
     audit.record(doc, { actor: me.subject, action: self ? 'member.leave' : 'member.remove', targetType: 'member', targetId: target.id, at: nowIso });
     return { removed: target.id, grantsRevoked: revoked };
-  });
+  }, { allowHeadroom: true });
   return { body: result };
 }
 

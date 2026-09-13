@@ -99,7 +99,7 @@ async function archive(ctx, req) {
     doc.archivedAt = ctx.nowIso();
     audit.record(doc, { actor: member.subject, action: 'workspace.archive', targetType: 'workspace', targetId: doc.id, at: ctx.nowIso() });
     return { workspace: model.summary(doc, member) };
-  });
+  }, { allowHeadroom: true });
   return { body: result };
 }
 

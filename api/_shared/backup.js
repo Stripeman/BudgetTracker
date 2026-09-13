@@ -19,6 +19,7 @@ const { createHash } = require('node:crypto');
 const { HttpError, safeParse, conflict } = require('./http');
 const { newId } = require('./ids');
 const money = require('./money');
+const ledger = require('./ledger');
 const { readDocument, stampDocument, CURRENT } = require('./schema');
 const archive = require('./archive');
 const audit = require('./audit');
@@ -53,15 +54,28 @@ function checkInvariants(doc) {
     if (!a || t.currency !== a.currency || !money.isMinor(t.amountMinor) || t.amountMinor === 0) throw invalidData('transaction amounts');
     if (t.categoryId && !categories.has(t.categoryId)) throw invalidData('transaction category');
     if (t.payeeId && !payees.has(t.payeeId)) throw invalidData('transaction payee');
+    // Direction follows kind; transfers are exactly the entries with a transfer id.
+    if (ledger.OUTFLOW.has(t.kind) && t.amountMinor > 0) throw invalidData('transaction direction');
+    if (ledger.INFLOW.has(t.kind) && t.amountMinor < 0) throw invalidData('transaction direction');
+    if ((t.kind === 'transfer') !== Boolean(t.transferId)) throw invalidData('transfer kind');
     if (Array.isArray(t.splits) && t.splits.length) {
-      if (money.sum(t.splits.map((s) => s.amountMinor)) !== t.amountMinor) throw invalidData('split totals');
-      for (const s of t.splits) if (s.categoryId && !categories.has(s.categoryId)) throw invalidData('split category');
+      let total;
+      try { total = money.sum(t.splits.map((s) => s.amountMinor)); } catch { throw invalidData('split amounts'); }
+      if (total !== t.amountMinor) throw invalidData('split totals');
+      for (const s of t.splits) {
+        if (s.categoryId && !categories.has(s.categoryId)) throw invalidData('split category');
+        if (Math.sign(s.amountMinor) !== Math.sign(t.amountMinor)) throw invalidData('split direction');
+      }
     }
     if (t.transferId) pairs.set(t.transferId, [...(pairs.get(t.transferId) || []), t]);
   }
   for (const legs of pairs.values()) {
-    if (legs.length === 1 && legs[0].counterpartExcluded === true) continue;
+    if (legs.length === 1 && legs[0].counterpartExcluded === true) {
+      if (accounts.has(legs[0].counterpartAccountId)) throw invalidData('transfer counterpart');
+      continue;
+    }
     if (legs.length !== 2 || legs[0].accountId === legs[1].accountId) throw invalidData('transfer pairs');
+    if (legs[0].counterpartAccountId !== legs[1].accountId || legs[1].counterpartAccountId !== legs[0].accountId) throw invalidData('transfer counterpart');
     if (Math.sign(legs[0].amountMinor) === Math.sign(legs[1].amountMinor)) throw invalidData('transfer direction');
     if (Boolean(legs[0].deletedAt) !== Boolean(legs[1].deletedAt)) throw invalidData('transfer deletion state');
     if (legs[0].currency === legs[1].currency && legs[0].amountMinor + legs[1].amountMinor !== 0) throw invalidData('transfer balance');
@@ -180,13 +194,12 @@ function plan({ current, archived, mode, principal, member, nowIso, newWorkspace
   const scopeNow = current ? scopeFor(current, principal.subject, member.role) : null;
   const scopeArc = scopeFor(archived, principal.subject, member.role);
   const arc = inScope(archived, scopeArc);
-  const otherPrivate = (archived.accounts || []).filter((a) => a.visibility === 'private' && a.ownerSubject !== principal.subject).length;
+  // Yes/no only: counts outside the caller's scope would reveal other members' private records,
+  // grants and invitations (security review finding 4).
   const excluded = {
-    otherMembersPrivateAccounts: otherPrivate,
-    sharedRecordsOutsideYourRole: scopeArc.shared ? 0 : (archived.accounts || []).filter((a) => a.visibility === 'shared').length,
-    archivedGrants: (archived.grants || []).length,
-    archivedMembers: (archived.members || []).length,
-    archivedInvitations: (archived.invitations || []).length,
+    otherMembersPrivateRecords: (archived.accounts || []).some((a) => a.visibility === 'private' && a.ownerSubject !== principal.subject),
+    sharedRecordsOutsideYourRole: !scopeArc.shared && (archived.accounts || []).some((a) => a.visibility === 'shared'),
+    archivedAccessIgnored: (archived.grants || []).length + (archived.invitations || []).length > 0 || (archived.members || []).length > 1,
   };
   const blockers = [];
   let next;
@@ -205,7 +218,8 @@ function plan({ current, archived, mode, principal, member, nowIso, newWorkspace
       createdAt: nowIso, createdBy: principal.subject, updatedAt: nowIso, revision: 1, settings: { ...archived.settings },
       members: [{ id: memberId, subject: principal.subject, email: principal.email, name: principal.name || '', role: 'owner', status: 'active', joinedAt: nowIso }],
       invitations: [], grants: [], contacts: scopeArc.shared ? arc.contacts : [], accounts: arc.accounts.map((a) => (a.visibility === 'private' ? { ...a, ownerSubject: principal.subject } : a)),
-      payees: payees.map((p) => (p.visibility === 'private' ? { ...p, ownerSubject: principal.subject } : p)),
+      // Payee ownership is never transferred to the restorer (security review finding 9).
+      payees,
       categories: archived.categories || [], transactions: txns, audit: [], idempotency: {}, restoredFrom: null,
     };
   } else {
@@ -234,23 +248,47 @@ function plan({ current, archived, mode, principal, member, nowIso, newWorkspace
     next.invitations = current.invitations;
     next.idempotency = current.idempotency;
   }
-  try { checkInvariants(next); } catch (e) {
-    blockers.push('This restore would break a link with records outside what you can restore (for example a transfer with another member\'s private account). A recovery operator must perform a full restore instead.');
+  const crossScope = 'This restore would break a link with records outside what you can restore (for example a transfer with another member\'s private account). A recovery operator must perform a full restore instead.';
+  try { checkInvariants(next); } catch (e) { blockers.push(crossScope); }
+  // A transfer whose legs straddle the caller's scope must not change on the in-scope side while
+  // the out-of-scope side stays as it is now — the invariant check cannot see this for
+  // cross-currency pairs (security review finding 8).
+  if (mode !== 'create-new' && !blockers.length) {
+    const nowById = new Map((current.transactions || []).map((t) => [t.id, JSON.stringify(t)]));
+    const legsByTransfer = new Map();
+    for (const t of next.transactions || []) if (t.transferId) legsByTransfer.set(t.transferId, [...(legsByTransfer.get(t.transferId) || []), t]);
+    for (const legs of legsByTransfer.values()) {
+      const inside = legs.filter((l) => scopeNow.accountIds.has(l.accountId));
+      if (inside.length === legs.length || inside.length === 0) continue;
+      if (inside.some((l) => nowById.get(l.id) !== JSON.stringify(l))) { blockers.push(crossScope); break; }
+    }
   }
-  const diff = mode === 'create-new' ? { add: COLLECTIONS.reduce((n, c) => n + (c === 'categories' ? (archived.categories || []).length : (next[c] || []).length), 0), remove: 0, update: 0, unchanged: 0 }
-    : diffCounts(inScope(current, scopeNow), arc);
+  // Only attachments referenced by records the caller restores are written (security review
+  // finding 2). Receipt references are introduced with receipt upload; until then none qualify.
+  const referenced = new Set();
+  const afterScope = scopeFor(next, principal.subject, mode === 'create-new' ? 'owner' : member.role);
+  for (const t of next.transactions || []) {
+    if (afterScope.accountIds.has(t.accountId)) for (const a of t.attachments || []) if (a && a.sha256) referenced.add(a.sha256);
+  }
+  // Counts and totals describe the RESULT that execution would write, not the archive, so a merge
+  // preview reports what merging actually does (financial review finding 5).
+  const scopeNext = scopeFor(next, principal.subject, mode === 'create-new' ? 'owner' : member.role);
+  const after = inScope(next, scopeNext);
+  const diff = mode === 'create-new' ? { add: COLLECTIONS.reduce((n, c) => n + after[c].length, 0), remove: 0, update: 0, unchanged: 0 }
+    : diffCounts(inScope(current, scopeNow), after);
   const summary = {
     mode,
     scope: { accounts: arc.accounts.length, transactions: arc.transactions.length, payees: arc.payees.length, categories: arc.categories.length, contacts: arc.contacts.length },
     changes: diff,
     excluded,
-    totalsAfter: totals(arc.accounts, balances(archived)),
+    totalsAfter: totals(after.accounts, balances(next)),
     totalsNow: current ? totals(inScope(current, scopeNow).accounts, balances(current)) : [],
     permissions: 'Archived memberships, grants and invitations are never restored. Current access is kept; a new workspace starts with only you as owner.',
     warnings: mode === 'replace' ? ['Replace removes records created after this backup within your restore scope. A recovery point is created first.'] : [],
     blockers,
+    attachmentsInScope: referenced.size,
   };
-  return { summary, next: blockers.length ? null : next };
+  return { summary, next: blockers.length ? null : next, attachments: referenced };
 }
 
 function finalize(next, { actor, nowIso, archiveId, mode }) {
