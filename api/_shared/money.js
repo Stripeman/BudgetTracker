@@ -13,7 +13,9 @@ const TWO = 'AED AFN ALL AMD ANG AOA ARS AUD AWG AZN BAM BBD BDT BGN BMD BND BOB
   + 'GYD HKD HNL HTG HUF IDR ILS INR IRR JMD KES KGS KHR KPW KYD KZT LAK LBP LKR LRD LSL MAD MDL MGA '
   + 'MKD MMK MNT MOP MRU MUR MVR MWK MXN MYR MZN NAD NGN NIO NOK NPR NZD PAB PEN PGK PHP PKR PLN QAR '
   + 'RON RSD RUB SAR SBD SCR SDG SEK SGD SHP SLE SOS SRD SSP STN SVC SYP SZL THB TJS TMT TOP TRY TTD '
-  + 'TWD TZS UAH USD UYU UZS VES WST XCD YER ZAR ZMW ZWL';
+  + 'TWD TZS UAH USD UYU UZS VED VES WST XCD XCG YER ZAR ZMW ZWG ZWL';
+// XCG (Caribbean guilder, replacing ANG), ZWG (Zimbabwe Gold, replacing ZWL) and VED (digital
+// bolívar) are current ISO 4217 codes (FIN-R16). ANG and ZWL stay so recorded history stays readable.
 for (const [codes, p] of [[ZERO, 0], [TWO, 2], [THREE, 3], [FOUR, 4]]) {
   for (const code of codes.split(' ')) PRECISION.set(code, p);
 }

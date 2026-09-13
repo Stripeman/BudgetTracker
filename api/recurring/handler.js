@@ -100,6 +100,16 @@ function locate(doc, principal, id, now) {
   return { r, a };
 }
 
+// A reversed recording reopens its occurrence (FIN-R4): it is owed again and can be skipped. A new
+// recording beside the reversed one is refused for now, because the backup invariant still counts
+// every live entry for an occurrence (backup.checkInvariants must first skip entries cancelled by a
+// live reversal). Removing this check is the only change needed once it does.
+function refuseReversedRecording(doc, r, occurrence) {
+  if (bills.liveRecordings(doc, r.id, occurrence).length) {
+    throw conflict('The payment recorded for this date was reversed. Recording it again is not available yet; skip this date or ask the workspace owner for help.', 'recording_reversed');
+  }
+}
+
 function requireOccurrence(r, value) {
   const occurrence = fields.date(value, 'Occurrence', { required: true });
   if (!schedule.occurrences(r.schedule, occurrence, occurrence).length) throw badRequest('That date is not an occurrence of this bill.', 'invalid_occurrence');
@@ -117,7 +127,12 @@ function view(doc, r, principal, user, today, now, recorded) {
     payeeId: v.payeeId || null, payeeName: v.payeeId && payees.get(v.payeeId) ? payees.get(v.payeeId).name : '',
     responsible: people.labelFor(v.responsibleRef, { doc, user }),
   });
-  const upcoming = bills.dueBetween(r, today, schedule.addDays(today, 400), recorded).slice(0, 6);
+  // A bill whose account is closed or removed takes no payments, so it has nothing due; it is shown
+  // with the reason instead of silently vanishing (FIN-R9).
+  const inactiveReason = bills.accountIssue(doc, r);
+  const upcoming = inactiveReason ? [] : bills.dueBetween(r, today, schedule.addDays(today, 400), recorded).slice(0, 6);
+  // The full overdue list is counted; only the displayed list is bounded (FIN-R12).
+  const overdue = inactiveReason ? [] : bills.overdue(r, today, recorded);
   const prefix = `${r.id}|`;
   return {
     id: r.id, name: r.name, billType: r.billType, kind: r.kind, currency: c,
@@ -129,9 +144,9 @@ function view(doc, r, principal, user, today, now, recorded) {
     ...termsView(bills.termsAt(r, today)),
     schedule: { freq: r.schedule.freq, interval: r.schedule.interval, startDate: r.schedule.startDate, endDate: r.schedule.endDate },
     reminderDays: r.reminderDays, notes: r.notes || '', tripId: r.tripId || null, trackFrom: r.trackFrom,
-    nextDue: upcoming[0] || null, upcoming,
-    overdue: bills.overdue(r, today, recorded).slice(-24),
-    reminders: bills.reminders(r, today, recorded),
+    nextDue: upcoming[0] || null, upcoming, inactiveReason,
+    overdue: overdue.slice(-24), overdueCount: overdue.length,
+    reminders: inactiveReason ? [] : bills.reminders(r, today, recorded),
     skips: bills.activeSkips(r).map((s) => ({ date: s.date, reason: s.reason || '' })),
     pauses: bills.effectivePauses(r).map((p) => ({ id: p.id, from: p.from, until: p.until })),
     pausedNow: bills.isPaused(r, today),
@@ -142,7 +157,7 @@ function view(doc, r, principal, user, today, now, recorded) {
     revision: r.revision,
     canEdit: a ? canChangeRecord(doc, principal, a, r, 'edit', now) : false,
     canDelete: a ? canChangeRecord(doc, principal, a, r, 'delete', now) : false,
-    canRecord: !!a && can(doc, principal, a, 'create', now) && (!dest || can(doc, principal, dest, 'create', now)),
+    canRecord: !inactiveReason && !!a && can(doc, principal, a, 'create', now) && (!dest || can(doc, principal, dest, 'create', now)),
   };
 }
 
@@ -162,18 +177,26 @@ async function list(ctx, req) {
     return a && !a.deletedAt && can(doc, ctx.principal, a, 'view-transactions', now);
   });
   const views = visible.map((r) => view(doc, r, ctx.principal, user, today, now, recorded));
+  // NEXT 30 DAYS (FIN-R11): a transfer between two accounts whose entries the viewer sees is a
+  // movement, reported apart from money in and out; a transfer into an account the viewer cannot
+  // see has left their view, so it counts as money out for them.
   const next30 = {};
+  const seesEntries = (id) => { const x = (doc.accounts || []).find((acc) => acc.id === id && !acc.deletedAt); return !!x && can(doc, ctx.principal, x, 'view-transactions', now); };
   for (const r of visible) {
+    if (bills.accountIssue(doc, r)) continue;
+    const internal = r.kind === 'transfer' && seesEntries(r.toAccountId);
     for (const d of bills.dueBetween(r, today, schedule.addDays(today, 30), recorded)) {
-      const s = next30[r.currency] || (next30[r.currency] = { out: 0, in: 0 });
+      const s = next30[r.currency] || (next30[r.currency] = { out: 0, in: 0, moved: 0 });
       const m = bills.termsAt(r, d).amountMinor;
-      if (r.kind === 'income') s.in = money.sum([s.in, m]); else s.out = money.sum([s.out, m]);
+      if (r.kind === 'income') s.in = money.sum([s.in, m]);
+      else if (internal) s.moved = money.sum([s.moved, m]);
+      else s.out = money.sum([s.out, m]);
     }
   }
   const summary = {
-    overdue: views.reduce((n, v) => n + v.overdue.length, 0),
+    overdue: views.reduce((n, v) => n + v.overdueCount, 0),
     dueSoon: views.reduce((n, v) => n + v.reminders.length, 0),
-    next30Days: Object.entries(next30).map(([currency, s]) => ({ currency, outgoing: money.toDecimal(s.out, currency), incoming: money.toDecimal(s.in, currency) })),
+    next30Days: Object.entries(next30).map(([currency, s]) => ({ currency, outgoing: money.toDecimal(s.out, currency), incoming: money.toDecimal(s.in, currency), transfers: money.toDecimal(s.moved, currency) })),
   };
   return { body: { recurring: views, summary, today } };
 }
@@ -188,6 +211,7 @@ async function draft(ctx, req) {
   const occurrence = requireOccurrence(r, query(req, 'occurrence'));
   const status = bills.occurrenceStatus(r, occurrence, bills.recordedSet(doc));
   if (status === 'recorded') throw conflict('This occurrence is already recorded.', 'already_recorded');
+  refuseReversedRecording(doc, r, occurrence);
   const t = bills.termsAt(r, occurrence);
   const payee = t.payeeId && (doc.payees || []).find((p) => p.id === t.payeeId);
   return {
@@ -270,6 +294,7 @@ async function record(ctx, req) {
     if (status === 'recorded') throw conflict('This occurrence is already recorded.', 'already_recorded');
     if (status === 'skipped') throw conflict('This occurrence was skipped. Undo the skip before recording it.', 'skipped');
     if (status === 'paused') throw conflict('This occurrence falls in a pause. Resume the bill before recording it.', 'paused');
+    refuseReversedRecording(doc, r, occurrence);
     const terms = bills.termsAt(r, occurrence);
     if (body.amount === undefined && terms.amountType === 'variable') throw badRequest('This bill varies. Enter the actual amount before recording it.', 'amount_required');
     // Never copy a reference to a category that no longer exists into a new entry (SEC-B1).

@@ -5,8 +5,10 @@
 //
 // DOUBLE-COUNTING RULE: a bill occurrence is "committed" only while it is due (not recorded, skipped
 // or paused). Once recorded it is an actual entry and no longer committed, so availability does not
-// change when a bill becomes real. Overdue occurrences in the current period stay committed: they
-// are still owed.
+// change when a bill becomes real. Overdue occurrences stay committed in the current period until
+// they are recorded or skipped — including ones from earlier periods (FIN-R13) — because they are
+// still owed. A reversed recording reopens its occurrence (FIN-R4). Bills whose accounts cannot
+// take payments (closed or removed) are left out everywhere (bills.accountIssue, FIN-R9).
 //
 // PRIVACY: shared budgets count only SHARED accounts (every member sees the same figures and no
 // private spending leaks into them); a private budget counts the accounts its owner may see.
@@ -53,6 +55,23 @@ function budgetTermsAt(budget, date) {
   return chosen;
 }
 
+// The day the budget's first plan takes effect.
+function firstEffective(budget) {
+  const versions = budget.versions && budget.versions.length ? budget.versions : [{ effectiveFrom: budget.startDate }];
+  return versions.reduce((min, v) => (v.effectiveFrom < min ? v.effectiveFrom : min), versions[0].effectiveFrom);
+}
+
+// CARRY-OVER RULE (FIN-R6, FIN-R7): the previous period carries over only when the budget existed
+// for all of it (its first plan took effect on or before the previous period's start) and that
+// period was a whole period under the plan in force then. A change of period type or anchor
+// (weekly to monthly, the 1st to the 15th) therefore carries nothing across, because the old plan's
+// amount belongs to a different span of days and comparing them would invent or destroy money.
+function carriesOver(budget, prev, prevTerms) {
+  if (prev.start < firstEffective(budget)) return false;
+  const then = periodFor(prevTerms, prev.start);
+  return then.start === prev.start && then.end === prev.end;
+}
+
 // ---- scope ------------------------------------------------------------------------------------
 function scopeAccounts(doc, budget, now) {
   const accounts = (doc.accounts || []).filter((a) => !a.deletedAt && a.currency === budget.currency);
@@ -78,14 +97,16 @@ function netSpending(doc, accountIds, categoryId, from, to) {
   return total;
 }
 
-// Bill occurrences still owed in [from, to]: future ones, plus past ones that are overdue.
+// Bill occurrences still owed in the period [from, to]: future ones, plus past ones that are
+// overdue — from this period and from earlier periods back to the bill's tracking start (FIN-R13).
 function committedSpending(doc, accountIds, categoryId, from, to, today, recorded) {
   let total = 0;
   for (const b of doc.recurring || []) {
-    if (b.deletedAt || !accountIds.has(b.accountId) || ledger.classify(b.kind) !== 'spending') continue;
+    if (b.deletedAt || !accountIds.has(b.accountId) || ledger.classify(b.kind) !== 'spending' || bills.accountIssue(doc, b)) continue;
     const start = bills.trackStart(b);
-    for (const date of bills.dueBetween(b, from, to, recorded)) {
-      if (date < today && date < start) continue;
+    const earlier = bills.dueBetween(b, start, schedule.addDays(from, -1), recorded);
+    const inPeriod = bills.dueBetween(b, from, to, recorded).filter((date) => !(date < today && date < start));
+    for (const date of [...earlier, ...inPeriod]) {
       const terms = bills.termsAt(b, date);
       if (terms.categoryId === categoryId) total = money.sum([total, terms.amountMinor]);
     }
@@ -109,6 +130,7 @@ function computeStatus(doc, budget, today, now) {
   const period = periodFor(terms, today);
   const prev = previousPeriod(terms, period);
   const prevTerms = budgetTermsAt(budget, prev.start);
+  const carries = carriesOver(budget, prev, prevTerms);
   const accounts = scopeAccounts(doc, budget, now);
   const ids = new Set(accounts.map((a) => a.id));
   const recorded = bills.recordedSet(doc);
@@ -118,9 +140,9 @@ function computeStatus(doc, budget, today, now) {
   const lines = terms.lines.map((line) => {
     const actual = netSpending(doc, ids, line.categoryId, period.start, period.end);
     const committed = committedSpending(doc, ids, line.categoryId, period.start, period.end, today, recorded);
-    // What was left of LAST period's own plan for this category.
+    // What was left of LAST period's own plan for this category (see carriesOver).
     const prevLine = prevTerms.lines.find((l) => l.categoryId === line.categoryId);
-    const carry = line.rollover && prevLine ? money.sum([prevLine.amountMinor, -netSpending(doc, ids, line.categoryId, prev.start, prev.end)]) : 0;
+    const carry = line.rollover && prevLine && carries ? money.sum([prevLine.amountMinor, -netSpending(doc, ids, line.categoryId, prev.start, prev.end)]) : 0;
     const available = money.sum([line.amountMinor, carry, -actual, -committed]);
     for (const [k, v] of [['planned', line.amountMinor], ['actual', actual], ['committed', committed], ['carry', carry], ['available', available]]) totals[k] = money.sum([totals[k], v]);
     return {
@@ -155,8 +177,9 @@ function forecast(doc, principal, { today, horizonDays, bufferMinor = null, buff
   const visible = (doc.accounts || []).filter((a) => !a.deletedAt && (a.status || 'open') === 'open' && can(doc, principal, a, 'view-balances', now));
   const detail = new Set(visible.filter((a) => can(doc, principal, a, 'view-transactions', now)).map((a) => a.id));
   const events = new Map(visible.map((a) => [a.id, []]));
-  const push = (accountId, date, amountMinor, certainty, label) => {
-    if (events.has(accountId) && detail.has(accountId)) events.get(accountId).push({ date, amountMinor, certainty, label });
+  // Every event carries a stable key so same-day ordering never depends on creation order (FIN-R8).
+  const push = (accountId, date, amountMinor, certainty, label, key) => {
+    if (events.has(accountId) && detail.has(accountId)) events.get(accountId).push({ date, amountMinor, certainty, label, key });
   };
   const startBalance = new Map();
   for (const a of visible) {
@@ -164,7 +187,7 @@ function forecast(doc, principal, { today, horizonDays, bufferMinor = null, buff
     for (const t of doc.transactions || []) {
       if (t.accountId !== a.id || t.deletedAt) continue;
       if (t.date <= today) bal = money.sum([bal, t.amountMinor]);
-      else if (t.date <= end) push(a.id, t.date, t.amountMinor, 'confirmed', 'Scheduled entry');
+      else if (t.date <= end) push(a.id, t.date, t.amountMinor, 'confirmed', 'Scheduled entry', `t|${t.id}`);
     }
     startBalance.set(a.id, bal);
   }
@@ -173,7 +196,7 @@ function forecast(doc, principal, { today, horizonDays, bufferMinor = null, buff
   const live = new Map((doc.accounts || []).filter((a) => !a.deletedAt).map((a) => [a.id, a]));
   const canSeeSource = (id) => live.has(id) && can(doc, principal, live.get(id), 'view-transactions', now);
   for (const b of doc.recurring || []) {
-    if (b.deletedAt || excluded.has(b.id) || !canSeeSource(b.accountId)) continue;
+    if (b.deletedAt || excluded.has(b.id) || !canSeeSource(b.accountId) || bills.accountIssue(doc, b)) continue;
     const owed = [
       ...bills.overdue(b, today, recorded).map((due) => ({ due, at: today, overdue: true })),
       ...bills.dueBetween(b, today, end, recorded).map((due) => ({ due, at: due, overdue: false })),
@@ -183,11 +206,13 @@ function forecast(doc, principal, { today, horizonDays, bufferMinor = null, buff
       const magnitude = changes.has(b.id) ? Math.abs(changes.get(b.id)) : terms.amountMinor;
       const certainty = terms.amountType === 'variable' ? 'estimate' : 'confirmed';
       const label = o.overdue ? `${b.name} (overdue since ${o.due})` : b.name;
-      push(b.accountId, o.at, bills.signed(b.kind, magnitude), certainty, label);
-      if (b.kind === 'transfer') push(b.toAccountId, o.at, magnitude, certainty, label);
+      push(b.accountId, o.at, bills.signed(b.kind, magnitude), certainty, label, `b|${b.id}|${o.due}`);
+      if (b.kind === 'transfer') push(b.toAccountId, o.at, magnitude, certainty, label, `b|${b.id}|${o.due}`);
     }
   }
-  for (const adj of adjustments) if (adj.type === 'one-off' && adj.date >= today && adj.date <= end) push(adj.accountId, adj.date, adj.amountMinor, 'scenario', 'What-if change');
+  adjustments.forEach((adj, i) => {
+    if (adj.type === 'one-off' && adj.date >= today && adj.date <= end) push(adj.accountId, adj.date, adj.amountMinor, 'scenario', 'What-if change', `w|${String(i).padStart(4, '0')}`);
+  });
 
   const variants = {
     expected: () => true,
@@ -196,7 +221,16 @@ function forecast(doc, principal, { today, horizonDays, bufferMinor = null, buff
   };
   const warnings = [];
   const accounts = visible.map((a) => {
-    const list = events.get(a.id).sort((x, y) => (x.date === y.date ? 0 : x.date < y.date ? -1 : 1));
+    // SAME-DAY ORDER (FIN-R8): by date; within a day money in before money out; then by stable key.
+    // So the lowest point and any below-zero warning depend on the data, never on which bill was
+    // added first. The rule is also stated in the assumptions below.
+    const list = events.get(a.id).sort((x, y) => {
+      if (x.date !== y.date) return x.date < y.date ? -1 : 1;
+      const inX = x.amountMinor > 0 ? 0 : 1;
+      const inY = y.amountMinor > 0 ? 0 : 1;
+      if (inX !== inY) return inX - inY;
+      return x.key < y.key ? -1 : x.key > y.key ? 1 : 0;
+    });
     const buffer = bufferMinor !== null && bufferCurrency === a.currency ? bufferMinor : null;
     const out = { accountId: a.id, name: a.name, currency: a.currency, start: money.toDecimal(startBalance.get(a.id), a.currency), itemsShared: detail.has(a.id), events: list.length, warnings: [] };
     try {
@@ -240,6 +274,8 @@ function forecast(doc, principal, { today, horizonDays, bufferMinor = null, buff
     assumptions: [
       'Starts from balances recorded up to today; later-dated entries are treated as confirmed.',
       'Includes bills that are due and not yet recorded, skipped or paused. Overdue bills are counted today.',
+      'Money coming in on a day is counted before money going out on the same day.',
+      'Bills whose account is closed or removed are left out until the account is reopened or the bill is ended.',
       'Variable bills use their estimate. "Cautious" leaves out estimated income; "hopeful" leaves out estimated expenses.',
       'What-if changes are applied only to this forecast and are never saved.',
       'Accounts whose entries are not shared with you show their balance without upcoming items.',

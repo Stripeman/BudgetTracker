@@ -31,6 +31,21 @@ const PRECISION = { JPY: 0, KRW: 0, ISK: 0, CLP: 0, VND: 0, BHD: 3, KWD: 3, JOD:
 const precisionOf = (c) => (c in PRECISION ? PRECISION[c] : 2);
 const STATUS_LABELS = { pending: "Pending", cleared: "Cleared", reconciled: "Reconciled" };
 
+// A reversal and the entry it reverses keep their financial details for good (FIN-R1): only notes,
+// tags and status can change, so the edit form locks the rest and says why. The server enforces it.
+export function reversalLock(t) {
+  if (t.reversedBy) return "This entry has been reversed, so its amount, date, type, category and merchant can no longer change. To correct it, add a new entry.";
+  if (t.links && t.links.reverses) return "This is a reversal, so its amount, date, type, category and merchant always match the entry it reverses. To correct it, add a new entry.";
+  return null;
+}
+
+// A reversal and its original are deleted together (FIN-R2), so the dialog says so.
+export function linkedDeleteNote(t) {
+  if (t.reversedBy) return "Its reversal is deleted with it, so the two keep cancelling out.";
+  if (t.links && t.links.reverses) return "The entry it reverses is deleted with it, so the two keep cancelling out.";
+  return null;
+}
+
 // True when at least one visible account accepts new entries from this person (UX-001).
 export function canAddEntries(state) {
   const data = sliceFor(state, "accounts").data;
@@ -172,6 +187,7 @@ function openDelete(ctx, t) {
     title: "Delete this entry?",
     body: [
       el("p", { text: "It is taken out of balances and lists. The entry itself stays in the workspace history with your reason and is never erased." }),
+      linkedDeleteNote(t) ? el("p", { text: linkedDeleteNote(t) }) : null,
       field("Reason", reason, { help: "Required." }),
     ],
     actions: [button("Cancel", () => modal.close()), confirm],
@@ -337,6 +353,12 @@ export function openQuickEntry(ctx, { transaction } = {}) {
     onRequestCreate: (name) => showCreate(name),
   });
   if (isTransfer) picker.input.disabled = true;
+  // Reversal pairs: financial fields are shown but cannot be changed (FIN-R1).
+  const lock = editing ? reversalLock(transaction) : null;
+  if (lock) {
+    for (const control of [amount, category, date, kind]) control.setAttribute("disabled", "");
+    picker.input.disabled = true;
+  }
 
   const createName = input({ maxlength: "80", autocomplete: "off" });
   const createType = select(Object.entries(MERCHANT_TYPE_LABELS).map(([value, label]) => ({ value, label })), "other");
@@ -463,6 +485,7 @@ export function openQuickEntry(ctx, { transaction } = {}) {
   const save = el("button", { type: "submit", class: "btn btn--primary", text: editing ? "Save changes" : "Save expense", form: `${key}-form` });
   const cancel = button("Cancel", () => modal.close());
   const form = el("form", { class: "form-grid", novalidate: true, id: `${key}-form` }, [
+    lock ? el("p", { class: "field__help field--wide reversal-lock", text: lock }) : null,
     el("div", { class: "field" }, [el("label", { class: "field__label", for: picker.input.id, text: "Merchant" }), picker.element, merchantLink]),
     createBox,
     amountField,

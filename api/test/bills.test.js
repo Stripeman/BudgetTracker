@@ -193,7 +193,7 @@ describe('BT-008-02 bills: skips, pauses, overdue and reminders', () => {
     assert.deepEqual(water.overdue, [], 'a bill started before it was tracked is not reported as missed');
     const { summary } = await list(h, f.q, 'alice');
     // Due 13 Sep – 13 Oct: water 15 Sep (40.00) and phone 5 Oct (20.00).
-    assert.deepEqual(summary, { overdue: 2, dueSoon: 1, next30Days: [{ currency: 'EUR', outgoing: '60.00', incoming: '0.00' }] });
+    assert.deepEqual(summary, { overdue: 2, dueSoon: 1, next30Days: [{ currency: 'EUR', outgoing: '60.00', incoming: '0.00', transfers: '0.00' }] });
 
     ok(await act(h, f.q, 'alice', 'record', { recurringId: phone.id, occurrence: '2026-08-05' }), 201);
     assert.deepEqual((await find(h, f.q, 'alice', phone.id)).overdue, ['2026-09-05']);

@@ -65,7 +65,7 @@ function view(doc, budget, member, today, now) {
     archived: !!budget.deletedAt, archivedAt: budget.deletedAt || null, archiveReason: budget.archiveReason || '',
     history: (budget.history || []).map((h) => ({ at: h.at, by: names.get(h.by) || 'Former member', changes: h.changes, reason: h.reason || '' })),
     lines: terms.lines.map(lineView),
-    versions: (budget.versions || []).map((v) => ({ effectiveFrom: v.effectiveFrom, period: v.period, reason: v.reason || '', by: v.createdBy ? names.get(v.createdBy) || 'Former member' : null, lines: v.lines.map(lineView) })),
+    versions: (budget.versions || []).map((v) => ({ effectiveFrom: v.effectiveFrom, period: v.period, reason: v.reason || '', backdated: !!v.backdated, by: v.createdBy ? names.get(v.createdBy) || 'Former member' : null, lines: v.lines.map(lineView) })),
     status: budgeting.budgetStatus(doc, budget, today, now),
   };
 }
@@ -114,7 +114,7 @@ function locate(doc, member, id, { archived = false } = {}) {
 
 async function patch(ctx, req) {
   const wsId = requireId(query(req, 'workspaceId'), 'workspaceId');
-  const body = fields.onlyKeys(readBody(req), ['budgetId', 'revision', 'name', 'lines', 'period', 'startDate', 'effectiveFrom', 'reason', 'icon']);
+  const body = fields.onlyKeys(readBody(req), ['budgetId', 'revision', 'name', 'lines', 'period', 'startDate', 'effectiveFrom', 'confirmBackdate', 'reason', 'icon']);
   const id = requireId(body.budgetId, 'budgetId');
   const catalog = await catalogFor(ctx, body);
   const { result } = await store.mutateWorkspace(ctx, wsId, (doc, member) => {
@@ -142,8 +142,17 @@ async function patch(ctx, req) {
       // so earlier periods keep the plan they had (audit B13). Earlier versions are never edited.
       const today = ctx.nowIso().slice(0, 10);
       const current = budgeting.budgetTermsAt(b, today);
+      const currentStart = budgeting.periodFor(current, today).start;
+      const effectiveFrom = fields.date(body.effectiveFrom, 'Effective from') || currentStart;
+      // A date before the current period rewrites periods that have finished (BT-001-05, audit
+      // B13), so it needs an explicit confirmation and the version is marked backdated (FIN-R14).
+      const backdated = effectiveFrom < currentStart;
+      if (backdated && fields.bool(body.confirmBackdate, 'Confirm backdate') !== true) {
+        throw conflict(`This change would apply from before the current period (which started ${currentStart}) and change periods that have finished. Confirm that this is intended.`, 'backdate_unconfirmed');
+      }
+      if (!backdated) fields.bool(body.confirmBackdate, 'Confirm backdate');
       const v = {
-        effectiveFrom: fields.date(body.effectiveFrom, 'Effective from') || budgeting.periodFor(current, today).start,
+        effectiveFrom, backdated,
         period: body.period !== undefined ? fields.oneOf(body.period, PERIODS, 'Period') : current.period,
         startDate: body.startDate !== undefined ? fields.date(body.startDate, 'Start date', { required: true }) : current.startDate,
         lines: body.lines !== undefined ? validLines(body.lines, b.currency, doc) : current.lines,
@@ -151,12 +160,14 @@ async function patch(ctx, req) {
       };
       const base = b.versions && b.versions.length ? b.versions : [{ effectiveFrom: b.startDate, period: b.period, startDate: b.startDate, lines: b.lines }];
       b.versions = [...base, v];
-      // The latest plan is mirrored at the top level for older readers.
-      b.lines = v.lines;
-      b.period = v.period;
-      b.startDate = v.startDate;
+      // The plan in force TODAY is mirrored at the top level for older readers — not simply the
+      // version just added, which may be future-dated or backdated behind a later one (FIN-R14).
+      const inForce = budgeting.budgetTermsAt(b, today);
+      b.lines = inForce.lines;
+      b.period = inForce.period;
+      b.startDate = inForce.startDate;
       changed.push('plan');
-    } else if (body.effectiveFrom !== undefined) {
+    } else if (body.effectiveFrom !== undefined || body.confirmBackdate !== undefined) {
       throw badRequest('An effective date applies only to changes of the plan (lines, period or start).', 'invalid_field');
     }
     if (changed.length) {

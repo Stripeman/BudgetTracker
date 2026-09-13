@@ -23,6 +23,13 @@ const accountIcons = (state) => new Map(((sliceFor(state, "accounts").data || {}
 const HORIZONS = [{ value: "30", label: "30 days" }, { value: "60", label: "60 days" }, { value: "90", label: "90 days" }, { value: "365", label: "12 months" }];
 const PERIODS = [{ value: "monthly", label: "Monthly" }, { value: "biweekly", label: "Every 2 weeks" }, { value: "weekly", label: "Weekly" }];
 
+// A plan change dated before the current period changes periods that have finished, so it needs an
+// explicit confirmation; the server refuses it otherwise (FIN-R14). Returns the message or null.
+export function backdateProblem(effectiveFrom, periodStart, confirmed) {
+  if (!effectiveFrom || !periodStart || effectiveFrom >= periodStart || confirmed) return null;
+  return "This date is before the current period, so it would change periods that have already finished. Tick “Also change finished periods” to confirm, or choose a later date.";
+}
+
 export function warningText(w, fmt, dateFormat) {
   const when = formatDate(w.date, dateFormat);
   const after = w.obligations && w.obligations.length ? ` after ${w.obligations.join(", ")}` : "";
@@ -236,6 +243,7 @@ function openBudgetEditor(ctx, budget = null) {
   // Plan changes apply from a date; earlier periods keep the plan they had (BT-001-05).
   const effectiveFrom = input({ type: "date" });
   effectiveFrom.value = editing ? budget.status.period.start : "";
+  const confirmBackdate = el("input", { type: "checkbox" });
   const reason = input({ maxlength: "200", placeholder: "Optional" });
   const chosenIcon = editing && budget.iconSource === "record" ? budget.icon : null;
   const iconPick = createIconPicker({ value: chosenIcon, inherited: "target", name: editing ? budget.name : "New budget" });
@@ -277,7 +285,8 @@ function openBudgetEditor(ctx, budget = null) {
       el("div", { class: "form-grid" }, [field("Name", name), iconPick.element, field("Who it is for", scope, { help: "A shared budget counts shared accounts only, so members' private spending never appears in it." }), field("Currency", currency), field("Period", period), field("Starts on", start)]),
       el("h3", { text: "Categories" }), linesBox, addLine,
       editing ? el("div", { class: "form-grid" }, [
-        field("Plan changes apply from", effectiveFrom, { help: "Earlier periods keep the plan they had." }),
+        field("Plan changes apply from", effectiveFrom, { help: `Earlier periods keep the plan they had. A date before ${formatDate(budget.status.period.start)} changes periods that have finished and needs confirming.` }),
+        el("label", { class: "field--inline field__label" }, [confirmBackdate, "Also change finished periods"]),
         field("Reason for the change", reason),
       ]) : null,
     ],
@@ -307,7 +316,13 @@ function openBudgetEditor(ctx, budget = null) {
       if (icon !== undefined) body.icon = icon;
       const planChanged = JSON.stringify(lines) !== JSON.stringify(budget.lines.map((l) => ({ categoryId: l.categoryId, amount: l.amount, rollover: !!l.rollover })))
         || period.value !== budget.period || start.value !== budget.startDate;
-      if (planChanged) Object.assign(body, { lines, period: period.value, startDate: start.value, ...(effectiveFrom.value ? { effectiveFrom: effectiveFrom.value } : {}), ...(reason.value.trim() ? { reason: reason.value.trim() } : {}) });
+      if (planChanged) {
+        effectiveFrom.removeAttribute("aria-invalid");
+        const problem = backdateProblem(effectiveFrom.value, budget.status.period.start, confirmBackdate.checked);
+        if (problem) { invalid(effectiveFrom, problem); return; }
+        const backdated = !!effectiveFrom.value && effectiveFrom.value < budget.status.period.start;
+        Object.assign(body, { lines, period: period.value, startDate: start.value, ...(effectiveFrom.value ? { effectiveFrom: effectiveFrom.value } : {}), ...(backdated ? { confirmBackdate: true } : {}), ...(reason.value.trim() ? { reason: reason.value.trim() } : {}) });
+      }
       if (Object.keys(body).length === 2) { announce("Nothing changed."); modal.close(); return; }
     } else {
       body = { name: name.value.trim(), scope: scope.value, currency: currency.value, period: period.value, startDate: start.value, lines, ...(iconPick.getValue() ? { icon: iconPick.getValue() } : {}) };

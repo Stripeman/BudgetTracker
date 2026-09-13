@@ -5,8 +5,9 @@
 //   POST    create one entry, or a transfer pair written atomically (Idempotency-Key supported)
 //   PATCH   { transactionId, revision, ... }  — the record revision must match (no silent
 //           overwrite of someone else's edit); reconciled amounts/dates/accounts are locked
-//   DELETE  { transactionId, revision }        soft delete (both legs of a transfer)
-//   POST    ?action=restore { transactionId }
+//   DELETE  { transactionId, revision, reason } soft delete (both legs of a transfer; a reversal
+//           and the entry it reverses together)
+//   POST    ?action=restore { transactionId }  restores the same group
 const { readBody, query, header, badRequest, forbidden, notFound, conflict } = require('../_shared/http');
 const { newId, requireId } = require('../_shared/ids');
 const { capabilitiesFor, can, canChangeRecord } = require('../_shared/authz');
@@ -22,6 +23,12 @@ const merchants = require('../_shared/merchants');
 const CREATE_KEYS = ['accountId', 'kind', 'amount', 'date', 'postedDate', 'payeeId', 'categoryId', 'splits', 'tags', 'notes', 'status', 'responsibleRef', 'transfer', 'original', 'links'];
 const PATCH_KEYS = ['transactionId', 'revision', 'reason', 'kind', 'amount', 'date', 'postedDate', 'payeeId', 'categoryId', 'splits', 'tags', 'notes', 'status', 'responsibleRef', 'original', 'toAmount'];
 const LOCKED_WHEN_RECONCILED = ['amount', 'date', 'kind', 'toAmount'];
+// REVERSAL PAIRS (FIN-R1): a reversal must stay the exact opposite of the entry it reverses (same
+// account, kind, category, merchant and splits, opposite amount). Every financial field of BOTH
+// halves is therefore fixed for good; notes, tags and status stay editable. A correction is a new
+// entry. The pair is also deleted and restored together (FIN-R2, FIN-R3; see setDeleted).
+const LOCKED_WHEN_REVERSED = ['kind', 'amount', 'date', 'postedDate', 'payeeId', 'categoryId', 'splits', 'responsibleRef', 'original', 'toAmount'];
+const inReversalPair = (t) => Boolean(t.reversedBy || (t.links && t.links.reverses));
 
 // AMENDMENTS (BT-001-05): an entry is never silently overwritten. Every change keeps the before and
 // after values of each field, who made it and when; a financial change (or un-reconciling) also
@@ -272,6 +279,11 @@ async function patch(ctx, req) {
     if (!canChangeRecord(doc, ctx.principal, account, t, 'edit', now)) throw forbidden('You cannot edit this entry.');
     checkRevision(t, body.revision);
     const reason = fields.text(body.reason, { field: 'Reason', max: 200 });
+    if (inReversalPair(t) && LOCKED_WHEN_REVERSED.some((k) => body[k] !== undefined)) {
+      throw conflict(t.reversedBy
+        ? 'This entry has been reversed, so its amount, date, type, category and merchant can no longer change. Add a new entry with the correct details.'
+        : 'This is a reversal, so its amount, date, type, category and merchant always match the entry it reverses. Add a new entry with the correct details.', 'reversal_locked');
+    }
     if (t.status === 'reconciled' && LOCKED_WHEN_RECONCILED.some((k) => body[k] !== undefined)) {
       throw conflict('This entry is reconciled. Change its status to cleared before editing amount, date or kind.', 'reconciled_locked');
     }
@@ -363,6 +375,18 @@ async function patch(ctx, req) {
   return { body: result };
 }
 
+// The entries that are deleted and restored together: both legs of a transfer, or a reversal and
+// the entry it reverses (FIN-R2, FIN-R3). A reversal and its original therefore always share their
+// deletion state, so a live reversal never stands alone and a deleted one never leaves its original
+// shown as reversed while counted in full.
+function linkedEntries(doc, t) {
+  const txns = doc.transactions || [];
+  if (t.transferId) return txns.filter((x) => x.transferId === t.transferId);
+  const partnerId = t.links && t.links.reverses ? t.links.reverses : t.reversedBy || null;
+  const partner = partnerId ? txns.find((x) => x.id === partnerId) : null;
+  return partner ? [t, partner] : [t];
+}
+
 function setDeleted(deleted) {
   return async (ctx, req) => {
     const wsId = requireId(query(req, 'workspaceId'), 'workspaceId');
@@ -375,14 +399,21 @@ function setDeleted(deleted) {
       if (!canChangeRecord(doc, ctx.principal, account, t, 'delete', now)) throw forbidden('You cannot delete or restore this entry.');
       if (Boolean(t.deletedAt) === deleted) return { changed: [] };
       if (deleted) checkRevision(t, body.revision);
-      if (deleted && t.status === 'reconciled') throw conflict('Reconciled entries cannot be deleted. Reverse them instead.', 'reconciled_locked');
+      // Only entries not already in the target state change (they normally all are not).
+      const legs = linkedEntries(doc, t).filter((x) => Boolean(x.deletedAt) !== deleted);
+      if (deleted && legs.some((x) => x.status === 'reconciled')) {
+        throw conflict(legs.length > 1 && t.status !== 'reconciled'
+          ? 'This entry is linked to a reconciled entry, so it cannot be deleted.'
+          : 'Reconciled entries cannot be deleted. Reverse them instead.', 'reconciled_locked');
+      }
       // Deleting takes an entry out of balances but never erases it; the reason is kept (BT-001-05).
       const reason = fields.text(body.reason, { field: 'Reason', max: 200 });
       if (deleted && !reason) throw badRequest('Give a reason for deleting this entry. It is kept with the entry\'s history.', 'reason_required');
-      const legs = t.transferId ? (doc.transactions || []).filter((x) => x.transferId === t.transferId) : [t];
       for (const x of legs) {
         const acc = (doc.accounts || []).find((a) => a.id === x.accountId);
-        if (!acc || !canChangeRecord(doc, ctx.principal, acc, x, 'delete', now)) throw forbidden('You cannot change both sides of this transfer.');
+        if (!acc || !canChangeRecord(doc, ctx.principal, acc, x, 'delete', now)) {
+          throw forbidden(t.transferId ? 'You cannot change both sides of this transfer.' : 'You cannot change both this entry and its reversal.');
+        }
       }
       // A bill payment recorded again after this entry was deleted must not be doubled (SEC-B6).
       if (!deleted) {
