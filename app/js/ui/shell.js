@@ -38,6 +38,7 @@ export function createShell({ mountPoint, store, router, theme, api }) {
   const footer = el("footer", { class: "app__footer" });
   let view = null;
   let viewKey = "";
+  let navigated = false;
   let menu = null;
 
   // The skip link targets #main; with hash routing it must move focus, not navigate (A11Y-003).
@@ -151,7 +152,11 @@ export function createShell({ mountPoint, store, router, theme, api }) {
       const mod = VIEWS[route.id] || dashboard;
       view = mod.createView({ ...ctx(), params: route.params });
       mount(main, view.element);
-      focusFirst(main);
+      // On in-app navigation focus moves to the new view's heading so a screen reader announces
+      // it. Not on the first load of the page: there focus stays at the top of the document, and a
+      // browser would otherwise draw a keyboard focus ring round the title after every refresh.
+      if (navigated) focusFirst(main);
+      navigated = true;
       const label = (ROUTES.find((r) => r.id === route.id) || ROUTES[0]).label;
       document.title = `${label} · BudgetTracker`;
     }

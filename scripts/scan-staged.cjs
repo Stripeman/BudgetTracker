@@ -96,13 +96,25 @@ function scanPath(file) {
 // The exception is deliberately narrow: only `"deprecated":` lines, only in package-lock.json.
 const isLockfileDeprecation = (file, line) => /(^|[\\/])package-lock\.json$/.test(file) && /^\s*"deprecated":\s*"/.test(line);
 
+// A registered vendored bundle (app/js/vendor/<name>/, validate.cjs rule 10) carries the MIT
+// licence notices of the packages compiled into it, and the licence requires their copyright lines
+// to ship with the code. Some quote the author's public address. That is third-party licence text,
+// not a personal identifier of anyone in this project. Equally narrow as the lockfile exception:
+// only files under app/js/vendor/, only lines inside the file's opening generated comment block,
+// and only lines that are a copyright line (" * ... Copyright ..."). An address anywhere else in
+// the bundle, or in any other file, is still refused.
+const isVendoredFile = (file) => /(^|[\\/])app[\\/]js[\\/]vendor[\\/][^\\/]+[\\/][^\\/]+\.js$/.test(file);
+const isCopyrightLine = (line) => /^\s*\*\s+Copyright\b/i.test(line);
+
 function scanContent(file, text) {
   const findings = [];
   const lines = text.split(/\r?\n/);
+  const bannerEnd = isVendoredFile(file) && /^\/\*/.test(lines[0] || '') ? lines.findIndex((l) => l.includes('*/')) : -1;
   lines.forEach((line, index) => {
     const at = index + 1;
     for (const [pattern, rule] of CONTENT_RULES) if (pattern.test(line)) findings.push({ file, line: at, rule });
     if (isLockfileDeprecation(file, line)) return;
+    if (index < bannerEnd && isCopyrightLine(line)) return;
     for (const match of line.matchAll(EMAIL)) {
       if (!EMAIL_ALLOWED.some(allowed => allowed.test(match[0]))) findings.push({ file, line: at, rule: 'personal-email' });
     }

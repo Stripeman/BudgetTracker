@@ -56,6 +56,19 @@ test('BT-003-03 lockfile deprecation notices are the only place a real-looking a
   assert.ok(rules(scanContent('package.json', deprecation)).includes('personal-email'), 'package.json is not a lockfile');
 });
 
+test('BT-003-03 copyright lines in a vendored bundle banner are the only vendored place an address is allowed', () => {
+  // Assembled at runtime so this file never contains a scannable address.
+  const address = 'author' + '@' + 'package-author.dev';
+  const vendored = 'app/js/vendor/tiptap/tiptap-bundle.js';
+  const bundle = ['/*', ' * GENERATED FILE - DO NOT EDIT BY HAND.', ` *     Copyright (C) 2015 by Some Author <${address}>`, ' */', `var contact="${address}";`].join('\n');
+  const emails = (file, text) => scanContent(file, text).filter((f) => f.rule === 'personal-email').map((f) => f.line);
+  assert.deepEqual(emails(vendored, bundle), [5], 'the banner copyright line is allowed; the same address in the code still blocks');
+  assert.deepEqual(emails('app/js/ui/shell.js', bundle), [3, 5], 'the same banner outside app/js/vendor still blocks');
+  assert.deepEqual(emails(vendored, ['var a = 1;', ` *     Copyright (C) 2015 by Some Author <${address}>`].join('\n')), [2], 'no opening comment, no exception');
+  assert.deepEqual(emails(vendored, ['/*', ' * notices', ' */', ` *     Copyright (C) 2015 by Some Author <${address}>`].join('\n')), [4], 'only inside the opening comment');
+  assert.deepEqual(emails(vendored, ['/*', ` * contact ${address}`, ' */'].join('\n')), [2], 'only copyright lines, not any line of the banner');
+});
+
 test('BT-003-03 allows fictional addresses, local emulator strings and non-card numbers', () => {
   const text = [
     'owner@example.com and reviewer@example.org',
