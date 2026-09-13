@@ -106,6 +106,14 @@ async function accept(ctx, req) {
   const body = fields.onlyKeys(readBody(req), ['workspaceId', 'token']);
   const wsId = requireId(body.workspaceId, 'workspaceId');
   let joined = null;
+  // The person's own workspace list is updated FIRST, so a full personal document refuses the join
+  // before any membership exists instead of leaving a member whose list lacks the workspace (security
+  // recheck L7). A stray id there is harmless: the list re-checks membership for every workspace.
+  await store.mutateUser(ctx, (user) => {
+    if ((user.workspaceIds || []).includes(wsId)) return undefined;
+    user.workspaceIds = [...(user.workspaceIds || []), wsId];
+    return true;
+  });
   // The caller is not yet a member, so this is the one write that bypasses mutateWorkspace's
   // membership check; the token + email match is the authorization.
   await update(ctx.storage, store.paths.workspace(wsId), (value) => {
@@ -134,12 +142,11 @@ async function accept(ctx, req) {
     doc.revision = (doc.revision || 0) + 1;
     doc.updatedAt = nowIso;
     joined = { memberId: member.id, role: member.role };
-    return stampDocument('workspace', doc);
-  });
-  await store.mutateUser(ctx, (user) => {
-    if ((user.workspaceIds || []).includes(wsId)) return undefined;
-    user.workspaceIds = [...(user.workspaceIds || []), wsId];
-    return true;
+    const stamped = stampDocument('workspace', doc);
+    // Joining removes nothing, so it gets no headroom: accepted invitations can never push the
+    // workspace into the space its owner needs to administer it (security recheck, invitation accept).
+    store.assertFits(ctx, stamped, 'This workspace is full, so no one can join it until its owner makes room.');
+    return stamped;
   });
   return { body: { workspaceId: wsId, ...joined } };
 }

@@ -140,7 +140,9 @@ describe('SEC-V1 the headroom kept for administering a full workspace', () => {
     ok(await h.call('members', 'PATCH', { as: 'alice', query: f.q, body: { memberId: f.memberId('Bob'), role: 'manager' } }));
     // The workspace is exactly full, with a small headroom (both only for tests).
     h.env.BT_WORKSPACE_MAX_BYTES = String(Buffer.byteLength(JSON.stringify(await stored(h, f))));
-    h.env.BT_WORKSPACE_HEADROOM_BYTES = '6000';
+    // 4,400 bytes of headroom leaves a manager 2,200: room for one backup's check (2,048) and its
+    // audit entry, then refusals, well within the manager's 4 backups a day.
+    h.env.BT_WORKSPACE_HEADROOM_BYTES = '4400';
     const statuses = [];
     for (let i = 0; i < 12; i += 1) statuses.push((await h.call('backups', 'POST', { as: 'bob', query: f.q, body: {} })).status);
     // Before the fix a manager's backups filled all the headroom and froze the owner out.
@@ -190,6 +192,57 @@ describe('SEC-V5 retry records count against a member while they exist', () => {
     doc.idempotency['google:g-alice|fictional-key-0002'] = { at: '2026-09-13T10:00:00.000Z', scope: 'x', hash: null, result: { notes: 'x'.repeat(1000) } };
     assert.ok(ledger.memberCharge(doc, bob) - before > 1000, 'Bob\'s record counts');
     assert.ok(ledger.memberCharge(doc, bob) - before < 2000, 'Alice\'s record does not count against Bob');
+  });
+});
+
+describe('Security recheck of 3474418: invitation accept and Lows', () => {
+  const invite = async (h, f, email) => ok(await h.call('invitations', 'POST', { as: 'alice', query: f.q, body: { email, role: 'viewer' } }), 201).token;
+  const acceptAs = (h, f, user, token) => h.call('invitations', 'POST', { user, query: { action: 'accept' }, body: { workspaceId: f.ws.id, token } });
+
+  test('accepting an invitation cannot fill a full workspace, and the owner can still administer it', async () => {
+    const h = harness();
+    const f = await household(h);
+    const frank = { userId: 'g-frank', email: 'frank@example.com', name: 'Frank Fictional' };
+    const token = await invite(h, f, frank.email);
+    h.env.BT_WORKSPACE_MAX_BYTES = String(Buffer.byteLength(JSON.stringify(await stored(h, f))) + 100);
+    // Before the fix each accept wrote past every limit, eventually freezing the owner out.
+    code(await acceptAs(h, f, frank, token), 409, 'workspace_full');
+    ok(await h.call('members', 'DELETE', { as: 'alice', query: f.q, body: { memberId: f.memberId('Carol'), reason: 'Fictional test' } }));
+  });
+
+  test('managers have their own small daily number of backups; owners keep theirs', async () => {
+    const h = harness();
+    const f = await household(h);
+    ok(await h.call('members', 'PATCH', { as: 'alice', query: f.q, body: { memberId: f.memberId('Bob'), role: 'manager' } }));
+    for (let i = 0; i < 4; i += 1) ok(await h.call('backups', 'POST', { as: 'bob', query: f.q, body: {} }), 201);
+    code(await h.call('backups', 'POST', { as: 'bob', query: f.q, body: {} }), 429, 'backup_limit');
+    ok(await h.call('backups', 'POST', { as: 'alice', query: f.q, body: {} }), 201);
+  });
+
+  test('expired retry records are not charged', async () => {
+    const h = harness({ env: { BT_MEMBER_QUOTA_BYTES: '20000' } });
+    const f = await household(h);
+    const name = `workspaces/${f.ws.id}/workspace.json`;
+    const { value } = await h.storage.getJson(name);
+    value.idempotency = { ...(value.idempotency || {}), 'google:g-bob|fictional-old-key': { at: '2026-09-10T10:00:00.000Z', scope: 'x', hash: null, result: { notes: 'x'.repeat(50000) } } };
+    await h.storage.putJson(name, value);
+    // Three days old, so expired: before the fix it still counted and Bob was refused.
+    ok(await h.call('contacts', 'POST', { as: 'bob', body: { scope: 'workspace', workspaceId: f.ws.id, name: 'Fictional Contact' } }), 201);
+  });
+
+  test('retry records are matched to their owner exactly, not by prefix', () => {
+    const bob = { subject: 'google:g-bob', role: 'member' };
+    const doc = { accounts: [], transactions: [], payees: [], recurring: [], budgets: [], idempotency: {} };
+    const before = ledger.memberCharge(doc, bob);
+    doc.idempotency['google:g-bob|m|fictional-key-0001'] = { at: '2026-09-13T10:00:00.000Z', result: { notes: 'x'.repeat(5000) } };
+    assert.equal(ledger.memberCharge(doc, bob), before, 'another person whose id starts with Bob\'s is not charged to Bob');
+  });
+
+  test('email addresses refuse control characters', async () => {
+    const h = harness();
+    const f = await household(h);
+    const res = await h.call('contacts', 'POST', { as: 'alice', body: { scope: 'workspace', workspaceId: f.ws.id, name: 'Fictional Plumber', email: `plumber${String.fromCharCode(27)}@example.com` } });
+    code(res, 400, 'invalid_email');
   });
 });
 

@@ -74,6 +74,10 @@ async function mutateWorkspace(ctx, wsId, fn, { idempotencyKey, idempotencyScope
     if (!doc || !member) throw notFound('Unknown workspace.');
     const key = idempotencyKey ? `${member.subject}|${idempotencyKey}` : null;
     if (!doc.idempotency || typeof doc.idempotency !== 'object') doc.idempotency = {};
+    // Expired retry records are dropped before anything is charged or replayed (security recheck L3).
+    for (const [k, v] of Object.entries(doc.idempotency)) {
+      if (!v || typeof v.at !== 'string' || nowMs - Date.parse(v.at) > IDEMPOTENCY_TTL_MS) delete doc.idempotency[k];
+    }
     if (key && Object.prototype.hasOwnProperty.call(doc.idempotency, key)) {
       const prior = doc.idempotency[key];
       if (prior.scope !== idempotencyScope || (requestHash && prior.hash !== requestHash)) {
@@ -100,7 +104,7 @@ async function mutateWorkspace(ctx, wsId, fn, { idempotencyKey, idempotencyScope
         doc.memberUsage = { ...usage, [member.subject]: prior + growth };
       }
       const after = ledger.memberCharge(doc, member);
-      if (!allowHeadroom && after > chargeBefore && after > ledger.quotaLimit(ctx.env)) throw ledger.quotaExceeded();
+      if (!allowHeadroom && after > chargeBefore && after > ledger.quotaLimit(ctx.env, member)) throw ledger.quotaExceeded();
     }
     for (const [k, v] of Object.entries(doc.idempotency)) {
       if (!v || typeof v.at !== 'string' || nowMs - Date.parse(v.at) > IDEMPOTENCY_TTL_MS) delete doc.idempotency[k];
@@ -163,10 +167,8 @@ const requestHash = (body) => sha256Hex(JSON.stringify(body));
 
 // The document cap for writes that bypass mutateWorkspace (restore execution). A restore cannot
 // be the way around the cap (security review SEC-R1).
-function assertFits(ctx, doc) {
-  if (Buffer.byteLength(JSON.stringify(doc)) > maxBytes(ctx.env)) {
-    throw conflict('This workspace has reached its storage limit, so this restore cannot be written. Nothing was changed.', 'workspace_full');
-  }
+function assertFits(ctx, doc, message = 'This workspace has reached its storage limit, so this restore cannot be written. Nothing was changed.') {
+  if (Buffer.byteLength(JSON.stringify(doc)) > maxBytes(ctx.env)) throw conflict(message, 'workspace_full');
 }
 
 // Whether a small headroom write (an audit entry) by this member would still fit, checked BEFORE

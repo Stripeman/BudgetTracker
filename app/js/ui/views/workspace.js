@@ -24,6 +24,10 @@ const TYPE_GROUPS = [
 
 const ROLES = [{ value: "viewer", label: "Viewer" }, { value: "member", label: "Member" }, { value: "manager", label: "Manager" }, { value: "owner", label: "Owner" }];
 const ROLE_LABEL = Object.fromEntries(ROLES.map((r) => [r.value, r.label]));
+// Storage allowances an owner may give a member (Terry, 2026-09-13), matching api/members/handler.js.
+const ALLOWANCE_MB = [1, 2, 4, 8, 12];
+const MB = 1024 * 1024;
+const sizeLabel = (bytes) => (bytes >= MB ? `${Math.round((bytes / MB) * 10) / 10} MB` : `${Math.max(1, Math.round(bytes / 1024))} KB`);
 
 // Plain-language activity (UX-007). Unknown actions fall back to readable words.
 const ACTIVITY = {
@@ -174,6 +178,7 @@ export function createView(ctx) {
   const describeMember = (h) => {
     if (h.event === "role") return `role ${ROLE_LABEL[h.from] || h.from} → ${ROLE_LABEL[h.to] || h.to}`;
     if (h.event === "rejoined") return `rejoined as ${ROLE_LABEL[h.to] || h.to}`;
+    if (h.event === "allowance") return `storage allowance ${sizeLabel(h.from)} → ${sizeLabel(h.to)}`;
     return `${MEMBER_EVENTS[h.event] || h.event}${h.reason ? ` — ${h.reason}` : ""}`;
   };
   async function loadFormer() {
@@ -354,6 +359,21 @@ export function createView(ctx) {
         // Read-only roles are text, not a greyed-out control that looks broken (UX-010).
         roleControl = el("span", { class: "badge", text: ROLE_LABEL[m.role] || m.role, title: soleOwner ? "A workspace always keeps at least one owner." : null });
       }
+      // Owners set each member's storage allowance; only the member sees how much of it they use,
+      // because that reflects their private records too (Terry, 2026-09-13; SEC-V3).
+      let allowanceControl = null;
+      if (role === "owner" && m.role !== "owner" && m.allowanceBytes) {
+        const steps = ALLOWANCE_MB.map((v) => ({ value: String(v), label: `${v} MB` }));
+        const current = m.allowanceBytes % MB === 0 && ALLOWANCE_MB.includes(m.allowanceBytes / MB) ? String(m.allowanceBytes / MB) : "";
+        allowanceControl = select(current ? steps : [{ value: "", label: sizeLabel(m.allowanceBytes) }, ...steps], current, { "aria-label": `Storage allowance for ${m.name}` });
+        const allowanceCommit = commitOnConfirm(allowanceControl, async (value) => {
+          if (!value) return;
+          const out = await store.actions.write((ws) => api.request("members", { method: "PATCH", query: { workspaceId: ws }, body: { memberId: m.id, allowanceMb: Number(value) } }), ["members"]);
+          if (!out.ok) { allowanceCommit.reset(current); announce(messageFor(out.error)); } else announce(`${m.name} can now store up to ${value} MB in this workspace.`);
+        });
+      }
+      const usage = m.self && m.usedBytes !== undefined && m.allowanceBytes
+        ? el("span", { class: "muted small", text: `Your storage: ${sizeLabel(m.usedBytes)} of ${sizeLabel(m.allowanceBytes)}` }) : null;
       const canRemove = !soleOwner && (role === "owner" || m.self);
       const remove = canRemove ? button(m.self ? "Leave workspace" : "Remove", () => confirmModal({
         title: m.self ? "Leave this workspace?" : `Remove ${m.name}?`,
@@ -365,7 +385,7 @@ export function createView(ctx) {
       }), { small: true, variant: "danger" }) : null;
       return el("li", { class: "row" }, [
         el("strong", { text: m.name }), m.self ? badge("you") : null, m.email ? el("span", { class: "muted small", text: m.email }) : null,
-        el("span", { class: "app__spacer" }), roleControl, remove,
+        el("span", { class: "app__spacer" }), usage, allowanceControl, roleControl, remove,
       ]);
     })));
     if (!loaded) { loaded = true; void loadInvites(); void loadBackups(); void loadAudit(); void loadHistory(); }

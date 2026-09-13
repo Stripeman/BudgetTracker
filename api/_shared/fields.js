@@ -84,6 +84,8 @@ function tags(value) {
   return [...new Set(value.map((t) => text(t, { field: 'Tag', max: 40, required: true }).toLowerCase()))];
 }
 
+// Control characters are refused in addresses too (security recheck L5).
+const EMAIL_CONTROLS = Object.freeze([[0x00, 0x1f], [0x7f, 0x9f]]);
 function email(value, field, { required = false } = {}) {
   const out = normalizeEmail(value);
   if (!out) {
@@ -91,7 +93,7 @@ function email(value, field, { required = false } = {}) {
     return '';
   }
   // Addresses are shown to other members too, so invisible and direction-changing characters are refused (SEC-V2).
-  if (!EMAIL_RE.test(out) || out.length > 254 || invisible.firstForbidden(out) !== null) throw badRequest(`${field} is not a valid email address.`, 'invalid_email');
+  if (!EMAIL_RE.test(out) || out.length > 254 || invisible.firstForbidden(out, EMAIL_CONTROLS) !== null) throw badRequest(`${field} is not a valid email address.`, 'invalid_email');
   return out;
 }
 

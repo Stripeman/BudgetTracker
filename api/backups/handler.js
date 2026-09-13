@@ -47,17 +47,22 @@ async function createBackup(ctx, wsId, { reason, actor }) {
 const MEMBER_RECOVERY_POINTS_PER_DAY = 6;
 // On-demand backups per workspace per day, owners included: each writes a full encrypted archive
 // and an audit entry (security recheck SEC-V1).
+// Each owner may make 12 a day; managers 4 each and 8 between them (security recheck L2).
 const ON_DEMAND_PER_DAY = 12;
+const ON_DEMAND_PER_MANAGER = 4;
+const ON_DEMAND_MANAGERS_PER_DAY = 8;
 const DAY_MS = 24 * 60 * 60 * 1000;
 // One ETag-guarded update of the backup index, so parallel requests are counted one by one.
-// Reservations from before `kind` existed were recovery points.
-async function reserve(ctx, wsId, { subject, kind, perPerson, perWorkspace, message, code }) {
+// Reservations from before `kind` existed were recovery points. `perWorkspace` counts only
+// reservations by people who are not owners.
+async function reserve(ctx, wsId, { subject, kind, byOwner = false, perPerson, perWorkspace, message, code }) {
   const nowMs = ctx.now();
   await update(ctx.backupStorage(), indexPath(wsId), (idx) => {
     const value = idx || { archives: [] };
     const recent = (value.reservations || []).filter((r) => (r.kind || 'recovery-point') === kind && nowMs - Date.parse(r.at) < DAY_MS);
-    if ((perPerson && recent.filter((r) => r.by === subject).length >= perPerson) || (perWorkspace && recent.length >= perWorkspace)) throw new HttpError(429, code, message);
-    return { ...value, reservations: [...(value.reservations || []), { by: subject, kind, at: new Date(nowMs).toISOString() }] };
+    if ((perPerson && recent.filter((r) => r.by === subject).length >= perPerson)
+      || (perWorkspace && recent.filter((r) => !r.byOwner).length >= perWorkspace)) throw new HttpError(429, code, message);
+    return { ...value, reservations: [...(value.reservations || []), { by: subject, kind, byOwner, at: new Date(nowMs).toISOString() }] };
   });
 }
 const reserveRecoveryPoint = (ctx, wsId, subject) => reserve(ctx, wsId, {
@@ -156,7 +161,13 @@ async function create(ctx, req) {
   // A workspace that fails an integrity check is refused before anything is stored, even a reservation.
   backup.checkInvariants(doc);
   store.assertRoomForHeadroomWrite(ctx, doc, member);
-  await reserve(ctx, wsId, { subject: member.subject, kind: 'on-demand', perWorkspace: ON_DEMAND_PER_DAY, message: `This workspace has had ${ON_DEMAND_PER_DAY} backups made today. Try again tomorrow.`, code: 'backup_limit' });
+  // Owners have their own daily number, so managers cannot use it up (security recheck L2).
+  const owner = member.role === 'owner';
+  await reserve(ctx, wsId, {
+    subject: member.subject, kind: 'on-demand', byOwner: owner, code: 'backup_limit',
+    perPerson: owner ? ON_DEMAND_PER_DAY : ON_DEMAND_PER_MANAGER, perWorkspace: owner ? undefined : ON_DEMAND_MANAGERS_PER_DAY,
+    message: 'The number of backups that can be made today in this workspace has been reached. Try again tomorrow.',
+  });
   const { entry } = await createBackup(ctx, wsId, { reason, actor: member.subject });
   await store.mutateWorkspace(ctx, wsId, (doc, me) => {
     audit.record(doc, { actor: me.subject, action: 'backup.create', targetType: 'backup', targetId: entry.archiveId, scope: 'managers', at: ctx.nowIso() });

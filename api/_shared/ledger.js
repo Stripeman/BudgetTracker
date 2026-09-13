@@ -237,21 +237,23 @@ function visiblePayees(doc, principal, visibleTxns) {
 // serialized size of their private accounts, the entries on them and the entries they created on
 // shared accounts. Owners are exempt (it is their workspace); the document cap still applies.
 const PRIVATE_QUOTA_BYTES = 2 * 1024 * 1024;
-const quotaLimit = (env) => {
+// A member's allowance is the one an owner set for them (Terry, 2026-09-13: owners set each
+// member's allowance; security recheck SEC-V3), otherwise the default. `BT_MEMBER_QUOTA_BYTES` may
+// only lower the DEFAULT (tests).
+const quotaLimit = (env, member) => {
+  if (member && Number.isSafeInteger(member.allowanceBytes) && member.allowanceBytes > 0) return member.allowanceBytes;
   const configured = Number(env && env.BT_MEMBER_QUOTA_BYTES);
   return Number.isSafeInteger(configured) && configured > 0 && configured < PRIVATE_QUOTA_BYTES ? configured : PRIVATE_QUOTA_BYTES;
 };
-// Nothing is ever deleted (BT-001-05), so the message does not suggest removing records. There is
-// no control for raising an allowance yet, so it does not promise one (SEC-V3; Terry to decide how
-// allowances are set).
+// Nothing is ever deleted (BT-001-05), so the message does not suggest removing records.
 function quotaExceeded() {
-  const e = badRequest('You have reached your storage allowance in this workspace, so this change cannot be saved. Allowances are fixed for now; the workspace owner can still make changes.', 'member_quota_exceeded');
+  const e = badRequest('You have reached your storage allowance in this workspace, so this change cannot be saved. Ask a workspace owner to raise it.', 'member_quota_exceeded');
   e.status = 409;
   return e;
 }
 function assertMemberQuota(doc, member, env) {
   if (member.role === 'owner') return;
-  if (memberCharge(doc, member) > quotaLimit(env)) throw quotaExceeded();
+  if (memberCharge(doc, member) > quotaLimit(env, member)) throw quotaExceeded();
 }
 // What a member is charged: the larger of what their records take now and all the growth their
 // writes have caused (the usage counter kept by store.mutateWorkspace, security retest SEC-U1). The
@@ -261,9 +263,10 @@ function assertMemberQuota(doc, member, env) {
 function memberCharge(doc, member) {
   const usage = doc.memberUsage && typeof doc.memberUsage === 'object' && Object.prototype.hasOwnProperty.call(doc.memberUsage, member.subject) ? doc.memberUsage[member.subject] : 0;
   let retries = 0;
-  const prefix = `${member.subject}|`;
+  // Keys are "<subject>|<key>" and a key never contains "|", so the owner is everything before the
+  // last "|" — matched exactly, never as a prefix (security recheck L4).
   for (const [k, v] of Object.entries(doc.idempotency && typeof doc.idempotency === 'object' ? doc.idempotency : {})) {
-    if (k.startsWith(prefix)) retries += Buffer.byteLength(k) + Buffer.byteLength(JSON.stringify(v));
+    if (k.slice(0, k.lastIndexOf('|')) === member.subject) retries += Buffer.byteLength(k) + Buffer.byteLength(JSON.stringify(v));
   }
   return Math.max(memberBytes(doc, member), Number.isSafeInteger(usage) ? usage : 0) + retries;
 }

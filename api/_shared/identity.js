@@ -51,7 +51,8 @@ function principalFrom(req, env) {
   const userId = typeof parsed.userId === 'string' ? parsed.userId : '';
   if (!USER_ID_RE.test(userId)) return null;
   const email = normalizeEmail(parsed.userDetails);
-  if (!EMAIL_RE.test(email)) return null;
+  // Fails closed on an address carrying control or invisible characters (security recheck L6).
+  if (!EMAIL_RE.test(email) || invisible.firstForbidden(email, CONTROLS) !== null) return null;
   const roles = Array.isArray(parsed.userRoles) ? parsed.userRoles : [];
   if (!roles.includes('authenticated')) return null;
   const name = claim(parsed.claims, 'name').slice(0, 120);
