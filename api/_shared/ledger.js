@@ -249,7 +249,14 @@ function quotaExceeded() {
 }
 function assertMemberQuota(doc, member, env) {
   if (member.role === 'owner') return;
-  if (memberBytes(doc, member) > quotaLimit(env)) throw quotaExceeded();
+  if (memberCharge(doc, member) > quotaLimit(env)) throw quotaExceeded();
+}
+// What a member is charged: the larger of what their records take now and all the growth their
+// writes have caused (the usage counter kept by store.mutateWorkspace, security retest SEC-U1). The
+// counter starts at zero for data written before it existed, which the record measure still covers.
+function memberCharge(doc, member) {
+  const usage = doc.memberUsage && typeof doc.memberUsage === 'object' && Object.prototype.hasOwnProperty.call(doc.memberUsage, member.subject) ? doc.memberUsage[member.subject] : 0;
+  return Math.max(memberBytes(doc, member), Number.isSafeInteger(usage) ? usage : 0);
 }
 // The quota's one measure: bytes a member's records take in the workspace document. Store writes
 // use it too, so any write that grows a member past it is refused (security retest SEC-T2).
@@ -271,7 +278,7 @@ function memberBytes(doc, member) {
 }
 
 module.exports = {
-  assertMemberQuota, memberBytes, quotaLimit, quotaExceeded,
+  assertMemberQuota, memberBytes, memberCharge, quotaLimit, quotaExceeded,
   ACCOUNT_TYPES, LIABILITY_TYPES, TX_KINDS, OUTFLOW, INFLOW, TX_STATUSES, NEVER_POSITIVE_OPENING, validateTerms, maskedNumber,
   balanceOf, accountView, accessOf, signedAmount, validateSplits, transactionView, visiblePayees, classify, openingBalance, assertLedgerInRange,
 };

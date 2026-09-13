@@ -337,7 +337,7 @@ function plan({ current, archived, mode, principal, member, nowIso, newWorkspace
     next.invitations = current.invitations;
     next.idempotency = current.idempotency;
   }
-  const crossScope = 'This restore would break a link with records outside what you can restore (for example a transfer with another member\'s private account). A recovery operator must perform a full restore instead.';
+  const crossScope = 'This restore would break a link with records outside what you can restore (for example a transfer with another member\'s private account, or with an account shared after this backup was made). A recovery operator must perform a full restore instead.';
   // Say which integrity rule failed when the CURRENT data already breaks it, instead of blaming the
   // restore scope (financial review FIN-R17). The detail is a rule name, never a record or value.
   let currentFails = null;

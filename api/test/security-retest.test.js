@@ -65,6 +65,65 @@ describe('SEC-T2 any write that grows a member\'s records respects their allowan
   });
 });
 
+describe('SEC-U1 a member is charged for every kind of growth their writes cause', () => {
+  test('shared contacts stop at the allowance, and the owner can still add entries', async () => {
+    const h = harness({ env: { BT_MEMBER_QUOTA_BYTES: '6000' } });
+    const f = await household(h);
+    let refused = null;
+    for (let i = 0; i < 200 && !refused; i += 1) {
+      const res = await h.call('contacts', 'POST', { as: 'bob', body: { scope: 'workspace', workspaceId: f.ws.id, name: `Fictional Contact ${i}` } });
+      if (res.status !== 201) refused = res;
+    }
+    // Before the fix contacts were never counted: 57 filled the workspace and locked the owner out.
+    assert.ok(refused, 'creation is stopped');
+    code(refused, 409, 'member_quota_exceeded');
+    const doc = await stored(h, f);
+    const bob = doc.members.find((m) => m.subject === 'google:g-bob');
+    assert.ok(ledger.memberCharge(doc, bob) <= 6000 + 1000, `Bob is charged ${ledger.memberCharge(doc, bob)} bytes`);
+    ok(await h.call('transactions', 'POST', { as: 'alice', query: f.q, body: { accountId: f.joint.id, kind: 'expense', amount: '1.00' } }), 201);
+  });
+
+  test('re-issuing a grant over and over is charged too', async () => {
+    const h = harness({ env: { BT_MEMBER_QUOTA_BYTES: '5000' } });
+    const f = await household(h);
+    let refused = null;
+    for (let i = 0; i < 300 && !refused; i += 1) {
+      const res = await h.call('grants', 'POST', { as: 'bob', query: f.q, body: { accountId: f.bobCard.id, memberId: f.memberId('Alice'), capabilities: ['view-transactions'] } });
+      if (res.status !== 201 && res.status !== 200) refused = res;
+    }
+    // Before the fix 300 re-issues grew the workspace while Bob's counted bytes stayed at 1,731.
+    assert.ok(refused, 're-issuing is stopped');
+    code(refused, 409, 'member_quota_exceeded');
+  });
+});
+
+describe('SEC-U2 plain-text names refuse invisible and direction-changing characters', () => {
+  test('a merchant or account name with a right-to-left override or zero-width space is refused', async () => {
+    const h = harness();
+    const f = await household(h);
+    const rlo = String.fromCodePoint(0x202e);
+    const zwsp = String.fromCodePoint(0x200b);
+    code(await h.call('payees', 'POST', { as: 'alice', query: f.q, body: { name: `Grocer${rlo}gnp.exe`, visibility: 'shared' } }), 400, 'invalid_field');
+    code(await h.call('accounts', 'POST', { as: 'alice', query: f.q, body: { name: `Sav${zwsp}ings`, type: 'savings', currency: 'EUR' } }), 400, 'invalid_field');
+    // Accented letters and emoji are fine.
+    ok(await h.call('payees', 'POST', { as: 'alice', query: f.q, body: { name: `Caf${String.fromCodePoint(0xe9)} ${String.fromCodePoint(0x1f600)}`, visibility: 'shared' } }), 201);
+  });
+});
+
+describe('SEC-U3 recovery points of private restores are listed without the member\'s name', () => {
+  test('owners see that a member restored, not who', async () => {
+    const h = harness();
+    const f = await household(h);
+    const id = ok(await h.call('backups', 'POST', { as: 'alice', query: f.q, body: {} }), 201).archive.archiveId;
+    ok(await h.call('transactions', 'POST', { as: 'bob', query: f.q, body: { accountId: f.bobCard.id, kind: 'expense', amount: '1.00' } }), 201);
+    const pv = ok(await h.call('restore', 'POST', { as: 'bob', query: { action: 'preview' }, body: { workspaceId: f.ws.id, archiveId: id, mode: 'replace' } }));
+    ok(await h.call('restore', 'POST', { as: 'bob', query: { action: 'execute' }, body: { workspaceId: f.ws.id, archiveId: id, mode: 'replace', expectedEtag: pv.expectedEtag, confirm: 'REPLACE' } }));
+    const list = ok(await h.call('backups', 'GET', { as: 'alice', query: f.q })).archives;
+    assert.equal(list.find((a) => a.reason === 'pre-restore').createdBy, 'A member (private restore)');
+    assert.equal(JSON.stringify(list).includes('Bob'), false);
+  });
+});
+
 describe('SEC-T3 a bill into an account the viewer cannot see', () => {
   test('does not reveal whether that account was closed or removed', async () => {
     const h = harness();

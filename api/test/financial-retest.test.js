@@ -130,6 +130,28 @@ describe('FIN-T6 a new period start day cannot count days twice without confirma
   });
 });
 
+describe('FIN-U1 an occurrence from before tracking started keeps its own date', () => {
+  test('only tracked, overdue occurrences are recorded today by default', async () => {
+    const h = harness();
+    const f = await household(h);
+    const power = ok(await h.call('recurring', 'POST', { as: 'alice', query: f.q, body: { name: 'Power', billType: 'utilities', accountId: f.joint.id, amount: '60.00', schedule: { freq: 'monthly', startDate: '2026-07-15' }, trackFrom: '2026-09-01' } }), 201).recurring;
+    const [entry] = ok(await billAct(h, f.q, 'record', { recurringId: power.id, occurrence: '2026-08-15' }), 201).transactions;
+    // 15 Aug is before tracking started on 1 Sep, so it was never owed here and is not overdue.
+    assert.equal(entry.date, '2026-08-15');
+  });
+});
+
+describe('FIN-U2 a change of amounts alone needs no confirmation within the current period', () => {
+  test('an amount change dated today is saved and applies to the current period', async () => {
+    const h = harness();
+    const f = await household(h);
+    const c = await cats(h, f.q);
+    const b = ok(await h.call('budgets', 'POST', { as: 'alice', query: f.q, body: { name: 'Groceries', scope: 'shared', currency: 'EUR', startDate: '2026-08-01', lines: [{ categoryId: c.Groceries, amount: '400.00' }] } }), 201).budget;
+    ok(await h.call('budgets', 'PATCH', { as: 'alice', query: f.q, body: { budgetId: b.id, revision: b.revision, lines: [{ categoryId: c.Groceries, amount: '450.00' }], effectiveFrom: '2026-09-13' } }));
+    assert.equal((await budgetLine(h, f.q)).planned, '450.00');
+  });
+});
+
 describe('FIN-T7 restoring a deleted bill payment uses the recording rule', () => {
   test('the correct payment can be restored while the mistaken one stays reversed', async () => {
     const h = harness();

@@ -153,10 +153,12 @@ async function patch(ctx, req) {
       };
       // A date before the current period rewrites periods that have finished (BT-001-05, audit B13;
       // FIN-R14). So does a new period type or start day whose first period begins before the change
-      // takes effect: days already counted in a finished period would count again (FIN-T6). Either
-      // needs an explicit confirmation, and the version is marked backdated.
+      // takes effect: days already counted under the old periods would count again (FIN-T6). Either
+      // needs an explicit confirmation, and the version is marked backdated. A change of amounts
+      // alone keeps the periods, so any date within the current period or later needs none (FIN-U2).
       const firstNewStart = budgeting.periodFor(v, effectiveFrom).start;
-      v.backdated = effectiveFrom < currentStart || firstNewStart < effectiveFrom;
+      const newPeriods = v.period !== current.period || v.startDate !== current.startDate;
+      v.backdated = effectiveFrom < currentStart || (newPeriods && firstNewStart < effectiveFrom);
       if (v.backdated && fields.bool(body.confirmBackdate, 'Confirm backdate') !== true) {
         throw conflict(effectiveFrom < currentStart
           ? `This change would apply from before the current period (which started ${currentStart}) and change periods that have finished. Confirm that this is intended.`

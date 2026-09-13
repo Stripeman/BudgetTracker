@@ -5,6 +5,7 @@ const { badRequest } = require('./http');
 const { isSafeId } = require('./ids');
 const { EMAIL_RE, normalizeEmail } = require('./identity');
 const richtext = require('./richtext');
+const invisible = require('./invisible');
 
 const CONTROL = /[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/;
 
@@ -17,6 +18,9 @@ function text(value, { field, max = 200, required = false, multiline = false } =
   const out = multiline ? value.replace(/\r\n/g, '\n').trim() : value.trim();
   if (!multiline && /[\n\r\t]/.test(out)) throw badRequest(`${field} must be a single line.`, 'invalid_field');
   if (CONTROL.test(out)) throw badRequest(`${field} contains control characters.`, 'invalid_field');
+  // Names and notes are shown to other members, so characters that hide or reorder text are refused
+  // here too — the same list rich text uses (security retest SEC-U2).
+  if (invisible.firstForbidden(out) !== null) throw badRequest(`${field} contains invisible or direction-changing characters.`, 'invalid_field');
   if (out.length > max) throw badRequest(`${field} must be at most ${max} characters.`, 'invalid_field');
   if (required && !out) throw badRequest(`${field} is required.`, 'missing_field');
   return out;

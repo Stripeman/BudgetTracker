@@ -100,6 +100,10 @@ function locate(doc, principal, id, now) {
   return { r, a };
 }
 
+// Overdue means owed and tracked: an occurrence before the bill's tracking start was never owed
+// here, so it keeps its own date when recorded (financial retest FIN-U1).
+const isOverdue = (r, occurrence, today) => occurrence < today && occurrence >= bills.trackStart(r);
+
 function requireOccurrence(r, value) {
   const occurrence = fields.date(value, 'Occurrence', { required: true });
   if (!schedule.occurrences(r.schedule, occurrence, occurrence).length) throw badRequest('That date is not an occurrence of this bill.', 'invalid_occurrence');
@@ -210,7 +214,7 @@ async function draft(ctx, req) {
     body: {
       saved: false,
       draft: {
-        recurringId: r.id, name: r.name, occurrence, date: occurrence < today ? today : occurrence, status, overdue: status === 'due' && occurrence < today,
+        recurringId: r.id, name: r.name, occurrence, date: isOverdue(r, occurrence, today) ? today : occurrence, status, overdue: status === 'due' && isOverdue(r, occurrence, today),
         kind: r.kind, accountId: r.accountId, toAccountId: r.toAccountId || null, currency: r.currency,
         amount: money.toDecimal(t.amountMinor, r.currency), amountType: t.amountType, amountIsEstimate: t.amountType === 'variable',
         categoryId: t.categoryId, payeeId: t.payeeId || null, payeeName: payee ? payee.name : '', responsible: people.labelFor(t.responsibleRef, { doc, user }),
@@ -296,7 +300,7 @@ async function record(ctx, req) {
     const base = {
       // An overdue occurrence is paid today unless told otherwise, so it moves from owed to spent in
       // the same budget period and what is available does not jump (financial retest FIN-T3).
-      date: fields.date(body.date, 'Date') || (occurrence < nowIso.slice(0, 10) ? nowIso.slice(0, 10) : occurrence), postedDate: null,
+      date: fields.date(body.date, 'Date') || (isOverdue(r, occurrence, nowIso.slice(0, 10)) ? nowIso.slice(0, 10) : occurrence), postedDate: null,
       status: fields.oneOf(body.status, ['pending', 'cleared'], 'Status', 'pending'),
       notes: fields.text(body.notes, { field: 'Notes', max: 5000, multiline: true }),
       createdBy: member.subject, createdAt: nowIso, revision: 1, deletedAt: null, original: null,

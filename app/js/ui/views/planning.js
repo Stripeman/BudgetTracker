@@ -321,7 +321,7 @@ function openBudgetEditor(ctx, budget = null) {
         const problem = backdateProblem(effectiveFrom.value, budget.status.period.start, confirmBackdate.checked);
         if (problem) { invalid(effectiveFrom, problem); return; }
         const backdated = !!effectiveFrom.value && effectiveFrom.value < budget.status.period.start;
-        Object.assign(body, { lines, period: period.value, startDate: start.value, ...(effectiveFrom.value ? { effectiveFrom: effectiveFrom.value } : {}), ...(backdated ? { confirmBackdate: true } : {}), ...(reason.value.trim() ? { reason: reason.value.trim() } : {}) });
+        Object.assign(body, { lines, period: period.value, startDate: start.value, ...(effectiveFrom.value ? { effectiveFrom: effectiveFrom.value } : {}), ...(backdated || confirmBackdate.checked ? { confirmBackdate: true } : {}), ...(reason.value.trim() ? { reason: reason.value.trim() } : {}) });
       }
       if (Object.keys(body).length === 2) { announce("Nothing changed."); modal.close(); return; }
     } else {

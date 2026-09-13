@@ -36,6 +36,8 @@ const maxBytes = (env) => {
   return Number.isSafeInteger(configured) && configured > 0 && configured < MAX_WORKSPACE_BYTES ? configured : MAX_WORKSPACE_BYTES;
 };
 
+const sizeWithoutIdempotency = (doc) => Buffer.byteLength(JSON.stringify({ ...doc, idempotency: undefined }));
+
 // Reads a workspace for an active member. A missing workspace, an archived-and-purged one and
 // one the caller does not belong to are all the same 404 — no existence oracle.
 async function loadWorkspace(ctx, wsId) {
@@ -72,15 +74,25 @@ async function mutateWorkspace(ctx, wsId, fn, { idempotencyKey, idempotencyScope
       result = { ...prior.result, replayed: true };
       return undefined;
     }
-    // Any ordinary write that grows a non-owner member's records must fit their allowance, whatever
-    // the handler (security retest SEC-T2: delete and restore cycles grew history without bound).
-    // Writes that remove access or data (headroom) are exempt; the restore that would follow is not.
-    const quotaBefore = member.role !== 'owner' && !allowHeadroom ? ledger.memberBytes(doc, member) : null;
+    // A non-owner member is charged for ALL the growth their writes cause, whatever kind of record it
+    // lands in — entries, contacts and their history, grants, audit entries — in a per-member usage
+    // counter, so no handler can be a way around the allowance (security retests SEC-T2, SEC-U1).
+    // Short-lived idempotency records are not counted; they expire. Writes that remove access or data
+    // (headroom) are charged but never refused; the restore that would follow is refused.
+    const charged = member.role !== 'owner';
+    const sizeBefore = charged ? sizeWithoutIdempotency(doc) : 0;
+    const chargeBefore = charged ? ledger.memberCharge(doc, member) : 0;
     result = fn(doc, member);
     if (result === undefined) return undefined;
-    if (quotaBefore !== null) {
-      const after = ledger.memberBytes(doc, member);
-      if (after > quotaBefore && after > ledger.quotaLimit(ctx.env)) throw ledger.quotaExceeded();
+    if (charged) {
+      const growth = sizeWithoutIdempotency(doc) - sizeBefore;
+      if (growth > 0) {
+        const usage = doc.memberUsage && typeof doc.memberUsage === 'object' ? doc.memberUsage : {};
+        const prior = Object.prototype.hasOwnProperty.call(usage, member.subject) && Number.isSafeInteger(usage[member.subject]) ? usage[member.subject] : 0;
+        doc.memberUsage = { ...usage, [member.subject]: prior + growth };
+      }
+      const after = ledger.memberCharge(doc, member);
+      if (!allowHeadroom && after > chargeBefore && after > ledger.quotaLimit(ctx.env)) throw ledger.quotaExceeded();
     }
     for (const [k, v] of Object.entries(doc.idempotency)) {
       if (!v || typeof v.at !== 'string' || nowMs - Date.parse(v.at) > IDEMPOTENCY_TTL_MS) delete doc.idempotency[k];

@@ -65,7 +65,10 @@ async function list(ctx, req) {
     const by = model.memberBySubject(doc, e.createdBy);
     // No record counts: whole-workspace counts would reveal other members' private activity
     // (security review finding 3).
-    return { archiveId: e.archiveId, createdAt: e.createdAt, reason: e.reason, createdBy: by ? by.name || 'Member' : 'Former member' };
+    // A restore by anyone but an owner is private to them (SEC-T5), so its recovery point is listed
+    // without their name (security retest SEC-U3).
+    const privateRestore = e.reason === 'pre-restore' && e.createdBy !== ctx.principal.subject && !(by && by.role === 'owner');
+    return { archiveId: e.archiveId, createdAt: e.createdAt, reason: e.reason, createdBy: privateRestore ? 'A member (private restore)' : by ? by.name || 'Member' : 'Former member' };
   });
   return { body: { archives, policy: 'Backups are encrypted, kept in separate storage and never downloadable. Restores are limited to what you may manage.' } };
 }

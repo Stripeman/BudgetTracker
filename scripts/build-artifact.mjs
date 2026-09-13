@@ -22,7 +22,14 @@ const SITE_DIRS = ["app/js", "app/styles"];
 const API_FILES = ["host.json", "package.json", "package-lock.json", "version.json"];
 const API_DIRS = ["_shared"];
 
+// Only files Git tracks are published: an ignored or untracked file inside an allowlisted folder
+// (for example under app/js) would otherwise ship without being in the recorded commit, and the
+// clean-tree checks do not see ignored files (security retest SEC-U5).
+const tracked = new Set(execFileSync("git", ["ls-files", "-z"], { cwd: ROOT }).toString("utf8").split("\0").filter(Boolean));
+const untracked = [];
 function copyFile(src, dest) {
+  const rel = path.relative(ROOT, src).split(path.sep).join("/");
+  if (!tracked.has(rel)) untracked.push(rel);
   fs.mkdirSync(path.dirname(dest), { recursive: true });
   fs.copyFileSync(src, dest);
 }
@@ -44,6 +51,7 @@ for (const d of API_DIRS) copyDir(path.join(ROOT, "api", d), path.join(API, d), 
 for (const name of Object.keys(ROUTES)) {
   for (const f of ["function.json", "index.js", "handler.js"]) copyFile(path.join(ROOT, "api", name, f), path.join(API, name, f));
 }
+if (untracked.length) { console.error(`artifact would include files Git does not track: ${untracked.join(", ")}`); process.exit(1); }
 execFileSync(process.platform === "win32" ? "npm.cmd" : "npm", ["ci", "--omit=dev", "--no-audit", "--no-fund"], { cwd: API, stdio: "inherit", shell: process.platform === "win32" });
 
 // Refuse to publish anything that looks like a test, secret or local data.
