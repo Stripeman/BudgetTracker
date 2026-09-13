@@ -39,7 +39,7 @@ Status key: **Fixed** (with the commit that fixed it), **Open**.
 | B9 | account close has no who/why | lifecycle | Medium | **Fixed** (close/reopen actions with revision and reason in the account history; tested) |
 | B10 | payee edits overwrite with no history or revision | names, aliases, defaults | Medium | **Fixed** by BT-007-01 (revision check, before/after history with reason) |
 | B11 | category edits overwrite with no history | names, parents | Medium | Open |
-| B12 | contact edits overwrite; private changes unaudited | contact details | Medium | Open |
+| B12 | contact edits overwrite; private changes unaudited | contact details | Medium | **Fixed** (before/after history on shared and private contacts, private history visible to its owner only; archive and restore; tested) |
 | B13 | budget lines replaced; past periods recomputed from current lines | historical budget performance | High | **Fixed** (plan versions from a date; tested) |
 | B14 | bill name/type/notes/reminder/end date overwritten | prior values | Medium | Open |
 | B15 | member role and rejoin overwrite membership | membership periods | Medium | Open |
