@@ -135,8 +135,11 @@ async function ensureUser(ctx) {
     const doc = readDocument('user', value);
     if (!doc) return newUserDoc(ctx.principal, nowIso);
     if (doc.subject !== ctx.principal.subject) throw conflict('Stored profile does not match this identity.', 'identity_mismatch');
-    if (doc.email === ctx.principal.email && (doc.name || '') === (ctx.principal.name || '')) return undefined;
-    return stampDocument('user', { ...doc, email: ctx.principal.email, name: ctx.principal.name || doc.name || '', updatedAt: nowIso });
+    // A name the person set themselves (PATCH /api/me) wins over the provider's; without either the
+    // stored name is kept. Written only when something actually changes.
+    const name = doc.nameSource === 'self' ? (doc.name || '') : (ctx.principal.name || doc.name || '');
+    if (doc.email === ctx.principal.email && (doc.name || '') === name) return undefined;
+    return stampDocument('user', { ...doc, email: ctx.principal.email, name, updatedAt: nowIso });
   });
   return readDocument('user', out.value);
 }

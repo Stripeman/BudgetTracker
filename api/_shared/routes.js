@@ -2,7 +2,7 @@
 // THE route registry: one place that names every function, its methods and its options. The
 // function directories, staticwebapp.config.json and the validator are all checked against it.
 const ROUTES = Object.freeze({
-  me: { methods: ['GET'] },
+  me: { methods: ['GET', 'PATCH'] },
   workspaces: { methods: ['GET', 'POST', 'PATCH', 'DELETE'] },
   members: { methods: ['GET', 'PATCH', 'DELETE'] },
   invitations: { methods: ['GET', 'POST', 'DELETE'] },

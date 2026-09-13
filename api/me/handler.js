@@ -8,6 +8,8 @@ const model = require('../_shared/workspace-model');
 const site = require('../_shared/site');
 const { appInfo } = require('../_shared/version');
 const prefs = require('../preferences/handler');
+const fields = require('../_shared/fields');
+const { readBody } = require('../_shared/http');
 
 async function get(ctx) {
   const user = await store.ensureUser(ctx);
@@ -33,4 +35,36 @@ async function get(ctx) {
   };
 }
 
-module.exports = { GET: get };
+// PATCH { name } — the name other members see. Static Web Apps never passes the provider's claims
+// (including its display name) to the API, only to /.auth/me, so without this every member showed as
+// "Member" (Terry's preview check, 2026-09-14). The name is self-asserted, exactly like the provider's
+// own display name, and validated like any text. It is saved to the person's profile and to their
+// member record in every workspace they belong to; a self-set name is never overwritten by the
+// provider's.
+async function patch(ctx, req) {
+  const body = fields.onlyKeys(readBody(req), ['name']);
+  const name = fields.text(body.name, { field: 'Name', max: 80, required: true });
+  let workspaceIds = [];
+  await store.mutateUser(ctx, (user) => {
+    workspaceIds = [...(user.workspaceIds || [])];
+    if (user.name === name && user.nameSource === 'self') return undefined;
+    user.name = name;
+    user.nameSource = 'self';
+    return true;
+  });
+  for (const id of workspaceIds) {
+    try {
+      await store.mutateWorkspace(ctx, id, (doc, member) => {
+        if (member.name === name) return undefined;
+        member.name = name;
+        return { ok: true };
+      }, { allowHeadroom: true });
+    } catch (e) {
+      // A workspace the person has left (or that is gone) keeps their earlier name.
+      if (e.status !== 404) throw e;
+    }
+  }
+  return get(ctx);
+}
+
+module.exports = { GET: get, PATCH: patch };

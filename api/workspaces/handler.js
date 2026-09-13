@@ -70,7 +70,9 @@ async function create(ctx, req) {
     if (key) user.idempotency[`ws|${key}`] = { id, at: ctx.nowIso() };
     return id;
   });
-  const doc = model.newWorkspaceDoc({ id: wsId, name, kind, currency, principal: ctx.principal, nowIso: ctx.nowIso() });
+  // The owner's name comes from their profile when the provider sent none (the API never receives it).
+  const owner = { subject: ctx.principal.subject, email: ctx.principal.email, name: ctx.principal.name || existing.name || '' };
+  const doc = model.newWorkspaceDoc({ id: wsId, name, kind, currency, principal: owner, nowIso: ctx.nowIso() });
   try {
     await ctx.storage.putJson(store.paths.workspace(wsId), doc, { ifNoneMatch: '*' });
   } catch (e) {
