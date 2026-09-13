@@ -25,7 +25,8 @@ export class DomEvent {
     this.key = init.key;
     this.defaultPrevented = false;
     this.propagationStopped = false;
-    this.target = null;
+    this.target = init.target || null;
+    this.relatedTarget = init.relatedTarget || null;
     this.currentTarget = null;
   }
   preventDefault() { this.defaultPrevented = true; }
@@ -45,7 +46,7 @@ class Node {
     this.classList = new ClassList(this);
     this.dataset = {};
     const props = new Map();
-    this.style = { setProperty: (k, v) => props.set(k, String(v)), getPropertyValue: (k) => props.get(k) || "" };
+    this.style = { setProperty: (k, v) => props.set(k, String(v)), getPropertyValue: (k) => props.get(k) || "", removeProperty: (k) => { props.delete(k); } };
     this.checked = false;
     this.disabled = false;
     this.value = "";
@@ -74,6 +75,9 @@ class Node {
     child.parentNode = null;
     return child;
   }
+  append(...nodes) {
+    for (const n of nodes) this.appendChild(typeof n === "string" ? this.ownerDocument.createTextNode(n) : n);
+  }
   replaceChildren(...nodes) {
     for (const c of this.childNodes) c.parentNode = null;
     this.childNodes = [];
@@ -99,13 +103,18 @@ class Node {
   addEventListener(type, fn) { if (!this.listeners.has(type)) this.listeners.set(type, []); this.listeners.get(type).push(fn); }
   removeEventListener(type, fn) { this.listeners.set(type, (this.listeners.get(type) || []).filter((f) => f !== fn)); }
   dispatchEvent(event) {
+    // Components build events with the platform's `new Event(...)`, whose `target` is read-only;
+    // the double carries it in its own event instead.
+    if (!(event instanceof DomEvent)) event = Object.assign(new DomEvent(event.type, { bubbles: event.bubbles }), { key: event.key });
     event.target = event.target || this;
-    let node = this;
-    while (node) {
+    // The propagation path is fixed BEFORE any listener runs, as in the DOM: a handler that removes
+    // its own element (a popup closing on Escape) does not stop the event reaching the ancestors.
+    const path = [];
+    for (let node = this; node; node = node.parentNode) path.push(node);
+    for (const node of event.bubbles ? path : [this]) {
       event.currentTarget = node;
       for (const fn of node.listeners.get(event.type) || []) fn.call(node, event);
-      if (!event.bubbles || event.propagationStopped) break;
-      node = node.parentNode;
+      if (event.propagationStopped) break;
     }
     return !event.defaultPrevented;
   }
@@ -165,8 +174,17 @@ export function installDom() {
   doc.body = new Node(doc, "body");
   doc.documentElement.appendChild(doc.body);
   doc.getElementById = (id) => doc.documentElement.querySelector(`#${id}`);
-  doc.addEventListener = () => {};
-  doc.removeEventListener = () => {};
+  // Document listeners are kept, and run only when a test calls document.dispatchEvent — events on
+  // elements do not bubble up to the document here, so components that listen on it (the modal's
+  // keydown, the account menu) behave as before unless a test drives the document on purpose.
+  const docListeners = new Map();
+  doc.addEventListener = (type, fn) => { if (!docListeners.has(type)) docListeners.set(type, []); docListeners.get(type).push(fn); };
+  doc.removeEventListener = (type, fn) => { docListeners.set(type, (docListeners.get(type) || []).filter((f) => f !== fn)); };
+  doc.dispatchEvent = (event) => {
+    event.currentTarget = doc;
+    for (const fn of [...(docListeners.get(event.type) || [])]) fn.call(doc, event);
+    return !event.defaultPrevented;
+  };
   doc.querySelector = (s) => doc.documentElement.querySelector(s);
   doc.querySelectorAll = (s) => doc.documentElement.querySelectorAll(s);
   const previous = { document: globalThis.document, raf: globalThis.requestAnimationFrame };

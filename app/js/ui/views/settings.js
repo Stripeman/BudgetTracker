@@ -55,10 +55,37 @@ export function createView(ctx) {
     el("p", { class: "field__help", text: "Icons offered to everyone on this site. Nothing is deleted: an icon you switch off or retire leaves the pickers but keeps showing wherever it is already used." }),
     catalogBox,
   ]);
+  // The name other members see (Terry's preview check, 2026-09-14): the API never receives the
+  // provider's name, so it is set here; the Google name is suggested while none is set.
+  const nameInput = input({ maxlength: "80", autocomplete: "name" });
+  const nameStatus = el("p", { class: "field__help", role: "status" });
+  let nameTouched = false;
+  let suggested = false;
+  nameInput.addEventListener("input", () => { nameTouched = true; });
+  const saveName = button("Save name", async () => {
+    const value = nameInput.value.trim();
+    if (!value) { nameStatus.textContent = "Enter the name other members should see."; nameInput.focus(); return; }
+    nameStatus.textContent = "Saving…";
+    try {
+      await ctx.api.updateMe({ name: value });
+      nameTouched = false;
+      nameStatus.textContent = "Saved.";
+      announce("Name saved.");
+      await store.actions.init();
+    } catch (err) { nameStatus.textContent = messageFor(err); }
+  }, { variant: "primary" });
+  const nameCard = el("section", { class: "card", "aria-labelledby": "set-name" }, [
+    el("h2", { class: "card__title", id: "set-name", text: "Your name" }),
+    field("Name shown to other members", nameInput),
+    el("p", { class: "field__help", text: "Other members of your workspaces see this name. Owners and managers also see your email address." }),
+    el("div", { class: "row" }, [saveName]),
+    nameStatus,
+  ]);
   const element = el("section", {}, [
     pageHead("My settings"),
     el("p", { class: "muted small", text: "“Inherited” values follow the site default until you change them. “Customized” values are your own choice; use “Use inherited” to return to the default. “Locked by site” values are set by the site administrator." }),
     el("div", { class: "grid grid--two" }, [
+      nameCard,
       el("section", { class: "card", "aria-labelledby": "set-appearance" }, [el("h2", { class: "card__title", id: "set-appearance", text: "Appearance" }), appearanceSource, dayNight.element, paletteField]),
       el("section", { class: "card", "aria-labelledby": "set-display" }, [el("h2", { class: "card__title", id: "set-display", text: "Display and privacy" }), prefBox, status]),
       el("section", { class: "card", "aria-labelledby": "set-contacts" }, [el("h2", { class: "card__title", id: "set-contacts", text: "Private contacts" }), el("p", { class: "field__help", text: "Only you can see these. Use them on your private records; use workspace contacts for shared ones." }), contactsBox]),
@@ -235,6 +262,17 @@ export function createView(ctx) {
 
   let rendered = "";
   function update(state) {
+    // Show the saved name, or suggest the Google one once, without overwriting what is being typed.
+    if (!nameTouched && document.activeElement !== nameInput) {
+      const current = state.auth && state.auth.user ? state.auth.user.name || "" : "";
+      if (current) nameInput.value = current;
+      else if (!suggested && ctx.api && ctx.api.providerName) {
+        suggested = true;
+        void ctx.api.providerName().then((n) => {
+          if (n && !nameTouched && !nameInput.value) { nameInput.value = n; nameStatus.textContent = "Suggested from your Google account. Select Save name to use it."; }
+        });
+      }
+    }
     const prefs = state.preferences;
     if (!prefs) return;
     colourCard.hidden = !state.selectedWorkspaceId;

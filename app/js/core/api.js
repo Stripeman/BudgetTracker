@@ -46,6 +46,19 @@ export function createApiClient({ fetchImpl = globalThis.fetch.bind(globalThis),
   return {
     request,
     me: () => request("me"),
+    updateMe: (body) => request("me", { method: "PATCH", body }),
+    // The provider's display name, which only the browser can read (/.auth/me); used to SUGGEST a
+    // name in My settings, never sent to the API on its own. Empty when unavailable (local dev).
+    providerName: async () => {
+      try {
+        const res = await fetch("/.auth/me", { credentials: "same-origin" });
+        if (!res.ok) return "";
+        const data = await res.json();
+        const claims = data && data.clientPrincipal && Array.isArray(data.clientPrincipal.claims) ? data.clientPrincipal.claims : [];
+        const claim = claims.find((c) => c && c.typ === "name" && typeof c.val === "string");
+        return claim ? claim.val.slice(0, 80) : "";
+      } catch { return ""; }
+    },
     siteSettings: () => request("site-settings"),
     workspaces: () => request("workspaces"),
     createWorkspace: (body, key) => request("workspaces", { method: "POST", body, idempotencyKey: key }),

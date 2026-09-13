@@ -10,6 +10,14 @@
 .app__brand img { width: 1.5rem; height: 1.5rem; }
 .app__spacer { flex: 1; }
 
+/* The header's workspace picker (BT-004-04), TaskTracker's `.picker` layout (T: main fb24a41): a
+   small uppercase label beside the control, dropped on a phone where the trigger names itself. The
+   picker may shrink (min-width 0) so a long workspace name ellipsizes instead of widening the page. */
+.picker { display: flex; align-items: center; gap: var(--space-2); min-width: 0; }
+.picker__label { font-size: var(--text-xs); text-transform: uppercase; letter-spacing: 0.04em; color: var(--text-muted); white-space: nowrap; cursor: pointer; }
+.picker--workspace { flex: 0 1 18rem; }
+.picker--workspace .cmdpick { flex: 1 1 auto; }
+
 .app__nav {
   display: flex; gap: var(--space-1); overflow-x: auto;
   padding: 0 var(--space-4); background: var(--surface); border-bottom: 1px solid var(--border);
@@ -49,7 +57,7 @@ ul.stack, ol.stack { list-style: none; margin: 0; padding: 0; }
 @media (max-width: 40rem) {
   .app__main { padding: var(--space-4) var(--space-3) var(--space-8); }
   .app__header { padding: var(--space-2) var(--space-3); flex-wrap: nowrap; }
-  .app__header select { max-width: 11rem; }
+  .picker__label { display: none; }
   .app__brand span { display: none; }
   /* Every section stays reachable: the nav wraps instead of hiding tabs off-screen (UX-004). */
   .app__nav { flex-wrap: wrap; overflow-x: visible; padding: 0 var(--space-2); }

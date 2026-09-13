@@ -161,6 +161,48 @@ try {
         await sleep(500);
         await evaluate(`(() => { const set = (sel, v) => { const i = document.querySelector(sel); i.value = v; i.dispatchEvent(new Event('input', { bubbles: true })); }; set('.modal input[placeholder^="For example"]', 'Fictional boat trip'); set('.modal input[placeholder^="0.00 or"]', '100'); })()`);
       }
+      // The header's workspace picker open (BT-004-04): "wspick" at desktop light, "wspickdark" and
+      // "wspicknarrow" (390 px) as named, and "wspicksearch" with text typed so the pinned
+      // "+ New workspace “…”" carries it. Nothing is chosen or created.
+      // "wspickkeys" drives the picker with REAL key presses: Enter opens it, Escape closes it with
+      // focus back on the trigger, Tab reaches "+ New workspace" and Enter opens the dialog, and
+      // Escape closes the dialog with focus back on the trigger. Nothing is created.
+      if (action === "wspickkeys") {
+        // Enter carries its character, as a real keyboard does: Chromium activates a focused button
+        // from the key's character event, which a bare keyDown does not produce.
+        const key = async (name, code, vk) => {
+          for (const type of ["keyDown", "keyUp"]) await cdp.send("Input.dispatchKeyEvent", { type, key: name, code, windowsVirtualKeyCode: vk, ...(type === "keyDown" && name === "Enter" ? { text: "\r", unmodifiedText: "\r" } : {}) });
+          await sleep(250);
+        };
+        const probe = async (label) => {
+          const r = await evaluate("JSON.stringify({ open: !!document.querySelector('.cmdpick__panel'), dialog: !!document.querySelector('.modal'), focus: document.activeElement ? (document.activeElement.className || document.activeElement.tagName) : null, name: document.activeElement ? (document.activeElement.getAttribute('aria-label') || document.activeElement.textContent || '').slice(0, 60) : null })");
+          console.error(`wspickkeys ${label} ${r.result.value}`);
+        };
+        await evaluate("document.querySelector('.picker--workspace .cmdpick__trigger').focus()");
+        await key("Enter", "Enter", 13); await probe("enter-opens");
+        await key("Escape", "Escape", 27); await probe("escape-closes");
+        await key("Enter", "Enter", 13);
+        await key("Tab", "Tab", 9); await probe("tab-to-create");
+        await key("Enter", "Enter", 13); await sleep(300); await probe("enter-opens-dialog");
+        await key("Escape", "Escape", 27); await sleep(300); await probe("escape-closes-dialog");
+      }
+      if (action.startsWith("wspick") && action !== "wspickkeys") {
+        if (action === "wspickdark" || action === "wspicknarrow") {
+          const narrow = action === "wspicknarrow";
+          await cdp.send("Emulation.setDeviceMetricsOverride", { width: narrow ? 390 : 1280, height: narrow ? 844 : 900, deviceScaleFactor: 1, mobile: narrow });
+          await cdp.send("Emulation.setEmulatedMedia", { features: [{ name: "prefers-color-scheme", value: narrow ? "light" : "dark" }, { name: "prefers-reduced-motion", value: "reduce" }] });
+          await cdp.send("Page.reload", { ignoreCache: true });
+          await sleep(1500);
+        }
+        await evaluate("document.querySelector('.picker--workspace .cmdpick__trigger').click()");
+        if (action === "wspicksearch") {
+          await sleep(200);
+          await evaluate("(() => { const b = document.querySelector('.cmdpick__search'); b.value = 'Allot'; b.dispatchEvent(new Event('input', { bubbles: true })); })()");
+        }
+        await sleep(300);
+        const state = await evaluate("JSON.stringify({ open: !!document.querySelector('.cmdpick__panel'), focus: document.activeElement && document.activeElement.className, active: document.activeElement && document.activeElement.getAttribute('aria-activedescendant'), panel: (() => { const p = document.querySelector('.cmdpick__panel'); if (!p) return null; const r = p.getBoundingClientRect(); return { left: Math.round(r.left), top: Math.round(r.top), right: Math.round(r.right), width: Math.round(r.width) }; })(), viewport: innerWidth, overflowX: document.documentElement.scrollWidth > innerWidth })");
+        console.error(`${action} ${state.result.value}`);
+      }
       await sleep(1200);
       const { data } = await cdp.send("Page.captureScreenshot", { format: "png" });
       const file = path.join(OUT, `interact-${action}.png`);

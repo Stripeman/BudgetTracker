@@ -98,7 +98,9 @@ async function execute(ctx, req) {
       if (k) user.idempotency[k] = { id, at: nowIso };
       return id;
     });
-    const { summary, next, attachments } = backup.plan({ current: doc, archived: opened.doc, mode, principal: ctx.principal, member, nowIso, newWorkspaceId: newWsId });
+    // The new owner's name comes from their profile when the provider sent none.
+    const owner = { subject: ctx.principal.subject, email: ctx.principal.email, name: ctx.principal.name || existing.name || '' };
+    const { summary, next, attachments } = backup.plan({ current: doc, archived: opened.doc, mode, principal: owner, member, nowIso, newWorkspaceId: newWsId });
     backup.ensureRestorable(summary);
     const finalDoc = backup.finalize(next, { actor: ctx.principal.subject, nowIso, archiveId, mode });
     store.assertFits(ctx, finalDoc);

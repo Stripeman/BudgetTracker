@@ -111,14 +111,17 @@ async function accept(ctx, req) {
   // before any membership exists instead of leaving a member whose list lacks the workspace (security
   // recheck L7). A stray id there is harmless: the list re-checks membership for every workspace.
   let added = false;
+  // The profile name is used when the provider sent none (the API never receives it).
+  let profileName = '';
   await store.mutateUser(ctx, (user) => {
+    profileName = user.name || '';
     if ((user.workspaceIds || []).includes(wsId)) return undefined;
     user.workspaceIds = [...(user.workspaceIds || []), wsId];
     added = true;
     return true;
   });
   try {
-    await join(ctx, wsId, body, (value) => { joined = value; });
+    await join(ctx, wsId, body, (value) => { joined = value; }, profileName);
   } catch (e) {
     // A failed join takes back the id it just added, so failed attempts leave nothing behind (LA4) —
     // unless the person is a member by now (a parallel accept with a good link, or a write that landed
@@ -144,7 +147,7 @@ async function accept(ctx, req) {
 
 // The caller is not yet a member, so this is the one write that bypasses mutateWorkspace's
 // membership check; the token + email match is the authorization.
-async function join(ctx, wsId, body, setJoined) {
+async function join(ctx, wsId, body, setJoined, profileName = '') {
   let joined = null;
   await update(ctx.storage, store.paths.workspace(wsId), (value) => {
     const doc = readDocument('workspace', value);
@@ -165,10 +168,10 @@ async function join(ctx, wsId, body, setJoined) {
         existing.history = [...existing.history, { at: nowIso, by: ctx.principal.subject, event: 'allowance', from: existing.allowanceBytes, to: ledger.quotaLimit(ctx.env, null) }];
         delete existing.allowanceBytes;
       }
-      existing.email = ctx.principal.email; existing.name = ctx.principal.name || existing.name;
+      existing.email = ctx.principal.email; existing.name = ctx.principal.name || profileName || existing.name;
       member = existing;
     } else {
-      member = { id: newId('mem'), subject: ctx.principal.subject, email: ctx.principal.email, name: ctx.principal.name || '', role: inv.role, status: 'active', joinedAt: nowIso };
+      member = { id: newId('mem'), subject: ctx.principal.subject, email: ctx.principal.email, name: ctx.principal.name || profileName || '', role: inv.role, status: 'active', joinedAt: nowIso };
       doc.members.push(member);
     }
     inv.status = 'accepted';
