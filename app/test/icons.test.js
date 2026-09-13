@@ -5,7 +5,7 @@ import { test, describe, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import { createRequire } from "node:module";
 import { installDom } from "./domdouble.js";
-import { icon, setCatalog, BUILT_IN_IDS, SYSTEM_IDS, directionOf, iconEntries, iconLabel, defaultIconFor, builtInIconFor, withIcon } from "../js/ui/icons.js";
+import { icon, setCatalog, setTypeIcons, BUILT_IN_IDS, SYSTEM_IDS, directionOf, iconEntries, iconLabel, defaultIconFor, builtInIconFor, withIcon } from "../js/ui/icons.js";
 import { createIconPicker, iconChange } from "../js/ui/iconpicker.js";
 import { categoryLabel } from "../js/ui/components.js";
 
@@ -83,6 +83,13 @@ describe("BT-011-05 icon registry", () => {
     assert.equal(defaultIconFor("bill", "utilities"), "bolt");
     assert.equal(defaultIconFor("budget"), "target");
     assert.equal(defaultIconFor("account", "spaceship"), "fallback");
+  });
+
+  test("SEC-I3 a workspace switch clears the previous workspace's type icons at once, keeping the catalogue", () => {
+    setCatalog({ ...server.catalogView({ disabled: ["film"], custom: [] }) }, { "account.checking": "cash" });
+    setTypeIcons({});
+    assert.equal(defaultIconFor("account", "checking"), "bank");
+    assert.ok(!iconEntries().some((e) => e.id === "film"), "the site catalogue is kept");
   });
 });
 

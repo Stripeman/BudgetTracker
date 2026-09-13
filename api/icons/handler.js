@@ -47,7 +47,11 @@ async function mutateCatalog(ctx, fn) {
     if (!out) { result = { catalog: icons.catalogView(catalog, { admin: true }) }; return undefined; }
     catalog.audit = [...(catalog.audit || []), { id: newId('aud'), at: ctx.nowIso(), actor: ctx.principal.subject, action: out.action, iconId: out.iconId }];
     result = { catalog: icons.catalogView(catalog, { admin: true }), iconId: out.iconId };
-    return icons.stamp(catalog);
+    const stamped = icons.stamp(catalog);
+    // The catalogue is bounded like a workspace: at the cap it is refused, never trimmed (SEC-I4);
+    // growth beyond it needs the partitioning in ADR-003.
+    if (Buffer.byteLength(JSON.stringify(stamped)) > icons.MAX_CATALOG_BYTES) throw conflict('The icon catalogue has reached its storage limit.', 'catalog_full');
+    return stamped;
   });
   return result;
 }
@@ -64,7 +68,9 @@ async function upload(ctx, req) {
     throw e;
   }
   const result = await mutateCatalog(ctx, (catalog) => {
-    if ((catalog.custom || []).length >= icons.MAX_CUSTOM) throw conflict(`The catalogue already has ${icons.MAX_CUSTOM} custom icons. Retire icons you no longer need.`, 'too_many_icons');
+    // Only icons on offer count toward the working limit, so retiring one frees a place (SEC-I2).
+    if ((catalog.custom || []).filter((c) => c.status === 'active').length >= icons.MAX_CUSTOM) throw conflict(`The catalogue already offers ${icons.MAX_CUSTOM} custom icons. Retire icons you no longer need.`, 'too_many_icons');
+    if ((catalog.custom || []).length >= icons.MAX_STORED) throw conflict(`The catalogue has stored ${icons.MAX_STORED} custom icons, the most it can keep.`, 'catalog_full');
     const id = newId('ico');
     const nowIso = ctx.nowIso();
     catalog.custom = [...(catalog.custom || []), {
@@ -86,6 +92,10 @@ function customChange(action) {
       if (!c) throw notFound('Unknown custom icon.');
       const to = action === 'retire' ? 'retired' : 'active';
       if (c.status === to) return null;
+      // Offering an icon again counts toward the working limit like a new upload (SEC-I2).
+      if (to === 'active' && (catalog.custom || []).filter((x) => x.status === 'active').length >= icons.MAX_CUSTOM) {
+        throw conflict(`The catalogue already offers ${icons.MAX_CUSTOM} custom icons. Retire another icon first.`, 'too_many_icons');
+      }
       c.history = [...(c.history || []), { at: ctx.nowIso(), by: ctx.principal.subject, action, from: c.status, to, reason: fields.text(body.reason, { field: 'Reason', max: 200 }) }];
       c.status = to;
       return { action: `icon.${action}`, iconId: id };

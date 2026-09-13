@@ -30,8 +30,10 @@ const ROOT_IGNORED = new Set(['xmlns', 'xmlns:xlink', 'width', 'height', 'fill',
 const SHAPE_IGNORED = new Set(['fill', 'stroke', 'stroke-width', 'stroke-linecap', 'stroke-linejoin', 'fill-rule', 'clip-rule']);
 
 const NUMBER = /^-?(\d+(\.\d+)?|\.\d+)$/;
-const PATH_D = /^[MmLlHhVvCcSsQqTtAaZz0-9.,\s+\-eE]+$/;
-const POINTS = /^[0-9.,\s+\-eE]+$/;
+// Whitespace is limited to space, tab, CR and LF (no vertical tab, no-break or Unicode separators),
+// and a path starts with a move command (security review SEC-I5).
+const PATH_D = /^[ \t\r\n]*[Mm][MmLlHhVvCcSsQqTtAaZz0-9., \t\r\n+\-eE]*$/;
+const POINTS = /^[0-9., \t\r\n+\-eE]+$/;
 
 class IconError extends Error {
   constructor(message) { super(message); this.code = 'invalid_icon'; }
@@ -109,6 +111,7 @@ function parseIconSvg(input) {
     last = tagRe.lastIndex;
     const [, closing, rawName, rawAttrs, selfClosing] = m;
     const name = rawName.toLowerCase();
+    if (closing && (rawAttrs.trim() || selfClosing)) fail('Closing tags in the icon may not have attributes.');
     if (name === 'g') {
       if (closing) { depth -= 1; if (depth < 0) fail('The icon groups are not balanced.'); continue; }
       if (rawAttrs.trim()) fail('Groups in the icon may not have attributes.');

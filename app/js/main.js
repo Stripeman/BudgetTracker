@@ -6,7 +6,7 @@ import { createApiClient } from "./core/api.js";
 import { createStore } from "./core/store.js";
 import { createRouter } from "./core/router.js";
 import { createShell } from "./ui/shell.js";
-import { setCatalog } from "./ui/icons.js";
+import { setCatalog, setTypeIcons } from "./ui/icons.js";
 import { sliceFor } from "./core/store.js";
 
 const theme = browserThemeController(window);
@@ -17,9 +17,10 @@ const store = createStore({ api });
 let appliedIcons = null;
 store.subscribe((state) => {
   const data = sliceFor(state, "icons").data;
-  if (!data || data === appliedIcons) return;
+  if (data === appliedIcons) return;
   appliedIcons = data;
-  setCatalog(data.catalog, data.typeIcons);
+  // While another workspace's icons load (or if they fail), its type icons are cleared at once.
+  if (data) setCatalog(data.catalog, data.typeIcons); else setTypeIcons({});
 });
 const router = createRouter(window);
 const shell = createShell({ mountPoint: document.getElementById("app"), store, router, theme, api });

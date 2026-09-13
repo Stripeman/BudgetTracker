@@ -87,6 +87,39 @@ describe('BT-011-05 the icon catalogue', () => {
   });
 });
 
+describe('BT-011-05 security review remediation', () => {
+  test('SEC-I1 category names such as constructor or __proto__ never reach the object prototype', async () => {
+    const h = harness();
+    const f = await household(h);
+    for (const name of ['constructor', 'toString']) {
+      const c = ok(await h.call('categories', 'POST', { as: 'alice', query: f.q, body: { name } }), 201).category;
+      assert.deepEqual([typeof c.icon, c.icon, c.defaultIcon], ['string', 'tag', 'tag'], name);
+      assert.match(c.color, /^#[0-9a-f]{6}$/);
+    }
+    // A category stored before icons existed, with a prototype-like name and a corrupted icon.
+    const path = `workspaces/${f.ws.id}/workspace.json`;
+    const { value } = await h.storage.getJson(path);
+    value.categories.push({ id: 'cat_legacyproto1', name: '__proto__', type: 'expense', archived: false, color: null, icon: { x: 1 } });
+    await h.storage.putJson(path, value);
+    const legacy = (await cats(h, f.q, 'bob')).find((c) => c.id === 'cat_legacyproto1');
+    assert.deepEqual([legacy.icon, legacy.iconSource, legacy.defaultIcon], ['tag', 'default', 'tag']);
+    const patched = ok(await catPatch(h, f.q, 'alice', { categoryId: 'cat_legacyproto1', name: 'Pets' })).category;
+    assert.deepEqual([patched.icon, patched.defaultIcon], ['tag', 'tag'], 'the pinned default is a string id');
+  });
+
+  test('SEC-I2 retiring a custom icon frees a place in the working limit; nothing is deleted', async () => {
+    const h = harness();
+    await household(h);
+    let last = null;
+    for (let i = 0; i < icons.MAX_CUSTOM; i += 1) last = ok(await upload(h, 'dave', { label: `Icon ${i}`, svg: SVG }), 201).iconId;
+    code(await upload(h, 'dave', { label: 'One more', svg: SVG }), 409, 'too_many_icons');
+    ok(await h.call('icons', 'POST', { as: 'dave', query: { action: 'retire' }, body: { iconId: last } }));
+    const out = ok(await upload(h, 'dave', { label: 'One more', svg: SVG }), 201);
+    assert.equal(out.catalog.custom.length, icons.MAX_CUSTOM + 1, 'the retired icon is still stored');
+    code(await h.call('icons', 'POST', { as: 'dave', query: { action: 'restore' }, body: { iconId: last } }), 409, 'too_many_icons');
+  });
+});
+
 describe('BT-011-05 choosing icons', () => {
   test('categories: defaults by stable id; managers and owners choose; rename and archive keep the icon; null resets', async () => {
     const h = harness();

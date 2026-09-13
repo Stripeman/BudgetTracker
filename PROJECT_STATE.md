@@ -237,6 +237,8 @@ The medium and low findings are numeric alignment, quick-entry field order and a
 - **Dev tooling:** `scripts/dev/screenshot.mjs` gained `--full 1` (whole page) and `--interact iconpick`.
 - **Evidence:** `npm test` 8/8 repository, 163/163 API, 47/47 app; `npm run validate` ok (21 routes); headless-Edge screenshots (light, dark, 390 px) of every view as Alice and of My settings as the site administrator, no console errors.
 - **Known limits:** native selects (category/account fields, filter options) cannot show icons; debt, trips, reports, exports and charts do not exist yet, so icons there wait for those features.
+- **Committed and pushed as `4bddb78`.** Then the independent security review (`docs/reviews/2026-09-13-security-review-icons.md`): no Critical/High/Medium. Fixed with tests: SEC-I1 prototype-named categories (own-property lookups in `icons.js` and `colors.js`, which also fixes a pre-existing 500 when creating a category named "constructor"), SEC-I2 retired icons no longer use up the working limit (offering one again counts; 500 stored in total), SEC-I3 type icons cleared synchronously on workspace switch, SEC-I5 stricter validator; SEC-I4 partly (6 MB catalogue cap, refused not trimmed). Open: SEC-I4 catalogue ETag/partitioning; SEC-I7 question for Terry — should personal display preferences (colours, icons) keep a change history under BT-001-05?
+- **Evidence after the fixes:** `npm test` 8/8 repository, 166/166 API, 48/48 app; `npm run validate` ok (21 routes).
 
 ## Checks run this checkpoint
 

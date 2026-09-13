@@ -25,7 +25,7 @@ const view = (c) => {
   return {
     id: c.id, name: c.name, type: c.type, parentId: c.parentId || null, archived: !!c.archived,
     color: colors.effectiveColor(c), colorSource: c.color ? 'workspace' : 'default', defaultColor: colors.defaultColorFor(c),
-    icon, iconSource: iconSource === 'record' ? 'workspace' : 'default', defaultIcon: c.defaultIcon || icons.initialCategoryIcon(c.name, c.type),
+    icon, iconSource: iconSource === 'record' ? 'workspace' : 'default', defaultIcon: icons.effective('category', { ...c, icon: null }).icon,
   };
 };
 

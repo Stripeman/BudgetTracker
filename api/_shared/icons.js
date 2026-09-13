@@ -72,11 +72,19 @@ const DEFAULTS = Object.freeze({
 // Record kinds whose TYPE icon a workspace may choose, and the types of each.
 const TYPE_KINDS = Object.freeze({ account: DEFAULTS.account, merchant: DEFAULTS.merchant, bill: DEFAULTS.bill });
 
-const initialCategoryIcon = (name, type) => CATEGORY_BY_NAME[name] || DEFAULTS.category[type] || DEFAULTS.category.expense;
+// Lookups use own properties only, so a name such as "__proto__" or "constructor" never reaches
+// Object's prototype (security review SEC-I1).
+const own = (obj, key) => Object.prototype.hasOwnProperty.call(obj, key);
+const initialCategoryIcon = (name, type) => (own(CATEGORY_BY_NAME, name) ? CATEGORY_BY_NAME[name] : own(DEFAULTS.category, type) ? DEFAULTS.category[type] : DEFAULTS.category.expense);
 
 const ID_RE = /^([a-z][a-z0-9-]{0,39}|ico_[A-Za-z0-9_-]{6,64})$/;
 const CUSTOM_RE = /^ico_[A-Za-z0-9_-]{6,64}$/;
+const isIconId = (v) => typeof v === 'string' && ID_RE.test(v);
+// Icons that may be offered at once, and all icons ever stored (retired ones included, since nothing
+// is deleted) — the second bounds the catalogue document (SEC-I2, SEC-I4).
 const MAX_CUSTOM = 100;
+const MAX_STORED = 500;
+const MAX_CATALOG_BYTES = 6 * 1024 * 1024;
 
 // ---- catalogue (site/icons.json, a site-level document: no financial data) ----
 const PATH = 'site/icons.json';
@@ -135,15 +143,18 @@ function validateTypeIcons(catalog, value, current = {}) {
 
 // The icon a record shows, and where it came from: chosen on the record, the workspace's icon for
 // its type, or the built-in default.
+// Stored values that are not icon ids (a tampered or corrupted document) are ignored, so the result
+// is always an id string.
 function effective(kind, record, doc) {
-  if (record.icon) return { icon: record.icon, iconSource: 'record' };
-  if (kind === 'category') return { icon: record.defaultIcon || initialCategoryIcon(record.name, record.type), iconSource: 'default' };
+  if (isIconId(record.icon)) return { icon: record.icon, iconSource: 'record' };
+  if (kind === 'category') return { icon: isIconId(record.defaultIcon) ? record.defaultIcon : initialCategoryIcon(record.name, record.type), iconSource: 'default' };
   if (kind === 'budget') return { icon: DEFAULTS.budget, iconSource: 'default' };
   const type = kind === 'bill' ? record.billType : record.type;
   const typeIcons = (doc && doc.settings && doc.settings.typeIcons) || {};
-  const chosen = typeIcons[`${kind}.${type}`];
-  if (chosen) return { icon: chosen, iconSource: 'type' };
-  return { icon: (TYPE_KINDS[kind] && TYPE_KINDS[kind][type]) || FALLBACK, iconSource: 'default' };
+  const key = `${kind}.${type}`;
+  if (own(typeIcons, key) && isIconId(typeIcons[key])) return { icon: typeIcons[key], iconSource: 'type' };
+  const defaults = own(TYPE_KINDS, kind) ? TYPE_KINDS[kind] : {};
+  return { icon: own(defaults, type) ? defaults[type] : FALLBACK, iconSource: 'default' };
 }
 
 // What any signed-in person may read: every built-in id with whether it can be chosen, and custom
@@ -162,6 +173,6 @@ function catalogView(catalog, { admin = false } = {}) {
 }
 
 module.exports = {
-  FALLBACK, BUILT_IN, BUILT_IN_IDS, SYSTEM, DEFAULTS, TYPE_KINDS, CATEGORY_BY_NAME, CUSTOM_RE, MAX_CUSTOM, PATH,
+  FALLBACK, BUILT_IN, BUILT_IN_IDS, SYSTEM, DEFAULTS, TYPE_KINDS, CATEGORY_BY_NAME, CUSTOM_RE, MAX_CUSTOM, MAX_STORED, MAX_CATALOG_BYTES, PATH,
   initialCategoryIcon, readCatalog, stamp, customById, isKnown, isSelectable, validateChoice, validateTypeIcons, effective, catalogView,
 };

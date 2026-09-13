@@ -65,7 +65,9 @@ function hashIndex(id) {
 
 // The default a category is given when it is created: a named default for built-in categories,
 // otherwise a palette colour chosen from its id (stable, never from its name).
-const initialDefault = (name, id) => (DEFAULT_BY_NAME[name] ? hexOf(DEFAULT_BY_NAME[name]) : PALETTE[hashIndex(id)].hex);
+// Own properties only: a category named "constructor" or "__proto__" must not reach Object's
+// prototype (security review SEC-I1).
+const initialDefault = (name, id) => (Object.prototype.hasOwnProperty.call(DEFAULT_BY_NAME, name) ? hexOf(DEFAULT_BY_NAME[name]) : PALETTE[hashIndex(id)].hex);
 const defaultColorFor = (c) => c.defaultColor || PALETTE[hashIndex(c.id)].hex;
 const effectiveColor = (c) => c.color || defaultColorFor(c);
 

@@ -57,6 +57,17 @@ describe('BT-011-05 custom icon validation', () => {
     refused(42);
   });
 
+  test('SEC-I5 closing tags carry nothing, values use plain whitespace, and paths start with a move', () => {
+    refused(wrap('<path d="M0 0"></path onload="x">'), /Closing tags/);
+    refused(wrap('<g><path d="M0 0"/></g onclick="x">'), /Closing tags/);
+    refused(wrap('<path d="eeeee"/>'), /path/);
+    refused(wrap('<path d="L1 1"/>'), /path/);
+    refused(wrap('<path d="M00"/>'), /path/);
+    refused(wrap('<path d="M0 0"/>'), /path/);
+    refused(wrap('<polyline points="0,0 1,1"/>'), /points/);
+    assert.ok(parseIconSvg(wrap('<path d=" m0 0\n l1 1\tz"/>')));
+  });
+
   test('stored shape data is re-checked before it is served', () => {
     assert.equal(isSafeShapes([{ type: 'path', attrs: { d: 'M4 12h16' } }]), true);
     assert.equal(isSafeShapes([{ type: 'script', attrs: {} }]), false);

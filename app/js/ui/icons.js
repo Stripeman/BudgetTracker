@@ -97,7 +97,8 @@ export const SYSTEM_IDS = Object.freeze(["fallback", "money-in", "money-out", "t
 
 // The same allow-list the server applies to uploads (api/_shared/icon-svg.js).
 const SHAPES = Object.freeze({ path: ["d"], circle: ["cx", "cy", "r"], rect: ["x", "y", "width", "height", "rx", "ry"], line: ["x1", "y1", "x2", "y2"], polyline: ["points"], polygon: ["points"] });
-const SAFE_VALUE = /^[MmLlHhVvCcSsQqTtAaZz0-9.,\s+\-eE]{1,2000}$/;
+// Whitespace limited to space, tab, CR and LF, as on the server (SEC-I5).
+const SAFE_VALUE = /^[MmLlHhVvCcSsQqTtAaZz0-9., \t\r\n+\-eE]{1,2000}$/;
 
 let catalog = { disabled: new Set(), custom: new Map(), defaults: null, typeIcons: {} };
 
@@ -111,6 +112,12 @@ export function setCatalog(view, typeIcons = {}) {
     if (shapes && typeof icon.id === "string" && /^ico_[A-Za-z0-9_-]{6,64}$/.test(icon.id)) custom.set(icon.id, { label: String(icon.label || "Custom icon"), status: icon.status, shapes });
   }
   catalog = { disabled, custom, defaults: (view && view.defaults) || null, typeIcons: { ...(typeIcons || {}) } };
+}
+
+// Resets the workspace's type icons synchronously on a workspace switch, keeping the site
+// catalogue, so another workspace's choices never linger (security review SEC-I3).
+export function setTypeIcons(typeIcons = {}) {
+  catalog = { ...catalog, typeIcons: { ...(typeIcons || {}) } };
 }
 
 // The icon a record of this kind and type gets when none is chosen on it: the workspace's icon for
