@@ -16,6 +16,20 @@ Retain the verified browser ES-module and Node/CommonJS API approach from TaskTr
 - **Money.** Integer minor units bounded at 10^15. Precision comes from ISO 4217. Rates are decimal strings converted with BigInt and half-even rounding. Allocation uses largest remainder with lowest-index tie-breaks.
 - **Authorization.** `api/_shared/authz.js` (below). The store requires an active member before any handler logic, and authz requires it again independently.
 
+## ADR-003: partition the workspace so the size cap never forces deletion (proposed 2026-09-13, BT-001-05)
+
+**Context.** Each workspace is one JSON document (ADR-002) capped at 12 MB. Nothing may ever be deleted (Terry, 2026-09-13): history, amendments, audit entries, closed merchants and voided entries all stay. The document therefore only grows, and when it reaches the cap every write fails with `workspace_full` — the only way out would be deletion, which is forbidden (audit finding E1).
+
+**Decision (proposed, not yet implemented).**
+- Keep **current state** in the workspace document: settings, members, grants, invitations, accounts, categories, merchants, bills, budgets, and the ledger for the open period.
+- Move **closed history** into immutable, sealed segment documents: `workspaces/{id}/ledger/{yyyy}.json` for entries of closed years (with their amendments), `workspaces/{id}/audit/{yyyy-mm}.json` for audit months. A segment is written once with create-only semantics and never edited; corrections to a sealed year are new entries (reversals, adjustments) in the open period that reference the sealed entry by id.
+- **Sealing** is an explicit, audited operation (owner or scheduled), run when the document passes 50 % of its cap or at year end; it writes the segment first (create-only, verified by re-read and hash), then removes the sealed records from the open document in one conditional write that also records the segment's hash. Nothing is lost: the records move, and the segment is referenced from the document.
+- **Reads** that need history (reports, merchant history, audit, restore) read the segment index plus the relevant segments; balances use a per-segment closing balance recorded at sealing and verified on read.
+- **Backups** include every segment (the manifest lists them with hashes); restores never rewrite a sealed segment.
+- The member quota applies to the open document only; the cap becomes per document.
+
+**Consequences.** Multi-document reads for history; sealing must be crash-safe (segment first, document second, idempotent by segment hash). Until this is implemented the cap remains a documented operational limit, and PROJECT_STATE tracks it as a release risk.
+
 ## Permission model
 
 Separate verified Google subject, contact, participant, workspace membership, financial resource ownership and capability grants. Every resource has a workspace and owner. A verified server principal is an adapter output, never a browser-provided object. Resource access requires ownership or an active explicit capability grant in the same workspace. Site-admin and workspace-owner labels are not inputs to financial authorization. Anonymous/invalid identity, unknown capabilities, cross-workspace access, missing/expired/revoked grants fail closed. The prototype checks explicit capabilities; trusted ingress, Google verification and route coverage remain pending.

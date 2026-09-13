@@ -72,15 +72,15 @@ test('stale edits are refused; reconciled entries lock amount and date; soft del
   const h = harness();
   const f = await personal(h);
   const t = (await h.call('transactions', 'POST', { as: 'alice', query: f.q, body: { accountId: f.checking.id, kind: 'expense', amount: '10.00' } })).body.transactions[0];
-  assert.equal((await h.call('transactions', 'PATCH', { as: 'alice', query: f.q, body: { transactionId: t.id, revision: 1, amount: '11.00' } })).status, 200);
+  assert.equal((await h.call('transactions', 'PATCH', { as: 'alice', query: f.q, body: { transactionId: t.id, revision: 1, amount: '11.00', reason: 'Typo' } })).status, 200);
   const stale = await h.call('transactions', 'PATCH', { as: 'alice', query: f.q, body: { transactionId: t.id, revision: 1, amount: '12.00' } });
   assert.equal(stale.status, 409);
   assert.equal(stale.body.error.code, 'stale_revision');
   await h.call('transactions', 'PATCH', { as: 'alice', query: f.q, body: { transactionId: t.id, revision: 2, status: 'reconciled' } });
   assert.equal((await h.call('transactions', 'PATCH', { as: 'alice', query: f.q, body: { transactionId: t.id, revision: 3, amount: '1.00' } })).body.error.code, 'reconciled_locked');
   assert.equal((await h.call('transactions', 'DELETE', { as: 'alice', query: f.q, body: { transactionId: t.id, revision: 3 } })).body.error.code, 'reconciled_locked');
-  await h.call('transactions', 'PATCH', { as: 'alice', query: f.q, body: { transactionId: t.id, revision: 3, status: 'cleared' } });
-  assert.equal((await h.call('transactions', 'DELETE', { as: 'alice', query: f.q, body: { transactionId: t.id, revision: 4 } })).status, 200);
+  await h.call('transactions', 'PATCH', { as: 'alice', query: f.q, body: { transactionId: t.id, revision: 3, status: 'cleared', reason: 'Statement corrected' } });
+  assert.equal((await h.call('transactions', 'DELETE', { as: 'alice', query: f.q, body: { transactionId: t.id, revision: 4, reason: 'Duplicate' } })).status, 200);
   assert.equal((await balances(h, f.q)).Checking, '1500.00');
   assert.equal((await h.call('transactions', 'POST', { as: 'alice', query: { ...f.q, action: 'restore' }, body: { transactionId: t.id } })).status, 200);
   assert.equal((await balances(h, f.q)).Checking, '1489.00');

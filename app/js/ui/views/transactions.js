@@ -15,7 +15,7 @@
 import { el, mount, announce } from "../dom.js";
 import { stateView, money, button, field, input, select, badge, categoryLabel } from "../components.js";
 import { categoryIndex } from "../../core/categories.js";
-import { openModal, confirmModal } from "../modal.js";
+import { openModal } from "../modal.js";
 import { createMerchantPicker } from "../merchantpicker.js";
 import { sliceFor } from "../../core/store.js";
 import { newIdempotencyKey } from "../../core/api.js";
@@ -120,13 +120,19 @@ export function createView(ctx) {
         : categories.get(t.categoryId) ? categoryLabel(categories.get(t.categoryId).name, categories.get(t.categoryId).shownColor)
           : (t.kind === "transfer" ? "—" : "Uncategorized")]),
       el("td", { "data-label": "Amount", class: "num" }, [money(t.amount, t.currency, prefs, { masked: false })]),
-      el("td", { "data-label": "Status" }, [badge(STATUS_LABELS[t.status] || t.status), t.kind !== "expense" ? el("div", { class: "muted small", text: KIND_LABELS[t.kind] || t.kind }) : null]),
+      el("td", { "data-label": "Status" }, [
+        badge(STATUS_LABELS[t.status] || t.status),
+        t.reversedBy ? [" ", badge("Reversed", "closed")] : null,
+        t.links && t.links.reverses ? [" ", badge("Reversal")] : null,
+        t.kind !== "expense" ? el("div", { class: "muted small", text: KIND_LABELS[t.kind] || t.kind }) : null,
+      ].flat()),
       el("td", { "data-label": "" }, [el("div", { class: "row-actions" }, [
         t.canEdit ? button("Edit", () => openQuickEntry(ctx, { transaction: t }), { small: true, attrs: { "aria-label": `Edit ${t.payeeName || "entry"} on ${t.date}` } }) : null,
-        t.canDelete ? button("Delete", () => confirmModal({
-          title: "Delete this entry?", message: "It is taken out of balances and lists. The entry itself is kept in the workspace history and is never erased.", confirmLabel: "Delete", danger: true,
-          onConfirm: () => ctx.store.actions.write((ws) => ctx.api.deleteTransaction(ws, { transactionId: t.id, revision: t.revision })),
-        }), { small: true, variant: "danger", attrs: { "aria-label": `Delete ${t.payeeName || "entry"} on ${t.date}` } }) : null,
+        // Corrections never overwrite history (BT-001-05): a reversal cancels an entry, even a
+        // reconciled one, and every change is listed under History.
+        t.canEdit && !t.transferId && !t.reversedBy && !(t.links && t.links.reverses) ? button("Reverse", () => openReverse(ctx, t), { small: true, attrs: { "aria-label": `Reverse ${t.payeeName || "entry"} on ${t.date}` } }) : null,
+        t.amendmentCount ? button("History", () => void openHistory(ctx, t), { small: true, attrs: { "aria-label": `History of ${t.payeeName || "entry"} on ${t.date}` } }) : null,
+        t.canDelete && t.status !== "reconciled" ? button("Delete", () => openDelete(ctx, t), { small: true, variant: "danger", attrs: { "aria-label": `Delete ${t.payeeName || "entry"} on ${t.date}` } }) : null,
       ])]),
     ]));
     mount(tableBox, el("div", { class: "table-wrap" }, [el("table", { class: "table table--cards" }, [
@@ -136,6 +142,111 @@ export function createView(ctx) {
     ])]));
   }
   return { element, update };
+}
+
+const CHANGE_LABELS = {
+  amountMinor: "Amount", kind: "Type", date: "Date", postedDate: "Posted date", categoryId: "Category", splits: "Split lines",
+  payeeId: "Merchant", responsibleRef: "Responsible person", original: "Exchange details", status: "Status", tags: "Tags", notes: "Notes",
+  deleted: "Deleted", reversedBy: "Reversed",
+};
+const stampOf = (iso) => String(iso || "").replace("T", " ").slice(0, 16);
+
+// Deleting takes an entry out of balances and lists; it is never erased, and the reason is kept.
+function openDelete(ctx, t) {
+  const reason = input({ maxlength: "200", autocomplete: "off" });
+  const confirm = el("button", { type: "button", class: "btn btn--danger", text: "Delete entry" });
+  const modal = openModal({
+    title: "Delete this entry?",
+    body: [
+      el("p", { text: "It is taken out of balances and lists. The entry itself stays in the workspace history with your reason and is never erased." }),
+      field("Reason", reason, { help: "Required." }),
+    ],
+    actions: [button("Cancel", () => modal.close()), confirm],
+  });
+  confirm.addEventListener("click", async () => {
+    modal.setError("");
+    if (!reason.value.trim()) {
+      reason.setAttribute("aria-invalid", "true");
+      reason.setAttribute("aria-errormessage", modal.errorId);
+      modal.setError("Give a reason for deleting this entry.");
+      reason.focus();
+      return;
+    }
+    modal.setBusy(true);
+    const out = await ctx.store.actions.write((ws) => ctx.api.deleteTransaction(ws, { transactionId: t.id, revision: t.revision, reason: reason.value.trim() }));
+    modal.setBusy(false);
+    if (!out.ok) { modal.setError(out.error); return; }
+    announce("Entry deleted. It stays in the history.");
+    modal.close();
+  });
+}
+
+// A reversal adds an entry with the opposite amount; the original is left exactly as it is.
+function openReverse(ctx, t) {
+  const key = newIdempotencyKey();
+  const reason = input({ maxlength: "200", autocomplete: "off" });
+  const date = input({ type: "date" });
+  date.value = todayIso();
+  const opposite = t.amount.startsWith("-") ? t.amount.slice(1) : `-${t.amount}`;
+  const confirm = el("button", { type: "button", class: "btn btn--primary", text: "Reverse entry" });
+  const modal = openModal({
+    title: `Reverse ${t.payeeName || "this entry"}?`,
+    body: [
+      el("p", { text: `A new entry of ${opposite} ${t.currency} is added so the two cancel out. The original stays exactly as it is${t.status === "reconciled" ? ", including its reconciliation" : ""}. Add the correct entry afterwards if one is needed.` }),
+      el("div", { class: "form-grid" }, [field("Reason", reason, { help: "Required. It is kept with both entries." }), field("Date of the reversal", date)]),
+    ],
+    actions: [button("Cancel", () => modal.close()), confirm],
+  });
+  confirm.addEventListener("click", async () => {
+    modal.setError("");
+    if (!reason.value.trim()) {
+      reason.setAttribute("aria-invalid", "true");
+      reason.setAttribute("aria-errormessage", modal.errorId);
+      modal.setError("Give a reason for the reversal.");
+      reason.focus();
+      return;
+    }
+    modal.setBusy(true);
+    const out = await ctx.store.actions.write((ws) => ctx.api.reverseTransaction(ws, { transactionId: t.id, reason: reason.value.trim(), date: date.value }, key));
+    modal.setBusy(false);
+    if (!out.ok) { modal.setError(out.error); return; }
+    announce("Entry reversed. Both entries stay in the history.");
+    modal.close();
+  });
+}
+
+// Every change to an entry: who, when, what changed from what to what, and why.
+async function openHistory(ctx, t) {
+  const state = ctx.store.getState();
+  const names = new Map([
+    ...((sliceFor(state, "categories").data || {}).categories || []).map((c) => [c.id, c.name]),
+    ...((sliceFor(state, "payees").data || {}).payees || []).map((p) => [p.id, p.name]),
+  ]);
+  const show = (fieldName, v) => {
+    if (v === null || v === undefined || v === "") return "—";
+    if (fieldName === "reversedBy") return "yes";
+    if (typeof v === "boolean") return v ? "yes" : "no";
+    if (fieldName === "status") return STATUS_LABELS[v] || v;
+    if (fieldName === "kind") return KIND_LABELS[v] || v;
+    if (Array.isArray(v)) return fieldName === "tags" ? v.join(", ") : `${v.length} line${v.length === 1 ? "" : "s"}`;
+    if (typeof v === "object") return "updated";
+    return names.get(v) || String(v);
+  };
+  const body = el("div", { "aria-live": "polite" }, [el("p", { class: "muted", text: "Loading…" })]);
+  const modal = openModal({ title: `History of ${t.payeeName || "this entry"}`, body: [body], actions: [button("Close", () => modal.close())] });
+  try {
+    const h = await ctx.api.transactionHistory(state.selectedWorkspaceId, t.id);
+    mount(body,
+      el("p", { class: "muted small", text: `Added ${stampOf(h.createdAt)} by ${h.createdBy}.` }),
+      el("ul", { class: "history-list" }, h.amendments.slice().reverse().map((a) => el("li", {}, [
+        el("div", { class: "muted small", text: `${stampOf(a.at)} · ${a.by}` }),
+        el("div", { text: a.changes.map((c) => `${CHANGE_LABELS[c.field] || c.field}: ${show(c.field, c.from)} → ${show(c.field, c.to)}`).join("; ") }),
+        a.reason ? el("div", { class: "muted small", text: `Reason: ${a.reason}` }) : null,
+      ]))));
+  } catch (err) {
+    mount(body);
+    modal.setError(err);
+  }
 }
 
 // Merchants choosable on an account: active, fully visible, and in a scope the account allows — a
@@ -174,6 +285,8 @@ export function openQuickEntry(ctx, { transaction } = {}) {
   const tags = input({ placeholder: "Comma separated", value: editing ? transaction.tags.join(", ") : "" });
   const notes = el("textarea", { class: "field__input", maxlength: "5000", text: editing ? transaction.notes : "" });
   const status = select([{ value: "pending", label: "Pending" }, { value: "cleared", label: "Cleared" }].concat(editing ? [{ value: "reconciled", label: "Reconciled" }] : []), editing ? transaction.status : "pending");
+  // Corrections keep their reason with the entry's history (BT-001-05).
+  const reason = input({ maxlength: "200", autocomplete: "off", placeholder: "Why is this being changed?" });
 
   const accountOf = (id) => allAccounts.find((a) => a.id === id) || null;
   const currentAccountId = () => (editing ? transaction.accountId : account.value);
@@ -339,6 +452,7 @@ export function openQuickEntry(ctx, { transaction } = {}) {
     field("Date", date),
     field("Type", kind),
     transferBox,
+    editing ? field("Reason for this change", reason, { help: "Needed when you change the amount, date, type, category or merchant, or un-reconcile. It is kept with the entry's history.", wide: true }) : null,
     el("details", { class: "more" }, [
       el("summary", { text: "More details (tags, status, notes)" }),
       el("div", { class: "form-grid" }, [withHint("Tags", "tags", tags), field("Status", status), field("Notes", notes, { wide: true })]),
@@ -382,10 +496,20 @@ export function openQuickEntry(ctx, { transaction } = {}) {
     if (editing) {
       const body = editBody(value, tagList);
       if (Object.keys(body).length === 2) { announce("Nothing changed."); modal.close(); return; }
+      if (reason.value.trim()) body.reason = reason.value.trim();
+      reason.removeAttribute("aria-invalid");
       modal.setBusy(true);
       const out = await ctx.store.actions.write((ws) => ctx.api.updateTransaction(ws, body));
       modal.setBusy(false);
-      if (!out.ok) { modal.setError(out.error); return; }
+      if (!out.ok) {
+        modal.setError(out.error);
+        if (out.error && out.error.code === "reason_required") {
+          reason.setAttribute("aria-invalid", "true");
+          reason.setAttribute("aria-errormessage", modal.errorId);
+          reason.focus();
+        }
+        return;
+      }
       announce("Entry saved.");
       modal.close();
       return;

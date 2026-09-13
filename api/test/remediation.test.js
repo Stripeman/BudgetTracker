@@ -29,7 +29,7 @@ describe('financial review remediation', () => {
     const h = harness();
     const f = await personal(h);
     const [out] = ok(await post(h, f, { accountId: f.checking.id, kind: 'transfer', amount: '120.00', transfer: { toAccountId: f.card.id } }), 201).transactions;
-    const res = await h.call('transactions', 'PATCH', { as: 'alice', query: f.q, body: { transactionId: out.id, revision: 1, toAmount: '100.00' } });
+    const res = await h.call('transactions', 'PATCH', { as: 'alice', query: f.q, body: { transactionId: out.id, revision: 1, toAmount: '100.00', reason: 'Fictional test' } });
     assert.equal(res.status, 400);
     assert.equal(res.body.error.code, 'invalid_transfer_edit');
     assert.deepEqual(await balances(h, f.q), { Checking: '1380.00', Card: '120.00', Yen: '0' });
@@ -89,7 +89,7 @@ describe('financial review remediation', () => {
     const h = harness();
     const f = await personal(h);
     const [out] = ok(await post(h, f, { accountId: f.checking.id, kind: 'transfer', amount: '100.00', transfer: { toAccountId: f.yen.id, rate: '161.235' } }), 201).transactions;
-    const edited = ok(await h.call('transactions', 'PATCH', { as: 'alice', query: f.q, body: { transactionId: out.id, revision: 1, amount: '50.00', toAmount: '9000' } })).transactions;
+    const edited = ok(await h.call('transactions', 'PATCH', { as: 'alice', query: f.q, body: { transactionId: out.id, revision: 1, amount: '50.00', toAmount: '9000', reason: 'Fictional test' } })).transactions;
     const incoming = edited.find((t) => t.currency === 'JPY');
     assert.deepEqual(incoming.original, { amountMinor: 5000, currency: 'EUR', rate: null, rateSource: 'bank-posted', rateDate: incoming.date });
     const b = await balances(h, f.q);
@@ -262,7 +262,7 @@ describe('security review remediation', () => {
     const bobYen = ok(await h.call('accounts', 'POST', { as: 'bob', query: f.q, body: { name: 'Bob Yen', type: 'cash', currency: 'JPY' } }), 201).account;
     const [out] = ok(await h.call('transactions', 'POST', { as: 'bob', query: f.q, body: { accountId: f.joint.id, kind: 'transfer', amount: '50.00', transfer: { toAccountId: bobYen.id, rate: '160' } } }), 201).transactions;
     const archiveId = ok(await h.call('backups', 'POST', { as: 'alice', query: f.q, body: {} }), 201).archive.archiveId;
-    ok(await h.call('transactions', 'PATCH', { as: 'bob', query: f.q, body: { transactionId: out.id, revision: 1, amount: '40.00', toAmount: '6400' } }));
+    ok(await h.call('transactions', 'PATCH', { as: 'bob', query: f.q, body: { transactionId: out.id, revision: 1, amount: '40.00', toAmount: '6400', reason: 'Fictional test' } }));
     const pv = ok(await h.call('restore', 'POST', { as: 'alice', query: { action: 'preview' }, body: { workspaceId: f.ws.id, archiveId, mode: 'replace' } }));
     assert.equal(pv.canExecute, false);
     assert.match(pv.blockers[0], /recovery operator/);

@@ -102,7 +102,7 @@ describe('SEC-B6 and SEC-B7 bill payments stay single and bills follow their acc
     const f = await household(h);
     const b = ok(await bill(h, f.q, 'alice', { name: 'Rent', accountId: f.joint.id, amount: '800.00', schedule: monthly('2026-09-01') }), 201).recurring;
     const first = ok(await act(h, f.q, 'alice', 'record', { recurringId: b.id, occurrence: '2026-09-01' }), 201).transactions[0];
-    ok(await h.call('transactions', 'DELETE', { as: 'alice', query: f.q, body: { transactionId: first.id, revision: first.revision } }));
+    ok(await h.call('transactions', 'DELETE', { as: 'alice', query: f.q, body: { transactionId: first.id, revision: first.revision, reason: 'Recorded by mistake' } }));
     ok(await act(h, f.q, 'alice', 'record', { recurringId: b.id, occurrence: '2026-09-01' }), 201);
     code(await h.call('transactions', 'POST', { as: 'alice', query: { ...f.q, action: 'restore' }, body: { transactionId: first.id } }), 409, 'already_recorded');
   });

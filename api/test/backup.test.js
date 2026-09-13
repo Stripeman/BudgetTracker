@@ -131,8 +131,8 @@ describe('BT-002 replace', () => {
     const id = await backupNow(h, f);
     // After the backup: Alice deletes the grocery entry; Bob edits his private entry and revokes the
     // grant; Carol is removed.
-    await h.call('transactions', 'DELETE', { as: 'alice', query: f.q, body: { transactionId: f.grocery.id, revision: 1 } });
-    await h.call('transactions', 'PATCH', { as: 'bob', query: f.q, body: { transactionId: f.secret.id, revision: 1, amount: '260.00' } });
+    await h.call('transactions', 'DELETE', { as: 'alice', query: f.q, body: { transactionId: f.grocery.id, revision: 1, reason: 'Fictional test' } });
+    await h.call('transactions', 'PATCH', { as: 'bob', query: f.q, body: { transactionId: f.secret.id, revision: 1, amount: '260.00', reason: 'Fictional test' } });
     await h.call('grants', 'DELETE', { as: 'bob', query: f.q, body: { grantId: grant.id } });
     await h.call('members', 'DELETE', { as: 'alice', query: f.q, body: { memberId: f.memberId('Carol') } });
     const pv = (await preview(h, f, 'alice', id, 'replace')).body;
@@ -211,7 +211,7 @@ describe('BT-002 replace', () => {
     // After backup, Bob deletes the transfer (both legs). Alice's replace would bring back only the
     // shared leg, which would unbalance the pair.
     const xfer = (await h.call('transactions', 'GET', { as: 'bob', query: { ...f.q, kind: 'transfer', accountId: f.joint.id } })).body.transactions[0];
-    assert.equal((await h.call('transactions', 'DELETE', { as: 'bob', query: f.q, body: { transactionId: xfer.id, revision: 1 } })).status, 200);
+    assert.equal((await h.call('transactions', 'DELETE', { as: 'bob', query: f.q, body: { transactionId: xfer.id, revision: 1, reason: 'Fictional test' } })).status, 200);
     const pv = (await preview(h, f, 'alice', id, 'replace')).body;
     assert.equal(pv.canExecute, false);
     assert.match(pv.blockers[0], /recovery operator/);

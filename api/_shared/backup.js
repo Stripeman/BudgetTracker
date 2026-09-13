@@ -60,6 +60,13 @@ function checkInvariants(doc) {
     }
   }
   for (const b of doc.budgets || []) for (const l of b.lines || []) if (!categories.has(l.categoryId)) throw invalidData('budget category');
+  // A reversal matches the entry it reverses: same account and kind, exactly the opposite amount.
+  const txById = new Map((doc.transactions || []).map((t) => [t.id, t]));
+  for (const t of doc.transactions || []) {
+    if (!t.links || !t.links.reverses) continue;
+    const target = txById.get(t.links.reverses);
+    if (!target || target.accountId !== t.accountId || target.kind !== t.kind || target.amountMinor !== -t.amountMinor) throw invalidData('reversal');
+  }
   // A bill occurrence is recorded at most once among live entries (both legs of a transfer count once) (SEC-B6).
   const occurrence = new Map();
   for (const t of doc.transactions || []) {
@@ -78,9 +85,11 @@ function checkInvariants(doc) {
     if (!a || t.currency !== a.currency || !money.isMinor(t.amountMinor) || t.amountMinor === 0) throw invalidData('transaction amounts');
     if (t.categoryId && !categories.has(t.categoryId)) throw invalidData('transaction category');
     if (t.payeeId && !payees.has(t.payeeId)) throw invalidData('transaction payee');
-    // Direction follows kind; transfers are exactly the entries with a transfer id.
-    if (ledger.OUTFLOW.has(t.kind) && t.amountMinor > 0) throw invalidData('transaction direction');
-    if (ledger.INFLOW.has(t.kind) && t.amountMinor < 0) throw invalidData('transaction direction');
+    // Direction follows kind (a reversal carries the opposite sign of the entry it reverses);
+    // transfers are exactly the entries with a transfer id.
+    const reversal = !!(t.links && t.links.reverses);
+    if (!reversal && ledger.OUTFLOW.has(t.kind) && t.amountMinor > 0) throw invalidData('transaction direction');
+    if (!reversal && ledger.INFLOW.has(t.kind) && t.amountMinor < 0) throw invalidData('transaction direction');
     if ((t.kind === 'transfer') !== Boolean(t.transferId)) throw invalidData('transfer kind');
     if (Array.isArray(t.splits) && t.splits.length) {
       let total;

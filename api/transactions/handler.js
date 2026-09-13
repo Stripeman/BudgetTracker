@@ -20,8 +20,20 @@ const audit = require('../_shared/audit');
 const merchants = require('../_shared/merchants');
 
 const CREATE_KEYS = ['accountId', 'kind', 'amount', 'date', 'postedDate', 'payeeId', 'categoryId', 'splits', 'tags', 'notes', 'status', 'responsibleRef', 'transfer', 'original', 'links'];
-const PATCH_KEYS = ['transactionId', 'revision', 'kind', 'amount', 'date', 'postedDate', 'payeeId', 'categoryId', 'splits', 'tags', 'notes', 'status', 'responsibleRef', 'original', 'toAmount'];
+const PATCH_KEYS = ['transactionId', 'revision', 'reason', 'kind', 'amount', 'date', 'postedDate', 'payeeId', 'categoryId', 'splits', 'tags', 'notes', 'status', 'responsibleRef', 'original', 'toAmount'];
 const LOCKED_WHEN_RECONCILED = ['amount', 'date', 'kind', 'toAmount'];
+
+// AMENDMENTS (BT-001-05): an entry is never silently overwritten. Every change keeps the before and
+// after values of each field, who made it and when; a financial change (or un-reconciling) also
+// needs a reason. A reconciled entry is corrected by a reversal plus a new entry, never by editing.
+const AMENDABLE = ['amountMinor', 'kind', 'date', 'postedDate', 'categoryId', 'splits', 'payeeId', 'responsibleRef', 'original', 'status', 'tags', 'notes'];
+const FINANCIAL = new Set(['amountMinor', 'kind', 'date', 'postedDate', 'categoryId', 'splits', 'payeeId', 'responsibleRef', 'original']);
+const valueOf = (t, f) => (t[f] === undefined ? null : structuredClone(t[f]));
+const snapshot = (t) => Object.fromEntries(AMENDABLE.map((f) => [f, valueOf(t, f)]));
+const diff = (before, t) => AMENDABLE.filter((f) => JSON.stringify(before[f]) !== JSON.stringify(valueOf(t, f))).map((f) => ({ field: f, from: before[f], to: valueOf(t, f) }));
+function amend(t, by, at, reason, changes) {
+  t.amendments = [...(t.amendments || []), { revision: t.revision, at, by, reason: reason || '', changes }];
+}
 
 async function readUser(ctx) {
   const { value } = await ctx.storage.getJson(store.paths.user(ctx.principal.subject));
@@ -84,6 +96,7 @@ function history(t, by, at, changed) {
 }
 
 async function list(ctx, req) {
+  if (query(req, 'action') === 'history') return amendmentHistory(ctx, req);
   const wsId = requireId(query(req, 'workspaceId'), 'workspaceId');
   const { doc } = await store.loadWorkspace(ctx, wsId);
   const user = await readUser(ctx);
@@ -256,11 +269,14 @@ async function patch(ctx, req) {
     if (t.deletedAt) throw conflict('Restore this entry before editing it.', 'deleted');
     if (!canChangeRecord(doc, ctx.principal, account, t, 'edit', now)) throw forbidden('You cannot edit this entry.');
     checkRevision(t, body.revision);
+    const reason = fields.text(body.reason, { field: 'Reason', max: 200 });
     if (t.status === 'reconciled' && LOCKED_WHEN_RECONCILED.some((k) => body[k] !== undefined)) {
       throw conflict('This entry is reconciled. Change its status to cleared before editing amount, date or kind.', 'reconciled_locked');
     }
     const changed = [];
     const pair = t.transferId ? (doc.transactions || []).find((x) => x.transferId === t.transferId && x.id !== t.id) : null;
+    const before = snapshot(t);
+    const pairBefore = pair ? snapshot(pair) : null;
     if (t.transferId) {
       for (const k of ['kind', 'payeeId', 'categoryId', 'splits', 'responsibleRef', 'original']) {
         if (body[k] !== undefined) throw badRequest('Transfers only allow date, status, tags, notes and amounts to change.', 'invalid_transfer_edit');
@@ -324,14 +340,19 @@ async function patch(ctx, req) {
     }
     if (body.tags !== undefined) { t.tags = fields.tags(body.tags); changed.push('tags'); }
     if (body.notes !== undefined) { t.notes = fields.text(body.notes, { field: 'Notes', max: 5000, multiline: true }); changed.push('notes'); }
-    if (!changed.length) return { transactions: [ledger.transactionView(doc, t, ctx.principal, now, lookups(doc))] };
+    const changesFor = new Map([[t, diff(before, t)], ...(pair ? [[pair, diff(pairBefore, pair)]] : [])]);
+    if (!changed.length || ![...changesFor.values()].some((c) => c.length)) return { transactions: [ledger.transactionView(doc, t, ctx.principal, now, lookups(doc))] };
+    const financial = [...changesFor.values()].some((c) => c.some((x) => FINANCIAL.has(x.field)));
+    const unreconciling = before.status === 'reconciled' && t.status !== 'reconciled';
+    if ((financial || unreconciling) && !reason) throw badRequest('Give a reason for this correction. It is kept with the entry\'s history.', 'reason_required');
     ledger.assertLedgerInRange(doc);
-    if (body.notes !== undefined || body.splits !== undefined) ledger.assertMemberQuota(doc, member, ctx.env);
+    ledger.assertMemberQuota(doc, member, ctx.env);
     for (const x of pair ? [t, pair] : [t]) {
       x.revision += 1;
       x.updatedAt = nowIso;
       x.updatedBy = member.subject;
       history(x, member.subject, nowIso, changed);
+      if (changesFor.get(x).length) amend(x, member.subject, nowIso, reason, changesFor.get(x));
       audit.record(doc, { actor: member.subject, action: 'transaction.update', targetType: 'transaction', targetId: x.id, scope: `account:${x.accountId}`, at: nowIso, fields: changed });
     }
     const look = lookups(doc);
@@ -343,7 +364,7 @@ async function patch(ctx, req) {
 function setDeleted(deleted) {
   return async (ctx, req) => {
     const wsId = requireId(query(req, 'workspaceId'), 'workspaceId');
-    const body = fields.onlyKeys(readBody(req), ['transactionId', 'revision']);
+    const body = fields.onlyKeys(readBody(req), ['transactionId', 'revision', 'reason']);
     const id = requireId(body.transactionId, 'transactionId');
     const { result } = await store.mutateWorkspace(ctx, wsId, (doc, member) => {
       const now = ctx.now();
@@ -352,7 +373,10 @@ function setDeleted(deleted) {
       if (!canChangeRecord(doc, ctx.principal, account, t, 'delete', now)) throw forbidden('You cannot delete or restore this entry.');
       if (Boolean(t.deletedAt) === deleted) return { changed: [] };
       if (deleted) checkRevision(t, body.revision);
-      if (deleted && t.status === 'reconciled') throw conflict('Reconciled entries cannot be deleted. Change the status first.', 'reconciled_locked');
+      if (deleted && t.status === 'reconciled') throw conflict('Reconciled entries cannot be deleted. Reverse them instead.', 'reconciled_locked');
+      // Deleting takes an entry out of balances but never erases it; the reason is kept (BT-001-05).
+      const reason = fields.text(body.reason, { field: 'Reason', max: 200 });
+      if (deleted && !reason) throw badRequest('Give a reason for deleting this entry. It is kept with the entry\'s history.', 'reason_required');
       const legs = t.transferId ? (doc.transactions || []).filter((x) => x.transferId === t.transferId) : [t];
       for (const x of legs) {
         const acc = (doc.accounts || []).find((a) => a.id === x.accountId);
@@ -368,10 +392,13 @@ function setDeleted(deleted) {
         }
       }
       for (const x of legs) {
+        // Who deleted it and when stay in the amendment even after a restore (audit B4).
+        const prior = { deletedAt: x.deletedAt || null, deletedBy: x.deletedBy || null };
         x.deletedAt = deleted ? nowIso : null;
         x.deletedBy = deleted ? member.subject : null;
         x.revision += 1;
         history(x, member.subject, nowIso, [deleted ? 'delete' : 'restore']);
+        amend(x, member.subject, nowIso, reason, [{ field: 'deleted', from: !deleted, to: deleted, ...(deleted ? {} : { previouslyDeletedAt: prior.deletedAt, previouslyDeletedBy: prior.deletedBy }) }]);
         audit.record(doc, { actor: member.subject, action: deleted ? 'transaction.delete' : 'transaction.restore', targetType: 'transaction', targetId: x.id, scope: `account:${x.accountId}`, at: nowIso });
       }
       if (!deleted) ledger.assertLedgerInRange(doc);
@@ -381,9 +408,71 @@ function setDeleted(deleted) {
   };
 }
 
+// A reversal corrects an entry — including a reconciled one — without touching it: a new entry of
+// the same kind, account, category and merchant with the opposite amount, linked both ways. The
+// person then records the correct entry. Balances, spending and budgets net out exactly.
+async function reverse(ctx, req) {
+  const wsId = requireId(query(req, 'workspaceId'), 'workspaceId');
+  const body = fields.onlyKeys(readBody(req), ['transactionId', 'reason', 'date']);
+  const id = requireId(body.transactionId, 'transactionId');
+  const { result } = await store.mutateWorkspace(ctx, wsId, (doc, member) => {
+    const now = ctx.now();
+    const nowIso = ctx.nowIso();
+    const { t, account } = findTxn(doc, ctx.principal, id, now);
+    if (!can(doc, ctx.principal, account, 'create', now) || !canChangeRecord(doc, ctx.principal, account, t, 'edit', now)) throw forbidden('You cannot reverse this entry.');
+    if (t.deletedAt) throw conflict('Deleted entries cannot be reversed.', 'deleted');
+    if (t.transferId) throw badRequest('Reverse a transfer by recording a transfer back.', 'unsupported');
+    if (t.links && t.links.reverses) throw conflict('A reversal cannot itself be reversed. Record a new entry instead.', 'is_reversal');
+    if (t.reversedBy) throw conflict('This entry has already been reversed.', 'already_reversed');
+    const reason = fields.text(body.reason, { field: 'Reason', max: 200 });
+    if (!reason) throw badRequest('Give a reason for the reversal. It is kept with both entries.', 'reason_required');
+    const rev = {
+      id: newId('txn'), accountId: t.accountId, kind: t.kind, amountMinor: -t.amountMinor, currency: t.currency,
+      payeeId: t.payeeId || null, categoryId: t.categoryId || null, splits: (t.splits || []).map((s) => ({ ...s, amountMinor: -s.amountMinor })),
+      responsibleRef: t.responsibleRef || null, original: null, transferId: null, counterpartAccountId: null,
+      date: fields.date(body.date, 'Date') || nowIso.slice(0, 10), postedDate: null, status: 'pending', tags: [...(t.tags || [])],
+      notes: `Reversal: ${reason}`, links: { reverses: t.id }, createdBy: member.subject, createdAt: nowIso, revision: 1, deletedAt: null,
+    };
+    history(rev, member.subject, nowIso, ['create', 'reversal']);
+    t.reversedBy = rev.id;
+    t.revision += 1;
+    t.updatedAt = nowIso;
+    amend(t, member.subject, nowIso, reason, [{ field: 'reversedBy', from: null, to: rev.id }]);
+    doc.transactions = [...(doc.transactions || []), rev];
+    ledger.assertLedgerInRange(doc);
+    ledger.assertMemberQuota(doc, member, ctx.env);
+    audit.record(doc, { actor: member.subject, action: 'transaction.reverse', targetType: 'transaction', targetId: t.id, scope: `account:${account.id}`, at: nowIso });
+    audit.record(doc, { actor: member.subject, action: 'transaction.create', targetType: 'transaction', targetId: rev.id, scope: `account:${account.id}`, at: nowIso });
+    const look = lookups(doc);
+    return { transactions: [t, rev].map((x) => ledger.transactionView(doc, x, ctx.principal, now, look)) };
+  }, { idempotencyKey: header(req, 'idempotency-key') || undefined, idempotencyScope: 'transactions.reverse', requestHash: store.requestHash({ q: wsId, body }) });
+  return { status: 201, body: result };
+}
+
+// The full amendment history of one entry: who changed what, from what to what, when and why.
+async function amendmentHistory(ctx, req) {
+  const wsId = requireId(query(req, 'workspaceId'), 'workspaceId');
+  const { doc } = await store.loadWorkspace(ctx, wsId);
+  const { t } = findTxn(doc, ctx.principal, requireId(query(req, 'transactionId'), 'transactionId'), ctx.now());
+  const names = new Map((doc.members || []).map((m) => [m.subject, m.name || 'Member']));
+  const value = (field, v) => {
+    if (field === 'amountMinor' && typeof v === 'number') return money.toDecimal(v, t.currency);
+    if (field === 'splits' && Array.isArray(v)) return v.map((s) => ({ categoryId: s.categoryId, amount: money.toDecimal(s.amountMinor, t.currency) }));
+    if (field === 'original' && v && typeof v === 'object' && money.isMinor(v.amountMinor)) return { ...v, amount: money.toDecimal(v.amountMinor, v.currency) };
+    return v;
+  };
+  return {
+    body: {
+      transactionId: t.id, createdAt: t.createdAt, createdBy: names.get(t.createdBy) || 'Former member',
+      amendments: (t.amendments || []).map((a) => ({ at: a.at, by: names.get(a.by) || 'Former member', reason: a.reason, changes: a.changes.map((c) => ({ ...c, from: value(c.field, c.from), to: value(c.field, c.to) })) })),
+    },
+  };
+}
+
 async function post(ctx, req) {
   const action = query(req, 'action');
   if (action === 'restore') return setDeleted(false)(ctx, req);
+  if (action === 'reverse') return reverse(ctx, req);
   if (action !== undefined) throw notFound();
   return create(ctx, req);
 }

@@ -216,6 +216,7 @@ function transactionView(doc, t, principal, now, lookups) {
     tags: t.tags || [], notes: t.notes || '', responsibleRef: t.responsibleRef || null,
     transferId: t.transferId || null, counterpartAccountId: t.counterpartAccountId || null,
     links: t.links || {}, createdAt: t.createdAt, updatedAt: t.updatedAt || null, revision: t.revision || 1,
+    amendmentCount: (t.amendments || []).length, reversedBy: t.reversedBy || null,
     createdBySelf: t.createdBy === principal.subject, deletedAt: t.deletedAt || null,
   };
 }
