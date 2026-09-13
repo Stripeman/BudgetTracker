@@ -5,6 +5,7 @@ import { icon, directionOf, iconLabel, withIcon } from "./icons.js";
 import { messageFor } from "../core/errors.js";
 import { formatAmount, isNegative } from "../core/format.js";
 import { Status } from "../core/store.js";
+import { categoryIndex } from "../core/categories.js";
 import { enhanceSelect, pickerOf, controlElement } from "./selectpicker.js";
 
 export { controlElement };
@@ -53,6 +54,26 @@ export function pickerSelect(options, value, attrs = {}, picker = {}) {
   const node = select(options, value, attrs);
   enhanceSelect(node, picker);
   return node;
+}
+
+// Marks for picker rows and triggers (BT-004-05): the same marks the rest of the app draws beside
+// these names. A category shows its icon tinted with its colour, or its colour dot when it has no
+// icon (BT-011-04/05, as `categoryLabel`); an account or merchant shows its own icon. Each call
+// returns a NEW node (a row and the trigger cannot share one), decorative, because the name is always
+// beside it. An id the list does not know gets no mark.
+export function categoryBadges(state) {
+  const index = categoryIndex(state);
+  return (id) => {
+    const c = index.get(id);
+    if (!c) return null;
+    if (c.shownIcon) return el("span", { class: "catlabel__icon", "aria-hidden": "true", vars: { "--swatch": c.shownColor || null } }, [icon(c.shownIcon)]);
+    return c.shownColor ? el("span", { class: "swatch-dot", "aria-hidden": "true", vars: { "--swatch": c.shownColor } }) : null;
+  };
+}
+
+export function iconBadges(records, fallback = null) {
+  const byId = new Map((records || []).map((r) => [String(r.id), r.icon || fallback]));
+  return (id) => (byId.get(String(id)) ? icon(byId.get(String(id))) : null);
 }
 
 export function button(label, onClick, { variant = "", small = false, attrs = {} } = {}) {

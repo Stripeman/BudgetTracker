@@ -5,10 +5,11 @@
 // only. Layout, contrast and real screen-reader output are checked in a real browser, not here.
 import { test, describe, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
-import { installDom } from "./domdouble.js";
+import { installDom, DomEvent } from "./domdouble.js";
 import { nativeDropdowns, pickerLabels, pickerNamed, chooseOption, chooseByKeyboard, triggerFor } from "./pickerassert.js";
 import { openNewWorkspace, createOnboarding } from "../js/ui/views/landing.js";
 import { createView as createAccounts } from "../js/ui/views/accounts.js";
+import { createView as createMerchants, openMerchantEditor } from "../js/ui/views/payees.js";
 
 let dom;
 beforeEach(() => { dom = installDom(); });
@@ -132,5 +133,94 @@ describe("BT-004-05 accounts: Add account and Who can see this", () => {
     await tick();
     assert.equal(calls.granted.length, 1);
     assert.equal(calls.granted[0].memberId, "m_carol");
+  });
+});
+
+function merchantsCtx() {
+  const calls = [];
+  const ready = (data) => ({ workspaceId: "ws_1", status: "ready", error: null, data });
+  const state = {
+    selectedWorkspaceId: "ws_1",
+    workspaces: [{ id: "ws_1", name: "Fictional household", role: "owner" }],
+    preferences: null,
+    categories: ready({ categories: [
+      { id: "cat_food", name: "Groceries", color: "#2563eb", icon: "cart" },
+      { id: "cat_gift", name: "Gifts", color: "#16a34a", icon: null },
+      { id: "cat_old", name: "Old hobby", color: "#9333ea", icon: null, archived: true },
+    ] }),
+    accounts: ready({ accounts: [
+      { id: "acc_joint", name: "Fictional joint", access: "shared", icon: "bank" },
+      { id: "acc_wallet", name: "Fictional wallet", access: "own", icon: "wallet" },
+    ] }),
+    payees: ready({ payees: [
+      { id: "p_bakery", name: "Fictional Bakery", status: "active", visibility: "shared", stats: [], canEdit: true },
+      { id: "p_video", name: "Fictional Video Store", status: "closed", visibility: "shared", stats: [], canEdit: true },
+    ] }),
+  };
+  const api = { createMerchant: async (ws, body) => { calls.push(body); return {}; } };
+  const store = { getState: () => state, actions: { write: async (fn) => { await fn("ws_1"); return { ok: true }; }, refreshPayees: async () => {} } };
+  return { ctx: { store, api, navigate() {} }, state, calls };
+}
+
+describe("BT-004-05 merchants: the Show filter and the merchant editor", () => {
+  test("Show is a short picker, and choosing Closed lists the closed merchants", () => {
+    const { ctx, state } = merchantsCtx();
+    const view = createMerchants(ctx);
+    dom.body.appendChild(view.element);
+    view.update(state);
+    assert.deepEqual(nativeDropdowns(view.element), []);
+    const show = pickerNamed(view.element, "Show");
+    assert.equal(spoken(show), "Show: Active. Choose.");
+    const table = () => view.element.querySelector("table").textContent;
+    assert.match(table(), /Fictional Bakery/);
+    assert.doesNotMatch(table(), /Fictional Video Store/);
+    chooseOption(show, "Closed");
+    assert.match(table(), /Fictional Video Store/);
+    assert.doesNotMatch(table(), /Fictional Bakery/);
+  });
+
+  test("the editor's dropdowns are pickers with their marks; the default account list follows Sharing; the chosen values are saved", async () => {
+    const { ctx, calls } = merchantsCtx();
+    openMerchantEditor(ctx);
+    const root = dom.body.querySelector(".modal");
+    assert.deepEqual(nativeDropdowns(root), []);
+    assert.deepEqual(pickerLabels(root), ["Sharing", "Type", "Default category", "Default account"]);
+    assert.equal(spoken(pickerNamed(root, "Sharing")), "Sharing: Shared with the workspace. Choose.");
+    assert.equal(spoken(pickerNamed(root, "Type")), "Type: Other. Search and choose.", "fourteen types: long enough to search");
+    // A new merchant is not offered an archived category; a category shows its tinted icon or dot.
+    triggerFor(pickerNamed(root, "Default category")).click();
+    const catRows = dom.body.querySelectorAll(".cmdpick__opt");
+    assert.deepEqual(catRows.map((r) => r.querySelector(".cmdpick__optlabel").textContent), ["None", "Groceries", "Gifts"]);
+    const groceries = catRows[1].querySelector(".catlabel__icon");
+    assert.ok(groceries, "Groceries has an icon");
+    assert.equal(groceries.style.getPropertyValue("--swatch"), "#2563eb", "tinted with its colour");
+    assert.equal(groceries.getAttribute("aria-hidden"), "true");
+    assert.equal(catRows[2].querySelector(".swatch-dot").style.getPropertyValue("--swatch"), "#16a34a", "no icon: the colour dot");
+    assert.ok(catRows[0].querySelector(".catlabel__icon, .swatch-dot") === null, "None has no mark");
+    catRows[1].dispatchEvent(new DomEvent("mousedown", { bubbles: true }));
+    // Shared merchants may default only to shared accounts; making it private offers private ones too.
+    const account = pickerNamed(root, "Default account");
+    triggerFor(account).click();
+    assert.deepEqual(dom.body.querySelectorAll(".cmdpick__opt").map((r) => r.querySelector(".cmdpick__optlabel").textContent), ["None", "Fictional joint"]);
+    triggerFor(account).click();
+    chooseOption(pickerNamed(root, "Sharing"), "Private to me");
+    chooseOption(account, "Fictional wallet");
+    // (The DOM double has no descendant combinator, so the two steps are taken separately.)
+    assert.ok(triggerFor(account).querySelector(".cmdpick__badge").querySelector("svg"), "the chosen account's icon is on the trigger");
+    chooseByKeyboard(pickerNamed(root, "Type"), { type: "groc" });
+    root.querySelector("input").value = "Fictional Greengrocer";
+    buttonNamed(root, "Add merchant").click();
+    await tick();
+    assert.equal(calls.length, 1);
+    const { name, visibility, type, defaultCategoryId, defaultAccountId } = calls[0];
+    assert.deepEqual({ name, visibility, type, defaultCategoryId, defaultAccountId },
+      { name: "Fictional Greengrocer", visibility: "private", type: "grocery", defaultCategoryId: "cat_food", defaultAccountId: "acc_wallet" });
+  });
+
+  test("a shared merchant's Sharing picker is locked", () => {
+    const { ctx } = merchantsCtx();
+    openMerchantEditor(ctx, { id: "p_bakery", name: "Fictional Bakery", visibility: "shared", status: "active", revision: 1, history: [] });
+    const root = dom.body.querySelector(".modal");
+    assert.equal(triggerFor(pickerNamed(root, "Sharing")).disabled, true);
   });
 });

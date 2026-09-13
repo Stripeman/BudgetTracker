@@ -436,6 +436,9 @@ fieldset.budget-line { margin: 0; padding: var(--space-3); border: 1px solid var
 .cmdpick__badge { display: inline-flex; align-items: center; flex: none; }
 .cmdpick__badge[hidden] { display: none; }
 .cmdpick__opt .people__badge { flex: none; }
+/* An account or merchant icon beside its name (BT-004-05), muted as in `.iconlabel`; a category's
+   icon keeps its own colour through `.catlabel__icon`. */
+.cmdpick__opt > .icon, .cmdpick__badge > .icon { color: var(--text-muted); }
 
 .cmdpick__panel {
   position: fixed; z-index: 80;
