@@ -36,7 +36,7 @@ Adding Staging later needs no redesign:
 
 **Storage controls** (verified by the provisioning script): StorageV2, Standard_LRS, TLS 1.2 minimum, HTTPS only, blob public access disabled, cross-tenant replication disabled, blob versioning, and blob and container soft delete (14 days for data, 35 days for backups). Data and backup storage are **separate accounts with separate keys**, so a leaked data key cannot delete recovery points.
 
-**Not applied yet:** immutable (WORM) retention on the production backup container. A *locked* policy cannot be undone, so it needs Terry's decision before production. The recommendation is a time-based policy on the backups container, tested unlocked first.
+**Immutable (WORM) retention on the production backups container (Terry, 2026-09-13: unlocked policy now).** The `backups` container in `stbudgetbkprd01` is created with **version-level** immutability and a default time-based policy of 35 days, **unlocked**. Version level is required: the backup index (`workspaces/<id>/index.json`) is rewritten on every backup and reservation, which a container-level policy would forbid; with version-level immutability each rewrite simply creates a new protected version. Every archive and every earlier version of the index is kept unchangeable for 35 days. Unlocked means the policy can still be changed or removed; locking is a separate, irreversible decision for later. Enabling version-level support on a container cannot be undone, and the container cannot be deleted while it holds blobs — both consistent with nothing ever being deleted.
 
 ## Application settings (names only; values never in Git, chat or logs)
 
@@ -51,7 +51,7 @@ These are set per environment on the SWA.
 | `BT_BACKUP_STORAGE`, `BT_BACKUP_CONTAINER` | `blob`, `backups` | no | agent |
 | `BT_BACKUP_CONNECTION_STRING` | backup account connection string | **yes** | agent (piped, never printed) |
 | `BT_BACKUP_KEYS`, `BT_BACKUP_ACTIVE_KEY` | backup master keys (`id:base64`) and the active id | **yes** | generated once by `configure-settings.ps1`, never overwritten; **Terry holds an offline escrow copy for production** (`scripts/recovery/escrow-keys.ps1`, `docs/RECOVERY_RUNBOOK.md`) |
-| `BT_SITE_ADMINS` | operational site admins; use the provider subject shown by `/api/me` | no | Terry |
+| `BT_SITE_ADMINS` | operational site admins, by provider **subject** (`google:<id>` from `/api/me`), never an email (SEC-R10). Terry's subject is kept only in the ignored `.local/deploy-target.json` and passed to `configure-settings.ps1 -SiteAdmins` | no | agent, with Terry's subject |
 | `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` | BudgetTracker's own Google OAuth client | secret: yes | **Terry** |
 | `APPLICATIONINSIGHTS_CONNECTION_STRING` | monitoring | treated as secret | agent |
 
@@ -88,6 +88,9 @@ The custom domain belongs to the **production** environment. Preview keeps its g
 - **Preview deploys.** Run locally by the implementation agent through `scripts/deploy/deploy.ps1 -Environment preview` (added with the frontend). The SWA deployment token is read from `az` at run time, held in memory only and never printed or stored. It is not placed in GitHub secrets, because the single token can deploy to every environment of the app.
 - **Production deploys.** Refused unless Terry explicitly authorizes the exact commit. The script then additionally requires `-AuthorizedProduction`, a clean tree on `main` equal to `origin/main`, and a typed confirmation.
 - **After any deploy.** Verify the running app separately (`/version.json`, `/api/me` environment and commit, sign-in, permission smoke checks) and report deployment and verification as separate claims.
+- **A deploy without the SWA CLI's final "Project deployed" line has failed**, whatever the exit code (2026-09-13: a preview deploy exited 0 without it; the frontend changed but the API kept running older code). Redeploy. The API now reports the commit stamped into the artifact by `scripts/build-artifact.mjs` (`api/build.json`), not the `BT_COMMIT` setting, so `/api/site-settings` `app.commit` names the code actually running; compare it with the commit you deployed.
+- **Runtime.** The API runs on Node 22 (`staticwebapp.config.json` `apiRuntime`, `deploy.ps1 --api-version`; Terry, 2026-09-13), matching the local and test runtime.
+- **Shared with preview (Terry, 2026-09-13: "share both for now").** Production uses the same Application Insights resource and the same Google OAuth client as preview; the Production redirect URI is added to that client. Separating them later needs only new settings.
 
 ## Rollback and schema compatibility
 

@@ -52,6 +52,11 @@ for (const name of Object.keys(ROUTES)) {
   for (const f of ["function.json", "index.js", "handler.js"]) copyFile(path.join(ROOT, "api", name, f), path.join(API, name, f));
 }
 if (untracked.length) { console.error(`artifact would include files Git does not track: ${untracked.join(", ")}`); process.exit(1); }
+// The commit the artifact is built from, read by api/_shared/version.js, so the running API reports
+// the code it actually runs rather than a setting (release readiness D2).
+const commit = execFileSync("git", ["rev-parse", "HEAD"], { cwd: ROOT }).toString("utf8").trim();
+if (!/^[0-9a-f]{40}$/.test(commit)) { console.error("could not read the commit to stamp into the artifact"); process.exit(1); }
+fs.writeFileSync(path.join(API, "build.json"), `${JSON.stringify({ commit })}\n`);
 execFileSync(process.platform === "win32" ? "npm.cmd" : "npm", ["ci", "--omit=dev", "--no-audit", "--no-fund"], { cwd: API, stdio: "inherit", shell: process.platform === "win32" });
 
 // Refuse to publish anything that looks like a test, secret or local data.
