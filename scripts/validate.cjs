@@ -136,7 +136,8 @@ for (const file of textFiles) {
 //     recorded in its banner, carries its licence notices, and has an npm script to regenerate it.
 //     A directory under app/js/vendor that is not registered here fails.
 const VENDORED_BUNDLES = [{
-  dir: 'tiptap', files: ['tiptap-bundle.js', 'tiptap.css'], script: 'vendor:tiptap', generator: 'scripts/build/vendor-tiptap.mjs',
+  // The generator lives outside scripts/build/, which .gitignore excludes as build output.
+  dir: 'tiptap', files: ['tiptap-bundle.js', 'tiptap.css'], script: 'vendor:tiptap', generator: 'scripts/vendor-tiptap.mjs',
   packages: ['@tiptap/core', '@tiptap/pm', '@tiptap/starter-kit', '@tiptap/extension-list', 'esbuild'],
 }];
 const vendorDir = path.join(ROOT, 'app/js/vendor');

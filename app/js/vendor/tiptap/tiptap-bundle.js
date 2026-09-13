@@ -2,7 +2,7 @@
  * GENERATED FILE - DO NOT EDIT BY HAND.
  *
  * Regenerate with:  npm run vendor:tiptap
- * Generator:        scripts/build/vendor-tiptap.mjs
+ * Generator:        scripts/vendor-tiptap.mjs
  *
  * Built from these exact, pinned versions:
  *   @tiptap/core@3.30.5
