@@ -10,6 +10,7 @@ import { nativeDropdowns, pickerLabels, pickerNamed, chooseOption, chooseByKeybo
 import { openNewWorkspace, createOnboarding } from "../js/ui/views/landing.js";
 import { createView as createAccounts } from "../js/ui/views/accounts.js";
 import { createView as createMerchants, openMerchantEditor } from "../js/ui/views/payees.js";
+import { createView as createSettings } from "../js/ui/views/settings.js";
 
 let dom;
 beforeEach(() => { dom = installDom(); });
@@ -222,5 +223,73 @@ describe("BT-004-05 merchants: the Show filter and the merchant editor", () => {
     openMerchantEditor(ctx, { id: "p_bakery", name: "Fictional Bakery", visibility: "shared", status: "active", revision: 1, history: [] });
     const root = dom.body.querySelector(".modal");
     assert.equal(triggerFor(pickerNamed(root, "Sharing")).disabled, true);
+  });
+});
+
+function settingsCtx({ locked = [] } = {}) {
+  const saved = [];
+  const sources = { themeMode: "default", themePalette: "default", displayCurrency: "default", dateFormat: "default", numberFormat: "default", defaultWorkspaceId: "default", balanceMasking: "default", categoryColors: "default", categoryIcons: "default" };
+  for (const key of locked) sources[key] = "locked";
+  const state = {
+    selectedWorkspaceId: null,
+    workspaces: [{ id: "ws_home", name: "Fictional household", role: "owner" }, { id: "ws_trip", name: "Fictional trip", role: "member" }],
+    auth: { user: { name: "Alice Fictional", siteAdmin: false } },
+    preferences: { effective: { dateFormat: "iso", numberFormat: "1,234.56", displayCurrency: "", defaultWorkspaceId: "", balanceMasking: false, themePalette: "midnight" }, sources },
+  };
+  const theme = { getTheme: () => "midnight", setTheme() {}, subscribe: () => () => {}, getMode: () => "light", getResolvedMode: () => "light", setMode() {} };
+  const store = { getState: () => state, actions: { savePreferences: async (patch) => { saved.push(patch); return { ok: true }; }, init: async () => {} } };
+  const api = { request: async () => ({ private: [] }) };
+  return { ctx: { store, theme, api }, state, saved };
+}
+
+describe("BT-004-05 My settings: display preferences", () => {
+  const panelKey = (key) => dom.body.querySelector(".cmdpick__panel").dispatchEvent(new DomEvent("keydown", { bubbles: true, key }));
+
+  test("the four preferences are pickers; each explicit choice saves once, and Escape saves nothing (A11Y-002)", () => {
+    const { ctx, state, saved } = settingsCtx();
+    const view = createSettings(ctx);
+    dom.body.appendChild(view.element);
+    view.update(state);
+    assert.deepEqual(nativeDropdowns(view.element), []);
+    assert.deepEqual(pickerLabels(view.element), ["Display currency", "Date format", "Number format", "Default workspace"]);
+    assert.equal(spoken(pickerNamed(view.element, "Display currency")), "Display currency: Account currency. Search and choose.");
+    assert.equal(spoken(pickerNamed(view.element, "Date format")), "Date format: 2026-09-13. Choose.");
+    assert.equal(spoken(pickerNamed(view.element, "Number format")), "Number format: 1,234.56. Choose.");
+    assert.equal(spoken(pickerNamed(view.element, "Default workspace")), "Default workspace: First available. Search and choose.");
+    const dateFormat = pickerNamed(view.element, "Date format");
+    triggerFor(dateFormat).click();
+    panelKey("ArrowDown");
+    panelKey("Escape");
+    assert.deepEqual(saved, [], "browsing and Escape save nothing");
+    chooseByKeyboard(dateFormat, { keys: ["ArrowDown"] });
+    assert.deepEqual(saved, [{ dateFormat: "dmy" }]);
+    chooseByKeyboard(pickerNamed(view.element, "Default workspace"), { type: "trip" });
+    assert.deepEqual(saved, [{ dateFormat: "dmy" }, { defaultWorkspaceId: "ws_trip" }]);
+  });
+
+  test("after a save rebuilds the card, focus is on the same preference's trigger, not lost to the page", () => {
+    const { ctx, state } = settingsCtx();
+    const view = createSettings(ctx);
+    dom.body.appendChild(view.element);
+    view.update(state);
+    const before = pickerNamed(view.element, "Date format");
+    chooseByKeyboard(before, { keys: ["ArrowDown"] });
+    assert.ok(document.activeElement === triggerFor(before), "the picker put focus back on its trigger");
+    // The store answers with the saved preference; the card is rebuilt from it.
+    state.preferences = { ...state.preferences, effective: { ...state.preferences.effective, dateFormat: "dmy" }, sources: { ...state.preferences.sources, dateFormat: "personal" } };
+    view.update(state);
+    const after = pickerNamed(view.element, "Date format");
+    assert.ok(after !== before, "rebuilt");
+    assert.equal(spoken(after), "Date format: 13/09/2026. Choose.");
+    assert.ok(document.activeElement === triggerFor(after), "focus followed the preference to its new trigger");
+  });
+
+  test("a preference the site has locked has a disabled picker", () => {
+    const { ctx, state } = settingsCtx({ locked: ["numberFormat"] });
+    const view = createSettings(ctx);
+    dom.body.appendChild(view.element);
+    view.update(state);
+    assert.equal(triggerFor(pickerNamed(view.element, "Number format")).disabled, true);
+    assert.equal(triggerFor(pickerNamed(view.element, "Date format")).disabled, false);
   });
 });
