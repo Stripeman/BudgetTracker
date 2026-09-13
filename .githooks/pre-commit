@@ -1,0 +1,4 @@
+#!/bin/sh
+# BT-003-03: scan staged paths and content before every commit.
+# Enable once per clone: git config core.hooksPath .githooks
+exec node scripts/scan-staged.cjs

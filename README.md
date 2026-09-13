@@ -47,8 +47,18 @@ Suggested GitHub About description:
 
 ## Local foundation checkpoint
 
-Seven Codex role definitions and five supporting procedures are available; see [.codex/agents/README.md](.codex/agents/README.md) and [validation evidence](docs/AGENT_VALIDATION.md). All seven roles were discovered; the security role executed a read-only smoke task. Claude-native agents are not configured.
+**Agents.** Nine role definitions are generated from `scripts/setup-project-agents.py`, for both Codex (`.codex/agents/`) and Claude (`.claude/agents/`), together with five supporting procedures. See [.codex/agents/README.md](.codex/agents/README.md) and the [validation evidence](docs/AGENT_VALIDATION.md).
 
-Run `node --test test/*.test.cjs` (verified with Node v22.23.1). Four tests pass for the local authorization/encrypted-snapshot preview prototype. It has no trusted identity adapter, durable storage, executable restore, scheduler or running application. Never connect it to real financial data. Independent security/financial review is pending.
+**One-time setup per clone.** Enable the staged-content scan:
 
-[Foundation design](docs/FOUNDATION_DESIGN.md), [recovery procedure](docs/RECOVERY_RUNBOOK.md), [TaskTracker inventory](docs/TASKTRACKER_REUSE.md), and [Word comparison](docs/BRIEF_RECONCILIATION.md) document decisions and gaps. GitHub secret scanning and push protection were observed enabled; main branch protection was absent. The new pinned scanning/test workflow has not run remotely. See PROJECT_STATE.md for the Claude handoff.
+```powershell
+git config core.hooksPath .githooks
+```
+
+The hook runs `node scripts/scan-staged.cjs`, which checks staged paths and content and runs gitleaks when it finds it in `.local/bin` or on PATH.
+
+**Tests.** Run `node --test test/*.test.cjs` (verified with Node v22.23.1). The suite covers the local authorization/encrypted-snapshot prototype and the staged scanner. The prototype has no trusted identity adapter, durable storage, executable restore or running application. Never connect it to real financial data.
+
+**Remote controls.** `main` is protected: a PR is required, the `secret-scan` and `foundation-tests` checks must pass, the rule is enforced for admins, and force-push and deletion are blocked. Dependabot security updates are enabled.
+
+**Further documentation.** The [foundation design](docs/FOUNDATION_DESIGN.md), [recovery procedure](docs/RECOVERY_RUNBOOK.md), [TaskTracker inventory](docs/TASKTRACKER_REUSE.md) and [Word comparison](docs/BRIEF_RECONCILIATION.md) record decisions and gaps. See PROJECT_STATE.md for current status and next steps.

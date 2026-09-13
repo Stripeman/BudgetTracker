@@ -27,4 +27,18 @@ Financial capabilities: view balances/transactions, create/edit/delete, comment,
 
 Versioned snapshots contain records, ownership, permissions, attachment bytes and hashes, schema version and nonsecret configuration metadata. Encrypt with authenticated encryption and a fresh nonce; key storage/rotation is external to archives. Never log keys or payloads. Decrypt and validate in isolation before any write. Validate workspace, schema, attachment completeness and financial invariants. Restored grant data is historical evidence only: strip grants and require explicit reauthorization against current identity/revocation state. Do not restore archived administrator roles. This conservative prototype disables all restored grants.
 
+## Independent prototype review — 2026-09-13
+
+Claude ran a read-only security and financial review of `lib/foundation.cjs` at `2360b79`. Verdict: **PARTIAL** for its prototype purpose. The prototype fails closed on typed malformed input, uses AES-GCM correctly, rejects tampering and strips grants. The production port must fix the following findings:
+
+1. **Owner shortcut** (high). Ownership bypasses workspace and membership checks and grants every capability, including `publish` and `change-permissions`. It also re-grants archived owners after a preview. Fix: owners must hold active membership in the resource's workspace; ownership maps to a capability set; publishing and permission changes are gated separately.
+2. **Fixed AAD** (medium). Workspace, schema, archive id, creation time and key id are not authenticated. Fix: authenticate a plaintext header in the AAD, check it before parsing, and use a key id with per-scope keys.
+3. **Validated object ≠ encrypted bytes** (medium). `toJSON` or coercing values can produce a valid-looking backup that cannot be restored. Fix: serialize first, validate the parsed bytes, and test-decrypt before recording success.
+4. **Per-record precision and coercing currency regex** (medium). Fix: use a server ISO 4217 table, `typeof` checks before any regex, reject `-0`, and bound the magnitude.
+5. **Preview returns full payloads** (medium). Fix: the preview returns counts, totals, conflicts, hash status and a permissions summary, never financial payloads.
+6. **Inherited or getter properties** (low). Fix: copy the principal and grants into frozen null-prototype plain values; use `Object.hasOwn`.
+7. **Size before work** (low). Fix: check total size first, index lookups, and store attachments as separately hashed blobs referenced by a manifest.
+8. **Raw exceptions** (low). Fix: return generic errors and log reason codes, never values.
+9. **Tests.** Add owner-in-another-workspace, malformed and inherited grants, header tampering and truncation, orphan attachments, precision mismatch, oversized input, and the encrypt/restore asymmetry. Also prove that revoked or expired archived grants stay inactive.
+
 Create-new, merge and replace need separate future execution semantics. No destructive restore is implemented until preview, pre-restore backup, conflict handling, confirmation and atomic commit/restart are proven. Workspace recovery and disaster recovery require distinct operator permissions. Schedules, retention, RPO/RTO and production key custody are pending decisions, not achieved guarantees.

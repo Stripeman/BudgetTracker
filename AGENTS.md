@@ -1,23 +1,51 @@
-# BudgetTracker implementation rules
+# BudgetTracker agent contract
 
-- Read docs/PROJECT_BRIEF.md, docs/REQUIREMENTS.md, PROJECT_STATE.md, and SECURITY.md before implementation.
-- Git is authoritative for source, safe configuration templates, infrastructure, tests, and documentation.
-- Use feature branches. Do not push to main, merge PRs, or deploy Production. Terry controls release approval.
-- Security, restrictive server-side permissions, backups, and tested restores are the foundation and first milestone.
-- This repository is public. Never commit secrets, actual financial data, receipts, backups, or private exports.
-- Maintain .gitignore; inspect staged diffs and file lists before committing. Never force-add ignored private files.
-- Add automated secret scanning and repository/environment protection controls; report controls accurately while pending.
-- Inspect TaskTracker’s actual code before confirming its stack or reusing components. Preserve its editor and moon/sun selector behavior.
-- Maintain README.md, PROJECT_STATE.md, and the requirement register. Keep the proposed GitHub description aligned with scope.
-- Give each feature and defect a stable BT identifier and acceptance evidence. Partial work remains partial.
-- Proceed autonomously with authorized branch work and focused checks. Ask only about genuine blockers.
-- Exclude eSIM offerings, card issuance, affiliate sales, and financial-product advertising.
+Applies to every automated agent (Codex, Claude or other). `CLAUDE.md` holds the full
+engineering standard; nothing here contradicts it.
 
-## Reusable roles and handoff
+## Before acting
 
-- Read the complete canonical brief; docs/BRIEF_RECONCILIATION.md records the full Word comparison with no additions or conflicts.
-- Native Codex roles live in .codex/agents/*.toml; invocation and boundaries are in .codex/agents/README.md. Supporting procedures live in .agents/skills/. Claude may read these instructions; native Claude configuration is not installed or validated.
-- One implementation owner writes for each scope. Reviewers remain read-only and return evidence; the owner applies accepted fixes.
-- Use archaeology before potential TaskTracker reuse. Use UX/UI, usability and accessibility reviewers for meaningful interface changes; security for identity/access/storage/integration/backup/restore; financial for calculations/data models. Use security and financial reviews at major milestones and before release. Do not run the whole team for every small commit.
-- Preserve the required Tiptap and moon/sun behavior despite the inspected TaskTracker mismatch; see docs/TASKTRACKER_REUSE.md.
-- Follow PROJECT_STATE.md for checkpoint evidence, limitations and next steps. Explicitly read repository instructions even when the app displays Agents.md: <none>.
+- Read `PROJECT_STATE.md` completely, `docs/PROJECT_BRIEF.md`, `docs/REQUIREMENTS.md`,
+  `SECURITY.md` and `CLAUDE.md` — explicitly, even if a tool displays `Agents.md: <none>`.
+  `docs/BRIEF_RECONCILIATION.md` records the full Word comparison with no additions or conflicts.
+- Check real Git state (`git status -sb`, `git log --oneline -10`, `git fetch` and compare).
+  Repository state outranks conversation memory. Preserve all existing and uncommitted work.
+
+## Never
+
+- Push to `main`, merge pull requests, enable auto-merge, deploy Production, or use another
+  agent or tool to bypass branch, Staging or release controls. Terry controls promotion.
+- Commit secrets, credentials, real financial data, receipts, backups, private exports, local
+  databases or personal identifiers. Never force-add ignored files or skip the staged scan.
+- Rely on client-only permission checks, trust browser-supplied identity or roles, let site
+  administration or workspace ownership imply access to private financial records, or let an
+  identifier cross a workspace boundary (it fails as not found).
+- Use binary floating point for money, overwrite concurrent writes, treat corrupt documents as
+  empty, make financial audit best-effort, or permanently delete financial records without
+  safeguards.
+- Resurrect revoked or expired access on restore, or mutate data during an import/restore preview.
+- Infer a deployment target from ambient Azure CLI state. Staging and Production stay separate.
+- Modify TaskTracker. Add eSIM offerings, card issuance, affiliate sales or financial-product
+  advertising.
+
+## Always
+
+- Deny by default and authorize server-side on every route and derived surface.
+- Give each feature and defect a stable BT identifier with acceptance evidence; partial stays partial.
+- Follow requirement → test → implementation; run the full gate (`npm test`, `npm run validate`)
+  and report real exit codes and anything not run.
+- Enable `git config core.hooksPath .githooks` and inspect staged paths and content before commits.
+- Reuse or faithfully adapt TaskTracker's Tiptap editor and day/night (moon/sun) Appearance
+  control from the freshest committed TaskTracker `main` (`docs/TASKTRACKER_REUSE.md`,
+  BT-011-01/02); never invent a different theme selector.
+- Keep one implementation writer per scope; reviewers are read-only. Role definitions are
+  generated by `scripts/setup-project-agents.py` into `.codex/agents/` and `.claude/agents/`.
+  Invoke specialists selectively, not for every small commit.
+- Maintain `README.md`, `.gitignore`, `PROJECT_STATE.md`, `SECURITY.md`, the brief and the
+  requirement and risk registers. Update `PROJECT_STATE.md` at every meaningful checkpoint with
+  completed and unfinished work, test and scan results, blockers and exact next steps.
+
+## When blocked
+
+Stop and say so with the BT identifier, evidence and the smallest action needed. Do not guess
+at an authorization rule, persistence contract or infrastructure target.

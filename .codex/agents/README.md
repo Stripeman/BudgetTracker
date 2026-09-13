@@ -1,6 +1,8 @@
 # BudgetTracker agents
 
-Seven native project agents live here as standalone TOML files for Codex CLI 0.154.0. Each file declares `name`, `description`, `sandbox_mode`, and `developer_instructions`; these are configured agents, not Claude Markdown files. Models inherit the current session. The reviewed generator in `scripts/setup-project-agents.py` is the source for role text; regenerate after changing it. Do not edit generated TOML independently.
+Nine project agents are generated from one reviewed source, `scripts/setup-project-agents.py`, into two formats. Codex gets standalone TOML files here, for Codex CLI 0.154.0; each declares `name`, `description`, `sandbox_mode` and `developer_instructions`. Claude Code gets Markdown subagents in `.claude/agents/`; reviewers there have Write, Edit and NotebookEdit disallowed. Models inherit the current session. Regenerate after changing the generator; never edit generated files independently. The generator also mirrors `.agents/skills/` to `.claude/skills/`.
+
+In Claude Code, invoke a role through the Agent tool by its exact name. Until a fresh Claude session has listed and executed a role natively, a general-purpose delegation that was told to follow a role file is documentation-driven, not native-loading evidence.
 
 | Agent name | When to invoke | Default |
 |---|---|---|
@@ -11,6 +13,8 @@ Seven native project agents live here as standalone TOML files for Codex CLI 0.1
 | accessibility-reviewer | Meaningful interface changes; keyboard, focus, semantics and assistive technology | Read-only |
 | security-privacy-reviewer | Identity, access, storage, integration, backups or restores | Read-only |
 | financial-accuracy-reviewer | Financial calculations and data-model changes | Read-only |
+| regression-false-green-auditor | Cross-layer claims: rendered control → action → authorization → persistence → readback → tests | Read-only |
+| release-readiness-auditor | Exact Staging candidate or release-review SHA; never deploys | Read-only |
 
 Use security and financial reviewers at major milestones and before release. Select the relevant roles; do not run the whole team for every small commit. The coordinating parent can be the implementation owner. Never let it and a child implementation agent edit concurrently. Reviewers report findings; the owner applies accepted fixes and obtains retest evidence.
 

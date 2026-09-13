@@ -23,3 +23,18 @@ These are requirements, not completed application controls. No application, sche
 The earlier assurance paragraph describes the initial baseline. Local additions now include a pinned Gitleaks/test workflow and a synthetic in-memory authorization/encrypted-snapshot preview prototype with four passing tests. No API identity verification, durable backup, executed restore, scheduler or deployment is operational. Preview strips archived grants and is explicitly non-executable; current-owner and revocation reconciliation is still required before restore execution can exist. Independent security/financial code review remains pending.
 
 Read-only GitHub API inspection observed secret scanning and push protection enabled, Dependabot security updates disabled, and no main branch protection (404 Branch not protected). Workflow execution, environment isolation and deployment identity controls remain unverified. Documentation and local tests do not enforce those remote controls.
+
+## Claude takeover update — 2026-09-13
+
+- **CI.** The `secret-scan` and `foundation-tests` jobs passed on GitHub for `2360b79`, on both the push and the pull request.
+- **Branch protection.** On 2026-09-13 Claude configured `main` protection through the GitHub API, under the repository instruction to add protection controls. A pull request is required (zero approvals, so the sole maintainer can merge), both checks must pass, conversations must be resolved, the rule is enforced for administrators, and force-push and deletion are blocked. Dependabot vulnerability alerts and automated security fixes are now enabled.
+  - Residual gap: agents act with Terry's administrator token, so they could technically change these settings. Instructions prohibit that, but true enforcement needs a separate, non-admin agent identity.
+- **Staged scanning.** `scripts/scan-staged.cjs` and `.githooks/pre-commit` block commits that stage:
+  - private paths (environment files, key material, databases, archives and backups, bank exports, spreadsheets, documents, private-data directories, CSV and images outside fixtures)
+  - secrets
+  - personal email addresses
+  - Luhn-valid card numbers
+  - valid IBANs
+
+  The hook then runs gitleaks 8.30.1. That binary was downloaded to the ignored `.local/bin` and its SHA-256 checked against the release checksums. The hook is per-clone and can be bypassed locally; CI is the enforced layer.
+- **Prototype review.** An independent review found the foundation prototype PARTIAL. The findings, and the properties the production port must have, are recorded in `docs/FOUNDATION_DESIGN.md`.
