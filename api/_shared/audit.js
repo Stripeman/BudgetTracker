@@ -18,7 +18,7 @@ function record(doc, { actor, action, targetType, targetId, scope, at, fields })
   if (!Array.isArray(doc.audit)) doc.audit = [];
   const entry = { id: newId('aud'), at, actor, action, targetType: targetType || null, targetId: targetId || null, scope: scope || 'members' };
   // Field NAMES only — which fields changed, never their values.
-  if (Array.isArray(fields) && fields.length) entry.fields = fields.filter((f) => typeof f === 'string').slice(0, 30);
+  if (Array.isArray(fields) && fields.length) entry.fields = fields.filter((f) => typeof f === 'string');
   doc.audit.push(entry);
   return entry;
 }

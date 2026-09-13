@@ -26,7 +26,9 @@ async function list(ctx, req) {
     // Closed merchants are not offered for new entries (BT-007-01); their history is unaffected.
     for (const p of ledger.visiblePayees(doc, ctx.principal, visibleTransactions(doc, ctx.principal, ctx.now()))) {
       if ((p.status || 'active') === 'closed') continue;
-      options.push({ ref: `payee:${p.id}`, label: p.name, type: 'payee', typeLabel: 'Payee', hint: (p.aliases || []).join(', ') });
+      // Aliases only for merchants the caller fully sees (security review SEC-B8).
+      const full = p.visibility === 'shared' || p.ownerSubject === ctx.principal.subject;
+      options.push({ ref: `payee:${p.id}`, label: p.name, type: 'payee', typeLabel: 'Payee', hint: full ? (p.aliases || []).join(', ') : '' });
     }
   }
   for (const m of model.activeMembers(doc)) {

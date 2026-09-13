@@ -73,6 +73,16 @@ export function money(decimal, currency, prefs, { masked } = {}) {
   return el("span", { class: "num money--masked" }, [el("span", { "aria-hidden": "true", text }), el("span", { class: "sr-only", text: `${currency} amount hidden (balance masking is on)` })]);
 }
 
+// A category with its colour (BT-011-04). Colour is never the only signal: the name is always
+// beside it, and the dot is hidden from assistive technology. The colour reaches CSS through the
+// CSSOM, never a style attribute.
+export function categoryLabel(name, color) {
+  return el("span", { class: "catlabel" }, [
+    color ? el("span", { class: "swatch-dot", "aria-hidden": "true", vars: { "--swatch": color } }) : null,
+    el("span", { text: name }),
+  ]);
+}
+
 // A plain figure (a planned amount, spending total or similar magnitude) that is neither money in
 // nor money out, so it is not coloured as either; `alert` marks a shortfall.
 export function amountText(decimal, currency, prefs, { alert = false } = {}) {

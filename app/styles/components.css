@@ -64,6 +64,9 @@ textarea.field__input { min-height: 5rem; resize: vertical; }
 .money--in { color: var(--money-in); }
 .money--out { color: var(--money-out); }
 .money--alert { color: var(--color-danger-text); font-weight: var(--weight-medium); }
+/* Category colours (BT-011-04): a dot beside the name, never colour alone. */
+.catlabel { display: inline-flex; align-items: center; gap: var(--space-1); }
+.swatch-dot { flex: 0 0 auto; width: 0.7rem; height: 0.7rem; border-radius: 50%; background: var(--swatch, var(--text-subtle)); box-shadow: inset 0 0 0 1px rgb(0 0 0 / 0.25); }
 /* --text-muted, not --text-subtle: the dots must stay readable (retest defect 4). */
 .money--masked { letter-spacing: 0.1em; color: var(--text-muted); }
 

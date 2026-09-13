@@ -8,7 +8,8 @@
 // and names the bills that lead there. WHAT-IF applies changes to a copy in memory on the server
 // and never saves anything.
 import { el, mount, announce } from "../dom.js";
-import { stateView, money, amountText, button, field, input, select, badge } from "../components.js";
+import { stateView, money, amountText, button, field, input, select, badge, categoryLabel } from "../components.js";
+import { categoryIndex } from "../../core/categories.js";
 import { openModal } from "../modal.js";
 import { sliceFor } from "../../core/store.js";
 import { formatDate, formatAmount, todayIso } from "../../core/format.js";
@@ -69,7 +70,7 @@ export function createView(ctx) {
     const budgets = sliceFor(state, "budgets");
     const bs = stateView(budgets, { empty: "No budgets yet. Add one to plan spending by category.", isEmpty: (d) => !d.budgets.length });
     if (bs) mount(budgetsBox, bs);
-    else mount(budgetsBox, ...budgets.data.budgets.map((b) => budgetCard(ctx, b, plain, fmt, eff.dateFormat)));
+    else { const cats = categoryIndex(state); mount(budgetsBox, ...budgets.data.budgets.map((b) => budgetCard(ctx, b, plain, fmt, eff.dateFormat, cats))); }
 
     const fc = sliceFor(state, "forecast");
     const fs = stateView(fc, { empty: "No accounts to project.", isEmpty: (d) => !d.forecast.accounts.length });
@@ -97,6 +98,13 @@ function forecastTable(f, prefs, dateFormat, label, compare = null) {
   return el("div", { class: "table-wrap" }, [el("table", { class: "table table--cards", "aria-label": label }, [
     el("thead", {}, [el("tr", {}, headers.map((h) => el("th", { scope: "col", class: h === "Account" ? "" : "num", text: h })))]),
     el("tbody", {}, f.accounts.map((a) => {
+      if (a.error) {
+        return el("tr", {}, [
+          el("th", { scope: "row", "data-label": "Account", text: a.name }),
+          el("td", { "data-label": "Today", class: "num" }, [money(a.start, a.currency, prefs)]),
+          el("td", { "data-label": "", colspan: compare ? "3" : "4", text: "Too large to project exactly." }),
+        ]);
+      }
       const base = compare && compare.accounts.find((x) => x.accountId === a.accountId);
       const lowest = [money(a.expected.lowest.amount, a.currency, prefs), el("div", { class: "muted small", text: formatDate(a.expected.lowest.date, dateFormat) })];
       return el("tr", {}, [
@@ -117,11 +125,12 @@ function forecastTable(f, prefs, dateFormat, label, compare = null) {
   ])]);
 }
 
-function budgetCard(ctx, b, prefs, fmt, dateFormat) {
+function budgetCard(ctx, b, prefs, fmt, dateFormat, cats = new Map()) {
   const s = b.status;
+  if (s.error) return el("section", { class: "card", "aria-label": `Budget ${b.name}` }, [el("h3", { class: "card__title", text: b.name }), el("p", { class: "error-text", text: s.explanation })]);
   const n = (v) => Number(v);
   const lines = s.lines.map((l) => el("tr", {}, [
-    el("th", { scope: "row", "data-label": "Category" }, [el("span", { text: l.category }), meter(n(l.actual) + n(l.committed), n(l.planned) + n(l.carry)), l.over ? el("div", { class: "error-text small", text: `Over by ${fmt(l.available.replace(/^-/, ""), s.currency)}` }) : null]),
+    el("th", { scope: "row", "data-label": "Category" }, [categoryLabel(l.category, (cats.get(l.categoryId) || {}).shownColor), meter(n(l.actual) + n(l.committed), n(l.planned) + n(l.carry)), l.over ? el("div", { class: "error-text small", text: `Over by ${fmt(l.available.replace(/^-/, ""), s.currency)}` }) : null]),
     // Budget figures are magnitudes, not money in or out, so they are not coloured as such.
     el("td", { "data-label": "Planned", class: "num" }, [amountText(l.planned, s.currency, prefs)]),
     el("td", { "data-label": "Carried over", class: "num" }, [l.rollover ? amountText(l.carry, s.currency, prefs) : "—"]),

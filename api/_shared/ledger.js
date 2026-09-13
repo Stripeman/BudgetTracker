@@ -242,8 +242,13 @@ function assertMemberQuota(doc, member, env) {
   for (const t of doc.transactions || []) {
     if (own.has(t.accountId) || t.createdBy === member.subject) bytes += Buffer.byteLength(JSON.stringify(t));
   }
+  // Merchants, bills and budgets a member adds count too (security review SEC-B5).
+  for (const p of doc.payees || []) if (p.ownerSubject === member.subject || p.createdBy === member.subject) bytes += Buffer.byteLength(JSON.stringify(p));
+  for (const r of doc.recurring || []) if (own.has(r.accountId) || r.createdBy === member.subject) bytes += Buffer.byteLength(JSON.stringify(r));
+  for (const b of doc.budgets || []) if (b.ownerSubject === member.subject) bytes += Buffer.byteLength(JSON.stringify(b));
   if (bytes > limit) {
-    const e = badRequest('You have reached your storage allowance in this workspace. Archive or remove older entries, or ask the owner.', 'member_quota_exceeded');
+    // Nothing is ever deleted (BT-001-05), so the message does not suggest removing records.
+    const e = badRequest('You have reached your storage allowance in this workspace. Ask the workspace owner about raising it.', 'member_quota_exceeded');
     e.status = 409;
     throw e;
   }

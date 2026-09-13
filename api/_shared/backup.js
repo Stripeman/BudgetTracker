@@ -52,6 +52,22 @@ function checkInvariants(doc) {
     const a = accounts.get(r.accountId);
     if (!a || r.currency !== a.currency) throw invalidData('bill account');
     if (!Array.isArray(r.versions) || !r.versions.length || !r.versions.every((v) => money.isMinor(v.amountMinor) && v.amountMinor > 0)) throw invalidData('bill amounts');
+    // Every reference a bill can copy into a new entry must exist (security review SEC-B1).
+    if (r.toAccountId && !accounts.has(r.toAccountId)) throw invalidData('bill destination');
+    for (const v of r.versions) {
+      if (v.categoryId && !categories.has(v.categoryId)) throw invalidData('bill category');
+      if (v.payeeId && !payees.has(v.payeeId)) throw invalidData('bill merchant');
+    }
+  }
+  for (const b of doc.budgets || []) for (const l of b.lines || []) if (!categories.has(l.categoryId)) throw invalidData('budget category');
+  // A bill occurrence is recorded at most once among live entries (both legs of a transfer count once) (SEC-B6).
+  const occurrence = new Map();
+  for (const t of doc.transactions || []) {
+    if (t.deletedAt || !t.links || !t.links.recurringId || !t.links.occurrence) continue;
+    const key = `${t.links.recurringId}|${t.links.occurrence}`;
+    const group = t.transferId || t.id;
+    if (occurrence.has(key) && occurrence.get(key) !== group) throw invalidData('bill occurrence recorded twice');
+    occurrence.set(key, group);
   }
   for (const a of accounts.values()) {
     if (!money.isCurrency(a.currency) || !money.isMinor(a.openingBalanceMinor)) throw invalidData('account amounts');
@@ -173,6 +189,9 @@ function scopeFor(doc, subject, role) {
 }
 
 const COLLECTIONS = ['accounts', 'transactions', 'payees', 'categories', 'contacts', 'recurring', 'budgets'];
+// Directory records a replace never removes: records outside the caller's scope may refer to them,
+// and the directory is never pruned (security review SEC-B1, BT-001-05).
+const KEEP_ON_REPLACE = new Set(['categories', 'payees']);
 
 function inScope(doc, scope) {
   return {
@@ -224,7 +243,10 @@ function plan({ current, archived, mode, principal, member, nowIso, newWorkspace
       const counterpartIncluded = keepAccounts.has(t.counterpartAccountId);
       return counterpartIncluded ? t : { ...t, counterpartExcluded: true };
     });
-    const usedPayees = new Set(txns.map((t) => t.payeeId).filter(Boolean));
+    // A savings commitment into an account that is not restored would move money nowhere.
+    const carriedBills = arc.recurring.filter((r) => r.kind !== 'transfer' || keepAccounts.has(r.toAccountId));
+    // Merchants used by carried entries and bills come along, so nothing points at a missing one (SEC-B1).
+    const usedPayees = new Set([...txns.map((t) => t.payeeId), ...carriedBills.flatMap((r) => (r.versions || []).map((v) => v.payeeId))].filter(Boolean));
     const payees = (archived.payees || []).filter((p) => scopeArc.payee(p) || usedPayees.has(p.id));
     const memberId = newId('mem');
     next = {
@@ -235,8 +257,7 @@ function plan({ current, archived, mode, principal, member, nowIso, newWorkspace
       // Payee ownership is never transferred to the restorer (security review finding 9).
       payees,
       categories: archived.categories || [], transactions: txns, audit: [], idempotency: {}, restoredFrom: null,
-      // A savings commitment into an account that is not restored would move money nowhere.
-      recurring: arc.recurring.filter((r) => r.kind !== 'transfer' || keepAccounts.has(r.toAccountId)),
+      recurring: carriedBills,
       budgets: arc.budgets,
     };
   } else {
@@ -244,7 +265,8 @@ function plan({ current, archived, mode, principal, member, nowIso, newWorkspace
     next = structuredClone(current);
     if (mode === 'replace') {
       for (const c of COLLECTIONS) {
-        const drop = new Set(cur[c].map((r) => r.id));
+        const archivedIds = new Set(arc[c].map((r) => r.id));
+        const drop = new Set(cur[c].filter((r) => !KEEP_ON_REPLACE.has(c) || archivedIds.has(r.id)).map((r) => r.id));
         const add = arc[c].filter((r) => !((next[c] || []).some((x) => x.id === r.id) && !drop.has(r.id)));
         next[c] = [...(next[c] || []).filter((r) => !drop.has(r.id)), ...add];
       }

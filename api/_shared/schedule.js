@@ -47,19 +47,32 @@ function validateSchedule(input) {
   return { freq, interval, startDate, endDate: endDate || null, dayOfMonth: parse(startDate).d };
 }
 
+// The index of the first occurrence that can fall on or after `from`, computed directly so the
+// cost never depends on how long ago the schedule started (security review SEC-B4). Monthly and
+// yearly steps start one step early because clamping can pull a date back into the range.
+function firstIndex(schedule, from) {
+  if (from <= schedule.startDate) return 0;
+  if (schedule.freq === 'weekly') return Math.max(0, Math.floor(daysBetween(schedule.startDate, from) / (7 * schedule.interval)));
+  const months = schedule.freq === 'monthly' ? schedule.interval : 12 * schedule.interval;
+  const a = parse(schedule.startDate);
+  const b = parse(from);
+  return Math.max(0, Math.floor(((b.y - a.y) * 12 + (b.m - a.m)) / months) - 1);
+}
+
 // Occurrence dates within [from, to] (inclusive), in order, bounded.
 function occurrences(schedule, from, to) {
   const out = [];
   const last = schedule.endDate && schedule.endDate < to ? schedule.endDate : to;
   if (last < schedule.startDate) return out;
-  for (let k = 0; out.length < MAX_OCCURRENCES; k += 1) {
+  const dom = schedule.dayOfMonth || parse(schedule.startDate).d;
+  const k0 = firstIndex(schedule, from);
+  for (let k = k0; out.length < MAX_OCCURRENCES && k - k0 <= MAX_OCCURRENCES + 2; k += 1) {
     let date;
     if (schedule.freq === 'weekly') date = addDays(schedule.startDate, 7 * schedule.interval * k);
-    else if (schedule.freq === 'monthly') date = addMonthsClamped(schedule.startDate, schedule.interval * k, schedule.dayOfMonth);
-    else date = addMonthsClamped(schedule.startDate, 12 * schedule.interval * k, schedule.dayOfMonth);
+    else if (schedule.freq === 'monthly') date = addMonthsClamped(schedule.startDate, schedule.interval * k, dom);
+    else date = addMonthsClamped(schedule.startDate, 12 * schedule.interval * k, dom);
     if (date > last) break;
     if (date >= from) out.push(date);
-    if (k > 100000) break;
   }
   return out;
 }

@@ -79,7 +79,8 @@ function validateLinks(links) {
 }
 
 function history(t, by, at, changed) {
-  t.history = [...(t.history || []), { revision: t.revision, at, by, fields: changed }].slice(-50);
+  // Never truncated (BT-001-05); growth is bounded by the member quota and the document cap.
+  t.history = [...(t.history || []), { revision: t.revision, at, by, fields: changed }];
 }
 
 async function list(ctx, req) {
@@ -111,7 +112,9 @@ async function list(ctx, req) {
     if (f.max !== undefined && money.compareAbsToDecimal(t.amountMinor, t.currency, f.max) > 0) return false;
     if (f.q) {
       const payee = t.payeeId && payees.get(t.payeeId);
-      const hay = `${payee ? payee.name : ''} ${(payee && payee.aliases || []).join(' ')} ${t.notes || ''} ${(t.tags || []).join(' ')}`.toLowerCase();
+      // Aliases are searched only for merchants the caller fully sees (security review SEC-B8).
+      const full = payee && (payee.visibility === 'shared' || payee.ownerSubject === ctx.principal.subject);
+      const hay = `${payee ? payee.name : ''} ${((full && payee.aliases) || []).join(' ')} ${t.notes || ''} ${(t.tags || []).join(' ')}`.toLowerCase();
       if (!hay.includes(f.q)) return false;
     }
     return true;
@@ -354,6 +357,15 @@ function setDeleted(deleted) {
       for (const x of legs) {
         const acc = (doc.accounts || []).find((a) => a.id === x.accountId);
         if (!acc || !canChangeRecord(doc, ctx.principal, acc, x, 'delete', now)) throw forbidden('You cannot change both sides of this transfer.');
+      }
+      // A bill payment recorded again after this entry was deleted must not be doubled (SEC-B6).
+      if (!deleted) {
+        for (const x of legs) {
+          const l = x.links || {};
+          if (!l.recurringId || !l.occurrence) continue;
+          const clash = (doc.transactions || []).some((y) => !y.deletedAt && !legs.includes(y) && y.links && y.links.recurringId === l.recurringId && y.links.occurrence === l.occurrence);
+          if (clash) throw conflict('This bill payment was recorded again after this entry was deleted, so this one cannot be restored.', 'already_recorded');
+        }
       }
       for (const x of legs) {
         x.deletedAt = deleted ? nowIso : null;

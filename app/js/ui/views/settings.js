@@ -6,7 +6,9 @@
 import { el, mount, announce } from "../dom.js";
 import { createDayNightControl } from "../daynight.js";
 import { createThemePicker } from "../themepicker.js";
-import { pageHead, field, select, sourceBadge, button, input, commitOnConfirm } from "../components.js";
+import { pageHead, field, select, sourceBadge, button, input, commitOnConfirm, badge } from "../components.js";
+import { sliceFor } from "../../core/store.js";
+import { colourEntries } from "../../core/categories.js";
 import { messageFor } from "../../core/errors.js";
 
 const CURRENCIES = ["", "EUR", "USD", "GBP", "CHF", "SEK", "NOK", "DKK", "PLN", "CAD", "AUD", "JPY"];
@@ -25,6 +27,7 @@ export function createView(ctx) {
   const paletteField = el("div", { class: "field" }, [el("p", { class: "field__label", id: "set-palette-label", text: "Colour palette" }), palettePicker.element, paletteSource]);
   const prefBox = el("div", { class: "form-grid" });
   const contactsBox = el("div");
+  const colourBox = el("div", { class: "stack" });
   const element = el("section", {}, [
     pageHead("My settings"),
     el("p", { class: "muted small", text: "“Inherited” values follow the site default until you change them. “Customized” values are your own choice; use “Use inherited” to return to the default. “Locked by site” values are set by the site administrator." }),
@@ -32,6 +35,11 @@ export function createView(ctx) {
       el("section", { class: "card", "aria-labelledby": "set-appearance" }, [el("h2", { class: "card__title", id: "set-appearance", text: "Appearance" }), appearanceSource, dayNight.element, paletteField]),
       el("section", { class: "card", "aria-labelledby": "set-display" }, [el("h2", { class: "card__title", id: "set-display", text: "Display and privacy" }), prefBox, status]),
       el("section", { class: "card", "aria-labelledby": "set-contacts" }, [el("h2", { class: "card__title", id: "set-contacts", text: "Private contacts" }), el("p", { class: "field__help", text: "Only you can see these. Use them on your private records; use workspace contacts for shared ones." }), contactsBox]),
+      el("section", { class: "card", "aria-labelledby": "set-colours" }, [
+        el("h2", { class: "card__title", id: "set-colours", text: "Category colours" }),
+        el("p", { class: "field__help", text: "Your own colours for this workspace's categories. They change only what you see; workspace colours are managed on the Workspace page." }),
+        colourBox,
+      ]),
     ]),
   ]);
 
@@ -68,10 +76,53 @@ export function createView(ctx) {
   }
   void loadContacts();
 
+  // Personal category colours (BT-011-04), with the same swatch picker as the theme. Rebuilt only
+  // when the categories or colours change, and focus returns to the picker that was in use.
+  let colourSig = "";
+  function renderColours(state) {
+    const data = sliceFor(state, "categories").data;
+    const prefs = state.preferences;
+    if (!data || !prefs) return;
+    const personal = prefs.effective.categoryColors || {};
+    const locked = prefs.sources.categoryColors === "locked";
+    const cats = data.categories.filter((c) => !c.archived);
+    const sig = JSON.stringify([cats.map((c) => [c.id, c.name, c.color]), personal, locked]);
+    if (sig === colourSig) return;
+    colourSig = sig;
+    const active = document.activeElement;
+    const focused = active && colourBox.contains(active) && active.closest ? active.closest("[data-category]") : null;
+    const focusId = focused ? focused.dataset.category : null;
+    const rows = cats.map((c) => {
+      const labelId = `set-colour-${c.id}`;
+      const picker = createThemePicker({
+        value: personal[c.id] || c.color, entries: colourEntries(data.palette, c.color, personal[c.id]),
+        labelledBy: labelId, listLabel: `Colours for ${c.name}`, namePrefix: `${c.name} colour`,
+        onPick: (hex) => { void save({ categoryColors: { ...personal, [c.id]: hex } }); },
+      });
+      picker.setDisabled(locked);
+      const reset = personal[c.id] && !locked ? button("Use workspace colour", () => {
+        const next = { ...personal };
+        delete next[c.id];
+        void save({ categoryColors: Object.keys(next).length ? next : null });
+      }, { small: true, variant: "ghost", attrs: { "aria-label": `Use the workspace colour for ${c.name}` } }) : null;
+      return el("div", { class: "field", dataset: { category: c.id } }, [
+        el("p", { class: "field__label", id: labelId, text: c.name }), picker.element,
+        el("div", { class: "row" }, [badge(personal[c.id] ? "Your colour" : "Workspace colour", "source"), reset]),
+      ]);
+    });
+    mount(colourBox, ...rows);
+    if (focusId) {
+      const row = rows.find((r) => r.dataset.category === focusId);
+      const toggle = row && row.querySelector(".themepick__toggle");
+      if (toggle) toggle.focus();
+    }
+  }
+
   let rendered = "";
   function update(state) {
     const prefs = state.preferences;
     if (!prefs) return;
+    renderColours(state);
     dayNight.setLocked(prefs.sources.themeMode === "locked");
     mount(appearanceSource, sourceBadge(prefs.sources.themeMode));
     const paletteLocked = prefs.sources.themePalette === "locked";

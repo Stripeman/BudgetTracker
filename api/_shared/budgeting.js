@@ -81,7 +81,18 @@ function committedSpending(doc, accountIds, categoryId, from, to, today, recorde
   return total;
 }
 
+// Amounts too large to add up exactly are reported for that budget instead of failing every
+// budget in the workspace (security review SEC-B3).
 function budgetStatus(doc, budget, today, now) {
+  try {
+    return computeStatus(doc, budget, today, now);
+  } catch (e) {
+    if (!e || e.code !== 'amount_overflow') throw e;
+    return { period: periodFor(budget, today), currency: budget.currency, lines: [], totals: null, error: 'too_large', explanation: 'These amounts are too large to add up exactly.', scopeNote: '', excludedCurrencyAccounts: 0 };
+  }
+}
+
+function computeStatus(doc, budget, today, now) {
   const period = periodFor(budget, today);
   const prev = previousPeriod(budget, period);
   const accounts = scopeAccounts(doc, budget, now);
@@ -102,7 +113,10 @@ function budgetStatus(doc, budget, today, now) {
       carry: money.toDecimal(carry, c), available: money.toDecimal(available, c), over: available < 0,
     };
   });
-  const otherCurrency = (doc.accounts || []).filter((a) => !a.deletedAt && a.currency !== c && (budget.scope !== 'shared' || a.visibility === 'shared')).length;
+  // Counted only within the budget's own scope, so it reveals nothing about others' accounts (SEC-B9).
+  const owner = { subject: budget.ownerSubject };
+  const inScope = budget.scope === 'shared' ? (a) => a.visibility === 'shared' : (a) => can(doc, owner, a, 'view-transactions', now);
+  const otherCurrency = (doc.accounts || []).filter((a) => !a.deletedAt && a.currency !== c && inScope(a)).length;
   return {
     period, currency: c, lines,
     totals: Object.fromEntries(Object.entries(totals).map(([k, v]) => [k, money.toDecimal(v, c)])),
@@ -138,8 +152,12 @@ function forecast(doc, principal, { today, horizonDays, bufferMinor = null, buff
     }
     startBalance.set(a.id, bal);
   }
+  // A bill counts only for someone who may see entries on its SOURCE account, so the incoming side
+  // of another member's private transfer never shows in a shared account's forecast (SEC-B2).
+  const live = new Map((doc.accounts || []).filter((a) => !a.deletedAt).map((a) => [a.id, a]));
+  const canSeeSource = (id) => live.has(id) && can(doc, principal, live.get(id), 'view-transactions', now);
   for (const b of doc.recurring || []) {
-    if (b.deletedAt || excluded.has(b.id)) continue;
+    if (b.deletedAt || excluded.has(b.id) || !canSeeSource(b.accountId)) continue;
     const owed = [
       ...bills.overdue(b, today, recorded).map((due) => ({ due, at: today, overdue: true })),
       ...bills.dueBetween(b, today, end, recorded).map((due) => ({ due, at: due, overdue: false })),
@@ -165,6 +183,7 @@ function forecast(doc, principal, { today, horizonDays, bufferMinor = null, buff
     const list = events.get(a.id).sort((x, y) => (x.date === y.date ? 0 : x.date < y.date ? -1 : 1));
     const buffer = bufferMinor !== null && bufferCurrency === a.currency ? bufferMinor : null;
     const out = { accountId: a.id, name: a.name, currency: a.currency, start: money.toDecimal(startBalance.get(a.id), a.currency), itemsShared: detail.has(a.id), events: list.length, warnings: [] };
+    try {
     for (const [name, keep] of Object.entries(variants)) {
       let bal = startBalance.get(a.id);
       let min = { minor: bal, date: today };
@@ -189,6 +208,13 @@ function forecast(doc, principal, { today, horizonDays, bufferMinor = null, buff
         if (firstBelowZero.date) out.warnings.push({ type: 'below-zero', date: firstBelowZero.date, balance: money.toDecimal(firstBelowZero.minor, a.currency), obligations: names(crossing.zero) });
         if (below && buffer !== null) out.warnings.push({ type: 'below-buffer', date: below, buffer: money.toDecimal(buffer, a.currency), obligations: names(crossing.buffer) });
       }
+    }
+    } catch (e) {
+      if (!e || e.code !== 'amount_overflow') throw e;
+      // One balance too large to add up exactly is reported, never allowed to fail the forecast.
+      out.error = 'too_large';
+      out.warnings = [];
+      for (const name of Object.keys(variants)) out[name] = null;
     }
     for (const w of out.warnings) warnings.push({ accountId: a.id, accountName: a.name, currency: a.currency, ...w });
     return out;

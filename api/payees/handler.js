@@ -14,7 +14,7 @@
 // values, author, time and reason. Merchants are payees, not financial accounts.
 const { readBody, query, badRequest, forbidden, notFound, conflict } = require('../_shared/http');
 const { newId, requireId } = require('../_shared/ids');
-const { can, roleAtLeast, visibleTransactions } = require('../_shared/authz');
+const { can, capabilitiesFor, roleAtLeast, visibleTransactions } = require('../_shared/authz');
 const store = require('../_shared/store');
 const ledger = require('../_shared/ledger');
 const money = require('../_shared/money');
@@ -91,7 +91,12 @@ function view(doc, p, principal, member, stats, now) {
     defaultAccountId: acct && can(doc, principal, acct, 'view-transactions', now) ? acct.id : null,
     defaultCurrency: p.defaultCurrency || null, tags: p.tags || [], revision: p.revision || 1,
     canEdit: !!member && mayEdit(p, member),
-    history: (p.history || []).slice(-20).map((h) => ({ at: h.at, by: names.get(h.by) || 'Former member', changes: h.changes, reason: h.reason || '' })),
+    // Others see a once-private merchant's history only from when it was shared, and without the
+    // values it had before (security review SEC-B11).
+    history: (p.history || []).filter((h) => p.ownerSubject === principal.subject || !p.sharedAt || h.at >= p.sharedAt).slice(-20).map((h) => ({
+      at: h.at, by: names.get(h.by) || 'Former member', reason: h.reason || '',
+      changes: p.ownerSubject !== principal.subject && p.sharedAt && h.at === p.sharedAt ? h.changes.map((c) => ({ field: c.field, from: null, to: c.to })) : h.changes,
+    })),
   };
 }
 
@@ -192,9 +197,11 @@ async function create(ctx, req) {
       // Created while entering an expense on a particular account: the merchant takes that account's
       // scope, so it is usable there. On someone else's private account it belongs to that account's
       // owner and does not outlive a revoked grant in the creator's hands (security review finding 9).
+      // The same rule as adding an entry: any access makes the account known, `create` is required.
       const a = (doc.accounts || []).find((x) => x.id === body.accountId && !x.deletedAt);
-      if (!a || !can(doc, ctx.principal, a, 'view-transactions', now)) throw notFound('Unknown account.');
-      if (!can(doc, ctx.principal, a, 'create', now)) throw forbidden('You cannot add entries to this account.');
+      const caps = a ? capabilitiesFor(doc, ctx.principal, a, now) : new Set();
+      if (!caps.size) throw notFound('Unknown account.');
+      if (!caps.has('create')) throw forbidden('You cannot add entries to this account.');
       if (a.visibility === 'shared') visibility = 'shared';
       else if (a.ownerSubject !== member.subject) { visibility = 'private'; ownerSubject = a.ownerSubject; }
     }
@@ -214,6 +221,7 @@ async function create(ctx, req) {
       history: [{ revision: 1, at: nowIso, by: member.subject, changes: [{ field: 'create' }] }],
     };
     doc.payees = [...(doc.payees || []), p];
+    ledger.assertMemberQuota(doc, member, ctx.env);
     audit.record(doc, { actor: member.subject, action: 'payee.create', targetType: 'payee', targetId: p.id, scope: visibility === 'shared' ? 'members' : `self:${ownerSubject}`, at: nowIso });
     return { payee: view(doc, p, ctx.principal, member, [], now), similar: dup.similar.map(merchants.brief) };
   });
@@ -237,17 +245,20 @@ function recorder(p) {
   const set = (field, value) => {
     const from = p[field] === undefined ? null : p[field];
     if (JSON.stringify(from) === JSON.stringify(value === undefined ? null : value)) return;
-    changes.push({ field, from, to: value === undefined ? null : value });
+    // Account ids never go into history: they could identify someone's private account (SEC-B11).
+    const redact = (v) => (field === 'defaultAccountId' && v ? 'an account' : v);
+    changes.push({ field, from: redact(from), to: redact(value === undefined ? null : value) });
     p[field] = value;
   };
   return { set, changes };
 }
 
-function commit(doc, p, member, nowIso, changes, reason, action) {
+function commit(doc, p, member, nowIso, changes, reason, action, env) {
   if (!changes.length) return;
   p.revision = (p.revision || 1) + 1;
   p.updatedAt = nowIso;
   p.history = [...(p.history || []), { revision: p.revision, at: nowIso, by: member.subject, changes, reason: reason || '' }];
+  ledger.assertMemberQuota(doc, member, env);
   audit.record(doc, { actor: member.subject, action, targetType: 'payee', targetId: p.id, scope: p.visibility === 'shared' ? 'members' : `self:${p.ownerSubject}`, at: nowIso, fields: changes.map((c) => c.field) });
 }
 
@@ -266,6 +277,7 @@ async function patch(ctx, req) {
     if (body.visibility !== undefined && body.visibility !== p.visibility) {
       if (body.visibility !== 'shared' || p.ownerSubject !== member.subject || member.role === 'viewer') throw forbidden('Only the creator can share a private merchant.');
       set('visibility', 'shared');
+      p.sharedAt = nowIso;
       const acct = p.defaultAccountId && (doc.accounts || []).find((a) => a.id === p.defaultAccountId);
       if (acct && acct.visibility !== 'shared') set('defaultAccountId', null);
     }
@@ -291,7 +303,7 @@ async function patch(ctx, req) {
     if (body.defaultCurrency !== undefined) set('defaultCurrency', currency(body.defaultCurrency));
     if (body.tags !== undefined) set('tags', fields.tags(body.tags));
     if (body.notes !== undefined) set('notes', fields.text(body.notes, { field: 'Notes', max: 5000, multiline: true }));
-    commit(doc, p, member, nowIso, changes, reason, 'payee.update');
+    commit(doc, p, member, nowIso, changes, reason, 'payee.update', ctx.env);
     return { payee: view(doc, p, ctx.principal, member, [], now) };
   });
   return { body: result };
@@ -324,7 +336,7 @@ function lifecycle(action) {
         set('closedOn', null);
         set('closeReason', '');
       }
-      commit(doc, p, member, nowIso, changes, reason, action === 'archive' ? 'payee.archive' : 'payee.reopen');
+      commit(doc, p, member, nowIso, changes, reason, action === 'archive' ? 'payee.archive' : 'payee.reopen', ctx.env);
       return { payee: view(doc, p, ctx.principal, member, [], now) };
     });
     return { body: result };

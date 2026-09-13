@@ -137,7 +137,8 @@ async function patch(ctx, req) {
       entry.before = before;
       entry.after = { openingBalanceMinor: account.openingBalanceMinor, openingDate: account.openingDate };
     }
-    account.history = [...(account.history || []), entry].slice(-50);
+    // Never truncated (BT-001-05): this history holds the before/after opening balance.
+    account.history = [...(account.history || []), entry];
     audit.record(doc, { actor: member.subject, action: 'account.update', targetType: 'account', targetId: account.id, scope: `account:${account.id}`, at: ctx.nowIso(), fields: changed });
     return { account: ledger.accountView(doc, ctx.principal, account, now) };
   });

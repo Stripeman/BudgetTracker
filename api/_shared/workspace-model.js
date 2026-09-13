@@ -3,6 +3,7 @@
 const { newId } = require('./ids');
 const { stampDocument } = require('./schema');
 const audit = require('./audit');
+const colors = require('./colors');
 
 const KINDS = Object.freeze(['personal', 'household', 'group', 'trip']);
 
@@ -20,7 +21,11 @@ function newWorkspaceDoc({ id, name, kind, currency, principal, nowIso }) {
     settings: { reportingCurrency: currency, budgetPeriod: 'monthly', weekStart: 1 },
     members: [{ id: newId('mem'), subject: principal.subject, email: principal.email, name: principal.name || '', role: 'owner', status: 'active', joinedAt: nowIso }],
     invitations: [], grants: [], contacts: [], accounts: [], payees: [],
-    categories: DEFAULT_CATEGORIES.map(([n, t]) => ({ id: newId('cat'), name: n, type: t, parentId: null, archived: false })),
+    categories: DEFAULT_CATEGORIES.map(([n, t]) => {
+      const catId = newId('cat');
+      // Each category keeps the default colour it was created with (BT-011-04), by id.
+      return { id: catId, name: n, type: t, parentId: null, archived: false, color: null, defaultColor: colors.initialDefault(n, catId) };
+    }),
     transactions: [], audit: [], idempotency: {},
   };
   audit.record(doc, { actor: principal.subject, action: 'workspace.create', targetType: 'workspace', targetId: id, at: nowIso });

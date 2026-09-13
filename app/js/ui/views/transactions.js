@@ -13,7 +13,8 @@
 // merchants are not offered, but an entry keeps the merchant it already has. Edits send only the
 // fields that changed, and an entry keeps its category even if that category has been archived.
 import { el, mount, announce } from "../dom.js";
-import { stateView, money, button, field, input, select, badge } from "../components.js";
+import { stateView, money, button, field, input, select, badge, categoryLabel } from "../components.js";
+import { categoryIndex } from "../../core/categories.js";
 import { openModal, confirmModal } from "../modal.js";
 import { createMerchantPicker } from "../merchantpicker.js";
 import { sliceFor } from "../../core/store.js";
@@ -99,7 +100,7 @@ export function createView(ctx) {
     const prefs = state.preferences;
     const effective = (prefs && prefs.effective) || {};
     const txns = sliceFor(state, "transactions");
-    const categories = new Map(((sliceFor(state, "categories").data || {}).categories || []).map((c) => [c.id, c.name]));
+    const categories = categoryIndex(state);
     const s = stateView(txns, { empty: "No entries match these filters.", isEmpty: (d) => !d.transactions.length });
     const fmt = (v, c) => formatAmount(v, c, { numberFormat: effective.numberFormat });
     if (txns.data) {
@@ -115,7 +116,9 @@ export function createView(ctx) {
       el("th", { scope: "row", "data-label": "Date", text: formatDate(t.date, effective.dateFormat) }),
       el("td", { "data-label": "Merchant" }, [el("span", { text: t.payeeName || (t.kind === "transfer" ? "Transfer" : "—") }), t.tags.length ? el("div", { class: "muted small", text: t.tags.join(", ") }) : null]),
       el("td", { "data-label": "Account", text: t.accountName }),
-      el("td", { "data-label": "Category", text: t.splits.length ? "Split" : categories.get(t.categoryId) || (t.kind === "transfer" ? "—" : "Uncategorized") }),
+      el("td", { "data-label": "Category" }, [t.splits.length ? "Split"
+        : categories.get(t.categoryId) ? categoryLabel(categories.get(t.categoryId).name, categories.get(t.categoryId).shownColor)
+          : (t.kind === "transfer" ? "—" : "Uncategorized")]),
       el("td", { "data-label": "Amount", class: "num" }, [money(t.amount, t.currency, prefs, { masked: false })]),
       el("td", { "data-label": "Status" }, [badge(STATUS_LABELS[t.status] || t.status), t.kind !== "expense" ? el("div", { class: "muted small", text: KIND_LABELS[t.kind] || t.kind }) : null]),
       el("td", { "data-label": "" }, [el("div", { class: "row-actions" }, [

@@ -11,6 +11,21 @@ const store = require('../_shared/store');
 const site = require('../_shared/site');
 const money = require('../_shared/money');
 const fields = require('../_shared/fields');
+const colors = require('../_shared/colors');
+
+// Personal category colours (BT-011-04): { <categoryId>: "#rrggbb" }, validated like workspace
+// colours. Keys must be category ids, so no key can reach an object's prototype.
+function categoryColors(v) {
+  if (!v || typeof v !== 'object' || Array.isArray(v)) throw badRequest('Category colours must be an object.', 'invalid_field');
+  const entries = Object.entries(v);
+  if (entries.length > 500) throw badRequest('Too many category colours.', 'invalid_field');
+  const out = {};
+  for (const [id, hex] of entries) {
+    if (!/^cat_[A-Za-z0-9_-]{1,64}$/.test(id)) throw badRequest('Category id is not valid.', 'invalid_id');
+    out[id] = colors.validateColor(hex, 'Category colour');
+  }
+  return out;
+}
 
 const VALIDATORS = {
   themeMode: (v) => fields.oneOf(v, site.THEME_MODES, 'Theme mode'),
@@ -29,8 +44,9 @@ const VALIDATORS = {
     return [...new Set(v)];
   },
   favoritePayees: (v) => { if (!Array.isArray(v) || v.length > 50 || !v.every(isSafeId)) throw badRequest('Favourite payees are not valid.', 'invalid_field'); return [...new Set(v)]; },
+  categoryColors,
 };
-const BUILT_IN = { locale: 'en', timeZone: 'UTC', dateFormat: 'iso', numberFormat: '1,234.56', displayCurrency: null, balanceMasking: false, defaultWorkspaceId: null, dashboardWidgets: ['balances', 'upcoming', 'budgets', 'recent'], favoritePayees: [] };
+const BUILT_IN = { locale: 'en', timeZone: 'UTC', dateFormat: 'iso', numberFormat: '1,234.56', displayCurrency: null, balanceMasking: false, defaultWorkspaceId: null, dashboardWidgets: ['balances', 'upcoming', 'budgets', 'recent'], favoritePayees: [], categoryColors: {} };
 
 function resolve(stored, siteDoc) {
   const effective = {};

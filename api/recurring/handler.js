@@ -57,9 +57,15 @@ function checkCategory(doc, value) {
   return id;
 }
 
+// Bounded so a year of occurrences across every bill in a workspace can never overflow a total
+// and break bills, budgets or the forecast for everyone (security review SEC-B3).
+const MAX_BILL_MINOR = 1e10;
+const MAX_BILLS = 500;
+
 function positive(text, currency, field = 'Amount') {
   const m = money.parseDecimal(text, currency, field);
   if (m <= 0) throw badRequest(`${field} must be greater than zero.`, 'invalid_amount');
+  if (m > MAX_BILL_MINOR) throw badRequest(`${field} is larger than a recurring bill can be.`, 'amount_too_large');
   return m;
 }
 
@@ -76,13 +82,15 @@ function tripFor(doc, value) {
 }
 
 function history(r, by, at, changed) {
-  r.history = [...(r.history || []), { revision: r.revision, at, by, fields: changed }].slice(-100);
+  // Never truncated (BT-001-05); growth is bounded by the member quota and the document cap.
+  r.history = [...(r.history || []), { revision: r.revision, at, by, fields: changed }];
 }
 
 function locate(doc, principal, id, now) {
   const r = (doc.recurring || []).find((x) => x.id === id && !x.deletedAt);
   const a = r && (doc.accounts || []).find((x) => x.id === r.accountId);
-  if (!r || !a || !can(doc, principal, a, 'view-transactions', now)) throw notFound('Unknown bill.');
+  // A bill on a deleted account is gone for everyone, like the account itself (SEC-B7).
+  if (!r || !a || a.deletedAt || !can(doc, principal, a, 'view-transactions', now)) throw notFound('Unknown bill.');
   return { r, a };
 }
 
@@ -108,7 +116,8 @@ function view(doc, r, principal, user, today, now, recorded) {
   return {
     id: r.id, name: r.name, billType: r.billType, kind: r.kind, currency: c,
     accountId: r.accountId, accountName: a ? a.name : '',
-    toAccountId: r.toAccountId || null,
+    // Someone else's private destination is neither named nor identified (SEC-B12).
+    toAccountId: dest && can(doc, principal, dest, 'view-balances', now) ? r.toAccountId : null,
     toAccountName: dest ? (can(doc, principal, dest, 'view-balances', now) ? dest.name : 'Another member\'s account') : null,
     ...termsView(bills.termsAt(r, today)),
     schedule: { freq: r.schedule.freq, interval: r.schedule.interval, startDate: r.schedule.startDate, endDate: r.schedule.endDate },
@@ -116,8 +125,8 @@ function view(doc, r, principal, user, today, now, recorded) {
     nextDue: upcoming[0] || null, upcoming,
     overdue: bills.overdue(r, today, recorded).slice(-24),
     reminders: bills.reminders(r, today, recorded),
-    skips: (r.skips || []).map((s) => ({ date: s.date, reason: s.reason || '' })),
-    pauses: (r.pauses || []).map((p) => ({ id: p.id, from: p.from, until: p.until })),
+    skips: bills.activeSkips(r).map((s) => ({ date: s.date, reason: s.reason || '' })),
+    pauses: bills.effectivePauses(r).map((p) => ({ id: p.id, from: p.from, until: p.until })),
     pausedNow: bills.isPaused(r, today),
     ended: !!(r.schedule.endDate && r.schedule.endDate < today),
     versions: r.versions.map(termsView),
@@ -143,7 +152,7 @@ async function list(ctx, req) {
   const visible = (doc.recurring || []).filter((r) => {
     if (r.deletedAt) return false;
     const a = (doc.accounts || []).find((x) => x.id === r.accountId);
-    return a && can(doc, ctx.principal, a, 'view-transactions', now);
+    return a && !a.deletedAt && can(doc, ctx.principal, a, 'view-transactions', now);
   });
   const views = visible.map((r) => view(doc, r, ctx.principal, user, today, now, recorded));
   const next30 = {};
@@ -195,6 +204,7 @@ async function create(ctx, req) {
     const now = ctx.now();
     const nowIso = ctx.nowIso();
     const today = nowIso.slice(0, 10);
+    if ((doc.recurring || []).filter((x) => !x.deletedAt).length >= MAX_BILLS) throw conflict(`This workspace has reached its limit of ${MAX_BILLS} bills. End bills you no longer need.`, 'too_many_bills');
     const billType = fields.oneOf(body.billType, bills.BILL_TYPES, 'Bill type', 'custom');
     const a = accountFor(doc, ctx.principal, requireId(body.accountId, 'accountId'), 'create', now);
     const kind = fields.oneOf(body.kind, bills.KINDS, 'Kind', bills.defaultKind(billType, body.toAccountId));
@@ -204,7 +214,7 @@ async function create(ctx, req) {
       accountId: a.id, toAccountId: null, currency: a.currency, schedule: sched,
       reminderDays: reminderDays(body.reminderDays, 3), notes: fields.text(body.notes, { field: 'Notes', max: 2000, multiline: true }),
       tripId: tripFor(doc, body.tripId), trackFrom: fields.date(body.trackFrom, 'Track from') || today,
-      versions: [], skips: [], pauses: [], createdBy: member.subject, createdAt: nowIso, revision: 1, deletedAt: null, history: [],
+      versions: [], skips: [], pauses: [], resumes: [], createdBy: member.subject, createdAt: nowIso, revision: 1, deletedAt: null, history: [],
     };
     const version = {
       id: newId('ver'), effectiveFrom: sched.startDate, amountMinor: positive(body.amount, a.currency),
@@ -252,6 +262,10 @@ async function record(ctx, req) {
     if (status === 'paused') throw conflict('This occurrence falls in a pause. Resume the bill before recording it.', 'paused');
     const terms = bills.termsAt(r, occurrence);
     if (body.amount === undefined && terms.amountType === 'variable') throw badRequest('This bill varies. Enter the actual amount before recording it.', 'amount_required');
+    // Never copy a reference to a category that no longer exists into a new entry (SEC-B1).
+    if (r.kind !== 'transfer' && body.categoryId === undefined && terms.categoryId && !(doc.categories || []).some((c) => c.id === terms.categoryId)) {
+      throw conflict('This bill\'s category no longer exists. Choose a category for this payment or edit the bill.', 'bill_category_missing');
+    }
     const magnitude = body.amount === undefined ? terms.amountMinor : positive(body.amount, r.currency);
     const base = {
       date: fields.date(body.date, 'Date') || occurrence, postedDate: null,
@@ -262,9 +276,10 @@ async function record(ctx, req) {
     const created = [];
     if (r.kind === 'transfer') {
       if (NOT_FOR_TRANSFERS.some((k) => body[k] !== undefined)) throw badRequest('Transfers between accounts have no category, payee or responsible person.', 'invalid_transfer');
-      const dest = (doc.accounts || []).find((x) => x.id === r.toAccountId && !x.deletedAt);
-      if (!dest) throw conflict('The destination account no longer exists.', 'destination_missing');
-      if (!can(doc, ctx.principal, dest, 'create', now)) throw forbidden('You cannot add entries to the destination account.');
+      const dest = (doc.accounts || []).find((x) => x.id === r.toAccountId);
+      // Permission first, so the answer never reveals whether someone else's account still exists (SEC-B12).
+      if (!dest || !can(doc, ctx.principal, dest, 'create', now)) throw forbidden('You cannot add entries to the destination account.');
+      if (dest.deletedAt) throw conflict('The destination account no longer exists.', 'destination_missing');
       const transferId = newId('xfr');
       const leg = (accountId, amountMinor, counterpartAccountId) => ({
         ...base, id: newId('txn'), accountId, kind: 'transfer', amountMinor, currency: r.currency, transferId, counterpartAccountId,
@@ -323,31 +338,32 @@ function change(action) {
         }
       } else if (action === 'unskip') {
         const occurrence = requireOccurrence(r, body.occurrence);
-        if (bills.isSkipped(r, occurrence)) { r.skips = r.skips.filter((s) => s.date !== occurrence); changed = `unskip ${occurrence}`; }
+        if (bills.isSkipped(r, occurrence)) {
+          // The skip record is kept and marked withdrawn, never removed (BT-001-05).
+          r.skips = (r.skips || []).map((s) => (s.date === occurrence && !s.withdrawnAt ? { ...s, withdrawnAt: nowIso, withdrawnBy: member.subject } : s));
+          changed = `unskip ${occurrence}`;
+        }
       } else if (action === 'pause') {
         const from = fields.date(body.from, 'From', { required: true });
         const until = fields.date(body.until, 'Until');
         if (until && until < from) throw badRequest('The pause ends before it starts.', 'invalid_pause');
         const open = '9999-12-31';
-        if ((r.pauses || []).some((p) => from <= (p.until || open) && p.from <= (until || open))) throw conflict('This pause overlaps an existing pause.', 'overlapping_pause');
+        if (bills.effectivePauses(r).some((p) => from <= (p.until || open) && p.from <= (until || open))) throw conflict('This pause overlaps an existing pause.', 'overlapping_pause');
         r.pauses = [...(r.pauses || []), { id: newId('pau'), from, until: until || null, at: nowIso, by: member.subject }];
         changed = `pause ${from}${until ? ` to ${until}` : ''}`;
       } else {
         const date = fields.date(body.date, 'Date') || today;
-        const prior = schedule.addDays(date, -1);
-        let hit = false;
-        r.pauses = (r.pauses || []).flatMap((p) => {
-          if (!(p.from <= date && (!p.until || date <= p.until))) return [p];
-          hit = true;
-          return p.from <= prior ? [{ ...p, until: prior }] : [];
-        });
-        if (!hit) throw conflict('This bill is not paused on that date.', 'not_paused');
+        const covering = bills.effectivePauses(r).filter((p) => p.from <= date && (!p.until || date <= p.until));
+        if (!covering.length) throw conflict('This bill is not paused on that date.', 'not_paused');
+        // Pause records are never edited: each resume is its own record (BT-001-05).
+        r.resumes = [...(r.resumes || []), ...covering.map((p) => ({ id: newId('res'), pauseId: p.id, date, at: nowIso, by: member.subject }))];
         changed = `resume ${date}`;
       }
       if (changed) {
         r.revision += 1;
         r.updatedAt = nowIso;
         history(r, member.subject, nowIso, [changed]);
+        ledger.assertMemberQuota(doc, member, ctx.env);
         audit.record(doc, { actor: member.subject, action: `recurring.${action}`, targetType: 'recurring', targetId: r.id, scope: `account:${a.id}`, at: nowIso });
       }
       return { recurring: view(doc, r, ctx.principal, user, today, now, recorded) };

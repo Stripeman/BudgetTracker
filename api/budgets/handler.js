@@ -14,6 +14,7 @@ const money = require('../_shared/money');
 const fields = require('../_shared/fields');
 const audit = require('../_shared/audit');
 const budgeting = require('../_shared/budgeting');
+const ledger = require('../_shared/ledger');
 
 const PERIODS = ['monthly', 'weekly', 'biweekly'];
 
@@ -74,6 +75,7 @@ async function create(ctx, req) {
       lines: validLines(body.lines, currency, doc), ownerSubject: member.subject, createdBy: member.subject, createdAt: nowIso, revision: 1, deletedAt: null,
     };
     doc.budgets = [...(doc.budgets || []), budget];
+    ledger.assertMemberQuota(doc, member, ctx.env);
     audit.record(doc, { actor: member.subject, action: 'budget.create', targetType: 'budget', targetId: budget.id, scope: scope === 'shared' ? 'members' : `self:${member.subject}`, at: nowIso });
     return { budget: view(doc, budget, member, nowIso.slice(0, 10), ctx.now()) };
   });
@@ -102,6 +104,7 @@ async function patch(ctx, req) {
     if (changed.length) {
       b.revision += 1;
       b.updatedAt = ctx.nowIso();
+      ledger.assertMemberQuota(doc, member, ctx.env);
       audit.record(doc, { actor: member.subject, action: 'budget.update', targetType: 'budget', targetId: b.id, scope: b.scope === 'shared' ? 'members' : `self:${member.subject}`, at: ctx.nowIso(), fields: changed });
     }
     return { budget: view(doc, b, member, ctx.nowIso().slice(0, 10), ctx.now()) };

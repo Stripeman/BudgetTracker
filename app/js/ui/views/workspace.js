@@ -3,7 +3,9 @@
 // confirmation, last successful backup shown), and recent activity in plain language. Every
 // control is presentation; the server enforces.
 import { el, mount, announce } from "../dom.js";
-import { pageHead, stateView, field, input, select, button, badge, commitOnConfirm } from "../components.js";
+import { pageHead, stateView, field, input, select, button, badge, commitOnConfirm, categoryLabel } from "../components.js";
+import { createThemePicker } from "../themepicker.js";
+import { colourEntries } from "../../core/categories.js";
 import { openModal, confirmModal } from "../modal.js";
 import { sliceFor } from "../../core/store.js";
 import { newIdempotencyKey } from "../../core/api.js";
@@ -37,6 +39,7 @@ export function createView(ctx) {
   const inviteBox = el("div");
   const backupsBox = el("div");
   const auditBox = el("div");
+  const coloursBox = el("div", { class: "stack" });
   const element = el("section", {}, [
     pageHead("Workspace"),
     el("div", { class: "grid grid--two" }, [
@@ -44,6 +47,7 @@ export function createView(ctx) {
       el("section", { class: "card", "aria-labelledby": "ws-invite" }, [el("h2", { class: "card__title", id: "ws-invite", text: "Invite someone" }), inviteBox]),
       el("section", { class: "card", "aria-labelledby": "ws-backups" }, [el("h2", { class: "card__title", id: "ws-backups", text: "Backups and restore" }), backupsBox]),
       el("section", { class: "card", "aria-labelledby": "ws-activity" }, [el("h2", { class: "card__title", id: "ws-activity", text: "Recent activity" }), auditBox]),
+      el("section", { class: "card", "aria-labelledby": "ws-colours" }, [el("h2", { class: "card__title", id: "ws-colours", text: "Category colours" }), coloursBox]),
     ]),
   ]);
 
@@ -122,8 +126,50 @@ export function createView(ctx) {
     } catch (err) { mount(auditBox, el("p", { class: "error-text", role: "alert", text: messageFor(err) })); }
   }
 
+  // Workspace category colours (BT-011-04): owners and managers choose them; everyone sees them.
+  // Each member may still pick personal colours in My settings.
+  let colourSig = "";
+  function renderColours(state) {
+    const data = sliceFor(state, "categories").data;
+    if (!data || !sliceFor(state, "members").data) return;
+    const canEdit = ["owner", "manager"].includes(me().role);
+    const cats = data.categories.filter((c) => !c.archived);
+    const sig = JSON.stringify([cats.map((c) => [c.id, c.name, c.color, c.colorSource]), canEdit]);
+    if (sig === colourSig) return;
+    colourSig = sig;
+    if (!canEdit) {
+      mount(coloursBox, el("p", { class: "field__help", text: "Owners and managers choose these. You can pick your own colours in My settings." }),
+        el("ul", { class: "stack" }, cats.map((c) => el("li", {}, [categoryLabel(c.name, c.color)]))));
+      return;
+    }
+    const active = document.activeElement;
+    const focused = active && coloursBox.contains(active) && active.closest ? active.closest("[data-category]") : null;
+    const focusId = focused ? focused.dataset.category : null;
+    const patchColour = (c, color) => store.actions.write((ws) => api.request("categories", { method: "PATCH", query: { workspaceId: ws }, body: { categoryId: c.id, color } }), ["categories"])
+      .then((out) => announce(out.ok ? `${c.name}: colour ${color ? "saved" : "reset to default"}.` : messageFor(out.error)));
+    const rows = cats.map((c) => {
+      const labelId = `ws-colour-${c.id}`;
+      const picker = createThemePicker({
+        value: c.color, entries: colourEntries(data.palette, c.color), labelledBy: labelId,
+        listLabel: `Colours for ${c.name}`, namePrefix: `${c.name} colour`, onPick: (hex) => { void patchColour(c, hex); },
+      });
+      return el("div", { class: "field", dataset: { category: c.id } }, [
+        el("p", { class: "field__label", id: labelId, text: c.name }), picker.element,
+        el("div", { class: "row" }, [badge(c.colorSource === "workspace" ? "Workspace colour" : "Default", "source"),
+          c.colorSource === "workspace" ? button("Reset to default", () => { void patchColour(c, null); }, { small: true, variant: "ghost", attrs: { "aria-label": `Reset ${c.name} to its default colour` } }) : null]),
+      ]);
+    });
+    mount(coloursBox, el("p", { class: "field__help", text: "Everyone in the workspace sees these colours unless they pick their own in My settings. Colours are checked so they stay visible on light and dark backgrounds." }), ...rows);
+    if (focusId) {
+      const row = rows.find((r) => r.dataset.category === focusId);
+      const toggle = row && row.querySelector(".themepick__toggle");
+      if (toggle) toggle.focus();
+    }
+  }
+
   let loaded = false;
   function update(state) {
+    renderColours(state);
     const members = sliceFor(state, "members");
     const s = stateView(members);
     if (s) { mount(membersBox, s); return; }

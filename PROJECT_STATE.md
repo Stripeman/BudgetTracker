@@ -216,6 +216,14 @@ The medium and low findings are numeric alignment, quick-entry field order and a
 - **Dev data:** the fictional seed now creates merchants, six bills (one overdue) and a shared budget. The previous fictional data was moved to `.local/dev-data-pre-merchants-20260913`, not deleted.
 - **Evidence:** `npm test` 8/8 repository, 116/116 API, 25/25 app; `npm run validate` ok (20 routes).
 
+## Checkpoint G — security review fixes, colour-coded categories, non-destructive fixes (2026-09-13)
+
+- **Committed before this:** `b62c790` (Planning tab). Pushed.
+- **Independent security review** of bills, budgets, forecast and merchants (`docs/reviews/2026-09-13-security-review-bills-merchants.md`): 1 High, 5 Medium, 5 Low, info; no cross-workspace or site-admin path to financial data. All fixed with regression tests in `api/test/security-b.test.js`: restores never leave dangling bill references and replace keeps directory records (SEC-B1, High); the forecast counts a bill only for viewers of its source account (B2); bill amount and count caps plus per-account/per-budget overflow containment (B3); schedules jump to the requested range and dates are limited to 1900–2200 (B4); the member quota counts merchants, bills and budgets (B5); one live recording per occurrence (B6); bills on deleted accounts are gone (B7); aliases only for fully visible merchants (B8); private budget counts stay in scope (B9); the merchant creator shortcut ends at first use (B10); sharing a merchant hides earlier history and account ids (B11); private transfer destinations are not identified and permission is checked before existence (B12).
+- **BT-011-04 colours:** see the register. Also: `api/_shared/colors.js`, categories handler, preference validator, `app/js/core/categories.js`, pickers in My settings and Workspace.
+- **BT-001-05 progress:** history/audit truncation removed; bill unskip/resume append-only; replace keeps categories and merchants.
+- **Evidence:** `npm test` 8/8 repository, 134/134 API, 35/35 app; `npm run validate` ok (20 routes).
+
 ## Checks run this checkpoint
 
 - `node --test test/*.test.cjs`: 7 passed, 0 failed (Node v22.23.1).

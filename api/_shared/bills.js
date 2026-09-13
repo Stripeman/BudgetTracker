@@ -34,8 +34,22 @@ function termsAt(bill, date) {
   return chosen;
 }
 
-const isPaused = (bill, date) => (bill.pauses || []).some((p) => p.from <= date && (!p.until || date <= p.until));
-const isSkipped = (bill, date) => (bill.skips || []).some((s) => s.date === date);
+// Skip and pause records are never edited or removed (BT-001-05): undoing a skip marks it
+// withdrawn, and a resume is its own record from which the effective pause range is derived.
+const activeSkips = (bill) => (bill.skips || []).filter((s) => !s.withdrawnAt);
+function effectivePauses(bill) {
+  const out = [];
+  for (const p of bill.pauses || []) {
+    const resumed = (bill.resumes || []).filter((r) => r.pauseId === p.id).map((r) => r.date).sort();
+    if (!resumed.length) { out.push(p); continue; }
+    const end = schedule.addDays(resumed[0], -1);
+    if (end < p.from) continue;
+    out.push({ ...p, until: p.until && p.until < end ? p.until : end });
+  }
+  return out;
+}
+const isPaused = (bill, date) => effectivePauses(bill).some((p) => p.from <= date && (!p.until || date <= p.until));
+const isSkipped = (bill, date) => activeSkips(bill).some((s) => s.date === date);
 const trackStart = (bill) => (bill.trackFrom && bill.trackFrom > bill.schedule.startDate ? bill.trackFrom : bill.schedule.startDate);
 
 // "<recurringId>|<occurrence>" -> transaction id, for every live entry recorded from a bill.
@@ -68,6 +82,6 @@ function reminders(bill, today, recorded) {
 }
 
 module.exports = {
-  BILL_TYPES, KINDS, AMOUNT_TYPES, defaultKind, signed, termsAt, isPaused, isSkipped, trackStart,
+  BILL_TYPES, KINDS, AMOUNT_TYPES, defaultKind, signed, termsAt, isPaused, isSkipped, activeSkips, effectivePauses, trackStart,
   recordedSet, occurrenceStatus, dueBetween, overdue, reminders,
 };

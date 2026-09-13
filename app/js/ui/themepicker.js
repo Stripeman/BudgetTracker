@@ -25,10 +25,12 @@ import { THEMES } from "./theme.js";
 
 let counter = 0;
 
-export function createThemePicker({ value, onPick, id = null, labelledBy = null, describedBy = null, listLabel = "Colour palette" } = {}) {
+// `entries` defaults to the application themes. The category colour picker (BT-011-04) reuses the
+// same visual pattern with its own entries, so expense colours stay independent of the app theme.
+export function createThemePicker({ value, onPick, id = null, labelledBy = null, describedBy = null, listLabel = "Colour palette", entries = THEMES, namePrefix = "Theme" } = {}) {
   const listId = `themepick-${++counter}`;
   const nameId = `${listId}-name`;
-  const entryOf = (themeId) => THEMES.find((t) => t.id === themeId) || THEMES[0];
+  const entryOf = (themeId) => entries.find((t) => t.id === themeId) || entries[0];
   let current = entryOf(value);
 
   const toggleSwatch = el("span", { class: "menu__swatch", "aria-hidden": "true", vars: { "--menu-swatch": current.swatch } });
@@ -42,13 +44,13 @@ export function createThemePicker({ value, onPick, id = null, labelledBy = null,
     "aria-controls": listId,
     // NAMES THE CURRENT VALUE, not merely the control (TaskTracker). With an external label the name
     // is "<label> <current palette>" (adaptation: TaskTracker's labelled mode dropped the value).
-    "aria-label": labelledBy ? null : `Theme: ${current.label}`,
+    "aria-label": labelledBy ? null : `${namePrefix}: ${current.label}`,
     "aria-labelledby": labelledBy ? `${labelledBy} ${nameId}` : null,
     "aria-describedby": describedBy || null,
   }, [toggleSwatch, toggleLabel, el("span", { class: "themepick__caret", "aria-hidden": "true", text: "▾" })]);
 
   const options = [];
-  const list = el("div", { class: "themepick__list", id: listId, role: "listbox", "aria-label": listLabel, hidden: true }, THEMES.map((entry) => {
+  const list = el("div", { class: "themepick__list", id: listId, role: "listbox", "aria-label": listLabel, hidden: true }, entries.map((entry) => {
     const option = el("button", {
       class: ["themepick__option", entry.id === current.id ? "themepick__option--current" : ""].filter(Boolean).join(" "),
       type: "button",
@@ -74,7 +76,7 @@ export function createThemePicker({ value, onPick, id = null, labelledBy = null,
     current = entryOf(themeId);
     toggleSwatch.style.setProperty("--menu-swatch", current.swatch);
     toggleLabel.textContent = current.label;
-    if (!labelledBy) toggle.setAttribute("aria-label", `Theme: ${current.label}`);
+    if (!labelledBy) toggle.setAttribute("aria-label", `${namePrefix}: ${current.label}`);
     // MATCHED BY ID, never by label text (TaskTracker).
     for (const option of options) {
       const isIt = option.dataset.theme === current.id;

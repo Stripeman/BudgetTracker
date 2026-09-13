@@ -88,7 +88,7 @@ async function put(ctx, req) {
     current.defaults = { ...site.DEFAULT_SITE.defaults, ...((stored && stored.defaults) || {}) };
     const { next, changed } = clean(body, current);
     if (!changed.length) { saved = current; return undefined; }
-    next.audit = [...((stored && stored.audit) || []), { id: newId('aud'), at: ctx.nowIso(), actor: ctx.principal.subject, action: 'site.update', fields: changed }].slice(-500);
+    next.audit = [...((stored && stored.audit) || []), { id: newId('aud'), at: ctx.nowIso(), actor: ctx.principal.subject, action: 'site.update', fields: changed }]; // never truncated (BT-001-05)
     saved = site.stampSite(next);
     return saved;
   }, { expectedEtag: header(req, 'if-match') || undefined });

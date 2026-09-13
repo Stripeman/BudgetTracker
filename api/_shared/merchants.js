@@ -81,9 +81,12 @@ function usableOn(p, account) {
 }
 
 function requireOpen(doc, payeeId) {
-  const p = payeeId && (doc.payees || []).find((x) => x.id === payeeId);
-  if (p && statusOf(p) === 'closed') throw badRequest(`${p.name} is closed. Reopen it on the Merchants tab or choose another merchant.`, 'merchant_closed');
-  return payeeId || null;
+  if (!payeeId) return null;
+  const p = (doc.payees || []).find((x) => x.id === payeeId);
+  // A reference to a merchant that no longer exists is never copied into a new entry (SEC-B1).
+  if (!p) throw badRequest('This merchant no longer exists. Choose another merchant.', 'invalid_payee');
+  if (statusOf(p) === 'closed') throw badRequest(`${p.name} is closed. Reopen it on the Merchants tab or choose another merchant.`, 'merchant_closed');
+  return payeeId;
 }
 
 // Validates a merchant chosen for an entry or a bill on `account`. `current` is the merchant the
@@ -93,7 +96,10 @@ function requireMerchant(doc, principal, account, payeeId, now, { current = null
   if (!id) return null;
   if (id === current) return id;
   const p = (doc.payees || []).find((x) => x.id === id && !x.deletedAt);
-  const visible = p && (p.createdBy === principal.subject || ledger.visiblePayees(doc, principal, visibleTransactions(doc, principal, now)).some((x) => x.id === id));
+  // A merchant the caller just created inline on someone else's account is usable until its first
+  // use; after that only normal visibility applies, so it does not outlive a grant (SEC-B10).
+  const unused = p && !(doc.transactions || []).some((t) => t.payeeId === id) && !(doc.recurring || []).some((r) => (r.versions || []).some((v) => v.payeeId === id));
+  const visible = p && ((p.createdBy === principal.subject && unused) || ledger.visiblePayees(doc, principal, visibleTransactions(doc, principal, now)).some((x) => x.id === id));
   if (!p || !visible || !usableOn(p, account)) throw badRequest('Choose a merchant from your merchant list.', 'invalid_payee');
   return requireOpen(doc, id);
 }
