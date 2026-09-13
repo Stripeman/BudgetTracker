@@ -24,6 +24,9 @@ export function openModal({ title, body, actions = [], onClose = () => {} }) {
   const backdrop = el("div", { class: "modal-backdrop" }, [dialog]);
   const app = document.getElementById("app");
   const wasInert = app ? app.inert : false;
+  // The skip link lives outside #app, so it is made inert separately (retest of A11Y-006).
+  const skip = typeof document.querySelector === "function" ? document.querySelector(".skip-link") : null;
+  const skipWasInert = skip ? skip.inert : false;
   let closed = false;
   let busyFocus = null;
 
@@ -32,6 +35,7 @@ export function openModal({ title, body, actions = [], onClose = () => {} }) {
     closed = true;
     if (backdrop.remove) backdrop.remove(); else if (backdrop.parentNode) backdrop.parentNode.removeChild(backdrop);
     if (app) app.inert = wasInert;
+    if (skip) skip.inert = skipWasInert;
     document.removeEventListener("keydown", onKey, true);
     if (opener && typeof opener.focus === "function") opener.focus();
     onClose();
@@ -57,6 +61,7 @@ export function openModal({ title, body, actions = [], onClose = () => {} }) {
   document.addEventListener("keydown", onKey, true);
   document.body.appendChild(backdrop);
   if (app) app.inert = true;
+  if (skip) skip.inert = true;
   const first = focusables().find((n) => n !== closeBtn) || closeBtn;
   first.focus();
 

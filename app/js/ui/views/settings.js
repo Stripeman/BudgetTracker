@@ -6,6 +6,7 @@
 import { el, mount, announce } from "../dom.js";
 import { createDayNightControl } from "../daynight.js";
 import { pageHead, field, select, sourceBadge, button, input, commitOnConfirm } from "../components.js";
+import { messageFor } from "../../core/errors.js";
 
 const CURRENCIES = ["", "EUR", "USD", "GBP", "CHF", "SEK", "NOK", "DKK", "PLN", "CAD", "AUD", "JPY"];
 
@@ -30,7 +31,7 @@ export function createView(ctx) {
   async function save(patch) {
     status.textContent = "Saving…";
     const out = await store.actions.savePreferences(patch);
-    status.textContent = out.ok ? "Saved." : (out.error && out.error.message) || "Could not save.";
+    status.textContent = out.ok ? "Saved." : out.error ? messageFor(out.error) : "Could not save.";
     if (out.ok) announce("Preference saved.");
   }
 
@@ -51,12 +52,12 @@ export function createView(ctx) {
       const data = await ctx.api.request("contacts");
       const name = input({ maxlength: "80", autocomplete: "off" });
       const add = button("Add contact", async () => {
-        try { await ctx.api.request("contacts", { method: "POST", body: { scope: "private", name: name.value } }); announce("Contact added."); await loadContacts(); } catch (err) { status.textContent = err.message; }
+        try { await ctx.api.request("contacts", { method: "POST", body: { scope: "private", name: name.value } }); announce("Contact added."); await loadContacts(); } catch (err) { status.textContent = messageFor(err); }
       }, { small: true });
       mount(contactsBox,
         data.private.length ? el("ul", { class: "stack" }, data.private.map((c) => el("li", { text: c.name }))) : el("p", { class: "muted small", text: "No private contacts yet." }),
         el("div", { class: "row" }, [field("New contact name", name), add]));
-    } catch (err) { mount(contactsBox, el("p", { class: "error-text", role: "alert", text: err.message })); }
+    } catch (err) { mount(contactsBox, el("p", { class: "error-text", role: "alert", text: messageFor(err) })); }
   }
   void loadContacts();
 

@@ -7,6 +7,7 @@ import { pageHead, stateView, field, input, select, button, badge, commitOnConfi
 import { openModal, confirmModal } from "../modal.js";
 import { sliceFor } from "../../core/store.js";
 import { newIdempotencyKey } from "../../core/api.js";
+import { messageFor } from "../../core/errors.js";
 
 const ROLES = [{ value: "viewer", label: "Viewer" }, { value: "member", label: "Member" }, { value: "manager", label: "Manager" }, { value: "owner", label: "Owner" }];
 const ROLE_LABEL = Object.fromEntries(ROLES.map((r) => [r.value, r.label]));
@@ -66,7 +67,7 @@ export function createView(ctx) {
           field("Invitation link (shown once)", linkField, { help: "Share it only with that person. It works only for their Google account and expires in 7 days." }));
         linkField.select();
         await renderPending();
-      } catch (err) { mount(result, el("p", { class: "error-text", role: "alert", text: err.message })); }
+      } catch (err) { mount(result, el("p", { class: "error-text", role: "alert", text: messageFor(err) })); }
     }, { variant: "primary" });
     async function renderPending() {
       try {
@@ -76,10 +77,10 @@ export function createView(ctx) {
           el("span", { text: i.email }), badge(ROLE_LABEL[i.role] || i.role), el("span", { class: "muted small", text: `until ${i.expiresAt.slice(0, 10)}` }),
           button("Cancel invitation", async () => {
             try { await api.request("invitations", { method: "DELETE", query: { workspaceId: wsId }, body: { invitationId: i.id } }); announce("Invitation cancelled."); await renderPending(); }
-            catch (err) { mount(result, el("p", { class: "error-text", role: "alert", text: err.message })); }
+            catch (err) { mount(result, el("p", { class: "error-text", role: "alert", text: messageFor(err) })); }
           }, { small: true, variant: "ghost" }),
         ]))));
-      } catch (err) { mount(pending, el("p", { class: "error-text", role: "alert", text: err.message })); }
+      } catch (err) { mount(pending, el("p", { class: "error-text", role: "alert", text: messageFor(err) })); }
     }
     mount(inviteBox, el("div", { class: "stack" }, [field("Email", email), field("Role", roleSel, { help: "No role can see members' private accounts." }), send, result, el("h3", { text: "Pending invitations" }), pending]));
     await renderPending();
@@ -95,7 +96,7 @@ export function createView(ctx) {
     try {
       const data = await api.backups(wsId);
       const create = button("Create backup now", async () => {
-        try { await api.createBackup(wsId); announce("Backup created."); await loadBackups(); } catch (err) { mount(status, el("span", { class: "error-text", text: err.message })); }
+        try { await api.createBackup(wsId); announce("Backup created."); await loadBackups(); } catch (err) { mount(status, el("span", { class: "error-text", text: messageFor(err) })); }
       }, { variant: "primary" });
       const last = data.archives[0];
       mount(backupsBox,
@@ -105,7 +106,7 @@ export function createView(ctx) {
           el("span", { text: stamp(a.createdAt) }), badge(a.reason), el("span", { class: "muted small", text: a.createdBy }),
           el("span", { class: "app__spacer" }), button("Restore…", () => openRestore(ctx, wsId, a), { small: true, attrs: { "aria-label": `Restore from ${stamp(a.createdAt)}` } }),
         ]))));
-    } catch (err) { mount(backupsBox, el("p", { class: "error-text", role: "alert", text: err.message })); }
+    } catch (err) { mount(backupsBox, el("p", { class: "error-text", role: "alert", text: messageFor(err) })); }
   }
 
   async function loadAudit() {
@@ -115,7 +116,7 @@ export function createView(ctx) {
       mount(auditBox, el("ul", { class: "stack small" }, data.entries.slice(0, 25).map((e) => el("li", {}, [
         el("span", { class: "muted", text: `${stamp(e.at)} · ` }), el("strong", { text: e.actorSelf ? "You" : e.actor }), ` ${describe(e.action)}`,
       ]))));
-    } catch (err) { mount(auditBox, el("p", { class: "error-text", role: "alert", text: err.message })); }
+    } catch (err) { mount(auditBox, el("p", { class: "error-text", role: "alert", text: messageFor(err) })); }
   }
 
   let loaded = false;
@@ -133,7 +134,7 @@ export function createView(ctx) {
         roleControl = select(ROLES, m.role, { "aria-label": `Role for ${m.name}` });
         const change = async (value) => {
           const out = await store.actions.write((ws) => api.request("members", { method: "PATCH", query: { workspaceId: ws }, body: { memberId: m.id, role: value } }), ["members"]);
-          if (!out.ok) { committer.reset(m.role); announce(out.error.message); } else announce(`${m.name} is now ${ROLE_LABEL[value]}.`);
+          if (!out.ok) { committer.reset(m.role); announce(messageFor(out.error)); } else announce(`${m.name} is now ${ROLE_LABEL[value]}.`);
           return out;
         };
         const committer = commitOnConfirm(roleControl, (value) => {

@@ -24,6 +24,7 @@ import * as settings from "./views/settings.js";
 import * as workspace from "./views/workspace.js";
 import * as join from "./views/join.js";
 import { renderLanding, createOnboarding } from "./views/landing.js";
+import { messageFor } from "../core/errors.js";
 
 const VIEWS = { dashboard, transactions, accounts, payees, settings, workspace, join };
 
@@ -149,7 +150,7 @@ export function createShell({ mountPoint, store, router, theme, api }) {
     mountPoint.setAttribute("data-app-status", state.auth.status);
     if (state.auth.status === Status.LOADING) return;
     if (state.auth.status === Status.ERROR) {
-      mount(mountPoint, el("main", { class: "landing", id: "main", tabindex: "-1" }, [el("h1", { text: "BudgetTracker is unavailable" }), el("p", { class: "error-text", text: (state.auth.error && state.auth.error.message) || "Please try again shortly." })]));
+      mount(mountPoint, el("main", { class: "landing", id: "main", tabindex: "-1" }, [el("h1", { text: "BudgetTracker is unavailable" }), el("p", { class: "error-text", text: state.auth.error ? messageFor(state.auth.error) : "Please try again shortly." })]));
       return;
     }
     if (!state.auth.user) { clear(mountPoint); mountPoint.appendChild(renderLanding()); menu = null; document.title = "BudgetTracker — sign in"; return; }

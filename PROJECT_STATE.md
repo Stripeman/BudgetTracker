@@ -190,6 +190,19 @@ The medium and low findings are numeric alignment, quick-entry field order and a
   - The screenshot run also caught a frontend crash when the API lacked the new `breakdown` field. It was caused by a stale dev-server process, and the dashboard now tolerates the missing field.
 - **Local dev server:** restarted by stopping only its own verified PID. Ports 4280, 7071 and 10000 were untouched.
 
+## Checkpoint E — preview verified, retest, budgets/bills/forecast API, new requirements (2026-09-13)
+
+- **Preview verified at `4ef49b8`:** `/api/site-settings` reports `app.commit` 4ef49b84…, `environment` preview. Google sign-in on preview is still unverified (Terry's OAuth redirect URI).
+- **Independent retest of `4ef49b8`** (headless Edge, fictional users, every write blocked in the browser): 30 of 32 UX/accessibility findings PASS; A11Y-004 and A11Y-006 PARTIAL, plus four new small defects. Fixed after the retest:
+  - dark-mode accent text now uses its own `--accent-text` token (≥ 4.5:1 on raised surfaces), and the rose/indigo dark hovers were lightened;
+  - the skip link is inert behind dialogs;
+  - raw error words ("network") replaced by `messageFor` sentences in every view;
+  - masked amounts use the muted text colour.
+  Not yet re-verified in a browser.
+- **BT-008-01 budgets and forecast, BT-008-02 recurring costs and bills (API):** see the requirement register for scope. Bills are versioned (changes effective from a date, never rewriting recorded entries), with skips, pauses, reminders, overdue detection and a reviewable draft per occurrence. Budgets and bills are in backups and caller-scoped restores (owner: shared budgets and bills on shared accounts; member: own private).
+- **Terry's new mandatory requirements (2026-09-13)** are registered as BT-008-02, BT-001-05 (no destructive deletion, immutable history), BT-007-01 (managed merchants), BT-011-03 (TaskTracker theme picker) and BT-011-04 (colour-coded expense types). Azure hosting already follows his instruction (one dedicated SWA with a preview environment; no Staging app; DNS and Production untouched).
+- **Evidence:** `npm test` 8/8 repository, 105/105 API, 20/20 app; `npm run validate` ok (20 routes).
+
 ## Checks run this checkpoint
 
 - `node --test test/*.test.cjs`: 7 passed, 0 failed (Node v22.23.1).
@@ -200,8 +213,8 @@ The medium and low findings are numeric alignment, quick-entry field order and a
 
 ## Unfinished work and blockers
 
-- **No application yet.** There is no API, frontend, identity adapter, durable store, backup or restore. The prototype must not touch real data.
-- **Staging target not established.** No Azure tenant, subscription or resources have been selected for BudgetTracker, and none may be inferred from `az` context. This blocks only the Staging deployment. It needs Terry to name the target, or to authorize provisioning in a named subscription.
+- **Application status.** The API (20 routes), the frontend shell and the preview deployment exist; no real financial data may be used until Terry authorizes Production. The feature modules listed as Planned or Partial in `docs/REQUIREMENTS.md` remain.
+- **Staging.** By Terry's instruction there is no separate Staging app yet; the design keeps it addable (named environments, per-environment settings and storage). Production storage, deployment and DNS need his explicit authorization.
 - **Agents use Terry's admin token**, so branch protection is not technically enforced against agents. A non-admin bot identity is recommended (Terry's action).
 - **Unverified rows in the reuse inventory.** The attachments, people picker, settings and local-runtime rows still need re-verification against `T:` `main`.
 - **Native Claude subagent loading** has not been validated. A fresh session is needed, because this one predates `.claude/agents`.
@@ -228,7 +241,10 @@ The medium and low findings are numeric alignment, quick-entry field order and a
 
 ## Exact next steps
 
-1. **Checkpoint B: done** (see above). Keep the CI job names `secret-scan` and `foundation-tests`; branch protection requires them.
-2. **Checkpoint C: done.** Run independent security-privacy and financial-accuracy reviews of commits `04f6bf9` and the checkpoint C commit (the BT-001/BT-002 milestone). Apply accepted findings with retests.
-3. **Checkpoint D: BT-004 and BT-011-01.** Local dev server, frontend shell following TaskTracker's core patterns, the faithful day/night Appearance control port with its tests, and a fictional seed. Obtain UX and accessibility review.
-4. Continue BT-006 → BT-008 → BT-009/010 → BT-011/012/007 in brief order, updating this file at each checkpoint.
+Checkpoints B–E are done (see above). Keep the CI job names `secret-scan` and `foundation-tests`; branch protection requires them. Next, in order:
+
+1. **BT-001-05 no destructive deletion** — apply the read-only deletion audit: amendments with actor, time and reason for financial corrections; void/archive/close states instead of deletion; no history/audit truncation without sealing; tests proving no physical-delete path.
+2. **BT-007-01 managed merchants** — extend payees into the merchant directory (stable ids, normalization, duplicates, status, defaults, contact details); searchable merchant dropdown with inline creation in quick entry and bills; Merchants tab create/edit/archive/reopen/history.
+3. **BT-011-03 theme picker** — port TaskTracker's canonical picker (archaeology of `T:` `main` in progress) into the account menu and My settings.
+4. **BT-011-04 category colours** and **Bills / Planning UI** (BT-008-01/02), then an independent security review of the bills, budgets and forecast surfaces and a UX/accessibility retest.
+5. Continue BT-009/010 → BT-011-02/012/007 imports, updating this file at each checkpoint.

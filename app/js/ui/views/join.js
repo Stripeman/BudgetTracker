@@ -2,6 +2,7 @@
 // The invitation only works for the Google account it was sent to.
 import { el, mount } from "../dom.js";
 import { button } from "../components.js";
+import { messageFor } from "../../core/errors.js";
 
 export function createView(ctx) {
   const box = el("div", { role: "status", text: "Checking the invitation…" });
@@ -19,7 +20,7 @@ export function createView(ctx) {
           await ctx.store.actions.init();
           await ctx.store.actions.selectWorkspace(out.workspaceId);
           ctx.navigate("dashboard");
-        } catch (err) { accept.disabled = false; mount(box, el("p", { class: "error-text", role: "alert", text: err.message })); }
+        } catch (err) { accept.disabled = false; mount(box, el("p", { class: "error-text", role: "alert", text: messageFor(err) })); }
       }, { variant: "primary" });
       mount(box,
         el("p", { text: `You are invited to “${pv.workspace.name}” as ${pv.role}.` }),

@@ -45,6 +45,14 @@ function checkInvariants(doc) {
   const payees = uniqueIds(doc.payees || [], 'payee');
   uniqueIds(doc.transactions || [], 'transaction');
   uniqueIds(doc.members || [], 'member');
+  uniqueIds(doc.budgets || [], 'budget');
+  uniqueIds(doc.recurring || [], 'recurring');
+  // A commitment belongs to its source account; a dangling one would be counted nowhere (BT-008).
+  for (const r of doc.recurring || []) {
+    const a = accounts.get(r.accountId);
+    if (!a || r.currency !== a.currency) throw invalidData('bill account');
+    if (!Array.isArray(r.versions) || !r.versions.length || !r.versions.every((v) => money.isMinor(v.amountMinor) && v.amountMinor > 0)) throw invalidData('bill amounts');
+  }
   for (const a of accounts.values()) {
     if (!money.isCurrency(a.currency) || !money.isMinor(a.openingBalanceMinor)) throw invalidData('account amounts');
   }
@@ -155,12 +163,16 @@ function scopeFor(doc, subject, role) {
     account: (a) => accounts.has(a.id),
     transaction: (t) => accounts.has(t.accountId),
     payee: (p) => (p.visibility === 'shared' && role === 'owner') || p.ownerSubject === subject,
+    // Commitments follow their source account; shared budgets are owner-scope, private budgets
+    // belong to their owner alone (BT-008).
+    recurring: (r) => accounts.has(r.accountId),
+    budget: (b) => (b.scope === 'shared' && role === 'owner') || (b.scope === 'private' && b.ownerSubject === subject),
     shared: role === 'owner',
     accountIds: accounts,
   };
 }
 
-const COLLECTIONS = ['accounts', 'transactions', 'payees', 'categories', 'contacts'];
+const COLLECTIONS = ['accounts', 'transactions', 'payees', 'categories', 'contacts', 'recurring', 'budgets'];
 
 function inScope(doc, scope) {
   return {
@@ -169,6 +181,8 @@ function inScope(doc, scope) {
     payees: (doc.payees || []).filter(scope.payee),
     categories: scope.shared ? (doc.categories || []) : [],
     contacts: scope.shared ? (doc.contacts || []) : [],
+    recurring: (doc.recurring || []).filter(scope.recurring),
+    budgets: (doc.budgets || []).filter(scope.budget),
   };
 }
 
@@ -221,6 +235,9 @@ function plan({ current, archived, mode, principal, member, nowIso, newWorkspace
       // Payee ownership is never transferred to the restorer (security review finding 9).
       payees,
       categories: archived.categories || [], transactions: txns, audit: [], idempotency: {}, restoredFrom: null,
+      // A savings commitment into an account that is not restored would move money nowhere.
+      recurring: arc.recurring.filter((r) => r.kind !== 'transfer' || keepAccounts.has(r.toAccountId)),
+      budgets: arc.budgets,
     };
   } else {
     const cur = inScope(current, scopeNow);
@@ -278,7 +295,7 @@ function plan({ current, archived, mode, principal, member, nowIso, newWorkspace
     : diffCounts(inScope(current, scopeNow), after);
   const summary = {
     mode,
-    scope: { accounts: arc.accounts.length, transactions: arc.transactions.length, payees: arc.payees.length, categories: arc.categories.length, contacts: arc.contacts.length },
+    scope: { accounts: arc.accounts.length, transactions: arc.transactions.length, payees: arc.payees.length, categories: arc.categories.length, contacts: arc.contacts.length, recurring: arc.recurring.length, budgets: arc.budgets.length },
     changes: diff,
     excluded,
     totalsAfter: totals(after.accounts, balances(next)),

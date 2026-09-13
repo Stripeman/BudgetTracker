@@ -113,9 +113,17 @@
 :root[data-theme="forest"] { --accent: #10b981; --accent-hover: #0d9d6d; --accent-soft: rgb(16 185 129 / 0.15); --accent-contrast: #04231a; }
 :root[data-theme="solar"] { --accent: #f59e0b; --accent-hover: #d98708; --accent-soft: rgb(245 158 11 / 0.16); --accent-contrast: #241802; }
 :root[data-theme="teal"] { --accent: #14b8a6; --accent-hover: #119c8d; --accent-soft: rgb(20 184 166 / 0.15); --accent-contrast: #0b1220; }
-:root[data-theme="rose"] { --accent: #f43f5e; --accent-hover: #cf3650; --accent-soft: rgb(244 63 94 / 0.15); --accent-contrast: #0b1220; }
+/* Rose and indigo hover LIGHTER in dark mode so dark ink stays above 4.5:1 (retest of A11Y-004). */
+:root[data-theme="rose"] { --accent: #f43f5e; --accent-hover: #f65a74; --accent-soft: rgb(244 63 94 / 0.15); --accent-contrast: #0b1220; }
 :root[data-theme="amber"] { --accent: #eab308; --accent-hover: #c79807; --accent-soft: rgb(234 179 8 / 0.15); --accent-contrast: #0b1220; }
-:root[data-theme="indigo"] { --accent: #7678f3; --accent-hover: #6466cf; --accent-soft: rgb(118 120 243 / 0.15); --accent-contrast: #0b1220; }
+:root[data-theme="indigo"] { --accent: #7678f3; --accent-hover: #8789f5; --accent-soft: rgb(118 120 243 / 0.15); --accent-contrast: #0b1220; }
+
+/* Accent-coloured TEXT (links, disclosure summaries, marks) needs 4.5:1 on every surface, including
+   the raised modal surface, so it has its own token (retest of A11Y-004). */
+:root { --accent-text: var(--accent); }
+:root[data-mode="dark"][data-theme="midnight"] { --accent-text: #60a5fa; }
+:root[data-mode="dark"][data-theme="rose"] { --accent-text: #fb7185; }
+:root[data-mode="dark"][data-theme="indigo"] { --accent-text: #9ea0f7; }
 
 /* Light-mode accents darkened for contrast (values from TaskTracker). */
 :root[data-mode="light"][data-theme="midnight"] { --accent: #2563eb; --accent-hover: #1d4fd0; --accent-contrast: #ffffff; }
@@ -126,3 +134,6 @@
 :root[data-mode="light"][data-theme="rose"] { --accent: #d73753; --accent-hover: #b72f47; --accent-contrast: #ffffff; }
 :root[data-mode="light"][data-theme="amber"] { --accent: #8c6b05; --accent-hover: #775b04; --accent-contrast: #ffffff; }
 :root[data-mode="light"][data-theme="indigo"] { --accent: #5f62e7; --accent-hover: #5153c4; --accent-contrast: #ffffff; }
+:root[data-mode="light"][data-theme="teal"] { --accent-text: #0c7066; }
+:root[data-mode="light"][data-theme="rose"] { --accent-text: #b72f47; }
+:root[data-mode="light"][data-theme="indigo"] { --accent-text: #5153c4; }

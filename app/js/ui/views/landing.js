@@ -1,6 +1,7 @@
 import { el } from "../dom.js";
 import { field, input, select, button } from "../components.js";
 import { AUTH, newIdempotencyKey } from "../../core/api.js";
+import { messageFor } from "../../core/errors.js";
 
 // The signed-out page is a real main landmark with the skip link's target (A11Y-013).
 export function renderLanding() {
@@ -30,7 +31,7 @@ export function createOnboarding({ store }) {
     try {
       await store.actions.createWorkspace({ name: name.value, kind: kind.value, reportingCurrency: currency.value }, key);
     } catch (err) {
-      error.textContent = err.message || "The workspace could not be created.";
+      error.textContent = messageFor(err);
     } finally { create.disabled = false; }
   }, { variant: "primary" });
   const element = el("section", { class: "landing" }, [
