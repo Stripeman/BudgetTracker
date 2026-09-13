@@ -11,8 +11,9 @@
 // on Escape (focus returns to the button), on an outside click and when focus leaves it.
 import { el, mount, clear, focusFirst, announce } from "./dom.js";
 import { createDayNightControl } from "./daynight.js";
-import { initials, select, commitOnConfirm, button } from "./components.js";
+import { initials } from "./components.js";
 import { createThemePicker } from "./themepicker.js";
+import { createWorkspacePicker } from "./workspacepicker.js";
 import { AUTH } from "../core/api.js";
 import { ROUTES } from "../core/router.js";
 import { Status } from "../core/store.js";
@@ -40,6 +41,7 @@ export function createShell({ mountPoint, store, router, theme, api }) {
   let viewKey = "";
   let navigated = false;
   let menu = null;
+  let wsPicker = null;
 
   // The skip link targets #main; with hash routing it must move focus, not navigate (A11Y-003).
   document.addEventListener("click", (event) => {
@@ -116,22 +118,46 @@ export function createShell({ mountPoint, store, router, theme, api }) {
     };
   }
 
-  function renderHeader(state) {
-    const brand = el("a", { class: "app__brand", href: "#/dashboard", "aria-label": "BudgetTracker home" }, [el("img", { src: "/favicon.svg", alt: "" }), el("span", { text: (state.site && state.site.branding && state.site.branding.name) || "BudgetTracker" })]);
-    const items = [brand];
-    if (state.workspaces.length) {
-      const picker = select(state.workspaces.map((w) => ({ value: w.id, label: `${w.name}${w.status === "archived" ? " (archived)" : ""}` })), state.selectedWorkspaceId, { "aria-label": "Workspace" });
-      commitOnConfirm(picker, (value) => { void store.actions.selectWorkspace(value); });
-      // Next to the picker as well as in the account menu, where Terry did not find it on preview
-      // (2026-09-13): starting a separate workspace belongs with choosing one.
-      const add = button("New workspace", () => openNewWorkspace({ store }), { small: true, attrs: { "aria-label": "New workspace" } });
-      items.push(el("div", { class: "row" }, [picker, add]));
+  // THE HEADER'S NODES ARE BUILT ONCE and refreshed in place, like the account menu: `mount()` then
+  // leaves the header untouched on a store commit, so nothing in it loses focus or closes under
+  // somebody mid-interaction.
+  const brandName = el("span");
+  const brand = el("a", { class: "app__brand", href: "#/dashboard", "aria-label": "BudgetTracker home" }, [el("img", { src: "/favicon.svg", alt: "" }), brandName]);
+  const spacer = el("div", { class: "app__spacer" });
+
+  // The workspace picker (BT-004-04): TaskTracker's command picker with a role badge, search and a
+  // pinned "+ New workspace" — where Terry looked for it on preview (2026-09-13), now inside the
+  // control rather than as a separate button beside it. Choosing goes through selectWorkspace, which
+  // owns the synchronous reset and the generation guard. "New workspace…" stays in the account menu,
+  // as TaskTracker keeps it in its profile menu.
+  function workspacePicker(state) {
+    if (!wsPicker) {
+      wsPicker = createWorkspacePicker({
+        workspaces: state.workspaces,
+        selectedId: state.selectedWorkspaceId,
+        onSelect: (id) => { void store.actions.selectWorkspace(id); },
+        onCreate: (name) => openNewWorkspace({ store, name }),
+        announce,
+      });
+    } else {
+      wsPicker.update({ workspaces: state.workspaces, selectedId: state.selectedWorkspaceId });
     }
-    items.push(el("div", { class: "app__spacer" }));
+    return wsPicker.element;
+  }
+
+  function renderHeader(state) {
+    brandName.textContent = (state.site && state.site.branding && state.site.branding.name) || "BudgetTracker";
+    const items = [brand];
+    if (state.workspaces.length) items.push(workspacePicker(state));
+    items.push(spacer);
     if (!menu) menu = buildMenu(state.auth.user);
     menu.refresh();
     items.push(menu.root);
+    // TaskTracker's guarantee: should the header ever be re-mounted, focus that was in the picker
+    // goes back to it rather than to the page.
+    const pickerHadFocus = !!(wsPicker && wsPicker.hasFocus());
     mount(header, ...items);
+    if (pickerHadFocus && !wsPicker.hasFocus()) wsPicker.restoreFocus();
   }
 
   function renderNav(route) {
@@ -175,7 +201,11 @@ export function createShell({ mountPoint, store, router, theme, api }) {
       mount(mountPoint, el("main", { class: "landing", id: "main", tabindex: "-1" }, [el("h1", { text: "BudgetTracker is unavailable" }), el("p", { class: "error-text", text: state.auth.error ? messageFor(state.auth.error) : "Please try again shortly." })]));
       return;
     }
-    if (!state.auth.user) { clear(mountPoint); mountPoint.appendChild(renderLanding()); menu = null; document.title = "BudgetTracker — sign in"; return; }
+    if (!state.auth.user) {
+      clear(mountPoint); mountPoint.appendChild(renderLanding()); menu = null;
+      if (wsPicker) { wsPicker.destroy(); wsPicker = null; }
+      document.title = "BudgetTracker — sign in"; return;
+    }
     if (!mountPoint.contains(main)) mount(mountPoint, header, nav, main, footer);
     renderHeader(state);
     renderFooter(state);

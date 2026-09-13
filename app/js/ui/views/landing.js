@@ -59,8 +59,11 @@ export function createOnboarding({ store }) {
 // Another workspace keeps its own accounts, entries, budgets and members apart — a trip, a side
 // business or a shared group. Opened from the account menu at any time; the new workspace becomes
 // the current one. One idempotency key per opening, so a double click creates one workspace.
-export function openNewWorkspace({ store }) {
+// `name` pre-fills the name, when the workspace picker's "+ New workspace “…”" carries what was
+// typed into its search box (BT-004-04).
+export function openNewWorkspace({ store, name = "" }) {
   const f = workspaceFields({ kind: "personal", placeholder: "For example: Side business" });
+  if (typeof name === "string" && name.trim()) f.name.value = name.trim().slice(0, 80);
   const key = newIdempotencyKey();
   const formId = `new-workspace-${key}`;
   // The footer button belongs to the form, so Enter in a field creates the workspace (UX2-006).

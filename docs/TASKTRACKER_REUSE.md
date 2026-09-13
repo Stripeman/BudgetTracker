@@ -76,6 +76,56 @@ CSP) is reusable if palettes are offered.
 - **Adaptations:** an unknown id draws a fallback icon instead of throwing (records can outlive a catalogue entry); an icon may take an accessible name (`role="img"`) when it stands alone; the id list is shared with the server catalogue and checked by a test; custom icons are validated shape data, never markup.
 - **Not copied:** brand logos, Unicode glyph maps, hard-coded colours, the throw on unknown names, and TaskTracker's paste/drop SVG handling, which is not a sanitizer. The artwork is original simple geometry.
 
+## Command picker and workspace picker — BT-004-04
+
+Terry, 2026-09-14: *"why dont we do like we do on the tasktracker.. im all for consistency"* — the
+header's workspace dropdown with a pinned "+ New workspace".
+
+- **Canonical source:** `T:` `main` `fb24a41` (read with `git show main:<path>` only; the `T:` and `Z:`
+  working trees were not touched): `app/js/ui/workspacepicker.js`, `app/js/ui/commandpicker.js` (514
+  lines), `app/js/core/popover.js`, `app/js/ui/popup.js`, the `cmdpick*`, `people__badge` and
+  `workspaces__marker` rules in `app/styles/components.css`, `.picker`/`.picker__label` in
+  `app/styles/layout.css`, and tests `commandpicker`, `popupdismiss`, `shellprojectpicker` and the
+  workspace-selector part of `profilenewworkspace`.
+- **Dependency mapping:**
+
+  | TaskTracker dependency | BudgetTracker | Decision |
+  |---|---|---|
+  | `ui/dom.js` `el`, `clear` | `app/js/ui/dom.js` has both, same contract (`el` refuses `style`, `vars` through the CSSOM) | Reused |
+  | `core/popover.js` `computePlacement` | None (theme, icon and merchant pickers open in normal flow) | Ported unchanged to `app/js/core/popover.js` (pure, DOM-free) |
+  | `ui/popup.js` `registerPopup` | None (each BudgetTracker picker dismisses itself) | Ported unchanged to `app/js/ui/popup.js`; the command picker is its only member so far |
+  | `core/people.js` `workspaceRelationship` | `workspace-model.summary` already gives the caller's `role` and `status` | Not ported; the marker reads `role` |
+  | Live-region `announce` | `app/js/ui/dom.js` `announce` | Reused ("Switched to …") |
+  | "New workspace" flow | `openNewWorkspace({ store })` in `app/js/ui/views/landing.js` | Reused; gained an optional `name` pre-fill from the search text |
+  | Escape inside dialogs | `escapeBelongsToControl` in `app/js/ui/modal.js` | Not needed in the header; the search box is `role="combobox"` with `aria-expanded="true"`, which that helper already honours |
+  | `components.js` `select`, `commitOnConfirm`, `button` | Present | No longer used by the header; the palette commits only on Enter or a pointer pick, which keeps A11Y-002 |
+  | Themepicker/iconpicker positioning | In-flow list, colours via `vars` | Same CSP approach: the panel is `position: fixed` and placed through `--pop-top`/`--pop-left`/`--pop-max-height` set with `style.setProperty` (validate rule 8 allows it; no style attribute) |
+
+- **Ported:** `app/js/ui/commandpicker.js` and `app/js/ui/workspacepicker.js`, the CSS blocks, and the
+  tests (`app/test/commandpicker.test.js`, `popupdismiss.test.js`, `workspacepicker.test.js`,
+  `shellworkspacepicker.test.js`). The header picker is built once and refreshed in place, like the
+  account menu, with TaskTracker's `hasFocus`/`restoreFocus` guard kept.
+- **Deliberate deviations:**
+  - **Marks O and M only.** O = you own it; M = any other role (manager, member, viewer), with the exact
+    role as the accessible name and in the row's spoken name ("Family budget — Manager"). TaskTracker's
+    G (guest) and S (site-admin elevation) are not ported: BudgetTracker has no public or guest
+    workspaces, and site administration grants no workspace access.
+  - **A1** the hidden select is `tabindex="-1"` and `aria-hidden` (TaskTracker's is an invisible tab stop).
+  - **A2** the search box is a real combobox and `aria-activedescendant` names the active row's **id**
+    (TaskTracker set it to the option value, on the listbox, which does not hold focus).
+  - **A3** "+ New workspace" is a button pinned outside the listbox that works from the keyboard
+    (TaskTracker's answered only `mousedown`; Enter on it chose the highlighted row). Focus returns to the
+    trigger before the dialog opens, so the dialog gives it back there.
+  - The keyboard hints in the footer are `aria-hidden` (the roles already convey them); hint, footer and
+    unavailable text use `--text-muted` for 4.5:1; the active row also gets the combobox outline; the
+    panel sits above the modal backdrop.
+  - Archived workspaces keep " (archived)" in their visible and spoken names, as the old select did.
+  - The separate "New workspace" button beside the picker (added in `7b6d1c2`) is removed; "New
+    workspace…" stays in the account menu, as TaskTracker keeps it in its profile menu.
+- **Test double:** `app/test/domdouble.js` gained `style.removeProperty`, `append`, event `target` and
+  `relatedTarget`, platform `Event` objects, and document listeners that run only through
+  `document.dispatchEvent` (so existing components that listen on the document behave as before).
+
 ## Rich text editor (Tiptap) — BT-011-02
 
 Detailed archaeology, gaps and the reduced schema and plan: `docs/reviews/2026-09-13-editor-archaeology.md` (2026-09-13, `T:` `main` `a1ec150`). Key points: ProseMirror JSON in a versioned envelope, never HTML; rendering through `el()`; the vendored bundle needs a registered-bundle exemption in `scripts/validate.cjs`; keep the MIT notices (TaskTracker's build strips them); BudgetTracker's server validator must be stricter (content model, undeclared keys, text checks, canonical `href`, tight limits).
