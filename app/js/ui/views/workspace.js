@@ -36,11 +36,14 @@ const ACTIVITY = {
   "payee.create": "added a merchant", "payee.update": "changed a merchant", "payee.delete": "removed a merchant", "payee.archive": "closed a merchant", "payee.reopen": "reopened a merchant",
   "recurring.create": "added a bill", "recurring.update": "changed a bill", "recurring.record": "recorded a bill", "recurring.skip": "skipped a bill payment", "recurring.unskip": "undid a skipped bill payment",
   "recurring.pause": "paused a bill", "recurring.resume": "resumed a bill", "recurring.delete": "removed a bill",
-  "budget.create": "added a budget", "budget.update": "changed a budget", "budget.delete": "removed a budget",
+  "budget.create": "added a budget", "budget.update": "changed a budget", "budget.delete": "archived a budget", "budget.restore": "restored a budget",
   "category.create": "added a category", "category.update": "changed a category", "workspace.type-icons": "changed the icons for account, bill or merchant types", "contact.create": "added a contact", "contact.update": "changed a contact", "contact.delete": "removed a contact",
   "backup.create": "created a backup", "workspace.restore-replace": "restored from a backup (replace)", "workspace.restore-merge": "restored from a backup (merge)", "workspace.restore-create": "created a workspace from a backup",
 };
 const describe = (action) => ACTIVITY[action] || action.replace(/[.-]/g, " ");
+// Workspace setting names and membership events in plain language (BT-001-05, audit B15/B16).
+const WS_FIELDS = { name: "Name", "settings.reportingCurrency": "Reporting currency", "settings.budgetPeriod": "Budget period", "settings.weekStart": "Week start" };
+const MEMBER_EVENTS = { removed: "removed", left: "left the workspace" };
 const stamp = (iso) => iso.replace("T", " ").slice(0, 16);
 
 export function createView(ctx) {
@@ -50,6 +53,8 @@ export function createView(ctx) {
   const inviteBox = el("div");
   const backupsBox = el("div");
   const auditBox = el("div");
+  const formerBox = el("div");
+  const historyBox = el("div");
   const coloursBox = el("div", { class: "stack" });
   const typesBox = el("div", { class: "stack" });
   const element = el("section", {}, [
@@ -59,6 +64,8 @@ export function createView(ctx) {
       el("section", { class: "card", "aria-labelledby": "ws-invite" }, [el("h2", { class: "card__title", id: "ws-invite", text: "Invite someone" }), inviteBox]),
       el("section", { class: "card", "aria-labelledby": "ws-backups" }, [el("h2", { class: "card__title", id: "ws-backups", text: "Backups and restore" }), backupsBox]),
       el("section", { class: "card", "aria-labelledby": "ws-activity" }, [el("h2", { class: "card__title", id: "ws-activity", text: "Recent activity" }), auditBox]),
+      el("section", { class: "card", "aria-labelledby": "ws-former" }, [el("h2", { class: "card__title", id: "ws-former", text: "Former members" }), formerBox]),
+      el("section", { class: "card", "aria-labelledby": "ws-history" }, [el("h2", { class: "card__title", id: "ws-history", text: "Workspace changes" }), historyBox]),
       el("section", { class: "card card--full", "aria-labelledby": "ws-colours" }, [el("h2", { class: "card__title", id: "ws-colours", text: "Category colours and icons" }), coloursBox]),
       el("section", { class: "card", "aria-labelledby": "ws-types" }, [el("h2", { class: "card__title", id: "ws-types", text: "Icons for types" }), typesBox]),
     ]),
@@ -137,6 +144,40 @@ export function createView(ctx) {
         el("span", { class: "muted", text: `${stamp(e.at)} · ` }), el("strong", { text: e.actorSelf ? "You" : e.actor }), ` ${describe(e.action)}`,
       ]))));
     } catch (err) { mount(auditBox, el("p", { class: "error-text", role: "alert", text: messageFor(err) })); }
+  }
+
+  // Former members and every membership change, for owners and managers (audit B15, D6).
+  const describeMember = (h) => {
+    if (h.event === "role") return `role ${ROLE_LABEL[h.from] || h.from} → ${ROLE_LABEL[h.to] || h.to}`;
+    if (h.event === "rejoined") return `rejoined as ${ROLE_LABEL[h.to] || h.to}`;
+    return `${MEMBER_EVENTS[h.event] || h.event}${h.reason ? ` — ${h.reason}` : ""}`;
+  };
+  async function loadFormer() {
+    const role = me().role;
+    if (role !== "owner" && role !== "manager") { mount(formerBox, el("p", { class: "muted", text: "Owners and managers can see former members and membership history." })); return; }
+    try {
+      const data = await api.request("members", { query: { workspaceId: wsId, includeFormer: "1" } });
+      mount(formerBox, data.former.length ? el("ul", { class: "stack" }, data.former.map((m) => el("li", {}, [
+        el("div", { class: "row" }, [el("strong", { text: m.name }), badge(ROLE_LABEL[m.role] || m.role), m.removedAt ? el("span", { class: "muted small", text: `since ${stamp(m.removedAt)}` }) : null]),
+        el("ul", { class: "history-list small" }, (m.history || []).slice().reverse().map((h) => el("li", { text: `${stamp(h.at)} · ${h.by}: ${describeMember(h)}` }))),
+      ]))) : el("p", { class: "muted small", text: "Nobody has left this workspace." }));
+    } catch (err) { mount(formerBox, el("p", { class: "error-text", role: "alert", text: messageFor(err) })); }
+  }
+
+  // Changes to the workspace's name and settings, and its archive/restore log (audit B16).
+  async function loadHistory() {
+    const role = me().role;
+    if (role !== "owner" && role !== "manager") { mount(historyBox, el("p", { class: "muted", text: "Owners and managers can see the workspace's change history." })); return; }
+    try {
+      const { workspace } = await api.request("workspaces", { query: { id: wsId } });
+      const show = (v) => (v === null || v === undefined || v === "" ? "—" : String(v));
+      const items = [
+        ...(workspace.history || []).map((h) => ({ at: h.at, text: `${h.by}: ${h.changes.map((c) => `${WS_FIELDS[c.field] || c.field} ${show(c.from)} → ${show(c.to)}`).join("; ")}${h.reason ? ` — ${h.reason}` : ""}` })),
+        ...(workspace.lifecycle || []).map((h) => ({ at: h.at, text: `${h.by}: ${h.state === "archived" ? "archived the workspace" : "restored the workspace"}${h.reason ? ` — ${h.reason}` : ""}` })),
+      ].sort((a, b) => (a.at < b.at ? 1 : -1));
+      mount(historyBox, items.length ? el("ul", { class: "history-list small" }, items.map((i) => el("li", { text: `${stamp(i.at)} · ${i.text}` })))
+        : el("p", { class: "muted small", text: "No changes to the workspace's name or settings yet." }));
+    } catch (err) { mount(historyBox, el("p", { class: "error-text", role: "alert", text: messageFor(err) })); }
   }
 
   // Workspace category colours (BT-011-04): owners and managers choose them; everyone sees them.
@@ -256,6 +297,7 @@ export function createView(ctx) {
   }
 
   let loaded = false;
+  let lastMembers = null;
   function update(state) {
     renderColours(state);
     renderTypes(state);
@@ -302,7 +344,9 @@ export function createView(ctx) {
         el("span", { class: "app__spacer" }), roleControl, remove,
       ]);
     })));
-    if (!loaded) { loaded = true; void loadInvites(); void loadBackups(); void loadAudit(); }
+    if (!loaded) { loaded = true; void loadInvites(); void loadBackups(); void loadAudit(); void loadHistory(); }
+    // A removal, role change or rejoin changes the members list; the former members reload with it.
+    if (members.data !== lastMembers) { lastMembers = members.data; void loadFormer(); }
   }
   return { element, update };
 }

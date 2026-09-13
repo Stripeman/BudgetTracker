@@ -263,6 +263,12 @@ The medium and low findings are numeric alignment, quick-entry field order and a
 - **Evidence:** `npm test` 8/8 repository, 171/171 API, 52/52 app; `npm run validate` ok (21 routes); full-page screenshots of Workspace, My settings and Dashboard.
 - **Preview verified at `bce2e1a`** (includes checkpoints I–K): `deploy.ps1 -Environment preview` exited 0; `/api/site-settings` reports `bce2e1a1e493634438cebd74fe0cbd4cc4bced32`; anonymous `/api/icons` is 401. Signed-in checks still wait for the preview Google redirect URI (Terry).
 
+## Checkpoint L — lifecycle UI (BT-001-05, 2026-09-13)
+
+- Planning: Archive on each editable budget (optional reason, confirmation that the plan and history stay) and an "Archived budgets" section that lists archived budgets with date and reason and restores them.
+- Workspace: "Former members" (membership history of each former member: role changes, removal or departure with reason, rejoins) and "Workspace changes" (name and settings before/after, archive and restore) for owners and managers; others see a short explanation. Activity labels for budget archive and restore.
+- **Evidence:** `npm test` 8/8 repository, 171/171 API, 52/52 app; `npm run validate` ok (21 routes); full-page screenshots of Planning and Workspace, no console errors.
+
 ## Checks run this checkpoint
 
 - `node --test test/*.test.cjs`: 7 passed, 0 failed (Node v22.23.1).
@@ -304,7 +310,7 @@ The medium and low findings are numeric alignment, quick-entry field order and a
 Checkpoints B–H are done (see above). Keep the CI job names `secret-scan` and `foundation-tests`; branch protection requires them. Next, in order:
 
 1. **BT-011-05 follow-up** — apply the independent security review of the icon catalogue and upload; a UX/accessibility pass over the icon picker and the Icons for types card in a real browser; redeploy preview and verify `app.commit`.
-2. **BT-001-05 remainder** — an authorized view of `superseded` records and `restores[]`; lifecycle states for budgets, members and workspaces; implement ADR-003; idempotency ruling (A8); backup retention/immutability (A11/A12, infrastructure, needs Terry).
+2. **BT-001-05 remainder** — an authorized view of `superseded` records and `restores[]` (lifecycle UI for budgets, members and workspaces is done); lifecycle states for budgets, members and workspaces; implement ADR-003; idempotency ruling (A8); backup retention/immutability (A11/A12, infrastructure, needs Terry).
 3. **BT-011-02 Tiptap editor** (archaeology of `T:` `main` first), then receipts/attachments, imports and reconciliation.
 4. **BT-009 shared expenses and settlement, BT-010 trips and currency** (icons for trips and trip accounts follow), debt planning, goals and alerts.
 5. **BT-012 reports and exports** (icons in reports, legends and exports follow), site settings UI, offline, rate limiting, scheduled backups and Key Vault, the remaining 13 TaskTracker palettes.

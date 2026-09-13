@@ -43,6 +43,24 @@ export function createView(ctx) {
   const whatIfBox = el("div");
   let warningsSig = "";
   const budgetActions = el("div", { class: "page-head__actions" });
+  // Archived budgets stay reachable and can be restored; nothing is deleted (BT-001-05).
+  const archivedList = el("div", { class: "stack" });
+  const archivedBox = el("details", { class: "more" }, [el("summary", { text: "Archived budgets" }), archivedList]);
+  const dateFormat = () => ((ctx.store.getState().preferences || {}).effective || {}).dateFormat;
+  const loadArchived = async () => {
+    mount(archivedList, el("p", { class: "muted small", role: "status", text: "Loading…" }));
+    try {
+      const data = await ctx.api.budgets(ctx.store.getState().selectedWorkspaceId, { includeArchived: "1" });
+      const archived = data.budgets.filter((b) => b.archived);
+      mount(archivedList, archived.length ? el("ul", { class: "stack" }, archived.map((b) => el("li", { class: "row" }, [
+        withIcon(b.icon, b.name), badge("Archived", "closed"),
+        el("span", { class: "muted small", text: `${formatDate(String(b.archivedAt).slice(0, 10), dateFormat())}${b.archiveReason ? ` — ${b.archiveReason}` : ""}` }),
+        el("span", { class: "app__spacer" }),
+        b.canEdit ? button("Restore", () => openBudgetLifecycle(ctx, b, false, loadArchived), { small: true, attrs: { "aria-label": `Restore budget ${b.name}` } }) : null,
+      ]))) : el("p", { class: "muted small", text: "No archived budgets." }));
+    } catch (err) { mount(archivedList, el("p", { class: "error-text", role: "alert", text: messageFor(err) })); }
+  };
+  archivedBox.addEventListener("toggle", () => { if (archivedBox.open) void loadArchived(); });
   const horizon = select(HORIZONS, "90");
   const buffer = input({ inputmode: "decimal", placeholder: "Optional, e.g. 500.00" });
   const run = button("Update forecast", () => refresh());
@@ -50,6 +68,7 @@ export function createView(ctx) {
     el("div", { class: "page-head" }, [el("h1", { text: "Planning" })]),
     el("div", { class: "page-head" }, [el("h2", { class: "section-title" }, [withIcon("target", "Budgets")]), budgetActions]),
     budgetsBox,
+    archivedBox,
     el("h2", { class: "section-title" }, [withIcon("chart-line", "Cash flow")]),
     el("p", { class: "muted", text: "Projected balances from today, including bills that are due and not yet recorded, skipped or paused. Only accounts whose balance you can see are included." }),
     el("div", { class: "filters" }, [field("Look ahead", horizon), field("Warn me below", buffer), el("div", { class: "filters__actions" }, [run])]),
@@ -161,6 +180,7 @@ function budgetCard(ctx, b, prefs, fmt, dateFormat, cats = new Map()) {
       el("span", { class: "muted small", text: `${formatDate(s.period.start, dateFormat)} – ${formatDate(s.period.end, dateFormat)}` }),
       el("span", { class: "app__spacer" }),
       b.canEdit ? button("Edit", () => openBudgetEditor(ctx, b), { small: true, attrs: { "aria-label": `Edit budget ${b.name}` } }) : null,
+      b.canEdit ? button("Archive", () => openBudgetLifecycle(ctx, b, true), { small: true, attrs: { "aria-label": `Archive budget ${b.name}` } }) : null,
     ]),
     el("p", { class: "muted small", text: `${s.explanation} ${s.scopeNote}` }),
     el("div", { class: "table-wrap" }, [el("table", { class: "table table--cards", "aria-label": `${b.name} by category` }, [
@@ -169,6 +189,34 @@ function budgetCard(ctx, b, prefs, fmt, dateFormat, cats = new Map()) {
     ])]),
     el("p", { class: "card__meta", text: `Total available ${fmt(s.totals.available, s.currency)} of ${fmt(s.totals.planned, s.currency)} planned.` }),
   ]);
+}
+
+// Archiving takes a budget out of the list and keeps its plan, versions and history; restoring
+// brings it back. The reason is optional and kept in the budget's history.
+function openBudgetLifecycle(ctx, budget, archive, after = null) {
+  const reason = input({ maxlength: "200", placeholder: "Optional", autocomplete: "off" });
+  const confirm = el("button", { type: "button", class: "btn btn--primary", text: archive ? "Archive budget" : "Restore budget" });
+  const modal = openModal({
+    title: archive ? `Archive ${budget.name}?` : `Restore ${budget.name}?`,
+    body: [
+      el("p", { text: archive
+        ? "It leaves the Budgets list. Its plan, earlier versions and history are kept, and you can restore it from Archived budgets."
+        : "It returns to the Budgets list with its plan and history." }),
+      el("div", { class: "form-grid" }, [field("Reason", reason)]),
+    ],
+    actions: [button("Cancel", () => modal.close()), confirm],
+  });
+  confirm.addEventListener("click", async () => {
+    modal.setError("");
+    modal.setBusy(true);
+    const body = { budgetId: budget.id, revision: budget.revision, ...(reason.value.trim() ? { reason: reason.value.trim() } : {}) };
+    const out = await ctx.store.actions.write((ws) => (archive ? ctx.api.archiveBudget(ws, body) : ctx.api.restoreBudget(ws, body)), ["budgets"]);
+    modal.setBusy(false);
+    if (!out.ok) { modal.setError(out.error); return; }
+    announce(archive ? `${budget.name} archived. Its history is kept.` : `${budget.name} restored.`);
+    modal.close();
+    if (after) void after();
+  });
 }
 
 function openBudgetEditor(ctx, budget = null) {
