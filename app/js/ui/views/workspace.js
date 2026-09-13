@@ -134,7 +134,7 @@ export function createView(ctx) {
         el("p", { class: "small", text: last ? `Last backup: ${stamp(last.createdAt)} (${last.reason}).` : "No backups yet." }),
         el("p", { class: "field__help", text: data.policy }), create, status,
         el("ul", { class: "stack" }, data.archives.map((a) => el("li", { class: "row" }, [
-          el("span", { text: stamp(a.createdAt) }), badge(a.reason), el("span", { class: "muted small", text: a.createdBy }),
+          el("span", { text: stamp(a.createdAt) }), badge(a.reason), el("span", { class: "muted small", text: a.createdBySelf ? "You" : a.createdBy }),
           el("span", { class: "app__spacer" }), button("Restore…", () => openRestore(ctx, wsId, a), { small: true, attrs: { "aria-label": `Restore from ${stamp(a.createdAt)}` } }),
         ]))), restoreHistory());
     } catch (err) { mount(backupsBox, el("p", { class: "error-text", role: "alert", text: messageFor(err) })); }
@@ -385,7 +385,8 @@ export function createView(ctx) {
       }), { small: true, variant: "danger" }) : null;
       return el("li", { class: "row" }, [
         el("strong", { text: m.name }), m.self ? badge("you") : null, m.email ? el("span", { class: "muted small", text: m.email }) : null,
-        el("span", { class: "app__spacer" }), usage, allowanceControl, roleControl, remove,
+        // A visible label: two unlabelled dropdowns side by side read as one choice (preview check, 2026-09-14).
+        el("span", { class: "app__spacer" }), usage, allowanceControl ? el("label", { class: "row small" }, [el("span", { class: "muted", text: "Storage" }), allowanceControl]) : null, roleControl, remove,
       ]);
     })));
     if (!loaded) { loaded = true; void loadInvites(); void loadBackups(); void loadAudit(); void loadHistory(); }
@@ -402,17 +403,31 @@ function openRestore(ctx, wsId, archive) {
     { value: "replace", label: "Replace — roll my records back to this backup" },
   ], "merge");
   const summary = el("div", { "aria-live": "polite" });
+  // Restore stays unavailable until a preview has shown what would change; say so instead of
+  // leaving a disabled button unexplained (Terry's preview check, 2026-09-13).
+  const previewFirst = () => mount(summary, el("p", { class: "field__help", id: "restore-preview-hint", text: "Choose what should happen, then select Preview. Restore becomes available once the preview has shown what will change." }));
+  previewFirst();
   const confirmText = input({ placeholder: "Type REPLACE to confirm", hidden: true, "aria-label": "Type REPLACE to confirm" });
+  // Merge can also bring back entries deleted since the backup; off unless chosen (Terry, 2026-09-13).
+  const restoreDeleted = el("input", { type: "checkbox" });
+  const restoreDeletedRow = el("label", { class: "row small" }, [restoreDeleted, el("span", { text: "Also bring back entries deleted since this backup" })]);
+  const withOption = (body) => (mode.value === "merge" && restoreDeleted.checked ? { ...body, restoreDeleted: true } : body);
   let previewData = null;
   const key = newIdempotencyKey();
   const preview = button("Preview", async () => {
     modal.setError("");
     try {
-      previewData = await ctx.api.previewRestore({ workspaceId: wsId, archiveId: archive.archiveId, mode: mode.value });
+      previewData = await ctx.api.previewRestore(withOption({ workspaceId: wsId, archiveId: archive.archiveId, mode: mode.value }));
       execute.disabled = !previewData.canExecute;
       confirmText.hidden = mode.value !== "replace";
       mount(summary,
         el("p", { class: "notice", text: `Preview only — nothing has changed. In your scope: ${previewData.scope.accounts} accounts, ${previewData.scope.transactions} entries. Changes: ${previewData.changes.add} added, ${previewData.changes.update} updated, ${previewData.changes.remove} taken out of the lists.${previewData.excluded.setAside ? ` ${previewData.excluded.setAside} current records are set aside and kept in the workspace history — nothing is deleted.` : ""}` }),
+        // Merge only adds records that no longer exist. Nothing is ever deleted, so an entry edited or
+        // deleted since the backup still exists and is kept as it is now; say so, and point to
+        // Replace, which rolls those back (Terry's preview check, 2026-09-13).
+        previewData.excluded.conflictsSkipped ? el("p", { class: "small", text: `${previewData.excluded.conflictsSkipped} ${previewData.excluded.conflictsSkipped === 1 ? "record differs" : "records differ"} from the backup (for example entries edited or deleted since). Merge keeps your current versions; to roll them back, deletions included, choose Replace.` }) : null,
+        previewData.excluded.deletedRestored ? el("p", { class: "small", text: `${previewData.excluded.deletedRestored} deleted ${previewData.excluded.deletedRestored === 1 ? "entry is" : "entries are"} brought back, each keeping its history.` }) : null,
+        previewData.nothingToRestore ? el("p", { class: "notice notice--warning", text: mode.value === "merge" ? "Nothing to merge: every record in this backup that you can restore still exists here, so Restore is not available. To undo edits or deletions made since the backup, choose Replace." : "Nothing to restore: what you can restore already matches this backup." }) : null,
         el("p", { class: "small", text: `Totals after: ${previewData.totalsAfter.map((t) => `${t.currency} ${t.amount}`).join(", ") || "none"}` }),
         previewData.excluded.otherMembersPrivateRecords ? el("p", { class: "small muted", text: "Other members' private records are outside your restore and stay as they are." }) : null,
         el("p", { class: "small muted", text: previewData.permissions }),
@@ -426,7 +441,7 @@ function openRestore(ctx, wsId, archive) {
     if (mode.value === "replace" && confirmText.value !== "REPLACE") { modal.setError("Type REPLACE to confirm replacing your records."); return; }
     modal.setBusy(true);
     try {
-      const body = { workspaceId: wsId, archiveId: archive.archiveId, mode: mode.value };
+      const body = withOption({ workspaceId: wsId, archiveId: archive.archiveId, mode: mode.value });
       if (mode.value !== "create-new") body.expectedEtag = previewData.expectedEtag;
       if (mode.value === "replace") body.confirm = "REPLACE";
       const out = await ctx.api.executeRestore(body, key);
@@ -443,11 +458,15 @@ function openRestore(ctx, wsId, archive) {
       modal.setBusy(false);
       modal.setError(err.code === "stale_preview" ? "The workspace changed since the preview. Preview again, then restore." : err);
     }
-  }, { variant: "danger", attrs: { disabled: true } });
-  mode.addEventListener("change", () => { previewData = null; execute.disabled = true; mount(summary); confirmText.hidden = true; });
+  }, { variant: "danger", attrs: { disabled: true, "aria-describedby": "restore-preview-hint" } });
+  // A styled hint on hover while Restore is unavailable (Terry, 2026-09-13).
+  const executeTip = el("span", { class: "tip", "data-tip": "Select Preview first. Restore becomes available once the preview has shown what will change." }, [execute]);
+  const resetPreview = () => { previewData = null; execute.disabled = true; previewFirst(); confirmText.hidden = true; };
+  mode.addEventListener("change", () => { restoreDeletedRow.hidden = mode.value !== "merge"; resetPreview(); });
+  restoreDeleted.addEventListener("change", resetPreview);
   const modal = openModal({
     title: `Restore from ${stamp(archive.createdAt)}`,
-    body: [field("What should happen", mode), summary, confirmText],
-    actions: [button("Cancel", () => modal.close()), preview, execute],
+    body: [field("What should happen", mode), restoreDeletedRow, summary, confirmText],
+    actions: [button("Cancel", () => modal.close()), preview, executeTip],
   });
 }

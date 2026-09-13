@@ -82,7 +82,12 @@ async function list(ctx, req) {
     // A restore by anyone but an owner is private to them (SEC-T5), so its recovery point is listed
     // without their name (security retest SEC-U3).
     const privateRestore = e.reason === 'pre-restore' && e.createdBy !== ctx.principal.subject && !(by && by.role === 'owner');
-    return { archiveId: e.archiveId, createdAt: e.createdAt, reason: e.reason, createdBy: privateRestore ? 'A member (private restore)' : by ? by.name || 'Member' : 'Former member' };
+    return {
+      archiveId: e.archiveId, createdAt: e.createdAt, reason: e.reason,
+      createdBy: privateRestore ? 'A member (private restore)' : by ? by.name || 'Member' : 'Former member',
+      // Lets the list say "You" even when the provider sent no display name.
+      createdBySelf: e.createdBy === ctx.principal.subject,
+    };
   });
   return { body: { archives, policy: 'Backups are encrypted, kept in separate storage and never downloadable. Restores are limited to what you may manage.' } };
 }

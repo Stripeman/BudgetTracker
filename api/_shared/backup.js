@@ -247,8 +247,22 @@ function totals(accounts, balanceMap) {
   return Object.entries(t).map(([currency, minor]) => ({ currency, amount: money.toDecimal(minor, currency) }));
 }
 
+// An entry deleted since the backup, brought back by a merge when asked (Terry, 2026-09-13): it is
+// undeleted IN PLACE — never swapped for the older copy — so its amendments and history stay, and
+// the undelete is recorded like any other (history, amendment with reason, audit entry).
+function undeleteFromBackup(doc, t, by, at, archiveId) {
+  const prior = { deletedAt: t.deletedAt || null, deletedBy: t.deletedBy || null };
+  t.deletedAt = null;
+  t.deletedBy = null;
+  t.revision = (Number.isSafeInteger(t.revision) ? t.revision : 0) + 1;
+  t.history = [...(t.history || []), { revision: t.revision, at, by, fields: ['restore'] }];
+  t.amendments = [...(t.amendments || []), { revision: t.revision, at, by, reason: `Brought back from backup ${archiveId}`, changes: [{ field: 'deleted', from: true, to: false, previouslyDeletedAt: prior.deletedAt, previouslyDeletedBy: prior.deletedBy }] }];
+  audit.record(doc, { actor: by, action: 'transaction.restore', targetType: 'transaction', targetId: t.id, scope: `account:${t.accountId}`, at });
+}
+
 // Produces the preview summary and, for execution, the next document. Pure: no storage access.
-function plan({ current, archived, mode, principal, member, nowIso, newWorkspaceId, archiveId = null }) {
+// `restoreDeleted` (merge only) also brings back entries deleted since the backup.
+function plan({ current, archived, mode, principal, member, nowIso, newWorkspaceId, archiveId = null, restoreDeleted = false }) {
   const scopeNow = current ? scopeFor(current, principal.subject, member.role) : null;
   const scopeArc = scopeFor(archived, principal.subject, member.role);
   const arc = inScope(archived, scopeArc);
@@ -322,14 +336,24 @@ function plan({ current, archived, mode, principal, member, nowIso, newWorkspace
       excluded.keptScopeChanged = keptScopeChanged;
     } else {
       let skipped = 0;
+      let undeleted = 0;
       for (const c of COLLECTIONS) {
         const have = new Map((next[c] || []).map((r) => [r.id, JSON.stringify(r)]));
         for (const r of arc[c]) {
           if (!have.has(r.id)) next[c] = [...(next[c] || []), r];
-          else if (have.get(r.id) !== JSON.stringify(r)) skipped += 1;
+          else if (have.get(r.id) !== JSON.stringify(r)) {
+            // Linked entries (transfer legs, reversal pairs, bill recordings) must come back together;
+            // if one cannot, the integrity check below blocks the restore and names the rule.
+            const now = restoreDeleted && c === 'transactions' ? next.transactions.find((x) => x.id === r.id) : null;
+            if (now && now.deletedAt && !r.deletedAt && scopeNow.transaction(now)) {
+              undeleteFromBackup(next, now, principal.subject, nowIso, archiveId);
+              undeleted += 1;
+            } else skipped += 1;
+          }
         }
       }
       excluded.conflictsSkipped = skipped;
+      if (restoreDeleted) excluded.deletedRestored = undeleted;
     }
     // Private accounts outside scope must stay exactly as they are now.
     next.members = current.members;

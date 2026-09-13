@@ -11,7 +11,7 @@
 // on Escape (focus returns to the button), on an outside click and when focus leaves it.
 import { el, mount, clear, focusFirst, announce } from "./dom.js";
 import { createDayNightControl } from "./daynight.js";
-import { initials, select, commitOnConfirm } from "./components.js";
+import { initials, select, commitOnConfirm, button } from "./components.js";
 import { createThemePicker } from "./themepicker.js";
 import { AUTH } from "../core/api.js";
 import { ROUTES } from "../core/router.js";
@@ -122,7 +122,10 @@ export function createShell({ mountPoint, store, router, theme, api }) {
     if (state.workspaces.length) {
       const picker = select(state.workspaces.map((w) => ({ value: w.id, label: `${w.name}${w.status === "archived" ? " (archived)" : ""}` })), state.selectedWorkspaceId, { "aria-label": "Workspace" });
       commitOnConfirm(picker, (value) => { void store.actions.selectWorkspace(value); });
-      items.push(el("div", {}, [picker]));
+      // Next to the picker as well as in the account menu, where Terry did not find it on preview
+      // (2026-09-13): starting a separate workspace belongs with choosing one.
+      const add = button("New workspace", () => openNewWorkspace({ store }), { small: true, attrs: { "aria-label": "New workspace" } });
+      items.push(el("div", { class: "row" }, [picker, add]));
     }
     items.push(el("div", { class: "app__spacer" }));
     if (!menu) menu = buildMenu(state.auth.user);

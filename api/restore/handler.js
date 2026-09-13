@@ -52,13 +52,17 @@ async function load(ctx, body) {
 }
 
 async function preview(ctx, req) {
-  const body = fields.onlyKeys(readBody(req), ['workspaceId', 'archiveId', 'mode']);
+  const body = fields.onlyKeys(readBody(req), ['workspaceId', 'archiveId', 'mode', 'restoreDeleted']);
   const { mode, doc, etag, member, opened, archiveId } = await load(ctx, body);
-  const { summary } = backup.plan({ current: doc, archived: opened.doc, mode, principal: ctx.principal, member, nowIso: ctx.nowIso(), newWorkspaceId: 'ws_preview', archiveId });
+  const restoreDeleted = mode === 'merge' && fields.bool(body.restoreDeleted, 'Bring back deleted entries') === true;
+  const { summary } = backup.plan({ current: doc, archived: opened.doc, mode, principal: ctx.principal, member, nowIso: ctx.nowIso(), newWorkspaceId: 'ws_preview', archiveId, restoreDeleted });
+  // The preview says when a merge or replace would change nothing, so Restore is not offered for a
+  // request execution would refuse (nothing_to_restore; Terry's preview check, 2026-09-13).
+  const nothingToRestore = mode !== 'create-new' && !changesAnything(summary);
   return {
     body: {
       archive: { archiveId, createdAt: opened.header.createdAt, reason: opened.header.reason, schemaVersion: opened.header.schemaVersion },
-      ...summary, expectedEtag: etag, canExecute: summary.blockers.length === 0,
+      ...summary, expectedEtag: etag, canExecute: summary.blockers.length === 0 && !nothingToRestore, nothingToRestore,
       confirmation: mode === 'replace' ? 'Send confirm: "REPLACE" with expectedEtag to execute.' : undefined,
     },
   };
@@ -74,9 +78,10 @@ async function writeAttachments(ctx, wsId, attachments, referenced) {
 }
 
 async function execute(ctx, req) {
-  const body = fields.onlyKeys(readBody(req), ['workspaceId', 'archiveId', 'mode', 'expectedEtag', 'confirm']);
+  const body = fields.onlyKeys(readBody(req), ['workspaceId', 'archiveId', 'mode', 'expectedEtag', 'confirm', 'restoreDeleted']);
   const { wsId, archiveId, mode, doc, etag, member, opened } = await load(ctx, body);
   const nowIso = ctx.nowIso();
+  const restoreDeleted = mode === 'merge' && fields.bool(body.restoreDeleted, 'Bring back deleted entries') === true;
 
   if (mode === 'create-new') {
     const key = header(req, 'idempotency-key');
@@ -112,7 +117,7 @@ async function execute(ctx, req) {
     throw conflict('The workspace changed since the preview. Preview again before restoring.', 'stale_preview');
   }
   if (mode === 'replace' && body.confirm !== 'REPLACE') throw badRequest('Replacing requires confirm: "REPLACE".', 'confirm_required');
-  const { summary, next, attachments } = backup.plan({ current: doc, archived: opened.doc, mode, principal: ctx.principal, member, nowIso, archiveId });
+  const { summary, next, attachments } = backup.plan({ current: doc, archived: opened.doc, mode, principal: ctx.principal, member, nowIso, archiveId, restoreDeleted });
   backup.ensureRestorable(summary);
   // A restore that changes nothing would still write an archive, a history entry and an audit entry.
   if (!changesAnything(summary)) throw conflict('This backup already matches what you can restore, so there is nothing to restore. Nothing was changed.', 'nothing_to_restore');

@@ -134,6 +134,24 @@ try {
           console.error(`iconpickesc ${state.result.value}`);
         }
       }
+      // The restore dialog (workspace page): "restorehover" hovers the still-disabled Restore button,
+      // which must show the styled "Preview first" hint; "restorepreview" ticks "bring back deleted
+      // entries" and runs Preview. A backup is created first if the workspace has none.
+      if (action === "restorehover" || action === "restorepreview") {
+        await evaluate("location.hash = '#/workspace'");
+        await sleep(1500);
+        await evaluate("(() => { if (!document.querySelector('[aria-label^=\"Restore from\"]')) { const b = [...document.querySelectorAll('button')].find((x) => /Create backup now/.test(x.textContent)); if (b) b.click(); } })()");
+        await sleep(1500);
+        await evaluate("document.querySelector('[aria-label^=\"Restore from\"]').click()");
+        await sleep(700);
+        if (action === "restorehover") {
+          const r = await evaluate("JSON.stringify((() => { const b = document.querySelector('.modal .tip button').getBoundingClientRect(); return { x: b.x + b.width / 2, y: b.y + b.height / 2 }; })())");
+          const { x, y } = JSON.parse(r.result.value);
+          await cdp.send("Input.dispatchMouseEvent", { type: "mouseMoved", x, y });
+        } else {
+          await evaluate("(() => { const c = document.querySelector('.modal input[type=checkbox]'); if (c && !c.checked) c.click(); [...document.querySelectorAll('.modal button')].find((b) => /^Preview$/.test(b.textContent.trim())).click(); })()");
+        }
+      }
       await sleep(1200);
       const { data } = await cdp.send("Page.captureScreenshot", { format: "png" });
       const file = path.join(OUT, `interact-${action}.png`);

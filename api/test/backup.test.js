@@ -16,6 +16,7 @@ const backup = require('../_shared/backup');
 const ledger = require('../_shared/ledger');
 
 const DAY = 24 * 60 * 60 * 1000;
+const ok = (res, status = 200) => { assert.equal(res.status, status, JSON.stringify(res.body)); return res.body; };
 
 async function backupNow(h, f, as = 'alice') {
   const res = await h.call('backups', 'POST', { as, query: f.q, body: {} });
@@ -38,7 +39,9 @@ describe('BT-002 archives', () => {
     }
     const listing = (await h.call('backups', 'GET', { as: 'alice', query: f.q })).body;
     assert.equal(listing.archives.length, 1);
-    assert.deepEqual(Object.keys(listing.archives[0]).sort(), ['archiveId', 'createdAt', 'createdBy', 'reason']);
+    assert.deepEqual(Object.keys(listing.archives[0]).sort(), ['archiveId', 'createdAt', 'createdBy', 'createdBySelf', 'reason']);
+    assert.equal(listing.archives[0].createdBySelf, true, 'Alice made it');
+    assert.equal((await h.call('backups', 'GET', { as: 'alice', query: f.q })).body.archives[0].createdBy, 'Alice Fictional');
     assert.equal((await h.call('backups', 'GET', { as: 'bob', query: f.q })).status, 403, 'members cannot list');
     assert.equal((await h.call('backups', 'GET', { as: 'dave', query: f.q })).status, 404, 'site admin has no route in');
   });
@@ -333,6 +336,8 @@ describe('Release review fixes: restores (SEC-R1 to R5, FIN-R2, FIN-R5, FIN-R17)
     const id = await backupNow(h, f);
     for (const mode of ['merge', 'replace']) {
       const pv = (await preview(h, f, 'alice', id, mode)).body;
+      // The preview already says so, and does not offer Restore (Terry's preview check).
+      assert.deepEqual([pv.nothingToRestore, pv.canExecute], [true, false], mode);
       const res = await execute(h, f, 'alice', { archiveId: id, mode, expectedEtag: pv.expectedEtag, confirm: 'REPLACE' });
       assert.equal(res.status, 409, mode);
       assert.equal(res.body.error.code, 'nothing_to_restore');
@@ -341,6 +346,66 @@ describe('Release review fixes: restores (SEC-R1 to R5, FIN-R2, FIN-R5, FIN-R17)
     const doc = await stored(h, f);
     assert.equal((doc.restores || []).length, 0);
     assert.ok(!doc.audit.some((e) => e.action.startsWith('workspace.restore')));
+  });
+
+  test('a merge after deleting one entry and adding another reports the difference and points to Replace', async () => {
+    const h = harness();
+    const f = await household(h);
+    const id = await backupNow(h, f);
+    // Terry's preview check: the deleted entry still exists (nothing is ever deleted), so merge has
+    // nothing to add; the preview says how many records differ and that nothing would be merged.
+    ok(await h.call('transactions', 'DELETE', { as: 'alice', query: f.q, body: { transactionId: f.grocery.id, revision: 1, reason: 'Fictional test' } }));
+    ok(await h.call('transactions', 'POST', { as: 'alice', query: f.q, body: { accountId: f.joint.id, kind: 'expense', amount: '3.00' } }), 201);
+    const pv = (await preview(h, f, 'alice', id, 'merge')).body;
+    assert.equal(pv.excluded.conflictsSkipped, 1);
+    assert.deepEqual([pv.nothingToRestore, pv.canExecute], [true, false]);
+    // Replace does roll the deletion back.
+    const pr = (await preview(h, f, 'alice', id, 'replace')).body;
+    assert.deepEqual([pr.nothingToRestore, pr.canExecute], [false, true]);
+    ok(await execute(h, f, 'alice', { archiveId: id, mode: 'replace', expectedEtag: pr.expectedEtag, confirm: 'REPLACE' }));
+    assert.ok((await h.call('transactions', 'GET', { as: 'alice', query: { ...f.q, accountId: f.joint.id } })).body.transactions.some((t) => t.id === f.grocery.id), 'the deleted entry is back');
+  });
+
+  test('merge can bring back entries deleted since the backup when asked; each keeps its history', async () => {
+    const h = harness();
+    const f = await household(h);
+    const id = await backupNow(h, f);
+    ok(await h.call('transactions', 'DELETE', { as: 'alice', query: f.q, body: { transactionId: f.grocery.id, revision: 1, reason: 'Fictional test' } }));
+    const extra = (await h.call('transactions', 'POST', { as: 'alice', query: f.q, body: { accountId: f.joint.id, kind: 'expense', amount: '3.00' } })).body.transactions[0];
+    const pv = ok(await h.call('restore', 'POST', { as: 'alice', query: { action: 'preview' }, body: { workspaceId: f.ws.id, archiveId: id, mode: 'merge', restoreDeleted: true } }));
+    assert.deepEqual([pv.excluded.deletedRestored, pv.excluded.conflictsSkipped, pv.nothingToRestore, pv.canExecute], [1, 0, false, true]);
+    ok(await h.call('restore', 'POST', { as: 'alice', query: { action: 'execute' }, body: { workspaceId: f.ws.id, archiveId: id, mode: 'merge', restoreDeleted: true, expectedEtag: pv.expectedEtag } }));
+    const live = (await h.call('transactions', 'GET', { as: 'alice', query: { ...f.q, accountId: f.joint.id } })).body.transactions.map((t) => t.id).sort();
+    assert.deepEqual(live, [f.grocery.id, extra.id].sort(), 'the deleted entry is back and the newer one stays');
+    const { value: doc } = await h.storage.getJson(`workspaces/${f.ws.id}/workspace.json`);
+    const g = doc.transactions.find((t) => t.id === f.grocery.id);
+    // Undeleted in place: the deletion stays in its amendments, followed by the restore.
+    assert.deepEqual(g.amendments.map((a) => a.changes[0].to), [true, false]);
+    assert.match(g.amendments[1].reason, new RegExp(`Brought back from backup ${id}`));
+    assert.ok(doc.audit.some((e) => e.action === 'transaction.restore' && e.targetId === f.grocery.id));
+  });
+
+  test('bringing back a deleted entry whose reversal is newer than the backup is blocked, naming the rule', async () => {
+    const h = harness();
+    const f = await household(h);
+    const e = (await h.call('transactions', 'POST', { as: 'alice', query: f.q, body: { accountId: f.joint.id, kind: 'expense', amount: '100.00' } })).body.transactions[0];
+    const id = await backupNow(h, f);
+    const [orig] = ok(await h.call('transactions', 'POST', { as: 'alice', query: { ...f.q, action: 'reverse' }, body: { transactionId: e.id, reason: 'Wrong amount' } }), 201).transactions;
+    ok(await h.call('transactions', 'DELETE', { as: 'alice', query: f.q, body: { transactionId: orig.id, revision: orig.revision, reason: 'Fictional test' } }));
+    const pv = ok(await h.call('restore', 'POST', { as: 'alice', query: { action: 'preview' }, body: { workspaceId: f.ws.id, archiveId: id, mode: 'merge', restoreDeleted: true } }));
+    assert.equal(pv.canExecute, false);
+    assert.match(pv.blockers[0], /reversal/);
+  });
+
+  test('without the option, merge still keeps deleted entries deleted', async () => {
+    const h = harness();
+    const f = await household(h);
+    const id = await backupNow(h, f);
+    ok(await h.call('transactions', 'DELETE', { as: 'alice', query: f.q, body: { transactionId: f.grocery.id, revision: 1, reason: 'Fictional test' } }));
+    ok(await h.call('transactions', 'POST', { as: 'alice', query: f.q, body: { accountId: f.joint.id, kind: 'expense', amount: '3.00' } }), 201);
+    const pv = ok(await h.call('restore', 'POST', { as: 'alice', query: { action: 'preview' }, body: { workspaceId: f.ws.id, archiveId: id, mode: 'merge' } }));
+    assert.equal(pv.excluded.deletedRestored, undefined);
+    assert.equal(pv.nothingToRestore, true);
   });
 
   test('SEC-R2 members may restore their own records at most 3 times a day; owners are not limited', async () => {
