@@ -91,10 +91,19 @@ function validateOriginal(original) {
   };
 }
 
+// Links to shared expenses and repayments (`groupExpenseId`, `groupSettlementId`) are set only by the
+// shared-expense route for the person recording their own part (BT-009): a client-supplied one could
+// make that person's update reverse an unrelated entry or block it (financial review finding 4,
+// security review S3). They are refused here; entries are never edited to carry them either.
+const SERVER_ONLY_LINKS = new Set(['groupExpenseId', 'groupSettlementId']);
+
 function validateLinks(links) {
   if (links === undefined || links === null) return {};
   if (typeof links !== 'object' || Array.isArray(links)) throw badRequest('Links must be an object.', 'invalid_field');
-  fields.onlyKeys(links, ['debtId', 'tripId', 'groupExpenseId', 'reimbursementOf', 'billId']);
+  for (const k of Object.keys(links)) {
+    if (SERVER_ONLY_LINKS.has(k)) throw badRequest('Entries for shared expenses are recorded from Shared expenses, not added here.', 'invalid_field');
+  }
+  fields.onlyKeys(links, ['debtId', 'tripId', 'reimbursementOf', 'billId']);
   const out = {};
   for (const [k, v] of Object.entries(links)) { const id = fields.optionalId(v, k); if (id) out[k] = id; }
   return out;
