@@ -1,14 +1,17 @@
 'use strict';
 // /api/backups?workspaceId=
 //   GET    backup metadata for the workspace (owners and managers). No archive bytes, no values.
+//   GET    ?action=history   restores into this workspace and the records they set aside (BT-001-05
+//          A7), for anyone who may restore; each set-aside record only if the caller could see it
 //   POST   { reason? }  create an on-demand encrypted backup (owners and managers)
 // Archives are never downloadable: they contain every member's private records, which no single
 // member may read. Restores go through /api/restore, limited to the caller's scope.
-const { readBody, query, forbidden } = require('../_shared/http');
+const { readBody, query, forbidden, notFound } = require('../_shared/http');
 const { newId, requireId } = require('../_shared/ids');
 const { update } = require('../_shared/storage');
 const { readDocument } = require('../_shared/schema');
-const { roleAtLeast } = require('../_shared/authz');
+const { roleAtLeast, can, capabilitiesFor } = require('../_shared/authz');
+const money = require('../_shared/money');
 const archive = require('../_shared/archive');
 const backup = require('../_shared/backup');
 const store = require('../_shared/store');
@@ -51,6 +54,61 @@ async function list(ctx, req) {
   return { body: { archives, policy: 'Backups are encrypted, kept in separate storage and never downloadable. Restores are limited to what you may manage.' } };
 }
 
+// The records a replace restore set aside are kept whole in the workspace (never deleted). Each is
+// shown only if the caller could see that record: entries and bills through their account,
+// accounts through their own access rule, merchants and budgets when shared or the caller's own.
+// Only summaries are returned, and a restore's count is shown only to the person who ran it, since
+// it can include their private records (security review finding 3).
+async function history(ctx, req) {
+  const wsId = requireId(query(req, 'workspaceId'), 'workspaceId');
+  const { doc, member } = await store.loadWorkspace(ctx, wsId);
+  if (member.role === 'viewer') throw notFound('Unknown backup.');
+  const now = ctx.now();
+  const subject = ctx.principal.subject;
+  const nameOf = (s) => { const m = model.memberBySubject(doc, s); return m ? m.name || 'Member' : 'Former member'; };
+  // Current account records take precedence over set-aside copies (current grants apply).
+  const accounts = new Map([
+    ...(doc.superseded || []).filter((s) => s.collection === 'accounts' && s.record).map((s) => [s.record.id, s.record]),
+    ...(doc.accounts || []).map((a) => [a.id, a]),
+  ]);
+  const visible = (s) => {
+    const r = s.record || {};
+    switch (s.collection) {
+      case 'accounts': return capabilitiesFor(doc, ctx.principal, accounts.get(r.id) || r, now).size > 0;
+      case 'transactions':
+      case 'recurring': { const a = accounts.get(r.accountId); return !!a && can(doc, ctx.principal, a, 'view-transactions', now); }
+      case 'payees': return r.visibility === 'shared' || r.ownerSubject === subject;
+      case 'budgets': return r.scope === 'shared' || r.ownerSubject === subject;
+      case 'categories':
+      case 'contacts': return true;
+      default: return false;
+    }
+  };
+  const summary = (s) => {
+    const r = s.record || {};
+    if (s.collection === 'transactions') return { date: r.date, amount: money.toDecimal(r.amountMinor, r.currency), currency: r.currency };
+    return { name: r.name || '' };
+  };
+  return {
+    body: {
+      restores: (doc.restores || []).map((r) => ({
+        archiveId: r.archiveId, mode: r.mode, at: r.at, by: nameOf(r.by), recoveryPoint: r.recoveryPoint || null,
+        setAside: r.by === subject ? r.setAside : null,
+      })),
+      setAside: (doc.superseded || []).filter(visible).map((s) => ({
+        id: s.id, collection: s.collection, reason: s.reason, archiveId: s.archiveId, at: s.at, by: nameOf(s.by), recordId: (s.record || {}).id, summary: summary(s),
+      })),
+    },
+  };
+}
+
+async function get(ctx, req) {
+  const action = query(req, 'action');
+  if (action === 'history') return history(ctx, req);
+  if (action !== undefined) throw notFound();
+  return list(ctx, req);
+}
+
 async function create(ctx, req) {
   const wsId = requireId(query(req, 'workspaceId'), 'workspaceId');
   const body = fields.onlyKeys(readBody(req), ['reason']);
@@ -67,4 +125,4 @@ async function create(ctx, req) {
   return { status: 201, body: { archive: { archiveId: entry.archiveId, createdAt: entry.createdAt, reason: entry.reason } } };
 }
 
-module.exports = { GET: list, POST: create, createBackup, archivePath, indexPath };
+module.exports = { GET: get, POST: create, createBackup, archivePath, indexPath };

@@ -16,7 +16,7 @@ Status key: **Fixed** (with the commit that fixed it), **Open**.
 | A4 | site audit capped at 500 | older site audit records | High | **Fixed** (`ab27260`) |
 | A5 | bill "unskip" removes the skip record | its date, reason, actor and time | High | **Fixed** (`ab27260`, withdrawn not removed; tested) |
 | A6 | bill "resume" rewrites or drops pause records | the original pause range | High | **Fixed** (`ab27260`, resumes are separate records; tested) |
-| A7 | restore "replace" removes in-scope records created after the backup and overwrites changed ones | the current records (only the encrypted recovery point keeps them) | High | **Fixed**: replaced and not-in-backup records move whole into the append-only `superseded` collection with who, when, why and the archive; each replace or merge appends to `restores[]` with its recovery point (`api/test/backup.test.js`, A7) |
+| A7 | restore "replace" removes in-scope records created after the backup and overwrites changed ones | the current records (only the encrypted recovery point keeps them) | High | **Fixed**: replaced and not-in-backup records move whole into the append-only `superseded` collection with who, when, why and the archive; each replace or merge appends to `restores[]` with its recovery point; both are viewable in the restore history, filtered to what each person may see (`api/test/backup.test.js`, A7) |
 | A8 | idempotency records pruned after 48 h | the cached replay response | Medium | Open (needs a ruling: cache, not record) |
 | A9 | preference set to null deletes the key | the prior value | Low | Open |
 | A10 | audit `fields` list capped at 30 | long field lists | Low | **Fixed** (`ab27260`) |

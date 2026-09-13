@@ -181,6 +181,31 @@ describe('BT-002 replace', () => {
     assert.equal(doc2.restores.length, 2);
   });
 
+  test('BT-001-05 restore history shows set-aside records only to people who could see them; counts only to the restorer', async () => {
+    const h = harness();
+    const f = await household(h);
+    const id = await backupNow(h, f);
+    const extra = (await h.call('transactions', 'POST', { as: 'alice', query: f.q, body: { accountId: f.joint.id, kind: 'expense', amount: '7.00' } })).body.transactions[0];
+    const bobExtra = (await h.call('transactions', 'POST', { as: 'bob', query: f.q, body: { accountId: f.bobCard.id, kind: 'expense', amount: '9.00' } })).body.transactions[0];
+    // Alice (owner) restores her scope; then Bob (member) restores his own private scope.
+    let pv = (await preview(h, f, 'alice', id, 'replace')).body;
+    assert.equal((await execute(h, f, 'alice', { archiveId: id, mode: 'replace', expectedEtag: pv.expectedEtag, confirm: 'REPLACE' })).status, 200);
+    pv = (await preview(h, f, 'bob', id, 'replace')).body;
+    assert.equal((await execute(h, f, 'bob', { archiveId: id, mode: 'replace', expectedEtag: pv.expectedEtag, confirm: 'REPLACE' })).status, 200);
+    const hist = async (as) => h.call('backups', 'GET', { as, query: { ...f.q, action: 'history' } });
+    const asAlice = (await hist('alice')).body;
+    assert.deepEqual(asAlice.setAside.map((s) => s.recordId), [extra.id], 'Bob\'s private entry is never shown to the owner');
+    assert.deepEqual(asAlice.restores.map((r) => [r.by, r.mode, r.setAside]), [['Alice Fictional', 'replace', 1], ['Bob Fictional', 'replace', null]]);
+    assert.deepEqual([asAlice.setAside[0].collection, asAlice.setAside[0].reason, asAlice.setAside[0].summary], ['transactions', 'not-in-backup', { date: extra.date, amount: '-7.00', currency: 'EUR' }]);
+    assert.equal(asAlice.setAside[0].record, undefined, 'summaries only, never the stored record');
+    const asBob = (await hist('bob')).body;
+    assert.deepEqual(asBob.setAside.map((s) => s.recordId).sort(), [extra.id, bobExtra.id].sort());
+    assert.deepEqual(asBob.restores.map((r) => [r.by, r.setAside]), [['Alice Fictional', null], ['Bob Fictional', 1]]);
+    assert.equal((await hist('carol')).status, 404, 'viewers cannot restore, so they see no restore history');
+    assert.equal((await hist('dave')).status, 404, 'site administration gives no workspace access');
+    assert.equal((await hist('eve')).status, 404);
+  });
+
   test('a stale preview is refused and a failed swap leaves the workspace unchanged', async () => {
     const h = harness();
     const f = await household(h);

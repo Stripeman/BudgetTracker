@@ -132,8 +132,32 @@ export function createView(ctx) {
         el("ul", { class: "stack" }, data.archives.map((a) => el("li", { class: "row" }, [
           el("span", { text: stamp(a.createdAt) }), badge(a.reason), el("span", { class: "muted small", text: a.createdBy }),
           el("span", { class: "app__spacer" }), button("Restore…", () => openRestore(ctx, wsId, a), { small: true, attrs: { "aria-label": `Restore from ${stamp(a.createdAt)}` } }),
-        ]))));
+        ]))), restoreHistory());
     } catch (err) { mount(backupsBox, el("p", { class: "error-text", role: "alert", text: messageFor(err) })); }
+  }
+
+  // Restores into this workspace and the records they set aside — kept, never deleted (BT-001-05
+  // A7). The server shows only records the viewer could see; loaded when opened.
+  const MODE_LABEL = { replace: "Replace", merge: "Merge" };
+  const COLLECTION_LABEL = { transactions: "Entry", accounts: "Account", payees: "Merchant", categories: "Category", contacts: "Contact", recurring: "Bill", budgets: "Budget" };
+  function restoreHistory() {
+    const box = el("div");
+    const details = el("details", { class: "more" }, [el("summary", { text: "Restore history and records set aside" }), box]);
+    details.addEventListener("toggle", async () => {
+      if (!details.open) return;
+      mount(box, el("p", { class: "muted small", role: "status", text: "Loading…" }));
+      try {
+        const data = await api.restoreHistory(wsId);
+        const describeRecord = (s) => (s.collection === "transactions" ? `${s.summary.date} ${s.summary.amount} ${s.summary.currency}` : s.summary.name || "");
+        mount(box,
+          data.restores.length ? el("ul", { class: "history-list small" }, data.restores.slice().reverse().map((r) => el("li", { text: `${stamp(r.at)} · ${r.by} · ${MODE_LABEL[r.mode] || r.mode}${r.setAside !== null ? ` · ${r.setAside} set aside` : ""}` })))
+            : el("p", { class: "muted small", text: "No restores into this workspace yet." }),
+          data.setAside.length ? el("ul", { class: "history-list small" }, data.setAside.slice().reverse().map((s) => el("li", {
+            text: `${COLLECTION_LABEL[s.collection] || s.collection}: ${describeRecord(s)} — ${s.reason === "not-in-backup" ? "created after the backup" : "replaced by the backup's version"} (${stamp(s.at)}, ${s.by})`,
+          }))) : null);
+      } catch (err) { mount(box, el("p", { class: "error-text", role: "alert", text: messageFor(err) })); }
+    });
+    return details;
   }
 
   async function loadAudit() {
