@@ -79,6 +79,11 @@ class Node {
     this.childNodes = [];
     for (const n of nodes) this.appendChild(n);
   }
+  // True for the node itself or any descendant, as in the DOM.
+  contains(other) {
+    for (let node = other; node; node = node.parentNode) if (node === this) return true;
+    return false;
+  }
   closest(selector) {
     let node = this;
     while (node && node instanceof Node) { if (matchesSimple(node, selector)) return node; node = node.parentNode; }

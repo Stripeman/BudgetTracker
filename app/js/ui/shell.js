@@ -26,7 +26,7 @@ import * as payees from "./views/payees.js";
 import * as settings from "./views/settings.js";
 import * as workspace from "./views/workspace.js";
 import * as join from "./views/join.js";
-import { renderLanding, createOnboarding } from "./views/landing.js";
+import { renderLanding, createOnboarding, openNewWorkspace } from "./views/landing.js";
 import { messageFor } from "../core/errors.js";
 
 const VIEWS = { dashboard, transactions, bills, planning, accounts, payees, settings, workspace, join };
@@ -92,6 +92,9 @@ export function createShell({ mountPoint, store, router, theme, api }) {
         el("div", { class: "menu__palette" }, [el("p", { class: "field__label small", id: "menu-palette-label", text: "Colour palette" }), palette.element]),
       ]),
       el("div", { class: "menu__group" }, [
+        // Track something separately in its own workspace; the menu closes and focus returns to its
+        // button first, so the dialog gives focus back there when it closes.
+        el("button", { type: "button", class: "menu__item", text: "New workspace…", onClick: () => { setOpen(false); trigger.focus(); openNewWorkspace({ store }); } }),
         el("a", { class: "menu__item", href: "#/settings", text: "My settings" }),
         el("a", { class: "menu__item", href: AUTH.logout, text: "Sign out" }),
       ]),

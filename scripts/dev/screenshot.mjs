@@ -107,6 +107,12 @@ try {
       await cdp.send("Page.reload", { ignoreCache: true });
       await sleep(1500);
       if (action === "menu") await evaluate("document.querySelector('.avatar').click()");
+      // "New workspace…" from the account menu: the dialog, nothing submitted.
+      if (action === "newws") {
+        await evaluate("document.querySelector('.avatar').click()");
+        await sleep(300);
+        await evaluate("[...document.querySelectorAll('.menu__item')].find(b => /New workspace/.test(b.textContent)).click()");
+      }
       if (action === "quick") {
         await evaluate("[...document.querySelectorAll('.page-head button')].find(b => /Add/.test(b.textContent)).click()");
         await sleep(400);
