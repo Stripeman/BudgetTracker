@@ -44,6 +44,22 @@ Record that design as an ADR before provisioning.
 
 **Rotation.** Add the new key, switch `BT_BACKUP_ACTIVE_KEY`, and keep the old key listed. Remove it only after every archive using it has passed retention. Removing it early makes those archives fail with `backup_key_unavailable`, which is tested.
 
+## Backup-key escrow (Terry; required before Production holds real data)
+
+Backup master keys live only in the app's settings, so losing the app or mis-editing a setting would make every archive unreadable. Keep an offline copy, and prove it works:
+
+1. After `scripts/deploy/configure-settings.ps1` has generated the environment's key, run:
+
+   ```powershell
+   $t = Get-Content .local/deploy-target.json -Raw | ConvertFrom-Json
+   ./scripts/recovery/escrow-keys.ps1 -SubscriptionId $t.subscriptionId -TenantId $t.tenantId -Environment production -AuthorizedProduction
+   ```
+
+   It writes `.local/escrow/<environment>-backup-keys-<time>.env` (ignored by Git), prints only the key ids and a fingerprint, and refuses to overwrite an earlier file.
+2. Create a backup of a workspace in that environment, download the archive from the backup storage account into an ignored `.local/` folder, and load the escrowed keys into the shell for this step only (see the drill below). Run the drill. A `passed` report proves the escrow copy opens real archives.
+3. Clear the keys from the shell. Move the escrow file and a note of its fingerprint to offline storage under Terry's control (for example a password manager entry or an encrypted USB drive). Record the date, fingerprint and drill result in `PROJECT_STATE.md` — never the key.
+4. Repeat after every key rotation: the escrow copy must list every key id that archives still use.
+
 ## Workspace recovery (workspace owner or member, in the application)
 
 1. Choose the archive. Run **preview** with the intended mode. Review the counts, totals for your accounts, exclusions and blockers. The preview changes nothing.
@@ -59,7 +75,9 @@ The operator role is separate from site administration and from workspace roles.
 2. Export the keys into the operator shell only for the duration of the drill. Then run:
 
    ```powershell
+   Get-Content <escrow file>.env | ForEach-Object { $n, $v = $_ -split '=', 2; if ($n) { Set-Item "env:$n" $v } }
    node scripts/recovery/drill.cjs --archive <file.btbk> --workspace <wsId> --target <new empty dir>
+   Remove-Item env:BT_BACKUP_KEYS, env:BT_BACKUP_ACTIVE_KEY
    ```
 
 3. The drill refuses a non-empty target, a mismatched workspace, tampering, a wrong or missing key, a newer schema, missing or altered attachments and any financial-invariant failure. Invariants checked:

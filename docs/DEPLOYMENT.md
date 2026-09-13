@@ -50,7 +50,7 @@ These are set per environment on the SWA.
 | `BT_STORAGE_CONNECTION_STRING` | data account connection string | **yes** | agent (piped from `az`, never printed) |
 | `BT_BACKUP_STORAGE`, `BT_BACKUP_CONTAINER` | `blob`, `backups` | no | agent |
 | `BT_BACKUP_CONNECTION_STRING` | backup account connection string | **yes** | agent (piped, never printed) |
-| `BT_BACKUP_KEYS`, `BT_BACKUP_ACTIVE_KEY` | backup master keys (`id:base64`) and the active id | **yes** | agent generates for preview; **Terry holds an offline escrow copy for production** |
+| `BT_BACKUP_KEYS`, `BT_BACKUP_ACTIVE_KEY` | backup master keys (`id:base64`) and the active id | **yes** | generated once by `configure-settings.ps1`, never overwritten; **Terry holds an offline escrow copy for production** (`scripts/recovery/escrow-keys.ps1`, `docs/RECOVERY_RUNBOOK.md`) |
 | `BT_SITE_ADMINS` | operational site admins; use the provider subject shown by `/api/me` | no | Terry |
 | `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` | BudgetTracker's own Google OAuth client | secret: yes | **Terry** |
 | `APPLICATIONINSIGHTS_CONNECTION_STRING` | monitoring | treated as secret | agent |
@@ -88,6 +88,21 @@ The custom domain belongs to the **production** environment. Preview keeps its g
 - **Preview deploys.** Run locally by the implementation agent through `scripts/deploy/deploy.ps1 -Environment preview` (added with the frontend). The SWA deployment token is read from `az` at run time, held in memory only and never printed or stored. It is not placed in GitHub secrets, because the single token can deploy to every environment of the app.
 - **Production deploys.** Refused unless Terry explicitly authorizes the exact commit. The script then additionally requires `-AuthorizedProduction`, a clean tree on `main` equal to `origin/main`, and a typed confirmation.
 - **After any deploy.** Verify the running app separately (`/version.json`, `/api/me` environment and commit, sign-in, permission smoke checks) and report deployment and verification as separate claims.
+
+## Rollback and schema compatibility
+
+Every stored document carries `schemaVersion`. All changes so far are additive within version 1 (`docs/FOUNDATION_DESIGN.md`), so an older version-1 build reads data written by a newer one; a document from a NEWER schema version is refused with 503 and never modified (`api/_shared/schema.js`). A release that bumps `schemaVersion` must record its migration and its own rollback steps first.
+
+In order of speed:
+
+1. **Contain (minutes).** Stop new sign-ins by removing the environment's `GOOGLE_CLIENT_ID`/`GOOGLE_CLIENT_SECRET` app settings (Terry). Sign-in then fails closed; stored data is untouched. Restore the settings to reopen.
+2. **Roll the code back (tens of minutes).** Production deploys only from `main` equal to `origin/main`, so a rollback is a revert: open a PR that reverts the faulty merge on `main`, let the required checks pass, have Terry merge it, then run `scripts/deploy/deploy.ps1 -Environment production -AuthorizedProduction` (typed confirmation). Verify `/api/site-settings` `app.commit` equals the revert commit. Never force-push `main` and never deploy from a branch.
+3. **Recover data.**
+   - A single workspace: restore from an encrypted archive through the app (preview first; replace sets current records aside, never drops them), or run `scripts/recovery/drill.cjs` into an isolated folder to inspect an archive first. Archives need the environment's backup key — for Production, the escrowed copy.
+   - Storage-level mistakes: blob versioning and soft delete keep earlier versions for 14 days (data) and 35 days (backups).
+4. **Never** delete storage accounts, clear containers, rotate backup keys without keeping the old ones, or change DNS as part of a rollback.
+
+Record every rollback — cause, commit, steps and verification — in `PROJECT_STATE.md`.
 
 ## Monitoring and logging
 
