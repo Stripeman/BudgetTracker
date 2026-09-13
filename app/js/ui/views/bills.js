@@ -38,6 +38,27 @@ export function scheduleLabel(s, dateFormat) {
 
 function signedAmount(b) { return b.kind === "income" ? b.amount : `-${b.amount}`; }
 
+// A bill whose account is closed or removed takes no payments and is left out of totals and
+// forecasts (FIN-R9). It is shown as needing attention, with what to do, instead of vanishing.
+const INACTIVE_TEXT = {
+  account_closed: (b) => `${b.accountName || "Its account"} is closed, so this bill takes no payments and is left out of totals and forecasts. Reopen the account or end the bill.`,
+  destination_closed: (b) => `${b.toAccountName || "The account it pays into"} is closed, so this transfer takes no payments and is left out of totals and forecasts. Reopen that account or end the bill.`,
+  destination_missing: () => "The account it pays into was removed, so this transfer takes no payments and is left out of totals and forecasts. End the bill.",
+};
+export function inactiveText(b) {
+  if (!b.inactiveReason) return null;
+  const text = INACTIVE_TEXT[b.inactiveReason];
+  return text ? text(b) : "This bill's account cannot take payments, so it is left out of totals and forecasts. Reopen the account or end the bill.";
+}
+
+// Transfers between accounts you can see are movements, not money in or out (FIN-R11); the card
+// mentions them separately. No two-way arrow is drawn: arrows are only for money in or out.
+const isZero = (v) => /^-?0(\.0+)?$/.test(String(v));
+export function next30Meta(x, fmt) {
+  const base = "Bills and income due in the next 30 days.";
+  return x.transfers && !isZero(x.transfers) ? `${base} Transfers between your own accounts: ${fmt(x.transfers, x.currency)}.` : base;
+}
+
 // Plain-language history lines instead of internal field names (UX2-004).
 function describeBillChange(text, dateFormat) {
   const [head, ...rest] = String(text).split(" ");
@@ -126,7 +147,7 @@ export function createView(ctx) {
       card("Overdue", String(summary.overdue), summary.overdue ? "Past due and not yet recorded or skipped." : "Nothing is overdue."),
       card("Due soon", String(summary.dueSoon), "Within each bill's due-soon window."),
       // Money in and out carry equal weight (UX2-016).
-      ...summary.next30Days.map((x) => card(`Next 30 days (${x.currency})`, `Out ${fmt(x.outgoing, x.currency)} · In ${fmt(x.incoming, x.currency)}`, "Bills and income due in the next 30 days.")),
+      ...summary.next30Days.map((x) => card(`Next 30 days (${x.currency})`, `Out ${fmt(x.outgoing, x.currency)} · In ${fmt(x.incoming, x.currency)}`, next30Meta(x, fmt))),
     );
 
     const items = [];
@@ -137,7 +158,14 @@ export function createView(ctx) {
     items.sort((x, y) => (x.date === y.date ? 0 : x.date < y.date ? -1 : 1));
     // No empty Actions column for someone who can act on none of these (UX2-013).
     const anyAction = items.some(({ b }) => b.canRecord || b.canEdit);
-    mount(attention, items.length ? table(["Due", "Bill", "Account", "Amount", ...(anyAction ? ["Actions"] : [])], items.map(({ b, date, overdue }) => el("tr", {}, [
+    // Bills that cannot take payments because of their account, unless already ended (FIN-R9).
+    const inactive = recurring.filter((b) => b.inactiveReason && !b.ended);
+    const inactiveList = inactive.length ? el("ul", { class: "history-list", "aria-label": "Bills whose account cannot take payments" }, inactive.map((b) => el("li", {}, [
+      withIcon(b.icon, el("strong", { text: b.name })), " ", badge("Not active", "closed"),
+      el("div", { class: "muted small", text: inactiveText(b) }),
+      b.canEdit ? el("div", { class: "row-actions" }, [button("End", () => openEnd(ctx, b), { small: true, attrs: { "aria-label": `End ${b.name}` } })]) : null,
+    ]))) : null;
+    mount(attention, ...(items.length || inactiveList ? [items.length ? table(["Due", "Bill", "Account", "Amount", ...(anyAction ? ["Actions"] : [])], items.map(({ b, date, overdue }) => el("tr", {}, [
       el("th", { scope: "row", "data-label": "Due" }, [el("span", { text: formatDate(date, eff.dateFormat) }), " ", overdue ? badge("Overdue", "overdue") : badge("Due soon")]),
       el("td", { "data-label": "Bill" }, [withIcon(b.icon, b.name)]),
       accountCell(b, b.accountName),
@@ -146,18 +174,19 @@ export function createView(ctx) {
         b.canRecord ? button("Review and record", () => void openRecord(ctx, b, date), { small: true, variant: "primary", attrs: { "aria-label": `Review and record ${b.name}, due ${date}` } }) : null,
         b.canEdit ? button("Skip", () => openSkip(ctx, b, date), { small: true, attrs: { "aria-label": `Skip ${b.name}, due ${date}` } }) : null,
       ])]) : null,
-    ])), "Bills that need attention") : el("div", { class: "state", text: "Nothing needs attention." }));
+    ])), "Bills that need attention") : null, inactiveList] : [el("div", { class: "state", text: "Nothing needs attention." })]));
 
     mount(listBox, table(["Bill", "Account", "Amount", "Schedule", "Next due", "Actions"], recurring.map((b) => el("tr", {}, [
       el("th", { scope: "row", "data-label": "Bill" }, [
         withIcon(b.icon, el("strong", { text: b.name })), " ", badge(BILL_TYPE_LABELS[b.billType] || b.billType),
         b.pausedNow ? [" ", badge("Paused")] : null, b.ended ? [" ", badge("Ended", "closed")] : null,
+        b.inactiveReason && !b.ended ? [" ", badge("Not active", "closed")] : null,
         b.payeeName ? el("div", { class: "muted small", text: b.payeeName }) : null,
       ].flat()),
       accountCell(b, b.kind === "transfer" ? `${b.accountName} → ${b.toAccountName || ""}` : b.accountName),
       el("td", { "data-label": "Amount", class: "num" }, [amountCell(b, plain)]),
       el("td", { "data-label": "Schedule", text: scheduleLabel(b.schedule, eff.dateFormat) }),
-      el("td", { "data-label": "Next due", text: b.ended ? "Ended" : b.nextDue ? formatDate(b.nextDue, eff.dateFormat) : "—" }),
+      el("td", { "data-label": "Next due", text: b.ended ? "Ended" : b.inactiveReason ? "Not active" : b.nextDue ? formatDate(b.nextDue, eff.dateFormat) : "—" }),
       el("td", { "data-label": "" }, [el("div", { class: "row-actions" }, [
         b.canRecord && b.nextDue ? button("Record next", () => void openRecord(ctx, b, b.nextDue), { small: true, attrs: { "aria-label": `Record next: ${b.name}` } }) : null,
         b.canEdit ? button("Edit", () => openBillEditor(ctx, b), { small: true, attrs: { "aria-label": `Edit ${b.name}` } }) : null,

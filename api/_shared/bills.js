@@ -8,7 +8,7 @@
 // transaction (linked by links.recurringId + links.occurrence), so editing a bill can never rewrite
 // what was already recorded.
 //
-// OCCURRENCE STATES: recorded (an entry exists) > skipped (explicitly, with a reason) > paused (inside
+// OCCURRENCE STATES: recorded (a live entry exists and has not been reversed) > skipped (explicitly, with a reason) > paused (inside
 // a pause range) > due. Only "due" occurrences are forecast, committed in budgets, reminded about or
 // reported overdue. Overdue = due, before today, and on/after the bill's tracking start (so creating a
 // bill with a start date in the past does not flood the person with "missed" items they already paid).
@@ -52,13 +52,45 @@ const isPaused = (bill, date) => effectivePauses(bill).some((p) => p.from <= dat
 const isSkipped = (bill, date) => activeSkips(bill).some((s) => s.date === date);
 const trackStart = (bill) => (bill.trackFrom && bill.trackFrom > bill.schedule.startDate ? bill.trackFrom : bill.schedule.startDate);
 
-// "<recurringId>|<occurrence>" -> transaction id, for every live entry recorded from a bill.
+// A recording counts while it is live and not cancelled by a live reversal (FIN-R4): reversing a
+// payment recorded by mistake reopens the occurrence, so it is owed, forecast and committed again
+// and can be skipped. "Recorded once" holds among live, unreversed entries.
+function recordingCounts(t, byId) {
+  if (t.deletedAt || !t.links || !t.links.recurringId || !t.links.occurrence) return false;
+  const reversal = t.reversedBy ? byId.get(t.reversedBy) : null;
+  return !(reversal && !reversal.deletedAt);
+}
+
+// "<recurringId>|<occurrence>" -> transaction id, for every live, unreversed entry recorded from a bill.
 function recordedSet(doc) {
+  const byId = new Map((doc.transactions || []).map((t) => [t.id, t]));
   const out = new Map();
   for (const t of doc.transactions || []) {
-    if (!t.deletedAt && t.links && t.links.recurringId && t.links.occurrence) out.set(`${t.links.recurringId}|${t.links.occurrence}`, t.id);
+    if (recordingCounts(t, byId)) out.set(`${t.links.recurringId}|${t.links.occurrence}`, t.id);
   }
   return out;
+}
+
+// Every live entry recorded for one occurrence, including one whose recording was reversed.
+function liveRecordings(doc, billId, occurrence) {
+  return (doc.transactions || []).filter((t) => !t.deletedAt && t.links && t.links.recurringId === billId && t.links.occurrence === occurrence);
+}
+
+// THE one rule for whether a bill's accounts can take its payments (FIN-R9). A bill whose source
+// account, or a transfer's destination, is closed or removed cannot be recorded (account_closed),
+// so it is left out of forecasts, budget commitments, the next-30-days total, overdue and due-soon
+// items, and the Bills page shows it as needing attention instead. Returns null or the reason.
+function accountIssue(doc, bill) {
+  const find = (id) => (doc.accounts || []).find((a) => a.id === id);
+  const source = find(bill.accountId);
+  if (!source || source.deletedAt) return 'account_missing';
+  if (source.status === 'closed') return 'account_closed';
+  if (bill.kind === 'transfer') {
+    const dest = find(bill.toAccountId);
+    if (!dest || dest.deletedAt) return 'destination_missing';
+    if (dest.status === 'closed') return 'destination_closed';
+  }
+  return null;
 }
 
 function occurrenceStatus(bill, date, recorded) {
@@ -83,5 +115,5 @@ function reminders(bill, today, recorded) {
 
 module.exports = {
   BILL_TYPES, KINDS, AMOUNT_TYPES, defaultKind, signed, termsAt, isPaused, isSkipped, activeSkips, effectivePauses, trackStart,
-  recordedSet, occurrenceStatus, dueBetween, overdue, reminders,
+  recordingCounts, recordedSet, liveRecordings, accountIssue, occurrenceStatus, dueBetween, overdue, reminders,
 };

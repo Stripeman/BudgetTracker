@@ -128,12 +128,14 @@ function maskedNumber(value) {
   return value;
 }
 
+// Added exactly with money.sum (BigInt), so a partial total never loses a minor unit whatever the
+// order of the entries (FIN-R15).
 function balanceOf(doc, account) {
-  let total = Number.isSafeInteger(account.openingBalanceMinor) ? account.openingBalanceMinor : 0;
+  const amounts = [Number.isSafeInteger(account.openingBalanceMinor) ? account.openingBalanceMinor : 0];
   for (const t of doc.transactions || []) {
-    if (t.accountId === account.id && !t.deletedAt) total += t.amountMinor;
+    if (t.accountId === account.id && !t.deletedAt) amounts.push(t.amountMinor);
   }
-  return total === 0 ? 0 : total;
+  return money.sum(amounts);
 }
 
 // How the viewer relates to an account (UX review UX-002): their own private account, a shared
