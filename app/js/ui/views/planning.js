@@ -168,6 +168,10 @@ function openBudgetEditor(ctx, budget = null) {
   const period = select(PERIODS, editing ? budget.period : "monthly");
   const start = input({ type: "date" });
   start.value = editing ? budget.startDate : `${todayIso().slice(0, 8)}01`;
+  // Plan changes apply from a date; earlier periods keep the plan they had (BT-001-05).
+  const effectiveFrom = input({ type: "date" });
+  effectiveFrom.value = editing ? budget.status.period.start : "";
+  const reason = input({ maxlength: "200", placeholder: "Optional" });
   const linesBox = el("div", { class: "stack" });
   const rows = [];
   function addRow(line = {}) {
@@ -191,6 +195,10 @@ function openBudgetEditor(ctx, budget = null) {
       el("div", { class: "form-grid" }, [field("Name", name), field("Who it is for", scope, { help: "A shared budget counts shared accounts only, so members' private spending never appears in it." }), field("Currency", currency), field("Period", period), field("Starts on", start)]),
       el("h3", { text: "Categories" }), linesBox,
       button("Add a category", () => addRow(), { small: true }),
+      editing ? el("div", { class: "form-grid" }, [
+        field("Plan changes apply from", effectiveFrom, { help: "Earlier periods keep the plan they had." }),
+        field("Reason for the change", reason),
+      ]) : null,
     ],
     actions: [cancel, save],
   });
@@ -199,9 +207,18 @@ function openBudgetEditor(ctx, budget = null) {
     if (!name.value.trim()) { modal.setError("Give the budget a name."); name.focus(); return; }
     if (!rows.length || rows.some((r) => !r.amount.value.trim())) { modal.setError("Every category line needs a planned amount."); return; }
     const lines = rows.map((r) => ({ categoryId: r.cat.value, amount: r.amount.value.trim(), rollover: r.rollover.checked }));
-    const body = editing
-      ? { budgetId: budget.id, revision: budget.revision, name: name.value.trim(), period: period.value, startDate: start.value, lines }
-      : { name: name.value.trim(), scope: scope.value, currency: currency.value, period: period.value, startDate: start.value, lines };
+    let body;
+    if (editing) {
+      // Only what changed is sent, so an unchanged plan never gains a new version.
+      body = { budgetId: budget.id, revision: budget.revision };
+      if (name.value.trim() !== budget.name) body.name = name.value.trim();
+      const planChanged = JSON.stringify(lines) !== JSON.stringify(budget.lines.map((l) => ({ categoryId: l.categoryId, amount: l.amount, rollover: !!l.rollover })))
+        || period.value !== budget.period || start.value !== budget.startDate;
+      if (planChanged) Object.assign(body, { lines, period: period.value, startDate: start.value, ...(effectiveFrom.value ? { effectiveFrom: effectiveFrom.value } : {}), ...(reason.value.trim() ? { reason: reason.value.trim() } : {}) });
+      if (Object.keys(body).length === 2) { announce("Nothing changed."); modal.close(); return; }
+    } else {
+      body = { name: name.value.trim(), scope: scope.value, currency: currency.value, period: period.value, startDate: start.value, lines };
+    }
     modal.setBusy(true);
     const out = await ctx.store.actions.write((ws) => (editing ? ctx.api.updateBudget(ws, body) : ctx.api.createBudget(ws, body)), ["budgets"]);
     modal.setBusy(false);

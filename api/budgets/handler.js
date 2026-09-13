@@ -43,10 +43,14 @@ function validLines(lines, currency, doc) {
 }
 
 function view(doc, budget, member, today, now) {
+  const terms = budgeting.budgetTermsAt(budget, today);
+  const names = new Map((doc.members || []).map((m) => [m.subject, m.name || 'Member']));
+  const lineView = (l) => ({ categoryId: l.categoryId, amount: money.toDecimal(l.amountMinor, budget.currency), rollover: l.rollover });
   return {
-    id: budget.id, name: budget.name, scope: budget.scope, currency: budget.currency, period: budget.period, startDate: budget.startDate,
+    id: budget.id, name: budget.name, scope: budget.scope, currency: budget.currency, period: terms.period, startDate: terms.startDate,
     revision: budget.revision, ownedBySelf: budget.ownerSubject === member.subject, canEdit: mayEdit(budget, member),
-    lines: budget.lines.map((l) => ({ categoryId: l.categoryId, amount: money.toDecimal(l.amountMinor, budget.currency), rollover: l.rollover })),
+    lines: terms.lines.map(lineView),
+    versions: (budget.versions || []).map((v) => ({ effectiveFrom: v.effectiveFrom, period: v.period, reason: v.reason || '', by: v.createdBy ? names.get(v.createdBy) || 'Former member' : null, lines: v.lines.map(lineView) })),
     status: budgeting.budgetStatus(doc, budget, today, now),
   };
 }
@@ -74,6 +78,7 @@ async function create(ctx, req) {
       startDate: fields.date(body.startDate, 'Start date') || `${nowIso.slice(0, 7)}-01`,
       lines: validLines(body.lines, currency, doc), ownerSubject: member.subject, createdBy: member.subject, createdAt: nowIso, revision: 1, deletedAt: null,
     };
+    budget.versions = [{ effectiveFrom: budget.startDate, period: budget.period, startDate: budget.startDate, lines: budget.lines, createdAt: nowIso, createdBy: member.subject, reason: '' }];
     doc.budgets = [...(doc.budgets || []), budget];
     ledger.assertMemberQuota(doc, member, ctx.env);
     audit.record(doc, { actor: member.subject, action: 'budget.create', targetType: 'budget', targetId: budget.id, scope: scope === 'shared' ? 'members' : `self:${member.subject}`, at: nowIso });
@@ -91,16 +96,35 @@ function locate(doc, member, id) {
 
 async function patch(ctx, req) {
   const wsId = requireId(query(req, 'workspaceId'), 'workspaceId');
-  const body = fields.onlyKeys(readBody(req), ['budgetId', 'revision', 'name', 'lines', 'period', 'startDate']);
+  const body = fields.onlyKeys(readBody(req), ['budgetId', 'revision', 'name', 'lines', 'period', 'startDate', 'effectiveFrom', 'reason']);
   const id = requireId(body.budgetId, 'budgetId');
   const { result } = await store.mutateWorkspace(ctx, wsId, (doc, member) => {
     const b = locate(doc, member, id);
     if (body.revision !== b.revision) throw conflict('This budget changed since you loaded it. Reload to see the latest version.', 'stale_revision');
     const changed = [];
     if (body.name !== undefined) { b.name = fields.text(body.name, { field: 'Name', max: 80, required: true }); changed.push('name'); }
-    if (body.lines !== undefined) { b.lines = validLines(body.lines, b.currency, doc); changed.push('lines'); }
-    if (body.period !== undefined) { b.period = fields.oneOf(body.period, PERIODS, 'Period'); changed.push('period'); }
-    if (body.startDate !== undefined) { b.startDate = fields.date(body.startDate, 'Start date', { required: true }); changed.push('startDate'); }
+    if (body.lines !== undefined || body.period !== undefined || body.startDate !== undefined) {
+      // A plan change is a new version from a date — by default the start of the current period —
+      // so earlier periods keep the plan they had (audit B13). Earlier versions are never edited.
+      const today = ctx.nowIso().slice(0, 10);
+      const current = budgeting.budgetTermsAt(b, today);
+      const v = {
+        effectiveFrom: fields.date(body.effectiveFrom, 'Effective from') || budgeting.periodFor(current, today).start,
+        period: body.period !== undefined ? fields.oneOf(body.period, PERIODS, 'Period') : current.period,
+        startDate: body.startDate !== undefined ? fields.date(body.startDate, 'Start date', { required: true }) : current.startDate,
+        lines: body.lines !== undefined ? validLines(body.lines, b.currency, doc) : current.lines,
+        createdAt: ctx.nowIso(), createdBy: member.subject, reason: fields.text(body.reason, { field: 'Reason', max: 200 }),
+      };
+      const base = b.versions && b.versions.length ? b.versions : [{ effectiveFrom: b.startDate, period: b.period, startDate: b.startDate, lines: b.lines }];
+      b.versions = [...base, v];
+      // The latest plan is mirrored at the top level for older readers.
+      b.lines = v.lines;
+      b.period = v.period;
+      b.startDate = v.startDate;
+      changed.push('plan');
+    } else if (body.effectiveFrom !== undefined) {
+      throw badRequest('An effective date applies only to changes of the plan (lines, period or start).', 'invalid_field');
+    }
     if (changed.length) {
       b.revision += 1;
       b.updatedAt = ctx.nowIso();

@@ -4,7 +4,7 @@ Privacy-first budgeting service with accounts, debt tracking, forecasting, trip 
 
 ## Status
 
-Project requirements and repository foundation are prepared. The application is not implemented or deployed yet. Security, restrictive permissions, encrypted backups, and tested restores are the first implementation milestone.
+Alpha, in active development on `feature/project-foundation`. Built and tested so far: the security and permission foundation, encrypted backups with tested restores, accounts and entries (with amendments, reasons and reversals — nothing is ever deleted), the managed merchant directory, recurring bills, budgets, the cash-flow forecast with what-if, colour-coded categories, and the web app with TaskTracker's day/night control and theme picker. A preview deployment exists for review; Production is not deployed. The [requirement register](docs/REQUIREMENTS.md) says exactly what is complete and what is partial.
 
 ## Planned capabilities
 
@@ -15,7 +15,7 @@ Project requirements and repository foundation are prepared. The application is 
 - Flexible budgets, savings goals, debt management, and cash-flow forecasting.
 - Shared expenses, flexible splits, reimbursements, and settlement.
 - Trip planning and dated currency conversion.
-- Google sign-in, TaskTracker rich text editor, configurable settings, and the same moon/sun theme selector.
+- Google sign-in, rich text editor, configurable settings, and the same moon/sun theme selector.
 
 Reuse the verified TaskTracker stack and components after inspecting its repository. BudgetTracker has separate resources and financial data. The service offers budgeting functionality; product sales, eSIM offerings, and card issuance are excluded.
 
@@ -29,9 +29,9 @@ Reuse the verified TaskTracker stack and components after inspecting its reposit
 
 ## Development and release
 
-Feature branch → isolated Azure Staging → Terry’s review → approved Git merge → controlled Production release.
+Feature branch → the BudgetTracker Static Web App's isolated `preview` environment → Terry’s review → approved Git merge → controlled Production release. A separate Staging app will be added later; Production and the `budget.remsik.org` DNS change only with Terry's explicit authorization.
 
-Agents must not push to main or deploy Production. Remote branch protection and environment controls still need configuration; documentation alone does not enforce them. Local start commands will be documented when the implementation exists.
+Agents must not push to main, merge, or deploy Production. Local commands are below.
 
 ## Public repository and private data
 
@@ -61,14 +61,14 @@ The hook runs `node scripts/scan-staged.cjs`, which checks staged paths and cont
 
 ```powershell
 npm ci --prefix api        # install API dependencies
-npm test                   # repository tests plus API tests (permission matrix, ledger, money, storage)
+npm test                   # repository, API and app tests
 npm run validate           # route registry, SWA config, versions, forbidden APIs, ignore rules
 npm run generate:functions # regenerate api/<route>/function.json and index.js from the registry
 ```
 
-**What the API covers so far.** Identity, workspaces, members, invitations, grants, contacts, people selectors, preferences, site settings, audit, accounts, payees, categories and transactions. The legacy `lib/foundation.cjs` prototype remains for reference only; the API supersedes it.
+**What is built so far.** API: identity, workspaces, members, invitations, grants, contacts, people selectors, preferences, site settings, audit, accounts, merchants, categories (with colours), transactions (amendments and reversals), recurring bills, budgets, forecast and what-if, backups and restores. Web app: dashboard, transactions, bills, planning, accounts, merchants, workspace and settings. The legacy `lib/foundation.cjs` prototype remains for reference only; the API supersedes it.
 
-**What is not built yet.** Frontend, local dev server, backups and restores.
+**What is not built yet.** The Tiptap editor, receipts and attachments, imports and reconciliation, shared expenses and settlement, trips and currency conversion, debt planning, goals and alerts, reports and exports, offline use, scheduled backups, and the partitioning in ADR-003. See the requirement register.
 
 Never connect any of this to real financial data.
 

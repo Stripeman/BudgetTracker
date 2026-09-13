@@ -30,6 +30,21 @@ Retain the verified browser ES-module and Node/CommonJS API approach from TaskTr
 
 **Consequences.** Multi-document reads for history; sealing must be crash-safe (segment first, document second, idempotent by segment hash). Until this is implemented the cap remains a documented operational limit, and PROJECT_STATE tracks it as a release risk.
 
+## Schema v1: additive changes since ADR-002 (no migration required)
+
+All changes so far only add optional fields and collections to the version-1 workspace document, so `schemaVersion` stays 1 and older documents are read tolerantly. Recorded here so a future migration knows what "absent" means:
+
+| Added | Meaning when absent (older documents) |
+|---|---|
+| `recurring[]` (bills with `versions`, `skips`, `pauses`, `resumes`, `history`) and `budgets[]` | No bills or budgets |
+| Bill `skips[].withdrawnAt`, `resumes[]` | A skip without `withdrawnAt` is active; no resumes |
+| Merchant fields on `payees[]`: `normalizedName`, `type`, `contact`, `customerNumber`, `openedOn`, `closedOn`, `closeReason`, `status`, `defaultAccountId`, `defaultCurrency`, `tags`, `revision`, `history`, `sharedAt` | Computed or default on read: normalized from the name, type `other`, status `active`, revision 1, empty history |
+| Category `color`, `defaultColor`, `history` | No workspace colour; the default is chosen from the palette by category id |
+| Transaction `amendments[]`, `reversedBy`, `links.reverses`, `links.recurringId`/`occurrence` | No amendments; not reversed; not from a bill |
+| User preference `categoryColors` | No personal colours |
+
+Any change that renames, removes or reinterprets a field needs a real migration (in `api/_shared/schema.js`) and a `schemaVersion` bump before release.
+
 ## Permission model
 
 Separate verified Google subject, contact, participant, workspace membership, financial resource ownership and capability grants. Every resource has a workspace and owner. A verified server principal is an adapter output, never a browser-provided object. Resource access requires ownership or an active explicit capability grant in the same workspace. Site-admin and workspace-owner labels are not inputs to financial authorization. Anonymous/invalid identity, unknown capabilities, cross-workspace access, missing/expired/revoked grants fail closed. The prototype checks explicit capabilities; trusted ingress, Google verification and route coverage remain pending.

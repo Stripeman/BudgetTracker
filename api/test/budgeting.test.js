@@ -89,6 +89,21 @@ describe('BT-008-01 budgets', () => {
     assert.equal(line.available, '615.00');
   });
 
+  test('changing a plan takes effect from the current period; earlier periods keep the plan they had', async () => {
+    const h = harness();
+    const f = await budgetFixture(h);
+    const b = ok(await h.call('budgets', 'POST', { as: 'alice', query: f.q, body: { name: 'Food', scope: 'shared', currency: 'EUR', startDate: '2026-01-01', lines: [{ categoryId: f.cats.Groceries, amount: '400.00' }] } }), 201).budget;
+    const planned = async (date) => ok(await h.call('budgets', 'GET', { as: 'alice', query: { ...f.q, ...(date ? { date } : {}) } })).budgets[0].status.lines[0].planned;
+    assert.equal(await planned('2026-08-15'), '400.00');
+    const edited = ok(await h.call('budgets', 'PATCH', { as: 'alice', query: f.q, body: { budgetId: b.id, revision: 1, lines: [{ categoryId: f.cats.Groceries, amount: '500.00' }], reason: 'Bigger household' } })).budget;
+    assert.deepEqual(edited.versions.map((v) => [v.effectiveFrom, v.lines[0].amount, v.reason]), [['2026-01-01', '400.00', ''], ['2026-09-01', '500.00', 'Bigger household']]);
+    assert.equal(await planned(), '500.00', 'the current period uses the new plan');
+    assert.equal(await planned('2026-08-15'), '400.00', 'August keeps the plan it had');
+    // A rollover into September uses August's own plan: 400.00 − 30.00 spent = 370.00.
+    const withRollover = ok(await h.call('budgets', 'PATCH', { as: 'alice', query: f.q, body: { budgetId: b.id, revision: edited.revision, lines: [{ categoryId: f.cats.Groceries, amount: '500.00', rollover: true }] } })).budget;
+    assert.equal(withRollover.status.lines[0].carry, '370.00');
+  });
+
   test('private budgets are invisible to others and count the owner\'s own accounts; shared budgets need a manager', async () => {
     const h = harness();
     const f = await budgetFixture(h);

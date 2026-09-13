@@ -46,8 +46,15 @@ assumptions.
   TaskTracker's site-admin owner elevation.
 - An identifier from another workspace fails as not found. Errors, logs and notifications never
   disclose another workspace or financial details.
-- Sensitive actions are audited atomically with the mutation (never best-effort). Deletion is
-  recoverable with safeguards; no silent permanent deletion of financial records.
+- Sensitive actions are audited atomically with the mutation (never best-effort).
+- **Nothing is ever physically deleted** (Terry, 2026-09-13; BT-001-05): merchants, payees,
+  contacts, members, accounts, transactions, bills, trips, budgets, categories, attachments,
+  settings, audit records, backups and restore history use archived, inactive, closed, cancelled
+  or superseded states. Historical financial records are immutable: corrections are amendments
+  (before/after values with who, when and why), reversals, replacements or adjustments that keep
+  the original. Archived or closed records are excluded from new-entry choices by default but stay
+  in history, search, reports, audits and authorized administrative views. Never truncate history
+  or audit arrays; size limits are solved by partitioning (ADR-003), never by deletion.
 - Backups are encrypted and independently protected. Restores are isolated, previewed without
   mutation, atomic, and never resurrect revoked or expired access.
 - Client state guards against stale responses: synchronous reset on workspace switch,
@@ -67,6 +74,13 @@ assumptions.
   derived on read. Original amount, currency, rate, rate source and effective date are
   preserved; refreshing rates never changes history. Paying a card or repaying a shared debt is
   never counted as spending again.
+- Merchants are managed directory records linked by stable id, never free text or names
+  (BT-007-01); closed merchants leave new-entry choices but keep their history.
+- Recurring bills are versioned: term changes take effect from a chosen date and never rewrite
+  recorded entries; each occurrence is reviewed before it becomes an entry and is recorded once
+  (BT-008-02).
+- Category colours are stored by stable category id, validated server-side for contrast and never
+  the only signal (BT-011-04).
 
 ## 5. Public repository hygiene
 
@@ -91,6 +105,13 @@ assumptions.
   storage, identities, secrets and data are fully separate; Staging uses fictional data.
 - Tie every release to a commit and application version and show version and environment in
   the app. Deployment success is not application validation; verify separately.
+- Hosting (Terry, 2026-09-13): one dedicated Azure Static Web App for BudgetTracker
+  (`budget-tracker`, resource group `budget-tracker`, East US 2) with its own settings, secrets,
+  authentication, storage, logs, backups and restore scope; feature builds go only to its named
+  `preview` environment. No separate Staging app yet, but keep everything ready for one. Never
+  copy TaskTracker secrets or data, never touch TaskTracker's Azure resources, and never change
+  DNS (`budget.remsik.org`, documented in `docs/DEPLOYMENT.md`) or deploy Production without
+  Terry's explicit authorization.
 
 ## 7. Working discipline
 
@@ -105,9 +126,10 @@ assumptions.
 - TaskTracker is read-only reference; never modify, fetch or switch it. Compare the committed
   `main` of `Z:\repos\TaskTracker` and `T:\repos\TaskTracker` and read the freshest with
   `git show main:<path>` (on 2026-09-13 `T:` `main` `a1ec150` was canonical; `Z:` was stale).
-  Reuse or faithfully adapt its Tiptap editor and its day/night (moon/sun) Appearance control
-  (`app/js/ui/daynight.js`) rather than inventing a different selector
-  (`docs/TASKTRACKER_REUSE.md`, BT-011-01/02). Do not copy site-admin elevation, best-effort audit, invalid-JSON
+  Reuse or faithfully adapt its Tiptap editor, its day/night (moon/sun) Appearance control
+  (`app/js/ui/daynight.js`) and its colour-aware theme picker (`app/js/ui/themepicker.js`, never a
+  plain browser select) rather than inventing different controls
+  (`docs/TASKTRACKER_REUSE.md`, BT-011-01/02/03). Do not copy site-admin elevation, best-effort audit, invalid-JSON
   fallback, archived-member reactivation, permanent deletion without safeguards, historical
   deployment exceptions, stale infrastructure facts, or forged-identity seed scripts.
 

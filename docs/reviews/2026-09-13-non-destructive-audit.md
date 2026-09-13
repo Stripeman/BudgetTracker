@@ -10,16 +10,16 @@ Status key: **Fixed** (with the commit that fixed it), **Open**.
 
 | ID | Where | What is lost | Sev | Status |
 |---|---|---|---|---|
-| A1 | transaction `history` capped at 50 | older history, including delete and restore events | High | Open |
-| A2 | account `history` capped at 50 | the before/after opening-balance record | High | Open |
-| A3 | bill `history` capped at 100 | older bill changes | High | Open |
-| A4 | site audit capped at 500 | older site audit records | High | Open |
-| A5 | bill "unskip" removes the skip record | its date, reason, actor and time | High | Open |
-| A6 | bill "resume" rewrites or drops pause records | the original pause range | High | Open |
+| A1 | transaction `history` capped at 50 | older history, including delete and restore events | High | **Fixed** (`ab27260`) |
+| A2 | account `history` capped at 50 | the before/after opening-balance record | High | **Fixed** (`ab27260`) |
+| A3 | bill `history` capped at 100 | older bill changes | High | **Fixed** (`ab27260`) |
+| A4 | site audit capped at 500 | older site audit records | High | **Fixed** (`ab27260`) |
+| A5 | bill "unskip" removes the skip record | its date, reason, actor and time | High | **Fixed** (`ab27260`, withdrawn not removed; tested) |
+| A6 | bill "resume" rewrites or drops pause records | the original pause range | High | **Fixed** (`ab27260`, resumes are separate records; tested) |
 | A7 | restore "replace" removes in-scope records created after the backup and overwrites changed ones | the current records (only the encrypted recovery point keeps them) | High | Open |
 | A8 | idempotency records pruned after 48 h | the cached replay response | Medium | Open (needs a ruling: cache, not record) |
 | A9 | preference set to null deletes the key | the prior value | Low | Open |
-| A10 | audit `fields` list capped at 30 | long field lists | Low | Open |
+| A10 | audit `fields` list capped at 30 | long field lists | Low | **Fixed** (`ab27260`) |
 | A11 | backup `retentionDays` implies pruning (none implemented) | — | Medium | Open (rename to minimum retention) |
 | A12 | blob soft-delete purges after 14/35 days; no WORM | storage-level deletions | Medium | Open (infrastructure, needs Terry) |
 | A13 | comment mentions an "archived-and-purged" workspace | — | Low | Open |
@@ -28,19 +28,19 @@ Status key: **Fixed** (with the commit that fixed it), **Open**.
 
 | ID | Where | Prior value lost | Sev | Status |
 |---|---|---|---|---|
-| B1 | transaction PATCH | every field; only field names kept | High | Open — amendments with before/after, actor, time, required reason; reversal plus replacement for cleared/reconciled corrections |
-| B2 | cross-currency transfer edit rebuilds rate context | original rate, source and date | High | Open |
-| B3 | reconciled → cleared needs no reason | the reconciliation decision | Medium | Open |
-| B4 | transaction restore clears `deletedBy` | who deleted it | Medium | Open |
-| B5 | edit form drops an archived category | the entry's category (silently recategorized) | High | Open (frontend) |
+| B1 | transaction PATCH | every field; only field names kept | High | **Fixed** (`af52dba`: amendments with before/after, author, time and required reason; reversals for reconciled entries) |
+| B2 | cross-currency transfer edit rebuilds rate context | original rate, source and date | High | **Fixed** (`af52dba`: prior exchange details kept in the amendment; tested) |
+| B3 | reconciled → cleared needs no reason | the reconciliation decision | Medium | **Fixed** (`af52dba`: un-reconciling requires a reason) |
+| B4 | transaction restore clears `deletedBy` | who deleted it | Medium | **Fixed** (`af52dba`: kept in the amendment; tested) |
+| B5 | edit form drops an archived category | the entry's category (silently recategorized) | High | **Fixed** (`e34c1ca`) |
 | B6 | edit form always sends `payeeName`; deleted payees re-matched | the entry's merchant link | High | **Fixed** by BT-007-01 (merchants by id; closed merchants keep links) |
-| B7 | edit form sends unchanged fields | history signal | Medium | Open (frontend) |
+| B7 | edit form sends unchanged fields | history signal | Medium | **Fixed** (`e34c1ca`; the server also records only real changes) |
 | B8 | account terms and fields overwritten | APR, limits, payment terms, names | High/Medium | Open — versioned terms |
 | B9 | account close has no who/why | lifecycle | Medium | Open |
 | B10 | payee edits overwrite with no history or revision | names, aliases, defaults | Medium | **Fixed** by BT-007-01 (revision check, before/after history with reason) |
 | B11 | category edits overwrite with no history | names, parents | Medium | Open |
 | B12 | contact edits overwrite; private changes unaudited | contact details | Medium | Open |
-| B13 | budget lines replaced; past periods recomputed from current lines | historical budget performance | High | Open — versioned lines |
+| B13 | budget lines replaced; past periods recomputed from current lines | historical budget performance | High | **Fixed** (plan versions from a date; tested) |
 | B14 | bill name/type/notes/reminder/end date overwritten | prior values | Medium | Open |
 | B15 | member role and rejoin overwrite membership | membership periods | Medium | Open |
 | B16 | workspace edits overwrite; unarchive loses who/when | settings history | Medium | Open |

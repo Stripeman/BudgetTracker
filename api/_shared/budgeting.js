@@ -41,6 +41,18 @@ function previousPeriod(budget, period) {
   return periodFor(budget, schedule.addDays(period.start, -1));
 }
 
+// A budget's plan (period, anchor and lines) is versioned from a date (audit B13): each period is
+// measured against the plan in force on that date, so changing a plan never rewrites how earlier
+// periods went. Budgets from before versioning have one implicit version.
+function budgetTermsAt(budget, date) {
+  const versions = budget.versions && budget.versions.length
+    ? budget.versions
+    : [{ effectiveFrom: budget.startDate, period: budget.period, startDate: budget.startDate, lines: budget.lines }];
+  let chosen = versions[0];
+  for (const v of versions) if (v.effectiveFrom <= date && v.effectiveFrom >= chosen.effectiveFrom) chosen = v;
+  return chosen;
+}
+
 // ---- scope ------------------------------------------------------------------------------------
 function scopeAccounts(doc, budget, now) {
   const accounts = (doc.accounts || []).filter((a) => !a.deletedAt && a.currency === budget.currency);
@@ -93,18 +105,22 @@ function budgetStatus(doc, budget, today, now) {
 }
 
 function computeStatus(doc, budget, today, now) {
-  const period = periodFor(budget, today);
-  const prev = previousPeriod(budget, period);
+  const terms = budgetTermsAt(budget, today);
+  const period = periodFor(terms, today);
+  const prev = previousPeriod(terms, period);
+  const prevTerms = budgetTermsAt(budget, prev.start);
   const accounts = scopeAccounts(doc, budget, now);
   const ids = new Set(accounts.map((a) => a.id));
   const recorded = bills.recordedSet(doc);
   const c = budget.currency;
   const categories = new Map((doc.categories || []).map((x) => [x.id, x.name]));
   const totals = { planned: 0, actual: 0, committed: 0, carry: 0, available: 0 };
-  const lines = budget.lines.map((line) => {
+  const lines = terms.lines.map((line) => {
     const actual = netSpending(doc, ids, line.categoryId, period.start, period.end);
     const committed = committedSpending(doc, ids, line.categoryId, period.start, period.end, today, recorded);
-    const carry = line.rollover ? money.sum([line.amountMinor, -netSpending(doc, ids, line.categoryId, prev.start, prev.end)]) : 0;
+    // What was left of LAST period's own plan for this category.
+    const prevLine = prevTerms.lines.find((l) => l.categoryId === line.categoryId);
+    const carry = line.rollover && prevLine ? money.sum([prevLine.amountMinor, -netSpending(doc, ids, line.categoryId, prev.start, prev.end)]) : 0;
     const available = money.sum([line.amountMinor, carry, -actual, -committed]);
     for (const [k, v] of [['planned', line.amountMinor], ['actual', actual], ['committed', committed], ['carry', carry], ['available', available]]) totals[k] = money.sum([totals[k], v]);
     return {
@@ -232,4 +248,4 @@ function forecast(doc, principal, { today, horizonDays, bufferMinor = null, buff
   };
 }
 
-module.exports = { periodFor, previousPeriod, budgetStatus, forecast, netSpending, committedSpending };
+module.exports = { periodFor, previousPeriod, budgetTermsAt, budgetStatus, forecast, netSpending, committedSpending };
