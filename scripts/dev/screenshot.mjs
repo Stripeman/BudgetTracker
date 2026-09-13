@@ -152,6 +152,15 @@ try {
           await evaluate("(() => { const c = document.querySelector('.modal input[type=checkbox]'); if (c && !c.checked) c.click(); [...document.querySelectorAll('.modal button')].find((b) => /^Preview$/.test(b.textContent.trim())).click(); })()");
         }
       }
+      // Shared expenses (BT-009): the Add expense dialog with a fictional description and amount, so
+      // the live split preview and its rounding note show; nothing is saved.
+      if (action === "groupadd") {
+        await evaluate("location.hash = '#/group'");
+        await sleep(1500);
+        await evaluate("[...document.querySelectorAll('.page-head button')].find((b) => b.textContent === 'Add expense').click()");
+        await sleep(500);
+        await evaluate(`(() => { const set = (sel, v) => { const i = document.querySelector(sel); i.value = v; i.dispatchEvent(new Event('input', { bubbles: true })); }; set('.modal input[placeholder^="For example"]', 'Fictional boat trip'); set('.modal input[placeholder^="0.00 or"]', '100'); })()`);
+      }
       await sleep(1200);
       const { data } = await cdp.send("Page.captureScreenshot", { format: "png" });
       const file = path.join(OUT, `interact-${action}.png`);

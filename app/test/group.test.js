@@ -237,7 +237,9 @@ describe("BT-009-10 navigation and empty states by workspace kind", () => {
     assert.doesNotMatch(text, /Add an account first/);
     assert.match(text, /none are needed to share expenses/);
     assert.match(text, /Your balance in this group/);
-    assert.match(text, /gets back EUR 225\.00/);
+    assert.match(text, /You get back EUR 225\.00/);
+    assert.match(text, /Shared expenses are listed on Shared expenses/);
+    assert.doesNotMatch(text, /Use “Add expense”/);
   });
 
   test("a balance says in words who gets money back or owes it, with an in or out arrow, never both ways", () => {
@@ -249,5 +251,7 @@ describe("BT-009-10 navigation and empty states by workspace kind", () => {
     assert.equal(owes.textContent, "owes EUR 75.00");
     assert.equal(owes.querySelector("svg").getAttribute("data-icon"), "money-out");
     assert.equal(balanceLabel({ net: "0.00" }, "EUR", fmt).textContent, "Settled up");
+    assert.equal(balanceLabel({ net: "-75.00" }, "EUR", fmt, { self: true, subject: "You" }).textContent, "You owe EUR 75.00");
+    assert.equal(balanceLabel({ net: "0.00" }, "EUR", fmt, { self: true, subject: "You" }).textContent, "You are settled up");
   });
 });

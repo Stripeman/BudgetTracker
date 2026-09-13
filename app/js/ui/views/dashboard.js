@@ -73,7 +73,7 @@ export function createView(ctx) {
       const mine = table && table.rows.find((r) => r.ref === data.permissions.selfRef);
       mount(shared, el("section", { class: "card", "aria-labelledby": "dash-shared" }, [
         titled("dash-shared", "users", "Your balance in this group"),
-        data ? el("div", { class: "card__value" }, [mine ? balanceLabel(mine, table.currency, fmt) : el("span", { class: "muted", text: "Settled up" })]) : stateView(g),
+        data ? el("div", { class: "card__value" }, [mine ? balanceLabel(mine, table.currency, fmt, { self: true, subject: "You" }) : el("span", { class: "muted", text: "You are settled up" })]) : stateView(g),
         data ? el("p", { class: "card__meta" }, [`${data.expenses.filter((e) => e.status !== "void").length} shared expenses recorded. `, el("a", { href: "#/group", text: "Open Shared expenses" })]) : null,
       ]));
     } else mount(shared);
@@ -101,7 +101,10 @@ export function createView(ctx) {
         a.balance !== undefined ? money(a.balance, a.currency, prefs) : el("span", { class: "muted small", text: "Balance not shared with you" }),
       ]))));
     }
-    const txState = stateView(txns, { empty: "No entries yet. Use “Add expense” to record one.", isEmpty: (d) => !d.transactions.length });
+    const txState = stateView(txns, {
+      empty: sharedKind ? "No account entries. Shared expenses are listed on Shared expenses." : "No entries yet. Use “Add expense” to record one.",
+      isEmpty: (d) => !d.transactions.length,
+    });
     // Merchant icons as in Transactions (UXI-9).
     const merchantIcons = new Map(((sliceFor(state, "payees").data || {}).payees || []).map((p) => [p.id, p.icon || "store"]));
     const accountsById = new Map(((accounts.data || {}).accounts || []).map((a) => [a.id, a]));

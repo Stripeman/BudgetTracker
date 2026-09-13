@@ -46,11 +46,15 @@ export function ledgerAccounts(state, currency) {
 }
 
 // The balance of one person in words, with the arrow for money coming to them or going from them.
-export function balanceLabel(row, currency, fmt) {
-  if (isZero(row.net)) return el("span", { class: "muted", text: "Settled up" });
+// `self` words it for the person looking ("get back", "owe"); `subject` puts a subject in front
+// ("You get back EUR 217.66").
+export function balanceLabel(row, currency, fmt, { self = false, subject = "" } = {}) {
+  const lead = subject ? `${subject} ` : "";
+  if (isZero(row.net)) return el("span", { class: "muted", text: subject ? `${lead}${self ? "are" : "is"} settled up` : "Settled up" });
   const gets = !String(row.net).startsWith("-");
   const amount = fmt(String(row.net).replace(/^-/, ""), currency);
-  return el("span", { class: "amount-dir" }, [arrow(gets ? "money-in" : "money-out"), el("span", { text: gets ? `gets back ${amount}` : `owes ${amount}` })]);
+  const verb = gets ? (self ? "get back" : "gets back") : (self ? "owe" : "owes");
+  return el("span", { class: "amount-dir" }, [arrow(gets ? "money-in" : "money-out"), el("span", { text: `${lead}${verb} ${amount}` })]);
 }
 
 export function createView(ctx) {
@@ -67,10 +71,9 @@ export function createView(ctx) {
     intro,
     el("div", { class: "stack" }, [
       needs,
-      el("div", { class: "grid grid--two" }, [
-        el("section", { class: "card", "aria-labelledby": "grp-balances" }, [titled("grp-balances", "scale", "Balances"), balancesBox]),
-        el("section", { class: "card", "aria-labelledby": "grp-settle" }, [titled("grp-settle", "users", "Settle up"), settleBox]),
-      ]),
+      // Full width: the balances table has seven columns (half width clipped the balance itself).
+      el("section", { class: "card", "aria-labelledby": "grp-balances" }, [titled("grp-balances", "scale", "Balances"), balancesBox]),
+      el("section", { class: "card", "aria-labelledby": "grp-settle" }, [titled("grp-settle", "users", "Settle up"), settleBox]),
       el("section", { class: "card", "aria-labelledby": "grp-expenses" }, [titled("grp-expenses", "receipt", "Expenses"), expensesBox]),
       el("section", { class: "card", "aria-labelledby": "grp-payments" }, [titled("grp-payments", "coins", "Payments"), paymentsBox]),
     ]),
@@ -118,7 +121,7 @@ export function createView(ctx) {
     mount(balancesBox,
       el("div", { class: "table-wrap" }, [el("table", { class: "table table--cards" }, [
         el("caption", { class: "sr-only", text: `Balances in ${c}. Paid minus share, plus payments made, minus payments received.` }),
-        el("thead", {}, [el("tr", {}, ["Person", "Paid", "Share", "Paid back", "Received", "Balance"].map((h, i) => el("th", { scope: "col", class: i ? "num" : "", text: h })))]),
+        el("thead", {}, [el("tr", {}, ["Person", "Paid", "Share", "Paid back", "Received", "Balance", "Not counted yet"].map((h, i) => el("th", { scope: "col", class: i && i < 6 ? "num" : "", text: h })))]),
         el("tbody", {}, rows.map((r) => {
           const pending = [!isZero(r.pendingOut) ? `${fmt(r.pendingOut, c)} reported as paid` : null, !isZero(r.pendingIn) ? `${fmt(r.pendingIn, c)} reported to them` : null,
             !isZero(r.disputedOut) || !isZero(r.disputedIn) ? `${fmt(isZero(r.disputedOut) ? r.disputedIn : r.disputedOut, c)} disputed` : null].filter(Boolean);
@@ -134,7 +137,8 @@ export function createView(ctx) {
             el("td", { "data-label": "Share", class: "num" }, [amountText(r.share, c)]),
             el("td", { "data-label": "Paid back", class: "num" }, [amountText(r.paidOut, c)]),
             el("td", { "data-label": "Received", class: "num" }, [amountText(r.received, c)]),
-            el("td", { "data-label": "Balance", class: "num" }, [balanceLabel(r, c, fmt), pending.length ? el("div", { class: "muted small", text: `Not counted yet: ${pending.join("; ")}` }) : null]),
+            el("td", { "data-label": "Balance", class: "num" }, [balanceLabel(r, c, fmt, { self: r.ref === data.permissions.selfRef })]),
+            el("td", { "data-label": "Not counted yet", class: "small" }, [pending.length ? el("span", { class: "muted", text: pending.join("; ") }) : el("span", { class: "muted", text: "—" })]),
           ]);
         })),
       ])]),
