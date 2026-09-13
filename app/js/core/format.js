@@ -36,6 +36,19 @@ export const ACCOUNT_TYPE_LABELS = Object.freeze({
   "merchant-credit": "Merchant credit", investment: "Investment", "other-asset": "Other asset", "other-liability": "Other liability",
 });
 
+// Bill types (BT-008-02); the ids match api/_shared/bills.js BILL_TYPES.
+export const BILL_TYPE_LABELS = Object.freeze({
+  housing: "Rent or mortgage", utilities: "Utilities", subscription: "Subscription", insurance: "Insurance",
+  "debt-payment": "Loan or debt payment", membership: "Membership", income: "Payroll or income", savings: "Savings transfer", custom: "Other",
+});
+
+// Merchant types (BT-007-01); the ids match api/_shared/merchants.js MERCHANT_TYPES.
+export const MERCHANT_TYPE_LABELS = Object.freeze({
+  retailer: "Retailer", grocery: "Grocery", restaurant: "Restaurant or café", utility: "Utility", housing: "Landlord or housing",
+  employer: "Employer", bank: "Bank or lender", insurer: "Insurer", subscription: "Subscription service", transport: "Transport",
+  health: "Health", government: "Government", person: "Person", other: "Other",
+});
+
 export const KIND_LABELS = Object.freeze({
   expense: "Expense", income: "Income", transfer: "Transfer", refund: "Refund", fee: "Fee",
   reimbursement: "Reimbursement received", advance: "Advance (lent)", adjustment: "Adjustment", interest: "Interest",

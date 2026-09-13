@@ -65,11 +65,20 @@ async function household(h) {
   const aliceSavings = await account('alice', { name: 'Alice Savings', type: 'savings', currency: 'EUR', openingBalance: '5000.00' });
   const bobCard = await account('bob', { name: 'Bob Card', type: 'credit-card', currency: 'EUR', terms: { creditLimit: '2000.00' } });
   const tx = async (as, body) => ok(await h.call('transactions', 'POST', { as, query: q, body }), 201).transactions[0];
-  const secret = await tx('bob', { accountId: bobCard.id, kind: 'expense', amount: '250.00', payeeName: 'Secret Jeweller', date: '2026-09-10' });
-  const grocery = await tx('alice', { accountId: joint.id, kind: 'expense', amount: '82.40', payeeName: 'Fictional Grocer', date: '2026-09-11' });
+  // Merchants are managed records chosen by id (BT-007-01): Bob's is private, Alice's shared.
+  const jeweller = await merchant(h, q, 'bob', { name: 'Secret Jeweller' });
+  const grocer = await merchant(h, q, 'alice', { name: 'Fictional Grocer', visibility: 'shared' });
+  const secret = await tx('bob', { accountId: bobCard.id, kind: 'expense', amount: '250.00', payeeId: jeweller.id, date: '2026-09-10' });
+  const grocery = await tx('alice', { accountId: joint.id, kind: 'expense', amount: '82.40', payeeId: grocer.id, date: '2026-09-11' });
   const members = ok(await h.call('members', 'GET', { as: 'alice', query: q })).members;
   const memberId = (name) => members.find((m) => m.name.startsWith(name)).id;
-  return { ws, q, joint, aliceSavings, bobCard, secret, grocery, memberId };
+  return { ws, q, joint, aliceSavings, bobCard, secret, grocery, memberId, merchants: { jeweller, grocer } };
 }
 
-module.exports = { USERS, TEST_KEYS, principalHeader, harness, household };
+async function merchant(h, q, as, body) {
+  const res = await h.call('payees', 'POST', { as, query: q, body });
+  if (res.status !== 201) throw new Error(`merchant fixture failed ${res.status} ${JSON.stringify(res.body)}`);
+  return res.body.payee;
+}
+
+module.exports = { USERS, TEST_KEYS, principalHeader, harness, household, merchant };

@@ -9,7 +9,7 @@
 //   POST    ?action=restore { transactionId }
 const { readBody, query, header, badRequest, forbidden, notFound, conflict } = require('../_shared/http');
 const { newId, requireId } = require('../_shared/ids');
-const { capabilitiesFor, can, canChangeRecord, visibleTransactions } = require('../_shared/authz');
+const { capabilitiesFor, can, canChangeRecord } = require('../_shared/authz');
 const { readDocument } = require('../_shared/schema');
 const store = require('../_shared/store');
 const ledger = require('../_shared/ledger');
@@ -17,9 +17,10 @@ const money = require('../_shared/money');
 const fields = require('../_shared/fields');
 const people = require('../_shared/people');
 const audit = require('../_shared/audit');
+const merchants = require('../_shared/merchants');
 
-const CREATE_KEYS = ['accountId', 'kind', 'amount', 'date', 'postedDate', 'payeeId', 'payeeName', 'categoryId', 'splits', 'tags', 'notes', 'status', 'responsibleRef', 'transfer', 'original', 'links'];
-const PATCH_KEYS = ['transactionId', 'revision', 'kind', 'amount', 'date', 'postedDate', 'payeeId', 'payeeName', 'categoryId', 'splits', 'tags', 'notes', 'status', 'responsibleRef', 'original', 'toAmount'];
+const CREATE_KEYS = ['accountId', 'kind', 'amount', 'date', 'postedDate', 'payeeId', 'categoryId', 'splits', 'tags', 'notes', 'status', 'responsibleRef', 'transfer', 'original', 'links'];
+const PATCH_KEYS = ['transactionId', 'revision', 'kind', 'amount', 'date', 'postedDate', 'payeeId', 'categoryId', 'splits', 'tags', 'notes', 'status', 'responsibleRef', 'original', 'toAmount'];
 const LOCKED_WHEN_RECONCILED = ['amount', 'date', 'kind', 'toAmount'];
 
 async function readUser(ctx) {
@@ -41,26 +42,10 @@ function accountFor(doc, principal, accountId, capability, now) {
   return account;
 }
 
-// Resolve or create the payee. A new payee inherits the visibility of the account it was first
-// used on, so naming a merchant on a private account never exposes it to other members.
-function resolvePayee(doc, principal, body, account, visibleTxns, nowIso) {
-  if (body.payeeId) {
-    const payee = ledger.visiblePayees(doc, principal, visibleTxns).find((p) => p.id === body.payeeId);
-    if (!payee) throw badRequest('Unknown payee.', 'invalid_payee');
-    return payee.id;
-  }
-  const name = fields.text(body.payeeName, { field: 'Payee', max: 80 });
-  if (!name) return null;
-  const key = name.toLowerCase();
-  const existing = ledger.visiblePayees(doc, principal, visibleTxns)
-    .find((p) => p.name.toLowerCase() === key || (p.aliases || []).some((a) => a.toLowerCase() === key));
-  if (existing) return existing.id;
-  // On a private account the payee belongs to the ACCOUNT OWNER, not to a grantee who typed it, so
-  // it does not outlive a revoked grant in the grantee's hands (security review finding 9).
-  const owner = account.visibility === 'private' ? account.ownerSubject : principal.subject;
-  const payee = { id: newId('pay'), name, aliases: [], visibility: account.visibility, ownerSubject: owner, defaultCategoryId: null, notes: '', createdAt: nowIso, createdBy: principal.subject, deletedAt: null };
-  doc.payees = [...(doc.payees || []), payee];
-  return payee.id;
+// The merchant is chosen from the managed directory by id, never typed as free text (BT-007-01).
+// A closed merchant cannot be used for a new entry, but an entry keeps the merchant it has.
+function resolvePayee(doc, principal, body, account, now, current = null) {
+  return merchants.requireMerchant(doc, principal, account, body.payeeId, now, { current });
 }
 
 function checkCategory(doc, categoryId) {
@@ -184,7 +169,6 @@ async function create(ctx, req) {
     const now = ctx.now();
     const nowIso = ctx.nowIso();
     const account = accountFor(doc, ctx.principal, accountId, 'create', now);
-    const visible = visibleTransactions(doc, ctx.principal, now);
     const date = fields.date(body.date, 'Date') || nowIso.slice(0, 10);
     const base = {
       date, postedDate: fields.date(body.postedDate, 'Posted date'),
@@ -230,7 +214,7 @@ async function create(ctx, req) {
     const splits = ledger.validateSplits(body.splits, amountMinor, account.currency, doc);
     const txn = {
       ...base, id: newId('txn'), accountId: account.id, kind, amountMinor, currency: account.currency,
-      payeeId: resolvePayee(doc, ctx.principal, body, account, visible, nowIso),
+      payeeId: resolvePayee(doc, ctx.principal, body, account, now),
       categoryId: splits.length ? null : checkCategory(doc, body.categoryId), splits,
       responsibleRef: people.requireRef(body.responsibleRef, { doc, user, visibility: account.visibility }),
       original: validateOriginal(body.original), transferId: null, counterpartAccountId: null,
@@ -275,7 +259,7 @@ async function patch(ctx, req) {
     const changed = [];
     const pair = t.transferId ? (doc.transactions || []).find((x) => x.transferId === t.transferId && x.id !== t.id) : null;
     if (t.transferId) {
-      for (const k of ['kind', 'payeeId', 'payeeName', 'categoryId', 'splits', 'responsibleRef', 'original']) {
+      for (const k of ['kind', 'payeeId', 'categoryId', 'splits', 'responsibleRef', 'original']) {
         if (body[k] !== undefined) throw badRequest('Transfers only allow date, status, tags, notes and amounts to change.', 'invalid_transfer_edit');
       }
       const pairAccount = pair && (doc.accounts || []).find((a) => a.id === pair.accountId);
@@ -321,9 +305,9 @@ async function patch(ctx, req) {
         if (body.splits !== undefined) changed.push('splits');
       }
       if (body.categoryId !== undefined) { if ((t.splits || []).length) throw badRequest('Split entries use per-line categories.', 'invalid_field'); t.categoryId = checkCategory(doc, body.categoryId); changed.push('categoryId'); }
-      if (body.payeeId !== undefined || body.payeeName !== undefined) {
-        t.payeeId = resolvePayee(doc, ctx.principal, body, account, visibleTransactions(doc, ctx.principal, now), nowIso);
-        changed.push('payee');
+      if (body.payeeId !== undefined) {
+        const next = resolvePayee(doc, ctx.principal, body, account, now, t.payeeId);
+        if (next !== t.payeeId) { t.payeeId = next; changed.push('payee'); }
       }
       if (body.responsibleRef !== undefined) { t.responsibleRef = people.requireRef(body.responsibleRef, { doc, user, visibility: account.visibility }); changed.push('responsibleRef'); }
       if (body.original !== undefined) { t.original = validateOriginal(body.original); changed.push('original'); }

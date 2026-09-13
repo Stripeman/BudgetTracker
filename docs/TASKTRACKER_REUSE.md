@@ -60,6 +60,15 @@ refusal-with-explanation and reduced-motion behavior. Deliberate adaptations:
 The palette picker (`app/js/ui/themepicker.js`, swatches drawn through the CSSOM because of the
 CSP) is reusable if palettes are offered.
 
+## Theme picker (colour-aware palette picker) — BT-011-03
+
+- **Canonical source:** `T:` `main` `a1ec150`, `app/js/ui/themepicker.js` (`createThemePicker`, RF-20260904-14, the only commit is `bfe3483`), CSS `app/styles/components.css` 8039–8049 (`.menu__swatch`) and 8063–8108 (`.themepick*`), tests `app/test/accountappearance.test.js` 202–272 and `themepreference.test.js` 123–231. Read with `git show main:<path>` only; the TaskTracker working tree was not touched.
+- **What it is:** a toggle button showing the current palette's colour circle and name (`aria-haspopup="listbox"`, `aria-expanded`, `aria-label="Theme: <name>"`) that opens an in-flow `role="listbox"` of `<button role="option">` rows, each with its circle; selection matched by id; swatch colours set through the CSSOM (`--menu-swatch`), never a style attribute.
+- **Ported:** `app/js/ui/themepicker.js` and the CSS block verbatim in substance, with TaskTracker's reasoning comments; mounted in the account menu (replacing the native select) and in My settings, where the palette moved into the Appearance card beside the day/night control as in TaskTracker.
+- **Documented adaptations** (TaskTracker's picker has no keyboard handling beyond native buttons, which BudgetTracker's accessibility reviews do not accept): opening focuses the current option and scrolls it into view; ArrowUp/ArrowDown/Home/End move; Escape closes, returns focus to the toggle and does not close a surrounding menu; Tab and an outside pointer press close; a pick returns focus to the toggle; with an external label the accessible name is "<label> <current palette>"; `setDisabled` closes the list and represents a site lock (TaskTracker has no lock concept); a visible focus outline on options.
+- **Tests:** `app/test/themepicker.test.js` ports TaskTracker's contract assertions and adds the adaptations.
+- **Palettes:** BudgetTracker has 8 of TaskTracker's 21 palettes (same ids, labels and swatches); adding the other 13 needs their light-mode contrast overrides and is tracked under BT-011-03.
+
 ## Rich text editor (Tiptap) — BT-011-02
 
 Canonical at `T:` `main`:

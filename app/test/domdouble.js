@@ -74,6 +74,16 @@ class Node {
     child.parentNode = null;
     return child;
   }
+  replaceChildren(...nodes) {
+    for (const c of this.childNodes) c.parentNode = null;
+    this.childNodes = [];
+    for (const n of nodes) this.appendChild(n);
+  }
+  closest(selector) {
+    let node = this;
+    while (node && node instanceof Node) { if (matchesSimple(node, selector)) return node; node = node.parentNode; }
+    return null;
+  }
   get firstChild() { return this.childNodes[0] || null; }
   get children() { return this.childNodes.filter((c) => c instanceof Node); }
   get textContent() {

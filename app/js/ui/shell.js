@@ -12,12 +12,14 @@
 import { el, mount, clear, focusFirst, announce } from "./dom.js";
 import { createDayNightControl } from "./daynight.js";
 import { initials, select, commitOnConfirm } from "./components.js";
+import { createThemePicker } from "./themepicker.js";
 import { AUTH } from "../core/api.js";
 import { ROUTES } from "../core/router.js";
 import { Status } from "../core/store.js";
 
 import * as dashboard from "./views/dashboard.js";
 import * as transactions from "./views/transactions.js";
+import * as bills from "./views/bills.js";
 import * as accounts from "./views/accounts.js";
 import * as payees from "./views/payees.js";
 import * as settings from "./views/settings.js";
@@ -26,7 +28,7 @@ import * as join from "./views/join.js";
 import { renderLanding, createOnboarding } from "./views/landing.js";
 import { messageFor } from "../core/errors.js";
 
-const VIEWS = { dashboard, transactions, accounts, payees, settings, workspace, join };
+const VIEWS = { dashboard, transactions, bills, accounts, payees, settings, workspace, join };
 
 export function createShell({ mountPoint, store, router, theme, api }) {
   const header = el("header", { class: "app__header" });
@@ -68,17 +70,20 @@ export function createShell({ mountPoint, store, router, theme, api }) {
       locked: isLocked("themeMode"),
     });
     theme.subscribe(() => dayNight.refresh());
-    const palette = select(theme.themes.map((t) => ({ value: t.id, label: t.label })), theme.getTheme(), { id: "menu-palette" });
-    const paletteCommit = commitOnConfirm(palette, (value) => {
-      theme.setTheme(value);
-      void store.actions.savePreferences({ themePalette: value });
-      announce(`Palette ${palette.options[palette.selectedIndex].text}`);
+    // TaskTracker's colour-aware palette picker (BT-011-03), the same control as in My settings.
+    const palette = createThemePicker({
+      value: theme.getTheme(), id: "menu-palette", labelledBy: "menu-palette-label",
+      onPick: (value) => {
+        theme.setTheme(value);
+        void store.actions.savePreferences({ themePalette: value });
+        announce(`Palette ${(theme.themes.find((t) => t.id === value) || {}).label || value}`);
+      },
     });
     panel.append(
       el("div", { class: "menu__group" }, [el("div", { class: "menu__identity" }, [el("strong", { text: user.name || "Signed in" }), el("div", { class: "muted small", text: user.email })])]),
       el("div", { class: "menu__group" }, [
         el("p", { class: "menu__heading", text: "Appearance" }), dayNight.element,
-        el("div", { class: "menu__palette" }, [el("label", { class: "field__label small", for: "menu-palette", text: "Colour palette" }), palette]),
+        el("div", { class: "menu__palette" }, [el("p", { class: "field__label small", id: "menu-palette-label", text: "Colour palette" }), palette.element]),
       ]),
       el("div", { class: "menu__group" }, [
         el("a", { class: "menu__item", href: "#/settings", text: "My settings" }),
@@ -95,8 +100,8 @@ export function createShell({ mountPoint, store, router, theme, api }) {
       root,
       refresh() {
         dayNight.setLocked(isLocked("themeMode"));
-        paletteCommit.reset(theme.getTheme());
-        palette.disabled = isLocked("themePalette");
+        if (palette.getValue() !== theme.getTheme()) palette.select(theme.getTheme());
+        palette.setDisabled(isLocked("themePalette"));
       },
     };
   }

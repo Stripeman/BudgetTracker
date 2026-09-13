@@ -5,6 +5,7 @@
 // Selects save only on an explicit choice, never on each arrow key (A11Y-002).
 import { el, mount, announce } from "../dom.js";
 import { createDayNightControl } from "../daynight.js";
+import { createThemePicker } from "../themepicker.js";
 import { pageHead, field, select, sourceBadge, button, input, commitOnConfirm } from "../components.js";
 import { messageFor } from "../../core/errors.js";
 
@@ -16,13 +17,19 @@ export function createView(ctx) {
   const dayNight = createDayNightControl({ theme, onChange: (mode) => save({ themeMode: mode }) });
   const unsubscribe = theme.subscribe(() => dayNight.refresh());
   const appearanceSource = el("span");
+  // THE SAME palette picker as the account menu (BT-011-03), grouped with the day/night control
+  // under Appearance as in TaskTracker. Built once and kept in sync, so a save never replaces the
+  // control under the person's focus.
+  const palettePicker = createThemePicker({ value: theme.getTheme(), labelledBy: "set-palette-label", onPick: (v) => { theme.setTheme(v); void save({ themePalette: v }); } });
+  const paletteSource = el("div", { class: "row" });
+  const paletteField = el("div", { class: "field" }, [el("p", { class: "field__label", id: "set-palette-label", text: "Colour palette" }), palettePicker.element, paletteSource]);
   const prefBox = el("div", { class: "form-grid" });
   const contactsBox = el("div");
   const element = el("section", {}, [
     pageHead("My settings"),
     el("p", { class: "muted small", text: "“Inherited” values follow the site default until you change them. “Customized” values are your own choice; use “Use inherited” to return to the default. “Locked by site” values are set by the site administrator." }),
     el("div", { class: "grid grid--two" }, [
-      el("section", { class: "card", "aria-labelledby": "set-appearance" }, [el("h2", { class: "card__title", id: "set-appearance", text: "Appearance" }), appearanceSource, dayNight.element]),
+      el("section", { class: "card", "aria-labelledby": "set-appearance" }, [el("h2", { class: "card__title", id: "set-appearance", text: "Appearance" }), appearanceSource, dayNight.element, paletteField]),
       el("section", { class: "card", "aria-labelledby": "set-display" }, [el("h2", { class: "card__title", id: "set-display", text: "Display and privacy" }), prefBox, status]),
       el("section", { class: "card", "aria-labelledby": "set-contacts" }, [el("h2", { class: "card__title", id: "set-contacts", text: "Private contacts" }), el("p", { class: "field__help", text: "Only you can see these. Use them on your private records; use workspace contacts for shared ones." }), contactsBox]),
     ]),
@@ -67,15 +74,18 @@ export function createView(ctx) {
     if (!prefs) return;
     dayNight.setLocked(prefs.sources.themeMode === "locked");
     mount(appearanceSource, sourceBadge(prefs.sources.themeMode));
+    const paletteLocked = prefs.sources.themePalette === "locked";
+    palettePicker.setDisabled(paletteLocked);
+    if (prefs.effective.themePalette && palettePicker.getValue() !== prefs.effective.themePalette) palettePicker.select(prefs.effective.themePalette);
+    mount(paletteSource, sourceBadge(prefs.sources.themePalette), prefs.sources.themePalette === "personal"
+      ? button("Use inherited", () => save({ themePalette: null }), { small: true, variant: "ghost", attrs: { "aria-label": "Use the inherited colour palette" } }) : null);
     const signature = JSON.stringify(prefs);
     if (signature === rendered) return;
     rendered = signature;
     const e = prefs.effective;
-    const palette = select(theme.themes.map((t) => ({ value: t.id, label: t.label })), e.themePalette);
     const masking = el("input", { type: "checkbox" });
     masking.checked = !!e.balanceMasking;
     mount(prefBox,
-      prefControl("Colour palette", "themePalette", palette, prefs, (v) => { theme.setTheme(v); return v; }),
       prefControl("Hide balances on screen", "balanceMasking", masking, prefs),
       prefControl("Display currency", "displayCurrency", select(CURRENCIES.map((c) => ({ value: c, label: c || "Account currency" })), e.displayCurrency || ""), prefs),
       prefControl("Date format", "dateFormat", select([{ value: "iso", label: "2026-09-13" }, { value: "dmy", label: "13/09/2026" }, { value: "mdy", label: "09/13/2026" }], e.dateFormat), prefs),

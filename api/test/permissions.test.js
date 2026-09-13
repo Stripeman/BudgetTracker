@@ -70,8 +70,12 @@ describe('BT-001 private accounts stay private from the workspace owner', () => 
     assert.equal((await h.call('payees', 'GET', { as: 'alice', query: { ...f.q, action: 'suggest', payeeId: secretPayeeId } })).status, 404);
     const options = (await h.call('people', 'GET', { as: 'alice', query: { ...f.q, field: 'payee' } })).body.options;
     assert.ok(!options.some((o) => o.label === 'Secret Jeweller'));
-    // Reusing the hidden payee name creates a separate payee rather than attaching to Bob's.
-    const mine = (await h.call('transactions', 'POST', { as: 'alice', query: f.q, body: { accountId: f.joint.id, kind: 'expense', amount: '1.00', payeeName: 'Secret Jeweller' } })).body.transactions[0];
+    // Reusing the hidden merchant's name creates a separate merchant: the duplicate check neither
+    // reveals Bob's private one nor attaches to it.
+    const created = await h.call('payees', 'POST', { as: 'alice', query: f.q, body: { name: 'Secret Jeweller', visibility: 'shared' } });
+    assert.equal(created.status, 201, JSON.stringify(created.body));
+    assert.deepEqual(created.body.similar, []);
+    const mine = (await h.call('transactions', 'POST', { as: 'alice', query: f.q, body: { accountId: f.joint.id, kind: 'expense', amount: '1.00', payeeId: created.body.payee.id } })).body.transactions[0];
     assert.notEqual(mine.payeeId, secretPayeeId);
     const audit = (await h.call('audit', 'GET', { as: 'alice', query: f.q })).body.entries;
     assert.ok(!audit.some((e) => e.targetId === f.bobCard.id || e.targetId === f.secret.id), 'no audit entries about Bob\'s private account');

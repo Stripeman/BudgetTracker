@@ -3,7 +3,7 @@
 // 2026-09-13; the household fixture's Joint account stands at 917.60 EUR (1000.00 − 82.40).
 const { test, describe } = require('node:test');
 const assert = require('node:assert/strict');
-const { harness, household } = require('./helpers');
+const { harness, household, merchant } = require('./helpers');
 
 const ok = (res, status = 200) => { assert.equal(res.status, status, JSON.stringify(res.body)); return res.body; };
 const code = (res, status, expected) => { assert.equal(res.status, status, JSON.stringify(res.body)); assert.equal(res.body.error.code, expected); };
@@ -22,9 +22,10 @@ describe('BT-008-02 bills: data model', () => {
     const h = harness();
     const f = await household(h);
     const cats = await categories(h, f.q);
+    const landlord = await merchant(h, f.q, 'alice', { name: 'Fictional Landlord', visibility: 'shared' });
     const rent = ok(await create(h, f.q, 'alice', {
       name: 'Rent', billType: 'housing', accountId: f.joint.id, amount: '800.00', schedule: monthly('2026-10-01'),
-      categoryId: cats.Housing, payeeName: 'Fictional Landlord', responsibleRef: `member:${f.memberId('Bob')}`, reminderDays: 5, notes: 'Standing order',
+      categoryId: cats.Housing, payeeId: landlord.id, responsibleRef: `member:${f.memberId('Bob')}`, reminderDays: 5, notes: 'Standing order',
     }), 201).recurring;
     assert.equal(rent.nextDue, '2026-10-01');
     assert.deepEqual(rent.upcoming.slice(0, 3), ['2026-10-01', '2026-11-01', '2026-12-01']);
@@ -72,7 +73,8 @@ describe('BT-008-02 bills: review before finalizing', () => {
     const h = harness();
     const f = await household(h);
     const cats = await categories(h, f.q);
-    const rent = ok(await create(h, f.q, 'alice', { name: 'Rent', billType: 'housing', accountId: f.joint.id, amount: '800.00', schedule: monthly('2026-10-01'), categoryId: cats.Housing, payeeName: 'Fictional Landlord' }), 201).recurring;
+    const landlord = await merchant(h, f.q, 'alice', { name: 'Fictional Landlord', visibility: 'shared' });
+    const rent = ok(await create(h, f.q, 'alice', { name: 'Rent', billType: 'housing', accountId: f.joint.id, amount: '800.00', schedule: monthly('2026-10-01'), categoryId: cats.Housing, payeeId: landlord.id }), 201).recurring;
     const res = ok(await draft(h, f.q, 'alice', rent.id, '2026-10-01'));
     assert.equal(res.saved, false);
     assert.deepEqual(

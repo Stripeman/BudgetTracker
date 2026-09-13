@@ -271,14 +271,16 @@ describe('security review remediation', () => {
   test('S9 reference-only payees show only a name; a grantee\'s payee belongs to the account owner', async () => {
     const h = harness();
     const f = await household(h);
-    ok(await h.call('payees', 'PATCH', { as: 'bob', query: f.q, body: { payeeId: f.secret.payeeId, notes: 'fictional private note', aliases: ['SJ'] } }));
+    ok(await h.call('payees', 'PATCH', { as: 'bob', query: f.q, body: { payeeId: f.secret.payeeId, revision: 1, notes: 'fictional private note', aliases: ['SJ'] } }));
     const grant = ok(await h.call('grants', 'POST', { as: 'bob', query: f.q, body: { accountId: f.bobCard.id, memberId: f.memberId('Alice'), capabilities: ['view-transactions', 'create'] } }), 201).grant;
     const seen = ok(await h.call('payees', 'GET', { as: 'alice', query: f.q })).payees.find((p) => p.id === f.secret.payeeId);
     assert.equal(seen.name, 'Secret Jeweller');
     assert.equal(seen.notes, '');
     assert.deepEqual(seen.aliases, []);
     assert.equal(seen.referenceOnly, true);
-    ok(await h.call('transactions', 'POST', { as: 'alice', query: f.q, body: { accountId: f.bobCard.id, kind: 'expense', amount: '3.00', payeeName: 'Alice Shop' } }), 201);
+    // Created while entering an expense on Bob's card, the merchant takes the card owner's scope.
+    const shop = ok(await h.call('payees', 'POST', { as: 'alice', query: f.q, body: { name: 'Alice Shop', accountId: f.bobCard.id } }), 201).payee;
+    ok(await h.call('transactions', 'POST', { as: 'alice', query: f.q, body: { accountId: f.bobCard.id, kind: 'expense', amount: '3.00', payeeId: shop.id } }), 201);
     ok(await h.call('grants', 'DELETE', { as: 'bob', query: f.q, body: { grantId: grant.id } }));
     assert.ok(!ok(await h.call('payees', 'GET', { as: 'alice', query: f.q })).payees.some((p) => p.name === 'Alice Shop'));
     assert.ok(ok(await h.call('payees', 'GET', { as: 'bob', query: f.q })).payees.find((p) => p.name === 'Alice Shop').ownedBySelf);

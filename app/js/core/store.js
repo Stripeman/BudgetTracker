@@ -27,7 +27,7 @@ export function initialState() {
     app: null, site: null, preferences: null,
     workspaces: [], selectedWorkspaceId: null,
     accounts: emptySlice(null), transactions: emptySlice(null), payees: emptySlice(null),
-    categories: emptySlice(null), members: emptySlice(null),
+    categories: emptySlice(null), members: emptySlice(null), bills: emptySlice(null),
   };
 }
 
@@ -86,7 +86,7 @@ export function createStore({ api }) {
       // Synchronous reset BEFORE any await, so nothing from the previous workspace can render.
       commit({
         selectedWorkspaceId: id,
-        accounts: emptySlice(id), transactions: emptySlice(id), payees: emptySlice(id), categories: emptySlice(id), members: emptySlice(id),
+        accounts: emptySlice(id), transactions: emptySlice(id), payees: emptySlice(id), categories: emptySlice(id), members: emptySlice(id), bills: emptySlice(id),
       });
       await Promise.all([actions.refreshAccounts(), actions.refreshCategories(), actions.refreshPayees(), actions.refreshMembers()]);
     },
@@ -96,6 +96,7 @@ export function createStore({ api }) {
     refreshPayees: () => loadSlice("payees", (id) => api.payees(id)),
     refreshMembers: () => loadSlice("members", (id) => api.members(id)),
     refreshTransactions: (filters = {}) => loadSlice("transactions", (id) => api.transactions(id, filters)),
+    refreshBills: () => loadSlice("bills", (id) => api.bills(id)),
 
     async createWorkspace(body, key) {
       const out = await api.createWorkspace(body, key);

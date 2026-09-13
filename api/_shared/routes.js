@@ -9,7 +9,8 @@ const ROUTES = Object.freeze({
   grants: { methods: ['GET', 'POST', 'DELETE'] },
   accounts: { methods: ['GET', 'POST', 'PATCH', 'DELETE'] },
   transactions: { methods: ['GET', 'POST', 'PATCH', 'DELETE'] },
-  payees: { methods: ['GET', 'POST', 'PATCH', 'DELETE'] },
+  // Merchants are never deleted (BT-001-05): closing and reopening are POST actions.
+  payees: { methods: ['GET', 'POST', 'PATCH'] },
   categories: { methods: ['GET', 'POST', 'PATCH'] },
   contacts: { methods: ['GET', 'POST', 'PATCH', 'DELETE'] },
   people: { methods: ['GET'] },

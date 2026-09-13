@@ -1,19 +1,29 @@
 'use strict';
-// /api/payees?workspaceId=
-//   GET                          visible payees with per-currency history totals from visible entries
-//   GET ?action=suggest&payeeId= editable autofill suggestion, explained, from visible history only
-//   POST   { name, aliases, visibility, defaultCategoryId, notes }
-//   PATCH  { payeeId, ... }      creator, or manager+ for shared payees
-//   DELETE { payeeId }           soft delete; historical entries keep their payee
-// Merchants are payees, not financial accounts.
-const { readBody, query, badRequest, forbidden, notFound } = require('../_shared/http');
+// /api/payees?workspaceId=     The managed merchant directory (BT-007-01)
+//   GET                                   merchants the caller may see, with totals from visible entries
+//                                         (?status=active|closed filters; default all)
+//   GET ?action=suggest&payeeId=          explained, editable autofill from visible history and defaults
+//   GET ?action=check&name=&visibility=   duplicate check before creating: exact and similar names
+//   POST { name, visibility?, type?, aliases?, contact?, customerNumber?, openedOn?, defaultCategoryId?,
+//          defaultAccountId?, defaultCurrency?, tags?, notes?, accountId?, allowDuplicate? }
+//   POST ?action=archive { payeeId, revision, closedOn?, reason? }   closes it for new entries
+//   POST ?action=reopen  { payeeId, revision, reason? }
+//   PATCH { payeeId, revision, reason?, visibility?, allowDuplicate?, ...details }
+// Creator, or manager+ for shared merchants, may change one. There is NO DELETE: merchants are never
+// deleted (BT-001-05); entries keep their merchant link and every change keeps its before/after
+// values, author, time and reason. Merchants are payees, not financial accounts.
+const { readBody, query, badRequest, forbidden, notFound, conflict } = require('../_shared/http');
 const { newId, requireId } = require('../_shared/ids');
-const { roleAtLeast, visibleTransactions } = require('../_shared/authz');
+const { can, roleAtLeast, visibleTransactions } = require('../_shared/authz');
 const store = require('../_shared/store');
 const ledger = require('../_shared/ledger');
 const money = require('../_shared/money');
 const fields = require('../_shared/fields');
 const audit = require('../_shared/audit');
+const merchants = require('../_shared/merchants');
+
+const DETAIL_KEYS = ['name', 'type', 'aliases', 'contact', 'customerNumber', 'openedOn', 'defaultCategoryId', 'defaultAccountId', 'defaultCurrency', 'tags', 'notes'];
+const EMPTY_CONTACT = Object.freeze({ website: '', address: '', phone: '', email: '' });
 
 function aliases(value) {
   if (value === undefined || value === null) return [];
@@ -21,27 +31,71 @@ function aliases(value) {
   return [...new Set(value.map((a) => fields.text(a, { field: 'Alias', max: 80, required: true })))];
 }
 
-// A private payee that is visible only because it appears on an entry the viewer can see shows
-// its NAME only — not the owner's notes, aliases or default category (security review finding 9).
-function view(p, principal, stats) {
-  const full = p.visibility === 'shared' || p.ownerSubject === principal.subject;
-  return {
-    id: p.id, name: p.name, aliases: full ? p.aliases || [] : [], visibility: p.visibility,
-    defaultCategoryId: full ? p.defaultCategoryId || null : null, notes: full ? p.notes || '' : '',
-    ownedBySelf: p.ownerSubject === principal.subject, referenceOnly: !full, stats: stats || [],
-  };
+function contact(value) {
+  if (value === undefined || value === null) return { ...EMPTY_CONTACT };
+  if (typeof value !== 'object' || Array.isArray(value)) throw badRequest('Contact details must be an object.', 'invalid_field');
+  fields.onlyKeys(value, ['website', 'address', 'phone', 'email']);
+  const website = fields.text(value.website, { field: 'Website', max: 200 });
+  if (website) {
+    let url = null;
+    try { url = new URL(website); } catch { url = null; }
+    if (!url || !['https:', 'http:'].includes(url.protocol)) throw badRequest('Website must start with https:// or http://.', 'invalid_field');
+  }
+  const phone = fields.text(value.phone, { field: 'Phone', max: 40 });
+  if (phone && !/^[0-9+().\-\s]{3,40}$/.test(phone)) throw badRequest('Phone may contain digits, spaces and + ( ) - . only.', 'invalid_field');
+  return { website, address: fields.text(value.address, { field: 'Address', max: 300, multiline: true }), phone, email: fields.email(value.email, 'Email') };
+}
+
+function category(doc, value) {
+  const id = fields.optionalId(value, 'Default category');
+  if (id && !(doc.categories || []).some((c) => c.id === id)) throw badRequest('Unknown category.', 'invalid_category');
+  return id;
+}
+
+// A shared merchant may only default to a shared account: its defaults are visible to every member.
+function defaultAccount(doc, principal, value, visibility, now) {
+  const id = fields.optionalId(value, 'Default account');
+  if (!id) return null;
+  const a = (doc.accounts || []).find((x) => x.id === id && !x.deletedAt);
+  if (!a || !can(doc, principal, a, 'view-transactions', now)) throw badRequest('Unknown account.', 'invalid_default_account');
+  if (visibility === 'shared' && a.visibility !== 'shared') throw badRequest('A shared merchant can only default to a shared account.', 'invalid_default_account');
+  return id;
+}
+
+function currency(value) {
+  if (value === undefined || value === null || value === '') return null;
+  if (!money.isCurrency(value)) throw badRequest('Default currency is not a known currency code.', 'invalid_currency');
+  return value;
 }
 
 function mayEdit(p, member) {
   return p.ownerSubject === member.subject || (p.visibility === 'shared' && roleAtLeast(member.role, 'manager'));
 }
 
-async function list(ctx, req) {
-  const wsId = requireId(query(req, 'workspaceId'), 'workspaceId');
-  const { doc } = await store.loadWorkspace(ctx, wsId);
-  const now = ctx.now();
-  const txns = visibleTransactions(doc, ctx.principal, now);
-  if (query(req, 'action') === 'suggest') return suggest(doc, ctx, req, txns);
+// A merchant visible only because it appears on an entry the viewer can see shows its NAME only —
+// never the owner's notes, contact details, aliases or defaults (security review finding 9).
+function view(doc, p, principal, member, stats, now) {
+  const full = p.visibility === 'shared' || p.ownerSubject === principal.subject;
+  const out = {
+    id: p.id, name: p.name, normalizedName: p.normalizedName || merchants.normalizeName(p.name), visibility: p.visibility,
+    status: merchants.statusOf(p), ownedBySelf: p.ownerSubject === principal.subject, referenceOnly: !full, stats: stats || [],
+    aliases: [], notes: '', defaultCategoryId: null,
+  };
+  if (!full) return out;
+  const acct = p.defaultAccountId && (doc.accounts || []).find((a) => a.id === p.defaultAccountId && !a.deletedAt);
+  const names = new Map((doc.members || []).map((m) => [m.subject, m.name || 'Member']));
+  return {
+    ...out, type: p.type || 'other', aliases: p.aliases || [], notes: p.notes || '', defaultCategoryId: p.defaultCategoryId || null,
+    contact: { ...EMPTY_CONTACT, ...(p.contact || {}) }, customerNumber: p.customerNumber || '',
+    openedOn: p.openedOn || null, closedOn: p.closedOn || null, closeReason: p.closeReason || '',
+    defaultAccountId: acct && can(doc, principal, acct, 'view-transactions', now) ? acct.id : null,
+    defaultCurrency: p.defaultCurrency || null, tags: p.tags || [], revision: p.revision || 1,
+    canEdit: !!member && mayEdit(p, member),
+    history: (p.history || []).slice(-20).map((h) => ({ at: h.at, by: names.get(h.by) || 'Former member', changes: h.changes, reason: h.reason || '' })),
+  };
+}
+
+function statsFor(txns) {
   const byPayee = new Map();
   for (const t of txns) {
     if (!t.payeeId) continue;
@@ -56,21 +110,45 @@ async function list(ctx, req) {
     perCurrency.set(t.currency, s);
     byPayee.set(t.payeeId, perCurrency);
   }
-  const payees = ledger.visiblePayees(doc, ctx.principal, txns).map((p) => view(p, ctx.principal,
-    [...(byPayee.get(p.id) || new Map()).entries()].map(([currency, s]) => ({
-      currency, count: s.count, gross: money.toDecimal(s.gross, currency), refunds: money.toDecimal(s.refunds, currency),
-      net: money.toDecimal(money.sum([s.gross, -s.refunds]), currency), lastDate: s.last,
-    }))));
+  return (id) => [...(byPayee.get(id) || new Map()).entries()].map(([c, s]) => ({
+    currency: c, count: s.count, gross: money.toDecimal(s.gross, c), refunds: money.toDecimal(s.refunds, c),
+    net: money.toDecimal(money.sum([s.gross, -s.refunds]), c), lastDate: s.last,
+  }));
+}
+
+async function list(ctx, req) {
+  const wsId = requireId(query(req, 'workspaceId'), 'workspaceId');
+  const { doc, member } = await store.loadWorkspace(ctx, wsId);
+  const now = ctx.now();
+  const txns = visibleTransactions(doc, ctx.principal, now);
+  const action = query(req, 'action');
+  if (action === 'suggest') return suggest(doc, ctx, req, txns, now);
+  if (action === 'check') return check(doc, ctx, req, now);
+  if (action !== undefined) throw notFound();
+  const status = query(req, 'status') === undefined ? null : fields.oneOf(query(req, 'status'), ['active', 'closed'], 'Status');
+  const stats = statsFor(txns);
+  const payees = ledger.visiblePayees(doc, ctx.principal, txns)
+    .filter((p) => !status || merchants.statusOf(p) === status)
+    .map((p) => view(doc, p, ctx.principal, member, stats(p.id), now));
   payees.sort((a, b) => a.name.localeCompare(b.name));
   return { body: { payees } };
 }
 
+function check(doc, ctx, req, now) {
+  const name = fields.text(query(req, 'name'), { field: 'Name', max: 80, required: true });
+  const visibility = fields.oneOf(query(req, 'visibility'), ['private', 'shared'], 'Visibility', 'private');
+  const { exact, similar } = merchants.findDuplicates(doc, ctx.principal, now, { name, visibility, ownerSubject: ctx.principal.subject });
+  return { body: { normalizedName: merchants.normalizeName(name), exact: exact.map(merchants.brief), similar: similar.map(merchants.brief) } };
+}
+
 // Autofill is a SUGGESTION: every value is returned separately with the reason, the client keeps
-// every field editable, and nothing is saved until the person saves the entry.
-function suggest(doc, ctx, req, txns) {
+// every field editable, and nothing is saved until the person saves the entry. Merchant defaults
+// fill in only where there is no history, and only for merchants the caller fully sees.
+function suggest(doc, ctx, req, txns, now) {
   const payeeId = requireId(query(req, 'payeeId'), 'payeeId');
   const payee = ledger.visiblePayees(doc, ctx.principal, txns).find((p) => p.id === payeeId);
   if (!payee) throw notFound('Unknown payee.');
+  const full = payee.visibility === 'shared' || payee.ownerSubject === ctx.principal.subject;
   const history = txns.filter((t) => t.payeeId === payeeId && t.kind !== 'transfer').sort((a, b) => b.date.localeCompare(a.date)).slice(0, 50);
   const mode = (values) => {
     const counts = new Map();
@@ -82,16 +160,19 @@ function suggest(doc, ctx, req, txns) {
   const cat = mode(history.map((t) => t.categoryId));
   const acc = mode(history.map((t) => t.accountId));
   const last = history[0];
+  const defAccount = full && payee.defaultAccountId && (doc.accounts || []).find((a) => a.id === payee.defaultAccountId && !a.deletedAt);
+  const usableDefault = defAccount && can(doc, ctx.principal, defAccount, 'create', now) ? defAccount.id : null;
+  const defCategory = full ? payee.defaultCategoryId || null : null;
   const suggestion = {
     payeeId, basedOn: history.length,
-    categoryId: cat ? cat.v : payee.defaultCategoryId || null,
+    categoryId: cat ? cat.v : defCategory,
     // Plain-language reasons (UX-006). "Your" entries means entries this person may see.
-    categoryReason: cat ? `You used this in ${cat.c} of your last ${history.length} ${payee.name} entries.` : payee.defaultCategoryId ? `The usual category for ${payee.name}.` : null,
-    accountId: acc ? acc.v : null,
-    accountReason: acc ? `You paid ${payee.name} from this account in ${acc.c} of your last ${history.length} entries.` : null,
+    categoryReason: cat ? `You used this in ${cat.c} of your last ${history.length} ${payee.name} entries.` : defCategory ? `The default category for ${payee.name}.` : null,
+    accountId: acc ? acc.v : usableDefault,
+    accountReason: acc ? `You paid ${payee.name} from this account in ${acc.c} of your last ${history.length} entries.` : usableDefault ? `The default account for ${payee.name}.` : null,
     kind: last ? last.kind : 'expense',
     amount: last ? money.toDecimal(Math.abs(last.amountMinor), last.currency) : null,
-    currency: last ? last.currency : null,
+    currency: last ? last.currency : (full ? payee.defaultCurrency || null : null),
     amountReason: last ? `From your last ${payee.name} entry (${last.date}).` : null,
     tags: last ? last.tags || [] : [],
     splits: last && (last.splits || []).length ? last.splits.map((s) => ({ categoryId: s.categoryId, amount: money.toDecimal(Math.abs(s.amountMinor), last.currency) })) : [],
@@ -101,17 +182,40 @@ function suggest(doc, ctx, req, txns) {
 
 async function create(ctx, req) {
   const wsId = requireId(query(req, 'workspaceId'), 'workspaceId');
-  const body = fields.onlyKeys(readBody(req), ['name', 'aliases', 'visibility', 'defaultCategoryId', 'notes']);
-  const name = fields.text(body.name, { field: 'Name', max: 80, required: true });
+  const body = fields.onlyKeys(readBody(req), [...DETAIL_KEYS, 'visibility', 'accountId', 'allowDuplicate']);
   const { result } = await store.mutateWorkspace(ctx, wsId, (doc, member) => {
-    const visibility = fields.oneOf(body.visibility, ['private', 'shared'], 'Visibility', 'private');
-    if (visibility === 'shared' && member.role === 'viewer') throw forbidden('Viewers cannot add shared payees.');
-    const categoryId = fields.optionalId(body.defaultCategoryId, 'Default category');
-    if (categoryId && !(doc.categories || []).some((c) => c.id === categoryId)) throw badRequest('Unknown category.', 'invalid_category');
-    const p = { id: newId('pay'), name, aliases: aliases(body.aliases), visibility, ownerSubject: member.subject, defaultCategoryId: categoryId, notes: fields.text(body.notes, { field: 'Notes', max: 2000, multiline: true }), createdAt: ctx.nowIso(), deletedAt: null };
+    const now = ctx.now();
+    const nowIso = ctx.nowIso();
+    let visibility = fields.oneOf(body.visibility, ['private', 'shared'], 'Visibility', 'private');
+    let ownerSubject = member.subject;
+    if (body.accountId !== undefined) {
+      // Created while entering an expense on a particular account: the merchant takes that account's
+      // scope, so it is usable there. On someone else's private account it belongs to that account's
+      // owner and does not outlive a revoked grant in the creator's hands (security review finding 9).
+      const a = (doc.accounts || []).find((x) => x.id === body.accountId && !x.deletedAt);
+      if (!a || !can(doc, ctx.principal, a, 'view-transactions', now)) throw notFound('Unknown account.');
+      if (!can(doc, ctx.principal, a, 'create', now)) throw forbidden('You cannot add entries to this account.');
+      if (a.visibility === 'shared') visibility = 'shared';
+      else if (a.ownerSubject !== member.subject) { visibility = 'private'; ownerSubject = a.ownerSubject; }
+    }
+    if (visibility === 'shared' && member.role === 'viewer') throw forbidden('Viewers cannot add shared merchants.');
+    const name = fields.text(body.name, { field: 'Name', max: 80, required: true });
+    const aliasList = aliases(body.aliases);
+    const dup = merchants.findDuplicates(doc, ctx.principal, now, { name, aliases: aliasList, visibility, ownerSubject });
+    if (dup.exact.length && fields.bool(body.allowDuplicate, 'Allow duplicate') !== true) throw merchants.duplicateError(dup.exact[0]);
+    const p = {
+      id: newId('pay'), name, normalizedName: merchants.normalizeName(name), aliases: aliasList, visibility, ownerSubject,
+      type: fields.oneOf(body.type, merchants.MERCHANT_TYPES, 'Merchant type', 'other'), contact: contact(body.contact),
+      customerNumber: fields.text(body.customerNumber, { field: 'Customer number', max: 60 }),
+      openedOn: fields.date(body.openedOn, 'Date opened'), closedOn: null, closeReason: '', status: 'active',
+      defaultCategoryId: category(doc, body.defaultCategoryId), defaultAccountId: defaultAccount(doc, ctx.principal, body.defaultAccountId, visibility, now),
+      defaultCurrency: currency(body.defaultCurrency), tags: fields.tags(body.tags), notes: fields.text(body.notes, { field: 'Notes', max: 5000, multiline: true }),
+      attachments: [], createdAt: nowIso, createdBy: member.subject, revision: 1, deletedAt: null,
+      history: [{ revision: 1, at: nowIso, by: member.subject, changes: [{ field: 'create' }] }],
+    };
     doc.payees = [...(doc.payees || []), p];
-    audit.record(doc, { actor: member.subject, action: 'payee.create', targetType: 'payee', targetId: p.id, scope: visibility === 'shared' ? 'members' : `self:${member.subject}`, at: ctx.nowIso() });
-    return { payee: view(p, ctx.principal) };
+    audit.record(doc, { actor: member.subject, action: 'payee.create', targetType: 'payee', targetId: p.id, scope: visibility === 'shared' ? 'members' : `self:${ownerSubject}`, at: nowIso });
+    return { payee: view(doc, p, ctx.principal, member, [], now), similar: dup.similar.map(merchants.brief) };
   });
   return { status: 201, body: result };
 }
@@ -122,44 +226,116 @@ function locate(doc, principal, id, now) {
   return p;
 }
 
+function checkRevision(p, revision) {
+  if (!Number.isSafeInteger(revision)) throw badRequest('revision is required so a stale edit cannot overwrite a newer one.', 'missing_revision');
+  if (revision !== (p.revision || 1)) throw conflict('This merchant changed since you loaded it. Reload to see the latest version.', 'stale_revision');
+}
+
+// Applies a change and records its before and after values; unchanged values are not recorded.
+function recorder(p) {
+  const changes = [];
+  const set = (field, value) => {
+    const from = p[field] === undefined ? null : p[field];
+    if (JSON.stringify(from) === JSON.stringify(value === undefined ? null : value)) return;
+    changes.push({ field, from, to: value === undefined ? null : value });
+    p[field] = value;
+  };
+  return { set, changes };
+}
+
+function commit(doc, p, member, nowIso, changes, reason, action) {
+  if (!changes.length) return;
+  p.revision = (p.revision || 1) + 1;
+  p.updatedAt = nowIso;
+  p.history = [...(p.history || []), { revision: p.revision, at: nowIso, by: member.subject, changes, reason: reason || '' }];
+  audit.record(doc, { actor: member.subject, action, targetType: 'payee', targetId: p.id, scope: p.visibility === 'shared' ? 'members' : `self:${p.ownerSubject}`, at: nowIso, fields: changes.map((c) => c.field) });
+}
+
 async function patch(ctx, req) {
   const wsId = requireId(query(req, 'workspaceId'), 'workspaceId');
-  const body = fields.onlyKeys(readBody(req), ['payeeId', 'name', 'aliases', 'defaultCategoryId', 'notes', 'visibility']);
+  const body = fields.onlyKeys(readBody(req), ['payeeId', 'revision', 'reason', 'visibility', 'allowDuplicate', ...DETAIL_KEYS]);
   const id = requireId(body.payeeId, 'payeeId');
   const { result } = await store.mutateWorkspace(ctx, wsId, (doc, member) => {
-    const p = locate(doc, ctx.principal, id, ctx.now());
-    if (!mayEdit(p, member)) throw forbidden('You cannot edit this payee.');
-    const changed = [];
-    if (body.name !== undefined) { p.name = fields.text(body.name, { field: 'Name', max: 80, required: true }); changed.push('name'); }
-    if (body.aliases !== undefined) { p.aliases = aliases(body.aliases); changed.push('aliases'); }
-    if (body.notes !== undefined) { p.notes = fields.text(body.notes, { field: 'Notes', max: 2000, multiline: true }); changed.push('notes'); }
-    if (body.defaultCategoryId !== undefined) {
-      const categoryId = fields.optionalId(body.defaultCategoryId, 'Default category');
-      if (categoryId && !(doc.categories || []).some((c) => c.id === categoryId)) throw badRequest('Unknown category.', 'invalid_category');
-      p.defaultCategoryId = categoryId; changed.push('defaultCategoryId');
-    }
+    const now = ctx.now();
+    const nowIso = ctx.nowIso();
+    const p = locate(doc, ctx.principal, id, now);
+    if (!mayEdit(p, member)) throw forbidden('You cannot edit this merchant.');
+    checkRevision(p, body.revision);
+    const reason = fields.text(body.reason, { field: 'Reason', max: 200 });
+    const { set, changes } = recorder(p);
     if (body.visibility !== undefined && body.visibility !== p.visibility) {
-      if (body.visibility !== 'shared' || p.ownerSubject !== member.subject || member.role === 'viewer') throw forbidden('Only the creator can share a private payee.');
-      p.visibility = 'shared'; changed.push('visibility');
+      if (body.visibility !== 'shared' || p.ownerSubject !== member.subject || member.role === 'viewer') throw forbidden('Only the creator can share a private merchant.');
+      set('visibility', 'shared');
+      const acct = p.defaultAccountId && (doc.accounts || []).find((a) => a.id === p.defaultAccountId);
+      if (acct && acct.visibility !== 'shared') set('defaultAccountId', null);
     }
-    if (changed.length) audit.record(doc, { actor: member.subject, action: 'payee.update', targetType: 'payee', targetId: p.id, scope: p.visibility === 'shared' ? 'members' : `self:${member.subject}`, at: ctx.nowIso(), fields: changed });
-    return { payee: view(p, ctx.principal) };
+    if (body.name !== undefined || body.aliases !== undefined) {
+      const name = body.name !== undefined ? fields.text(body.name, { field: 'Name', max: 80, required: true }) : p.name;
+      const aliasList = body.aliases !== undefined ? aliases(body.aliases) : p.aliases || [];
+      const dup = merchants.findDuplicates(doc, ctx.principal, now, { name, aliases: aliasList, visibility: p.visibility, ownerSubject: p.ownerSubject, exceptId: p.id });
+      if (dup.exact.length && fields.bool(body.allowDuplicate, 'Allow duplicate') !== true) throw merchants.duplicateError(dup.exact[0]);
+      set('name', name);
+      set('aliases', aliasList);
+      p.normalizedName = merchants.normalizeName(name);
+    }
+    if (body.type !== undefined) set('type', fields.oneOf(body.type, merchants.MERCHANT_TYPES, 'Merchant type'));
+    if (body.contact !== undefined) set('contact', contact(body.contact));
+    if (body.customerNumber !== undefined) set('customerNumber', fields.text(body.customerNumber, { field: 'Customer number', max: 60 }));
+    if (body.openedOn !== undefined) {
+      const openedOn = fields.date(body.openedOn, 'Date opened');
+      if (openedOn && p.closedOn && openedOn > p.closedOn) throw badRequest('The opening date is after the closing date.', 'invalid_date');
+      set('openedOn', openedOn);
+    }
+    if (body.defaultCategoryId !== undefined) set('defaultCategoryId', category(doc, body.defaultCategoryId));
+    if (body.defaultAccountId !== undefined) set('defaultAccountId', defaultAccount(doc, ctx.principal, body.defaultAccountId, p.visibility, now));
+    if (body.defaultCurrency !== undefined) set('defaultCurrency', currency(body.defaultCurrency));
+    if (body.tags !== undefined) set('tags', fields.tags(body.tags));
+    if (body.notes !== undefined) set('notes', fields.text(body.notes, { field: 'Notes', max: 5000, multiline: true }));
+    commit(doc, p, member, nowIso, changes, reason, 'payee.update');
+    return { payee: view(doc, p, ctx.principal, member, [], now) };
   });
   return { body: result };
 }
 
-async function remove(ctx, req) {
-  const wsId = requireId(query(req, 'workspaceId'), 'workspaceId');
-  const body = fields.onlyKeys(readBody(req), ['payeeId']);
-  const id = requireId(body.payeeId, 'payeeId');
-  const { result } = await store.mutateWorkspace(ctx, wsId, (doc, member) => {
-    const p = locate(doc, ctx.principal, id, ctx.now());
-    if (!mayEdit(p, member)) throw forbidden('You cannot remove this payee.');
-    p.deletedAt = ctx.nowIso();
-    audit.record(doc, { actor: member.subject, action: 'payee.delete', targetType: 'payee', targetId: p.id, scope: p.visibility === 'shared' ? 'members' : `self:${member.subject}`, at: ctx.nowIso() });
-    return { removed: p.id };
-  });
-  return { body: result };
+// Closing and reopening. Neither touches any entry: the history stays exactly as recorded.
+function lifecycle(action) {
+  return async (ctx, req) => {
+    const wsId = requireId(query(req, 'workspaceId'), 'workspaceId');
+    const body = fields.onlyKeys(readBody(req), action === 'archive' ? ['payeeId', 'revision', 'reason', 'closedOn'] : ['payeeId', 'revision', 'reason']);
+    const id = requireId(body.payeeId, 'payeeId');
+    const { result } = await store.mutateWorkspace(ctx, wsId, (doc, member) => {
+      const now = ctx.now();
+      const nowIso = ctx.nowIso();
+      const p = locate(doc, ctx.principal, id, now);
+      if (!mayEdit(p, member)) throw forbidden('You cannot close or reopen this merchant.');
+      checkRevision(p, body.revision);
+      const reason = fields.text(body.reason, { field: 'Reason', max: 200 });
+      const { set, changes } = recorder(p);
+      if (action === 'archive') {
+        if (merchants.statusOf(p) === 'closed') throw conflict('This merchant is already closed.', 'already_closed');
+        const closedOn = fields.date(body.closedOn, 'Date closed') || nowIso.slice(0, 10);
+        if (p.openedOn && closedOn < p.openedOn) throw badRequest('The closing date is before the opening date.', 'invalid_date');
+        set('status', 'closed');
+        set('closedOn', closedOn);
+        set('closeReason', reason);
+      } else {
+        if (merchants.statusOf(p) !== 'closed') throw conflict('This merchant is not closed.', 'not_closed');
+        set('status', 'active');
+        set('closedOn', null);
+        set('closeReason', '');
+      }
+      commit(doc, p, member, nowIso, changes, reason, action === 'archive' ? 'payee.archive' : 'payee.reopen');
+      return { payee: view(doc, p, ctx.principal, member, [], now) };
+    });
+    return { body: result };
+  };
 }
 
-module.exports = { GET: list, POST: create, PATCH: patch, DELETE: remove };
+async function post(ctx, req) {
+  const action = query(req, 'action');
+  if (action === undefined) return create(ctx, req);
+  if (action === 'archive' || action === 'reopen') return lifecycle(action)(ctx, req);
+  throw notFound();
+}
+
+module.exports = { GET: list, POST: post, PATCH: patch };

@@ -3,7 +3,7 @@
 // are not spending), splits, idempotency, stale-edit refusal, reconciliation locks, soft delete.
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const { harness } = require('./helpers');
+const { harness, merchant } = require('./helpers');
 
 async function personal(h) {
   const ws = (await h.call('workspaces', 'POST', { as: 'alice', body: { name: 'Alice Personal', kind: 'personal', reportingCurrency: 'EUR' } })).body.workspace;
@@ -20,7 +20,7 @@ const balances = async (h, q) => Object.fromEntries((await h.call('accounts', 'G
 test('card purchase is spending; paying the card is a transfer, not spending again', async () => {
   const h = harness();
   const f = await personal(h);
-  await h.call('transactions', 'POST', { as: 'alice', query: f.q, body: { accountId: f.card.id, kind: 'expense', amount: '120.00', payeeName: 'Fictional Shop' } });
+  await h.call('transactions', 'POST', { as: 'alice', query: f.q, body: { accountId: f.card.id, kind: 'expense', amount: '120.00' } });
   const pay = await h.call('transactions', 'POST', { as: 'alice', query: f.q, body: { accountId: f.checking.id, kind: 'transfer', amount: '120.00', transfer: { toAccountId: f.card.id } } });
   assert.equal(pay.status, 201);
   assert.deepEqual(pay.body.transactions.map((t) => t.amount), ['-120.00', '120.00']);
@@ -59,7 +59,7 @@ test('splits must sum exactly to the amount', async () => {
 test('a repeated Idempotency-Key creates exactly one entry', async () => {
   const h = harness();
   const f = await personal(h);
-  const body = { accountId: f.checking.id, kind: 'expense', amount: '9.99', payeeName: 'Fictional Cafe' };
+  const body = { accountId: f.checking.id, kind: 'expense', amount: '9.99' };
   const headers = { 'Idempotency-Key': 'client-key-0001' };
   const first = await h.call('transactions', 'POST', { as: 'alice', query: f.q, body, headers });
   const second = await h.call('transactions', 'POST', { as: 'alice', query: f.q, body, headers });
@@ -103,8 +103,9 @@ test('autofill suggestions are explained, editable data and never saved', async 
   const f = await personal(h);
   const cats = (await h.call('categories', 'GET', { as: 'alice', query: f.q })).body.categories;
   const dining = cats.find((c) => c.name === 'Dining').id;
+  const cafe = await merchant(h, f.q, 'alice', { name: 'Fictional Cafe' });
   for (const amount of ['4.50', '5.20']) {
-    await h.call('transactions', 'POST', { as: 'alice', query: f.q, body: { accountId: f.card.id, kind: 'expense', amount, payeeName: 'Fictional Cafe', categoryId: dining, tags: ['coffee'] } });
+    await h.call('transactions', 'POST', { as: 'alice', query: f.q, body: { accountId: f.card.id, kind: 'expense', amount, payeeId: cafe.id, categoryId: dining, tags: ['coffee'] } });
   }
   const payee = (await h.call('payees', 'GET', { as: 'alice', query: f.q })).body.payees.find((p) => p.name === 'Fictional Cafe');
   assert.deepEqual(payee.stats, [{ currency: 'EUR', count: 2, gross: '9.70', refunds: '0.00', net: '9.70', lastDate: '2026-09-13' }]);

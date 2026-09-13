@@ -61,26 +61,48 @@ await acc("alice", { name: "Car Loan", type: "loan", currency: "EUR", openingBal
 const cats = Object.fromEntries((await call("categories", "GET", "alice", { query: q })).categories.map((c) => [c.name, c.id]));
 const tx = (as, body) => call("transactions", "POST", as, { query: q, body });
 const shopping = [
-  ["Fictional Grocer", "Groceries", ["82.40", "64.15", "91.30", "58.75", "73.20", "88.05"]],
-  ["Corner Cafe", "Dining", ["4.50", "5.20", "4.50", "12.80", "4.50"]],
-  ["City Transit", "Transport", ["49.00", "2.80", "2.80"]],
-  ["Power and Light Co", "Utilities", ["96.40"]],
-  ["Streaming Service", "Entertainment", ["11.99"]],
-  ["Hardware Barn", "Shopping", ["37.60", "124.99"]],
+  ["Fictional Grocer", "grocery", "Groceries", ["82.40", "64.15", "91.30", "58.75", "73.20", "88.05"]],
+  ["Corner Cafe", "restaurant", "Dining", ["4.50", "5.20", "4.50", "12.80", "4.50"]],
+  ["City Transit", "transport", "Transport", ["49.00", "2.80", "2.80"]],
+  ["Power and Light Co", "utility", "Utilities", ["96.40"]],
+  ["Streaming Service", "subscription", "Entertainment", ["11.99"]],
+  ["Hardware Barn", "retailer", "Shopping", ["37.60", "124.99"]],
 ];
+// Merchants are managed records chosen by id (BT-007-01): shared ones for the household, one
+// private to Bob.
+const merchant = async (as, body) => (await call("payees", "POST", as, { query: q, body })).payee.id;
+const m = {};
+for (const [name, type, category] of shopping) m[name] = await merchant("alice", { name, type, visibility: "shared", defaultCategoryId: cats[category] });
+m["Fictional Employer"] = await merchant("alice", { name: "Fictional Employer", type: "employer", visibility: "shared", defaultCategoryId: cats.Salary });
+m["Fictional Landlord"] = await merchant("alice", { name: "Fictional Landlord", type: "housing", visibility: "shared", defaultCategoryId: cats.Housing, contact: { website: "https://landlord.example.com", phone: "+1 555 0100", email: "rent@example.com", address: "" } });
+m["Fictional Watch Shop"] = await merchant("bob", { name: "Fictional Watch Shop", type: "retailer" });
 let n = 0;
-for (const [payeeName, category, amounts] of shopping) {
+for (const [name, , category, amounts] of shopping) {
   for (const amount of amounts) {
     n += 1;
-    await tx(n % 3 === 0 ? "bob" : "alice", { accountId: n % 4 === 0 ? card.id : joint.id, kind: "expense", amount, payeeName, categoryId: cats[category], date: day(2 + n * 2), status: n > 6 ? "cleared" : "pending" });
+    await tx(n % 3 === 0 ? "bob" : "alice", { accountId: n % 4 === 0 ? card.id : joint.id, kind: "expense", amount, payeeId: m[name], categoryId: cats[category], date: day(2 + n * 2), status: n > 6 ? "cleared" : "pending" });
   }
 }
-await tx("alice", { accountId: joint.id, kind: "income", amount: "3150.00", payeeName: "Fictional Employer", categoryId: cats.Salary, date: day(20), status: "cleared" });
-await tx("alice", { accountId: joint.id, kind: "refund", amount: "37.60", payeeName: "Hardware Barn", date: day(8) });
+await tx("alice", { accountId: joint.id, kind: "income", amount: "3150.00", payeeId: m["Fictional Employer"], categoryId: cats.Salary, date: day(20), status: "cleared" });
+await tx("alice", { accountId: joint.id, kind: "refund", amount: "37.60", payeeId: m["Hardware Barn"], date: day(8) });
 await tx("alice", { accountId: joint.id, kind: "transfer", amount: "250.00", date: day(6), transfer: { toAccountId: card.id } });
 await tx("alice", { accountId: joint.id, kind: "transfer", amount: "300.00", date: day(15), transfer: { toAccountId: savings.id } });
-await tx("bob", { accountId: bobCard.id, kind: "expense", amount: "180.00", payeeName: "Fictional Watch Shop", categoryId: cats.Shopping, date: day(4) });
-await tx("bob", { accountId: bobCard.id, kind: "expense", amount: "23.90", payeeName: "Corner Cafe", categoryId: cats.Dining, date: day(3) });
+await tx("bob", { accountId: bobCard.id, kind: "expense", amount: "180.00", payeeId: m["Fictional Watch Shop"], categoryId: cats.Shopping, date: day(4) });
+await tx("bob", { accountId: bobCard.id, kind: "expense", amount: "23.90", payeeId: m["Corner Cafe"], categoryId: cats.Dining, date: day(3) });
 const members = (await call("members", "GET", "alice", { query: q })).members;
-await call("grants", "POST", "alice", { query: q, body: { accountId: savings.id, memberId: members.find((m) => m.name.startsWith("Bob")).id, capabilities: ["view-balances"] } });
-console.log(`Seeded fictional workspace ${ws.name} (${ws.id}) with ${n + 6} entries.`);
+await call("grants", "POST", "alice", { query: q, body: { accountId: savings.id, memberId: members.find((x) => x.name.startsWith("Bob")).id, capabilities: ["view-balances"] } });
+
+// Recurring bills (BT-008-02) and a shared budget (BT-008-01). day(-n) is n days from now.
+const bill = (as, body) => call("recurring", "POST", as, { query: q, body });
+const monthly = (startDate) => ({ freq: "monthly", startDate });
+await bill("alice", { name: "Rent", billType: "housing", accountId: joint.id, amount: "1250.00", schedule: monthly(day(-6)), payeeId: m["Fictional Landlord"], categoryId: cats.Housing, reminderDays: 7 });
+await bill("alice", { name: "Electricity", billType: "utilities", accountId: joint.id, amount: "95.00", amountType: "variable", schedule: monthly(day(-2)), payeeId: m["Power and Light Co"], categoryId: cats.Utilities });
+await bill("alice", { name: "Streaming", billType: "subscription", accountId: card.id, amount: "11.99", schedule: monthly(day(-12)), payeeId: m["Streaming Service"], categoryId: cats.Entertainment });
+await bill("alice", { name: "Salary", billType: "income", accountId: joint.id, amount: "3150.00", schedule: monthly(day(-17)), payeeId: m["Fictional Employer"], categoryId: cats.Salary });
+await bill("alice", { name: "Savings", billType: "savings", kind: "transfer", accountId: joint.id, toAccountId: savings.id, amount: "300.00", schedule: monthly(day(-15)) });
+await bill("alice", { name: "Phone", billType: "subscription", accountId: joint.id, amount: "35.00", schedule: monthly(day(9)), trackFrom: day(9), categoryId: cats.Utilities });
+await call("budgets", "POST", "alice", { query: q, body: { name: "Household essentials", scope: "shared", currency: "EUR", period: "monthly", startDate: `${day(0).slice(0, 8)}01`, lines: [
+  { categoryId: cats.Groceries, amount: "450.00", rollover: true }, { categoryId: cats.Dining, amount: "120.00" },
+  { categoryId: cats.Utilities, amount: "180.00" }, { categoryId: cats.Transport, amount: "100.00" },
+] } });
+console.log(`Seeded fictional workspace ${ws.name} (${ws.id}) with ${n + 6} entries, 6 bills and a budget.`);

@@ -4,6 +4,7 @@
 export const ROUTES = Object.freeze([
   { id: "dashboard", path: "/dashboard", label: "Dashboard" },
   { id: "transactions", path: "/transactions", label: "Transactions" },
+  { id: "bills", path: "/bills", label: "Bills" },
   { id: "accounts", path: "/accounts", label: "Accounts" },
   { id: "payees", path: "/payees", label: "Merchants" },
   { id: "workspace", path: "/workspace", label: "Workspace" },

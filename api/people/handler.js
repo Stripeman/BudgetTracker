@@ -23,7 +23,9 @@ async function list(ctx, req) {
   const user = readDocument('user', value) || { contacts: [] };
   const options = [];
   if (field === 'payee') {
+    // Closed merchants are not offered for new entries (BT-007-01); their history is unaffected.
     for (const p of ledger.visiblePayees(doc, ctx.principal, visibleTransactions(doc, ctx.principal, ctx.now()))) {
+      if ((p.status || 'active') === 'closed') continue;
       options.push({ ref: `payee:${p.id}`, label: p.name, type: 'payee', typeLabel: 'Payee', hint: (p.aliases || []).join(', ') });
     }
   }

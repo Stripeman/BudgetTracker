@@ -20,7 +20,10 @@ const ACTIVITY = {
   "grant.create": "shared an account", "grant.revoke": "stopped sharing an account",
   "account.create": "added an account", "account.update": "changed an account", "account.delete": "deleted an account", "account.restore": "restored an account",
   "transaction.create": "added an entry", "transaction.update": "edited an entry", "transaction.delete": "deleted an entry", "transaction.restore": "restored an entry",
-  "payee.create": "added a merchant", "payee.update": "changed a merchant", "payee.delete": "removed a merchant",
+  "payee.create": "added a merchant", "payee.update": "changed a merchant", "payee.delete": "removed a merchant", "payee.archive": "closed a merchant", "payee.reopen": "reopened a merchant",
+  "recurring.create": "added a bill", "recurring.update": "changed a bill", "recurring.record": "recorded a bill", "recurring.skip": "skipped a bill payment", "recurring.unskip": "undid a skipped bill payment",
+  "recurring.pause": "paused a bill", "recurring.resume": "resumed a bill", "recurring.delete": "removed a bill",
+  "budget.create": "added a budget", "budget.update": "changed a budget", "budget.delete": "removed a budget",
   "category.create": "added a category", "category.update": "changed a category", "contact.create": "added a contact", "contact.update": "changed a contact", "contact.delete": "removed a contact",
   "backup.create": "created a backup", "workspace.restore-replace": "restored from a backup (replace)", "workspace.restore-merge": "restored from a backup (merge)", "workspace.restore-create": "created a workspace from a backup",
 };

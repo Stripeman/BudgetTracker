@@ -203,6 +203,16 @@ The medium and low findings are numeric alignment, quick-entry field order and a
 - **Terry's new mandatory requirements (2026-09-13)** are registered as BT-008-02, BT-001-05 (no destructive deletion, immutable history), BT-007-01 (managed merchants), BT-011-03 (TaskTracker theme picker) and BT-011-04 (colour-coded expense types). Azure hosting already follows his instruction (one dedicated SWA with a preview environment; no Staging app; DNS and Production untouched).
 - **Evidence:** `npm test` 8/8 repository, 105/105 API, 20/20 app; `npm run validate` ok (20 routes).
 
+## Checkpoint F — managed merchants and the non-destructive audit (2026-09-13)
+
+- **Committed before this:** `773c979` (budgets, bills, forecast API; retest fixes; new requirements). Pushed.
+- **BT-007-01 merchants:** built in the API and UI (see the register). Breaking API change, deliberate and traced: `transactions` and `recurring` no longer accept free-text `payeeName`; merchants are created on `/api/payees` (inline from quick entry) and linked by `payeeId`. `payees` has no DELETE; `?action=archive|reopen` instead. All fixtures, tests and the dev seed were updated.
+- **BT-001-05 audit:** `docs/reviews/2026-09-13-non-destructive-audit.md`. Remaining high items: history/audit caps (A1–A4), bill unskip/resume (A5–A6), restore replace (A7), transaction amendments (B1–B2), budget line versions (B13), the 12 MB cap (E1).
+- **TaskTracker theme picker archaeology (for BT-011-03):** `T:` `main` `a1ec150` `app/js/ui/themepicker.js` — a toggle button with a swatch and the current name, opening an in-flow `role=listbox` of option buttons with swatch circles (`.menu__swatch` via `--menu-swatch` CSSOM var, `.themepick*` CSS). It has no arrow/Escape/focus-return handling; BudgetTracker's port will add those as documented adaptations. TaskTracker has 21 palettes; BudgetTracker has 8 of them (same ids and swatches).
+- **Bills UI (BT-008-02):** new Bills tab — overdue / due soon / next-30-days cards, a "Needs attention" list with Review and record and Skip, all bills with schedule and next due, and dialogs for review-and-record (edit amount, date, merchant, category, notes for that payment only), skip, pause/resume, history (terms over time, skips with undo, pauses, changes) and the bill editor (term changes take effect from a chosen date; bills are ended, never deleted). Headless-Edge screenshots of Merchants, Bills and Transactions at desktop light/dark and narrow widths plus quick entry showed no console problems. Found and fixed from the screenshots: a stale dev-server process served the old payees handler (the Merchants tab appeared empty); the dev server was restarted by its own verified PID only, and the tab now treats a missing status as active.
+- **Dev data:** the fictional seed now creates merchants, six bills (one overdue) and a shared budget. The previous fictional data was moved to `.local/dev-data-pre-merchants-20260913`, not deleted.
+- **Evidence:** `npm test` 8/8 repository, 116/116 API, 25/25 app; `npm run validate` ok (20 routes).
+
 ## Checks run this checkpoint
 
 - `node --test test/*.test.cjs`: 7 passed, 0 failed (Node v22.23.1).

@@ -47,6 +47,9 @@ export function openModal({ title, body, actions = [], onClose = () => {} }) {
   }
 
   function onKey(event) {
+    // An open combobox list is dismissed first; the next Escape closes the dialog (merchant picker).
+    const t = event.target;
+    if (event.key === "Escape" && t && t.getAttribute && t.getAttribute("role") === "combobox" && t.getAttribute("aria-expanded") === "true") return;
     if (event.key === "Escape") { event.preventDefault(); close(); return; }
     if (event.key !== "Tab") return;
     const items = focusables();

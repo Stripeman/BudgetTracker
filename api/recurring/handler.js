@@ -4,12 +4,12 @@
 //                                                    due date, upcoming, overdue, reminders, versions
 //   GET  ?action=draft&recurringId=&occurrence=      review draft for one occurrence (nothing saved)
 //   POST { name, billType, kind?, accountId, toAccountId?, amount, amountType?, schedule, categoryId?,
-//          payeeName?, responsibleRef?, reminderDays?, notes?, tripId?, trackFrom? }
-//   POST ?action=record { recurringId, occurrence, amount?, date?, categoryId?, payeeName?,
+//          payeeId?, responsibleRef?, reminderDays?, notes?, tripId?, trackFrom? }
+//   POST ?action=record { recurringId, occurrence, amount?, date?, categoryId?, payeeId?,
 //          responsibleRef?, notes?, status? }   the reviewed occurrence becomes a real entry, once
 //   POST ?action=skip { recurringId, occurrence, reason? }  |  ?action=unskip { recurringId, occurrence }
 //   POST ?action=pause { recurringId, from, until? }        |  ?action=resume { recurringId, date? }
-//   PATCH { recurringId, revision, effectiveFrom?, amount?, amountType?, categoryId?, payeeName?,
+//   PATCH { recurringId, revision, effectiveFrom?, amount?, amountType?, categoryId?, payeeId?,
 //           responsibleRef?, name?, billType?, notes?, reminderDays?, endDate? }
 //   DELETE { recurringId, revision }                 soft delete; recorded entries are kept
 //
@@ -22,7 +22,7 @@
 // effective date and add a version; earlier versions and recorded entries are never modified.
 const { readBody, query, header, badRequest, forbidden, notFound, conflict } = require('../_shared/http');
 const { newId, requireId } = require('../_shared/ids');
-const { can, canChangeRecord, visibleTransactions } = require('../_shared/authz');
+const { can, canChangeRecord } = require('../_shared/authz');
 const { readDocument } = require('../_shared/schema');
 const store = require('../_shared/store');
 const money = require('../_shared/money');
@@ -32,11 +32,12 @@ const people = require('../_shared/people');
 const schedule = require('../_shared/schedule');
 const ledger = require('../_shared/ledger');
 const bills = require('../_shared/bills');
+const merchants = require('../_shared/merchants');
 
-const CREATE_KEYS = ['name', 'billType', 'kind', 'accountId', 'toAccountId', 'amount', 'amountType', 'schedule', 'categoryId', 'payeeName', 'responsibleRef', 'reminderDays', 'notes', 'tripId', 'trackFrom'];
-const PATCH_KEYS = ['recurringId', 'revision', 'effectiveFrom', 'amount', 'amountType', 'categoryId', 'payeeName', 'responsibleRef', 'name', 'billType', 'notes', 'reminderDays', 'endDate'];
-const TERM_KEYS = ['amount', 'amountType', 'categoryId', 'payeeName', 'responsibleRef'];
-const NOT_FOR_TRANSFERS = ['categoryId', 'payeeName', 'responsibleRef'];
+const CREATE_KEYS = ['name', 'billType', 'kind', 'accountId', 'toAccountId', 'amount', 'amountType', 'schedule', 'categoryId', 'payeeId', 'responsibleRef', 'reminderDays', 'notes', 'tripId', 'trackFrom'];
+const PATCH_KEYS = ['recurringId', 'revision', 'effectiveFrom', 'amount', 'amountType', 'categoryId', 'payeeId', 'responsibleRef', 'name', 'billType', 'notes', 'reminderDays', 'endDate'];
+const TERM_KEYS = ['amount', 'amountType', 'categoryId', 'payeeId', 'responsibleRef'];
+const NOT_FOR_TRANSFERS = ['categoryId', 'payeeId', 'responsibleRef'];
 
 async function readUser(ctx) {
   const { value } = await ctx.storage.getJson(store.paths.user(ctx.principal.subject));
@@ -48,22 +49,6 @@ function accountFor(doc, principal, id, capability, now) {
   if (!a || !can(doc, principal, a, 'view-transactions', now)) throw notFound('Unknown account.');
   if (capability && !can(doc, principal, a, capability, now)) throw forbidden(`You do not have ${capability} permission on this account.`);
   return a;
-}
-
-// Matches an existing payee the caller can see, but never attaches another person's private payee
-// to a shared bill (its name would become visible to every member).
-function resolvePayee(doc, principal, account, rawName, now, nowIso) {
-  const name = fields.text(rawName, { field: 'Payee', max: 80 });
-  if (!name) return null;
-  const key = name.toLowerCase();
-  const usable = (p) => (account.visibility === 'shared' ? p.visibility === 'shared' : p.visibility === 'shared' || p.ownerSubject === account.ownerSubject);
-  const existing = ledger.visiblePayees(doc, principal, visibleTransactions(doc, principal, now))
-    .find((p) => usable(p) && (p.name.toLowerCase() === key || (p.aliases || []).some((x) => x.toLowerCase() === key)));
-  if (existing) return existing.id;
-  const owner = account.visibility === 'private' ? account.ownerSubject : principal.subject;
-  const p = { id: newId('pay'), name, aliases: [], visibility: account.visibility, ownerSubject: owner, defaultCategoryId: null, notes: '', createdAt: nowIso, createdBy: principal.subject, deletedAt: null };
-  doc.payees = [...(doc.payees || []), p];
-  return p.id;
 }
 
 function checkCategory(doc, value) {
@@ -115,7 +100,7 @@ function view(doc, r, principal, user, today, now, recorded) {
   const c = r.currency;
   const termsView = (v) => ({
     effectiveFrom: v.effectiveFrom, amount: money.toDecimal(v.amountMinor, c), amountType: v.amountType, categoryId: v.categoryId,
-    payeeName: v.payeeId && payees.get(v.payeeId) ? payees.get(v.payeeId).name : '',
+    payeeId: v.payeeId || null, payeeName: v.payeeId && payees.get(v.payeeId) ? payees.get(v.payeeId).name : '',
     responsible: people.labelFor(v.responsibleRef, { doc, user }),
   });
   const upcoming = bills.dueBetween(r, today, schedule.addDays(today, 400), recorded).slice(0, 6);
@@ -196,7 +181,7 @@ async function draft(ctx, req) {
         recurringId: r.id, name: r.name, occurrence, date: occurrence, status, overdue: status === 'due' && occurrence < today,
         kind: r.kind, accountId: r.accountId, toAccountId: r.toAccountId || null, currency: r.currency,
         amount: money.toDecimal(t.amountMinor, r.currency), amountType: t.amountType, amountIsEstimate: t.amountType === 'variable',
-        categoryId: t.categoryId, payeeName: payee ? payee.name : '', responsible: people.labelFor(t.responsibleRef, { doc, user }),
+        categoryId: t.categoryId, payeeId: t.payeeId || null, payeeName: payee ? payee.name : '', responsible: people.labelFor(t.responsibleRef, { doc, user }),
       },
     },
   };
@@ -235,7 +220,7 @@ async function create(ctx, req) {
     } else {
       if (body.toAccountId !== undefined) throw badRequest('Only transfers have a destination account.', 'invalid_field');
       version.categoryId = checkCategory(doc, body.categoryId);
-      version.payeeId = resolvePayee(doc, ctx.principal, a, body.payeeName, now, nowIso);
+      version.payeeId = merchants.requireMerchant(doc, ctx.principal, a, body.payeeId, now);
       version.responsibleRef = people.requireRef(body.responsibleRef, { doc, user, visibility: a.visibility });
     }
     r.versions.push(version);
@@ -253,7 +238,7 @@ async function create(ctx, req) {
 // come from the terms effective on the occurrence date; a variable bill needs the actual amount.
 async function record(ctx, req) {
   const wsId = requireId(query(req, 'workspaceId'), 'workspaceId');
-  const body = fields.onlyKeys(readBody(req), ['recurringId', 'occurrence', 'amount', 'date', 'categoryId', 'payeeName', 'responsibleRef', 'notes', 'status']);
+  const body = fields.onlyKeys(readBody(req), ['recurringId', 'occurrence', 'amount', 'date', 'categoryId', 'payeeId', 'responsibleRef', 'notes', 'status']);
   const user = await readUser(ctx);
   const { result } = await store.mutateWorkspace(ctx, wsId, (doc, member) => {
     const now = ctx.now();
@@ -289,7 +274,8 @@ async function record(ctx, req) {
     } else {
       created.push({
         ...base, id: newId('txn'), accountId: a.id, kind: r.kind, amountMinor: bills.signed(r.kind, magnitude), currency: r.currency,
-        payeeId: body.payeeName !== undefined ? resolvePayee(doc, ctx.principal, a, body.payeeName, now, nowIso) : terms.payeeId,
+        // A new entry never links to a closed merchant, including the bill's own (BT-007-01).
+        payeeId: body.payeeId !== undefined ? merchants.requireMerchant(doc, ctx.principal, a, body.payeeId, now) : merchants.requireOpen(doc, terms.payeeId),
         categoryId: body.categoryId !== undefined ? checkCategory(doc, body.categoryId) : terms.categoryId,
         responsibleRef: body.responsibleRef !== undefined ? people.requireRef(body.responsibleRef, { doc, user, visibility: a.visibility }) : terms.responsibleRef,
         transferId: null, counterpartAccountId: null, tags: [], splits: [], links: { recurringId: r.id, occurrence },
@@ -391,7 +377,7 @@ async function patch(ctx, req) {
       if (body.amount !== undefined) v.amountMinor = positive(body.amount, r.currency);
       if (body.amountType !== undefined) v.amountType = fields.oneOf(body.amountType, bills.AMOUNT_TYPES, 'Amount type');
       if (body.categoryId !== undefined) v.categoryId = checkCategory(doc, body.categoryId);
-      if (body.payeeName !== undefined) v.payeeId = resolvePayee(doc, ctx.principal, a, body.payeeName, now, nowIso);
+      if (body.payeeId !== undefined) v.payeeId = merchants.requireMerchant(doc, ctx.principal, a, body.payeeId, now, { current: v.payeeId });
       if (body.responsibleRef !== undefined) v.responsibleRef = people.requireRef(body.responsibleRef, { doc, user, visibility: a.visibility });
       r.versions = [...r.versions, v];
       changed.push('terms');

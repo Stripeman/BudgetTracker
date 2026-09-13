@@ -4,7 +4,7 @@
 // 2026-09-01..2026-09-30.
 const { test, describe } = require('node:test');
 const assert = require('node:assert/strict');
-const { harness, household } = require('./helpers');
+const { harness, household, merchant } = require('./helpers');
 const schedule = require('../_shared/schedule');
 
 const ok = (res, status = 200) => { assert.equal(res.status, status, JSON.stringify(res.body)); return res.body; };
@@ -40,8 +40,9 @@ async function budgetFixture(h) {
   ok(await tx('alice', { accountId: f.joint.id, kind: 'expense', amount: '30.00', categoryId: cats.Groceries, date: '2026-08-20' }), 201);
   // Bob's PRIVATE grocery spending must never appear in the shared budget.
   ok(await tx('bob', { accountId: f.bobCard.id, kind: 'expense', amount: '999.00', categoryId: cats.Groceries, date: '2026-09-07' }), 201);
+  const courier = await merchant(h, f.q, 'alice', { name: 'Fictional Delivery', visibility: 'shared' });
   const delivery = ok(await h.call('recurring', 'POST', { as: 'alice', query: f.q, body: {
-    name: 'Fictional Delivery', billType: 'subscription', accountId: f.joint.id, amount: '25.00', categoryId: cats.Groceries, payeeName: 'Fictional Delivery',
+    name: 'Fictional Delivery', billType: 'subscription', accountId: f.joint.id, amount: '25.00', categoryId: cats.Groceries, payeeId: courier.id,
     schedule: { freq: 'monthly', startDate: '2026-07-20' },
   } }), 201).recurring;
   return { ...f, cats, delivery };
@@ -110,7 +111,8 @@ async function forecastFixture(h) {
   const savings = ok(await h.call('accounts', 'POST', { as: 'alice', query: q, body: { name: 'Savings', type: 'savings', currency: 'EUR' } }), 201).account;
   const rec = (body) => h.call('recurring', 'POST', { as: 'alice', query: q, body });
   const salary = ok(await rec({ name: 'Salary', billType: 'income', accountId: checking.id, amount: '2000.00', schedule: { freq: 'monthly', startDate: '2026-08-25' } }), 201).recurring;
-  ok(await rec({ name: 'Rent', billType: 'housing', accountId: checking.id, amount: '800.00', schedule: { freq: 'monthly', startDate: '2026-09-01' }, payeeName: 'Fictional Landlord' }), 201);
+  const landlord = await merchant(h, q, 'alice', { name: 'Fictional Landlord' });
+  ok(await rec({ name: 'Rent', billType: 'housing', accountId: checking.id, amount: '800.00', schedule: { freq: 'monthly', startDate: '2026-09-01' }, payeeId: landlord.id }), 201);
   const utility = ok(await rec({ name: 'Utilities', billType: 'utilities', accountId: checking.id, amount: '100.00', amountType: 'variable', schedule: { freq: 'monthly', startDate: '2026-08-15' } }), 201).recurring;
   ok(await rec({ name: 'Savings', billType: 'savings', kind: 'transfer', accountId: checking.id, toAccountId: savings.id, amount: '150.00', schedule: { freq: 'monthly', startDate: '2026-09-28' } }), 201);
   return { q, checking, savings, salary, utility };
