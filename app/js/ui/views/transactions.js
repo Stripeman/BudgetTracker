@@ -61,6 +61,10 @@ export function addEntriesBlocked(state, what = "entries") {
   if (!ws || !data) return null;
   if (ws.role === "viewer") return el("p", { class: "muted small", text: `You can view this workspace but not add ${what}.` });
   const open = data.accounts.filter((a) => !a.deletedAt && a.status !== "closed");
+  // A shared-expense group or a trip needs no account (Terry, 2026-09-14; BT-009): lead there.
+  if (!open.length && what === "entries" && (ws.kind === "group" || ws.kind === "trip")) {
+    return el("p", { class: "muted small" }, ["Shared expenses need no account: record them on Shared expenses. Add an account only to track your own money here. ", el("a", { href: "#/group", text: "Go to Shared expenses" })]);
+  }
   const text = open.length
     ? `None of the open accounts here lets you add ${what}. Add your own account first.`
     : `Add an account first: ${what} are recorded against an account.`;

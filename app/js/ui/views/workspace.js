@@ -43,6 +43,10 @@ const ACTIVITY = {
   "budget.create": "added a budget", "budget.update": "changed a budget", "budget.delete": "archived a budget", "budget.restore": "restored a budget",
   "category.create": "added a category", "category.update": "changed a category", "workspace.type-icons": "changed the icons for account, bill or merchant types", "contact.create": "added a contact", "contact.update": "changed a contact", "contact.delete": "removed a contact",
   "backup.create": "created a backup", "workspace.restore-replace": "restored from a backup (replace)", "workspace.restore-merge": "restored from a backup (merge)", "workspace.restore-create": "created a workspace from a backup",
+  // Shared expenses (BT-009).
+  "group.expense.create": "added a shared expense", "group.expense.update": "corrected a shared expense", "group.expense.void": "voided a shared expense",
+  "group.settlement.report": "recorded a payment", "group.settlement.confirm": "confirmed a payment", "group.settlement.dispute": "disputed a payment", "group.settlement.void": "voided a payment",
+  "group.ledger.link": "recorded a shared expense on their own account", "group.ledger.unlink": "stopped recording a shared expense on their own account", "transaction.reverse": "reversed an entry",
 };
 const describe = (action) => ACTIVITY[action] || action.replace(/[.-]/g, " ");
 // Workspace setting names and membership events in plain language (BT-001-05, audit B15/B16).

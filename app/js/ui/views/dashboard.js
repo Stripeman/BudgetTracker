@@ -9,19 +9,27 @@ import { openQuickEntry, canAddEntries, addEntriesBlocked, amountWithDirection }
 import { warningText } from "./planning.js";
 import { formatAmount } from "../../core/format.js";
 import { icon, withIcon } from "../icons.js";
+import { openGroupExpense, balanceLabel } from "./group.js";
 
 // A card title with its icon (BT-011-05); the words name the card, the icon is decoration.
 const titled = (id, iconId, text, tag = "h2") => el(tag, { class: "card__title", id }, [withIcon(iconId, text)]);
 
+// A shared-expense group or a trip needs no account (Terry, 2026-09-14; BT-009): its dashboard leads
+// to Shared expenses and shows the person's balance there, instead of asking for an account.
+const SHARED_KINDS = new Set(["group", "trip"]);
+const workspaceOf = (state) => (state.workspaces || []).find((w) => w.id === state.selectedWorkspaceId) || null;
+
 export function createView(ctx) {
   const totals = el("div", { class: "grid grid--cards" });
   const alerts = el("div");
+  const shared = el("div");
   const accountsBox = el("div");
   const recent = el("div");
   const actions = el("div", { class: "page-head__actions" });
   const element = el("section", {}, [
     el("div", { class: "page-head" }, [el("h1", { text: "Dashboard" }), actions]),
     alerts,
+    shared,
     totals,
     el("div", { class: "grid grid--two" }, [
       el("section", { class: "card", "aria-labelledby": "dash-accounts" }, [titled("dash-accounts", "bank", "Accounts"), accountsBox]),
@@ -31,8 +39,12 @@ export function createView(ctx) {
   void ctx.store.actions.refreshTransactions({ limit: 8 });
   void ctx.store.actions.refreshBills();
   void ctx.store.actions.refreshForecast({ horizon: "30" });
+  const first = workspaceOf(ctx.state || ctx.store.getState());
+  if (first && SHARED_KINDS.has(first.kind)) void ctx.store.actions.refreshGroup();
 
   function update(state) {
+    const ws = workspaceOf(state);
+    const sharedKind = !!ws && SHARED_KINDS.has(ws.kind);
     const prefs = state.preferences;
     const dateFormat = prefs && prefs.effective && prefs.effective.dateFormat;
     // Needs attention (BT-008): overdue and due-soon bills, and 30-day cash-flow warnings.
@@ -46,10 +58,29 @@ export function createView(ctx) {
     mount(alerts, items.length ? el("section", { class: "notice notice--warning", "aria-labelledby": "dash-alerts" }, [titled("dash-alerts", "bell", "Needs attention"), el("ul", { class: "stack" }, items)]) : null);
     const accounts = sliceFor(state, "accounts");
     const txns = sliceFor(state, "transactions");
-    mount(actions, canAddEntries(state)
-      ? button("Add expense", () => openQuickEntry(ctx), { variant: "primary" })
-      : addEntriesBlocked(state));
-    const accState = stateView(accounts, { empty: "No accounts yet. Add one from Accounts.", isEmpty: (d) => !d.accounts.length });
+    if (sharedKind && ws.role !== "viewer") {
+      mount(actions, button("Add shared expense", () => openGroupExpense(ctx), { variant: "primary" }),
+        canAddEntries(state) ? button("Add to an account", () => openQuickEntry(ctx)) : null);
+    } else {
+      mount(actions, canAddEntries(state)
+        ? button("Add expense", () => openQuickEntry(ctx), { variant: "primary" })
+        : addEntriesBlocked(state));
+    }
+    if (sharedKind) {
+      const g = sliceFor(state, "group");
+      const data = g.data;
+      const table = data && (data.balances.find((b) => b.currency === data.currency) || data.balances[0]);
+      const mine = table && table.rows.find((r) => r.ref === data.permissions.selfRef);
+      mount(shared, el("section", { class: "card", "aria-labelledby": "dash-shared" }, [
+        titled("dash-shared", "users", "Your balance in this group"),
+        data ? el("div", { class: "card__value" }, [mine ? balanceLabel(mine, table.currency, fmt) : el("span", { class: "muted", text: "Settled up" })]) : stateView(g),
+        data ? el("p", { class: "card__meta" }, [`${data.expenses.filter((e) => e.status !== "void").length} shared expenses recorded. `, el("a", { href: "#/group", text: "Open Shared expenses" })]) : null,
+      ]));
+    } else mount(shared);
+    const accState = stateView(accounts, {
+      empty: sharedKind ? "No accounts, and none are needed to share expenses. Add one only if you want to track your own money here." : "No accounts yet. Add one from Accounts.",
+      isEmpty: (d) => !d.accounts.length,
+    });
     if (accState) { mount(totals); mount(accountsBox, accState); } else {
       mount(totals, ...accounts.data.totals.map((t) => {
         // Tolerates an API without the breakdown (a rollout or cached assets can briefly pair a

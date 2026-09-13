@@ -106,3 +106,20 @@ await call("budgets", "POST", "alice", { query: q, body: { name: "Household esse
   { categoryId: cats.Utilities, amount: "180.00" }, { categoryId: cats.Transport, amount: "100.00" },
 ] } });
 console.log(`Seeded fictional workspace ${ws.name} (${ws.id}) with ${n + 6} entries, 6 bills and a budget.`);
+
+// A shared-expense group (BT-009) with no accounts at all: Alice, Bob and a contact who has no login.
+const grp = (await call("workspaces", "POST", "alice", { body: { name: "Fictional Dinner Club", kind: "group", reportingCurrency: "EUR" } })).workspace;
+const gq = { workspaceId: grp.id };
+const ginv = await call("invitations", "POST", "alice", { query: gq, body: { email: USERS.bob.email, role: "member" } });
+await call("invitations", "POST", "bob", { query: { action: "accept" }, body: { workspaceId: grp.id, token: ginv.token } });
+const gmembers = (await call("members", "GET", "alice", { query: gq })).members;
+const ga = `member:${gmembers.find((x) => x.name.startsWith("Alice")).id}`;
+const gb = `member:${gmembers.find((x) => x.name.startsWith("Bob")).id}`;
+const dana = (await call("contacts", "POST", "alice", { body: { scope: "workspace", workspaceId: grp.id, name: "Dana Fictional" } })).contact.ref;
+const everyone = { method: "equal", lines: [ga, gb, dana].map((ref) => ({ ref })) };
+const shared = (as, body) => call("group", "POST", as, { query: gq, body });
+await shared("alice", { description: "Dinner at the harbour", date: day(5), amount: "300.00", payers: [{ ref: ga }], split: everyone });
+await shared("bob", { description: "Taxi back", date: day(5), amount: "36.00", payers: [{ ref: gb }], split: { method: "shares", lines: [{ ref: ga, value: 1 }, { ref: gb, value: 1 }, { ref: dana, value: 2 }] } });
+await shared("alice", { description: "Museum tickets", date: day(3), amount: "100.00", payers: [{ ref: ga, amount: "60.00" }, { ref: gb, amount: "40.00" }], split: everyone });
+await call("group", "POST", "bob", { query: { ...gq, action: "settle" }, body: { from: gb, to: ga, amount: "50.00", date: day(1), method: "Bank transfer" } });
+console.log(`Seeded fictional group ${grp.name} (${grp.id}) with 3 shared expenses and a reported payment, and no accounts.`);

@@ -14,7 +14,7 @@ import { createDayNightControl } from "./daynight.js";
 import { initials, select, commitOnConfirm, button } from "./components.js";
 import { createThemePicker } from "./themepicker.js";
 import { AUTH } from "../core/api.js";
-import { ROUTES } from "../core/router.js";
+import { ROUTES, navRoutes } from "../core/router.js";
 import { Status } from "../core/store.js";
 
 import * as dashboard from "./views/dashboard.js";
@@ -26,10 +26,11 @@ import * as payees from "./views/payees.js";
 import * as settings from "./views/settings.js";
 import * as workspace from "./views/workspace.js";
 import * as join from "./views/join.js";
+import * as group from "./views/group.js";
 import { renderLanding, createOnboarding, openNewWorkspace } from "./views/landing.js";
 import { messageFor } from "../core/errors.js";
 
-const VIEWS = { dashboard, transactions, bills, planning, accounts, payees, settings, workspace, join };
+const VIEWS = { dashboard, group, transactions, bills, planning, accounts, payees, settings, workspace, join };
 
 export function createShell({ mountPoint, store, router, theme, api }) {
   const header = el("header", { class: "app__header" });
@@ -134,8 +135,10 @@ export function createShell({ mountPoint, store, router, theme, api }) {
     mount(header, ...items);
   }
 
-  function renderNav(route) {
-    mount(nav, ...ROUTES.filter((r) => !r.hidden).map((r) => el("a", { href: `#${r.path}`, "aria-current": r.id === route.id ? "page" : null, text: r.label })));
+  // Sections depend on the workspace kind (Shared expenses: groups, trips and households, BT-009).
+  function renderNav(route, state) {
+    const ws = state.workspaces.find((w) => w.id === state.selectedWorkspaceId);
+    mount(nav, ...navRoutes(ws && ws.kind).map((r) => el("a", { href: `#${r.path}`, "aria-current": r.id === route.id ? "page" : null, text: r.label })));
   }
 
   function renderFooter(state) {
@@ -188,7 +191,7 @@ export function createShell({ mountPoint, store, router, theme, api }) {
       if (viewKey !== "onboarding") { viewKey = "onboarding"; view = createOnboarding(ctx()); mount(main, view.element); document.title = "Create a workspace · BudgetTracker"; }
       return;
     }
-    renderNav(route);
+    renderNav(route, state);
     renderView(state, route);
   }
 

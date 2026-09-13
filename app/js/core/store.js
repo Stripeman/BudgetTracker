@@ -28,7 +28,7 @@ export function initialState() {
     workspaces: [], selectedWorkspaceId: null,
     accounts: emptySlice(null), transactions: emptySlice(null), payees: emptySlice(null),
     categories: emptySlice(null), members: emptySlice(null), bills: emptySlice(null),
-    budgets: emptySlice(null), forecast: emptySlice(null), icons: emptySlice(null),
+    budgets: emptySlice(null), forecast: emptySlice(null), icons: emptySlice(null), group: emptySlice(null),
   };
 }
 
@@ -90,7 +90,7 @@ export function createStore({ api }) {
       commit({
         selectedWorkspaceId: id,
         accounts: emptySlice(id), transactions: emptySlice(id), payees: emptySlice(id), categories: emptySlice(id), members: emptySlice(id), bills: emptySlice(id),
-        budgets: emptySlice(id), forecast: emptySlice(id), icons: emptySlice(id),
+        budgets: emptySlice(id), forecast: emptySlice(id), icons: emptySlice(id), group: emptySlice(id),
       });
       await Promise.all([actions.refreshAccounts(), actions.refreshCategories(), actions.refreshPayees(), actions.refreshMembers(), actions.refreshIcons()]);
     },
@@ -110,6 +110,8 @@ export function createStore({ api }) {
     refreshTransactions: (filters = {}) => loadSlice("transactions", (id) => api.transactions(id, filters)),
     refreshBills: () => loadSlice("bills", (id) => api.bills(id)),
     refreshBudgets: () => loadSlice("budgets", (id) => api.budgets(id)),
+    // Shared expenses and settlement (BT-009): expenses, payments and derived balances.
+    refreshGroup: () => loadSlice("group", (id) => api.group(id)),
     // The last forecast parameters are kept, so a refresh after a write keeps the chosen horizon.
     refreshForecast: (params) => { if (params) lastForecast = params; return loadSlice("forecast", (id) => api.forecast(id, lastForecast)); },
 
