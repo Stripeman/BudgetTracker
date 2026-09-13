@@ -23,7 +23,7 @@ TaskTracker's resources, settings, secrets and data are never touched or copied.
 
 | Environment | SWA environment | Data storage | Backup storage | Data | Status |
 |---|---|---|---|---|---|
-| preview | named preview environment `preview` | `stbudgetpv01` | `stbudgetbkpv01` | fictional only | provisioned 2026-09-13; application not yet deployed |
+| preview | named preview environment `preview` — https://polite-plant-03bb7570f-preview.eastus2.3.azurestaticapps.net | `stbudgetpv01` | `stbudgetbkpv01` | fictional only | deployed 2026-09-13 with settings configured (see PROJECT_STATE for the exact commit and verification) |
 | production | production environment | `stbudgetprd01` | `stbudgetbkprd01` | real | **not created**; needs Terry's explicit authorization |
 | staging (future) | a separate SWA or the named environment `staging` | own accounts | own accounts | fictional | not planned yet |
 
@@ -96,6 +96,9 @@ The custom domain belongs to the **production** environment. Preview keeps its g
 - Backup-failure alerting is pending (see `docs/RECOVERY_RUNBOOK.md`).
 
 ## Residual risks (recorded, not hidden)
+
+- **Dev tooling vulnerabilities.** `@azure/static-web-apps-cli` 2.0.10 (the same pin TaskTracker uses) pulls in `adm-zip` and `tmp`, which `npm audit` flags as high severity, plus `devcert` as low. They affect only the local deploy tooling on the operator's machine and are never published; the API's production dependencies audit clean. Revisit when a patched CLI is released.
+- **Deployment from a dirty tree (2026-09-13).** The first preview deploy was labelled `386543c`, but it included an uncommitted `platform.apiRuntime` line in `staticwebapp.config.json`. `deploy.ps1` now refuses a dirty tree for every environment. Preview was then redeployed from a clean commit.
 
 - **One deployment token.** A Static Web App has one deployment token for all its environments. Anyone holding it could deploy production. It is fetched only at run time and never stored. A separate production SWA or token rotation after use would remove this risk.
 - **Agent credentials.** Agents operate with Terry's Azure and GitHub admin credentials. Instructions, not identities, currently restrict them from production and settings changes. A dedicated least-privilege deployment identity is recommended before production.

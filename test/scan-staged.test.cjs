@@ -44,6 +44,18 @@ test('BT-003-03 detects secrets and personal financial identifiers without echoi
   }
 });
 
+test('BT-003-03 lockfile deprecation notices are the only place a real-looking address is allowed', () => {
+  // Assembled at runtime so this file never contains a scannable address.
+  const address = 'maintainer' + '@' + 'package-author.dev';
+  const deprecation = `      "deprecated": "Old versions are unsupported; contact ${address}",`;
+  assert.deepEqual(scanContent('package-lock.json', deprecation), [], 'npm deprecation metadata in a lockfile');
+  assert.deepEqual(scanContent('api/package-lock.json', deprecation), [], 'nested lockfile');
+  const otherField = `      "author": "${address}",`;
+  assert.ok(rules(scanContent('package-lock.json', otherField)).includes('personal-email'), 'any other lockfile field still blocks');
+  assert.ok(rules(scanContent('notes.md', deprecation)).includes('personal-email'), 'the same text elsewhere still blocks');
+  assert.ok(rules(scanContent('package.json', deprecation)).includes('personal-email'), 'package.json is not a lockfile');
+});
+
 test('BT-003-03 allows fictional addresses, local emulator strings and non-card numbers', () => {
   const text = [
     'owner@example.com and reviewer@example.org',

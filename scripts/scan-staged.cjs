@@ -90,12 +90,19 @@ function scanPath(file) {
   return findings;
 }
 
+// npm writes the registry's own deprecation notices into lockfiles, and some quote a package
+// maintainer's public contact address. That is third-party package metadata, not a personal
+// identifier of anyone in this project, and hand-editing it would be undone by the next install.
+// The exception is deliberately narrow: only `"deprecated":` lines, only in package-lock.json.
+const isLockfileDeprecation = (file, line) => /(^|[\\/])package-lock\.json$/.test(file) && /^\s*"deprecated":\s*"/.test(line);
+
 function scanContent(file, text) {
   const findings = [];
   const lines = text.split(/\r?\n/);
   lines.forEach((line, index) => {
     const at = index + 1;
     for (const [pattern, rule] of CONTENT_RULES) if (pattern.test(line)) findings.push({ file, line: at, rule });
+    if (isLockfileDeprecation(file, line)) return;
     for (const match of line.matchAll(EMAIL)) {
       if (!EMAIL_ALLOWED.some(allowed => allowed.test(match[0]))) findings.push({ file, line: at, rule: 'personal-email' });
     }

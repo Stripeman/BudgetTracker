@@ -148,6 +148,30 @@ Resource providers `Microsoft.OperationalInsights` and `Microsoft.Insights` were
 
 **Not verified.** Keyboard and screen-reader walkthroughs, and independent UX, usability and accessibility reviews. There is no deployed preview yet.
 
+## Preview deployment (2026-09-13, authorized by Terry: preview only)
+
+- **URL:** https://polite-plant-03bb7570f-preview.eastus2.3.azurestaticapps.net (named environment `preview` of SWA `budget-tracker`).
+- **How it was deployed:** `scripts/deploy/deploy.ps1 -Environment preview`. The full test and validate gate passed, and the artifact came from the allowlist. The token was read from Azure into memory only.
+- **Dirty-tree incident:** the first deploy was labelled `386543c` but included one uncommitted line (`platform.apiRuntime` in `staticwebapp.config.json`). The script now requires a clean tree for every environment, and preview is being redeployed from a clean commit. Check the latest deployed commit with `/api/me` (`app.commit`, once `BT_COMMIT` is set) or with the deployment record in this file.
+- **Settings:** set by `configure-settings.ps1` — storage and backup connection strings, the App Insights connection, a newly generated preview backup key, environment `preview`, and site admins by Terry's email. `GOOGLE_CLIENT_ID`/`GOOGLE_CLIENT_SECRET` were already present in the preview environment; they were not set by this session and their values were not read.
+- **Verified live:**
+  - `/` returns 200 with CSP, HSTS, `frame-ancestors 'none'` and no-referrer headers.
+  - `/version.json` reports 0.1.0-alpha.1.
+  - `/.auth/login/aad`, `github` and `twitter` return 404.
+  - Anonymous `/api/me` and anonymous POST return 401.
+  - Anonymous `/api/site-settings` returns 200 with no-store, so storage is reachable.
+- **Not verified:** Google sign-in on preview. It needs Terry's OAuth client to list the preview callback URI. No signed-in API calls or UI checks have been run on preview yet.
+- **Production:** not provisioned, not configured, not deployed. The `budget.remsik.org` DNS is unchanged.
+
+## UX/UI review of 386543c (independent, read-only)
+
+13 findings (UX-001 to UX-013), accepted. The high-severity ones:
+- viewers see Add actions they cannot use
+- a grantee cannot tell that a "Private" account is someone else's shared with them, and their net position includes it
+- at 390px the amount columns scroll off-screen and the filters fill the first screen
+
+The medium and low findings are numeric alignment, quick-entry field order and a sticky Save, stale suggestion hints, terminology, format preferences ignored, settings source labels, workspace-page states, onboarding for non-members, and menu ARIA roles. They will be remediated together with the accessibility review (pending) before the next UI checkpoint.
+
 ## Checks run this checkpoint
 
 - `node --test test/*.test.cjs`: 7 passed, 0 failed (Node v22.23.1).

@@ -13,6 +13,10 @@
     "seed:dev": "node scripts/dev/seed.mjs",
     "validate": "node scripts/validate.cjs",
     "generate:functions": "node scripts/generate-functions.cjs",
-    "build": "npm test && npm run validate"
+    "build": "npm test && npm run validate",
+    "build:artifact": "node scripts/build-artifact.mjs"
+  },
+  "devDependencies": {
+    "@azure/static-web-apps-cli": "2.0.10"
   }
 }
