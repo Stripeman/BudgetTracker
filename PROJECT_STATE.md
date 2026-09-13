@@ -275,6 +275,7 @@ The medium and low findings are numeric alignment, quick-entry field order and a
 - **Evidence:** new test in `api/test/backup.test.js` (owner, member, viewer, site administrator, outsider); `npm test` 8/8 repository, 172/172 API, 52/52 app; `npm run validate` ok (21 routes).
 - **Preview verified at `cb2f168`** (includes checkpoints L and M): `deploy.ps1 -Environment preview` exited 0; `/api/site-settings` reports `cb2f16884aaffb5b8ad8288cb72fd4e7ccba27e2`; anonymous `/api/icons` is 401.
 - **SEC-I4 (mostly fixed):** `GET /api/icons` returns `catalogEtag`; the store sends back the version it holds and reuses its copy when the answer is `catalog: null`, so switching workspaces no longer re-downloads the catalogue; administrators always get the full view. Open: partition the catalogue's audit/history. Evidence: new test in `api/test/icons.test.js`; `npm test` 8/8 repository, 173/173 API, 52/52 app; `npm run validate` ok (21 routes).
+- **Preview verified at `df61ec0`:** `deploy.ps1 -Environment preview` exited 0; `/api/site-settings` reports `df61ec024125b2fe0808d118564656c33021260f`.
 - **Next increment started:** BT-011-02 Tiptap editor — TaskTracker `T:` `main` is still `a1ec150` (freshest; `Z:` `main` is `40ced2a`, 2026-08-26); read-only archaeology of its editor modules, vendoring and tests is in progress.
 
 ## Checks run this checkpoint
