@@ -22,9 +22,15 @@ const audit = require('../_shared/audit');
 const icons = require('../_shared/icons');
 const { parseIconSvg, IconError } = require('../_shared/icon-svg');
 
+// `catalogEtag` identifies the catalogue version. A client that already holds that version sends it
+// back as ?catalogEtag= and receives `catalog: null` instead of the whole catalogue again, so a
+// workspace switch does not re-download it (security review SEC-I4). Administrators always get the
+// full view, which carries history.
 async function get(ctx, req) {
-  const { catalog } = await icons.readCatalog(ctx.storage);
-  const body = { catalog: icons.catalogView(catalog, { admin: !!ctx.siteAdmin }), admin: !!ctx.siteAdmin };
+  const { catalog, etag } = await icons.readCatalog(ctx.storage);
+  const catalogEtag = `${etag || 'none'}${ctx.siteAdmin ? ':admin' : ''}`;
+  const unchanged = !ctx.siteAdmin && query(req, 'catalogEtag') === catalogEtag;
+  const body = { catalog: unchanged ? null : icons.catalogView(catalog, { admin: !!ctx.siteAdmin }), catalogEtag, admin: !!ctx.siteAdmin };
   const wsId = query(req, 'workspaceId');
   if (wsId !== undefined) {
     const { doc, member } = await store.loadWorkspace(ctx, requireId(wsId, 'workspaceId'));

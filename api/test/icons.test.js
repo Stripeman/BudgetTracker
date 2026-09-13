@@ -107,6 +107,21 @@ describe('BT-011-05 security review remediation', () => {
     assert.deepEqual([patched.icon, patched.defaultIcon], ['tag', 'tag'], 'the pinned default is a string id');
   });
 
+  test('SEC-I4 a client holding the current catalogue version is not sent the catalogue again', async () => {
+    const h = harness();
+    const f = await household(h);
+    const first = ok(await h.call('icons', 'GET', { as: 'bob', query: f.q }));
+    assert.ok(first.catalog && first.catalogEtag);
+    const again = ok(await h.call('icons', 'GET', { as: 'bob', query: { ...f.q, catalogEtag: first.catalogEtag } }));
+    assert.deepEqual([again.catalog, again.catalogEtag, again.typeIcons], [null, first.catalogEtag, {}], 'the workspace part is still returned');
+    ok(await upload(h, 'dave'), 201);
+    const changed = ok(await h.call('icons', 'GET', { as: 'bob', query: { ...f.q, catalogEtag: first.catalogEtag } }));
+    assert.notEqual(changed.catalogEtag, first.catalogEtag);
+    assert.equal(changed.catalog.custom.length, 1, 'a changed catalogue is sent in full');
+    const admin = ok(await h.call('icons', 'GET', { as: 'dave', query: { catalogEtag: changed.catalogEtag } }));
+    assert.ok(admin.catalog, 'administrators always get the full view with history');
+  });
+
   test('SEC-I2 retiring a custom icon frees a place in the working limit; nothing is deleted', async () => {
     const h = harness();
     await household(h);

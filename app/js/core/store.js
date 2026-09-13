@@ -36,6 +36,7 @@ export function createStore({ api }) {
   let state = deepFreeze(initialState());
   let generation = 0;
   let lastForecast = { horizon: "90" };
+  let lastCatalog = null;
   const listeners = new Set();
 
   function commit(patch) {
@@ -98,8 +99,14 @@ export function createStore({ api }) {
     refreshCategories: () => loadSlice("categories", (id) => api.categories(id)),
     refreshPayees: () => loadSlice("payees", (id) => api.payees(id)),
     refreshMembers: () => loadSlice("members", (id) => api.members(id)),
-    // The icon catalogue with this workspace's type icons (BT-011-05).
-    refreshIcons: () => loadSlice("icons", (id) => api.icons(id)),
+    // The icon catalogue with this workspace's type icons (BT-011-05). The last catalogue is kept and
+    // its version sent back, so an unchanged catalogue is not downloaded again (SEC-I4).
+    refreshIcons: () => loadSlice("icons", async (id) => {
+      const res = await api.icons(id, lastCatalog ? lastCatalog.etag : undefined);
+      if (res.catalog === null && lastCatalog && lastCatalog.etag === res.catalogEtag) return { ...res, catalog: lastCatalog.catalog };
+      lastCatalog = { etag: res.catalogEtag, catalog: res.catalog };
+      return res;
+    }),
     refreshTransactions: (filters = {}) => loadSlice("transactions", (id) => api.transactions(id, filters)),
     refreshBills: () => loadSlice("bills", (id) => api.bills(id)),
     refreshBudgets: () => loadSlice("budgets", (id) => api.budgets(id)),
