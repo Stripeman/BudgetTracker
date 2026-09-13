@@ -118,13 +118,18 @@ async function history(ctx, req) {
       case 'payees': return r.visibility === 'shared' || r.ownerSubject === subject;
       case 'budgets': return r.scope === 'shared' || r.ownerSubject === subject;
       case 'categories':
-      case 'contacts': return true;
+      case 'contacts':
+      // Shared expenses and payments are group records every member sees (BT-009).
+      case 'groupExpenses':
+      case 'groupSettlements': return true;
       default: return false;
     }
   };
   const summary = (s) => {
     const r = s.record || {};
     if (s.collection === 'transactions') return { date: r.date, amount: money.toDecimal(r.amountMinor, r.currency), currency: r.currency };
+    if (s.collection === 'groupExpenses') return { date: r.date, amount: money.toDecimal(r.amountMinor, r.currency), currency: r.currency, name: r.description || '' };
+    if (s.collection === 'groupSettlements') return { date: r.date, amount: money.toDecimal(r.amountMinor, r.currency), currency: r.currency };
     return { name: r.name || '' };
   };
   // Archive ids only for people who may list backups, or for the person who ran that restore: a

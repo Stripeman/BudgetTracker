@@ -19,6 +19,8 @@ const ROUTES = Object.freeze({
   budgets: { methods: ['GET', 'POST', 'PATCH', 'DELETE'] },
   recurring: { methods: ['GET', 'POST', 'PATCH', 'DELETE'] },
   forecast: { methods: ['GET', 'POST'] },
+  // Shared expenses and settlement (BT-009): expenses and payments are voided, never deleted.
+  group: { methods: ['GET', 'POST', 'PATCH'] },
   // The icon catalogue (BT-011-05): icons are retired or switched off, never deleted.
   icons: { methods: ['GET', 'POST', 'PATCH'] },
   backups: { methods: ['GET', 'POST'] },

@@ -24,6 +24,12 @@ const { readDocument, stampDocument, CURRENT } = require('./schema');
 const archive = require('./archive');
 const audit = require('./audit');
 const bills = require('./bills');
+const groups = require('./groups');
+
+// Shared expenses (BT-009) name who paid and who shared. A new workspace starts with only the
+// restorer, so records naming any other member cannot come along without losing that.
+const GROUP_MEMBERS_BLOCKER = 'Shared expenses in this backup name other members. A new workspace starts with only you, so who paid and who shared could not be kept. Restore into this workspace with Merge or Replace instead.';
+const GROUP_LEDGER_BLOCKER = 'This restore would change or set aside shared expenses or payments that another member also recorded on their own account, which this restore cannot change. Their entries would no longer match. That member can first stop recording them on their account, or a recovery operator can perform a full restore.';
 
 const invalidData = (detail) => Object.assign(new HttpError(422, 'backup_invalid', `The workspace data failed an integrity check (${detail}). Nothing has been changed.`), { detail });
 const sha256 = (b) => createHash('sha256').update(b).digest('hex');
@@ -61,6 +67,12 @@ function checkInvariants(doc) {
     }
   }
   for (const b of doc.budgets || []) for (const l of b.lines || []) if (!categories.has(l.categoryId)) throw invalidData('budget category');
+  // Shared expenses and payments (BT-009): payers and shares add up to the total, the shares are what
+  // the split gives, everyone named exists as a member or shared contact, payments are positive.
+  uniqueIds(doc.groupExpenses || [], 'group expense');
+  uniqueIds(doc.groupSettlements || [], 'group settlement');
+  const groupProblem = groups.invariantProblem(doc);
+  if (groupProblem) throw invalidData(groupProblem);
   // A reversal matches the entry it reverses: same account and kind, exactly the opposite amount.
   const txById = new Map((doc.transactions || []).map((t) => [t.id, t]));
   for (const t of doc.transactions || []) {
@@ -145,6 +157,10 @@ function manifestOf(doc, attachments) {
       accounts: (doc.accounts || []).length, transactions: (doc.transactions || []).length, payees: (doc.payees || []).length,
       categories: (doc.categories || []).length, contacts: (doc.contacts || []).length, members: (doc.members || []).length,
       grants: (doc.grants || []).length, attachments: attachments.length, transferPairs,
+      // Only when the workspace has them, so manifests of archives made before shared expenses existed
+      // still verify byte for byte (BT-009).
+      ...(Array.isArray(doc.groupExpenses) ? { groupExpenses: doc.groupExpenses.length } : {}),
+      ...(Array.isArray(doc.groupSettlements) ? { groupSettlements: doc.groupSettlements.length } : {}),
     },
     balances: [...balances(doc).entries()].map(([accountId, minor]) => ({ accountId, minor })),
   };
@@ -213,7 +229,7 @@ function scopeFor(doc, subject, role) {
   };
 }
 
-const COLLECTIONS = ['accounts', 'transactions', 'payees', 'categories', 'contacts', 'recurring', 'budgets'];
+const COLLECTIONS = ['accounts', 'transactions', 'payees', 'categories', 'contacts', 'recurring', 'budgets', 'groupExpenses', 'groupSettlements'];
 // Directory records a replace never removes: records outside the caller's scope may refer to them,
 // and the directory is never pruned (security review SEC-B1 and SEC-R4 for contacts, BT-001-05).
 const KEEP_ON_REPLACE = new Set(['categories', 'payees', 'contacts']);
@@ -227,6 +243,9 @@ function inScope(doc, scope) {
     contacts: scope.shared ? (doc.contacts || []) : [],
     recurring: (doc.recurring || []).filter(scope.recurring),
     budgets: (doc.budgets || []).filter(scope.budget),
+    // Shared expenses and payments are shared group records: owner scope, like shared accounts (BT-009).
+    groupExpenses: scope.shared ? (doc.groupExpenses || []) : [],
+    groupSettlements: scope.shared ? (doc.groupSettlements || []) : [],
   };
 }
 
@@ -287,7 +306,9 @@ function plan({ current, archived, mode, principal, member, nowIso, newWorkspace
     // Merchants used by carried entries and bills come along, so nothing points at a missing one (SEC-B1).
     const usedPayees = new Set([...txns.map((t) => t.payeeId), ...carriedBills.flatMap((r) => (r.versions || []).map((v) => v.payeeId))].filter(Boolean));
     const payees = (archived.payees || []).filter((p) => scopeArc.payee(p) || usedPayees.has(p.id));
-    const memberId = newId('mem');
+    // The restorer keeps the member id they had, so shared expenses that name them still do (BT-009).
+    const archivedSelf = (archived.members || []).find((m) => m.subject === principal.subject);
+    const memberId = archivedSelf ? archivedSelf.id : newId('mem');
     next = {
       id: newWorkspaceId, name: `${archived.name} (restored ${nowIso.slice(0, 10)})`.slice(0, 80), kind: archived.kind, status: 'active',
       createdAt: nowIso, createdBy: principal.subject, updatedAt: nowIso, revision: 1, settings: { ...archived.settings },
@@ -298,7 +319,10 @@ function plan({ current, archived, mode, principal, member, nowIso, newWorkspace
       categories: archived.categories || [], transactions: txns, audit: [], idempotency: {}, restoredFrom: null,
       recurring: carriedBills,
       budgets: arc.budgets,
+      groupExpenses: arc.groupExpenses,
+      groupSettlements: arc.groupSettlements,
     };
+    if ([...groups.memberIds(next)].some((id) => id !== memberId)) blockers.push(GROUP_MEMBERS_BLOCKER);
   } else {
     const cur = inScope(current, scopeNow);
     next = structuredClone(current);
@@ -372,7 +396,8 @@ function plan({ current, archived, mode, principal, member, nowIso, newWorkspace
     const detail = e.detail || 'document';
     if (currentFails) blockers.push(`The current workspace data already fails an integrity check (${currentFails}), so it cannot be restored over. Correct that record first, or ask a recovery operator.`);
     else if (/^transfer/.test(detail)) blockers.push(crossScope);
-    else blockers.push(`This restore would leave records inconsistent (${detail}), so it cannot run as chosen. Try another restore mode, or ask a recovery operator.`);
+    // A more specific blocker already given (shared expenses naming other members) says it better.
+    else if (!blockers.length) blockers.push(`This restore would leave records inconsistent (${detail}), so it cannot run as chosen. Try another restore mode, or ask a recovery operator.`);
   }
   // A transfer whose legs straddle the caller's scope must not change on the in-scope side while
   // the out-of-scope side stays as it is now — the invariant check cannot see this for
@@ -385,6 +410,16 @@ function plan({ current, archived, mode, principal, member, nowIso, newWorkspace
       const inside = legs.filter((l) => scopeNow.accountIds.has(l.accountId));
       if (inside.length === legs.length || inside.length === 0) continue;
       if (inside.some((l) => nowById.get(l.id) !== JSON.stringify(l))) { blockers.push(crossScope); break; }
+    }
+  }
+  // A shared expense or payment that a member also recorded on an account outside the caller's scope
+  // must not be changed or set aside: their entries would stand alone (BT-009). Merge never changes an
+  // existing record, so only replace can do this.
+  if (mode === 'replace' && !blockers.length) {
+    const nextById = new Map([...(next.groupExpenses || []), ...(next.groupSettlements || [])].map((r) => [r.id, JSON.stringify(r)]));
+    for (const r of [...(current.groupExpenses || []), ...(current.groupSettlements || [])]) {
+      const outside = (r.ledgerLinks || []).some((l) => !l.endedAt && !scopeNow.accountIds.has(l.accountId));
+      if (outside && nextById.get(r.id) !== JSON.stringify(r)) { blockers.push(GROUP_LEDGER_BLOCKER); break; }
     }
   }
   // Only attachments referenced by records the caller restores are written (security review
@@ -402,7 +437,7 @@ function plan({ current, archived, mode, principal, member, nowIso, newWorkspace
     : diffCounts(inScope(current, scopeNow), after);
   const summary = {
     mode,
-    scope: { accounts: arc.accounts.length, transactions: arc.transactions.length, payees: arc.payees.length, categories: arc.categories.length, contacts: arc.contacts.length, recurring: arc.recurring.length, budgets: arc.budgets.length },
+    scope: { accounts: arc.accounts.length, transactions: arc.transactions.length, payees: arc.payees.length, categories: arc.categories.length, contacts: arc.contacts.length, recurring: arc.recurring.length, budgets: arc.budgets.length, groupExpenses: arc.groupExpenses.length, groupSettlements: arc.groupSettlements.length },
     changes: diff,
     excluded,
     // Totals only over data that passed the integrity check: a broken amount cannot be summed.

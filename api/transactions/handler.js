@@ -39,9 +39,9 @@ const FINANCIAL = new Set(['amountMinor', 'kind', 'date', 'postedDate', 'categor
 const valueOf = (t, f) => (t[f] === undefined ? null : structuredClone(t[f]));
 const snapshot = (t) => Object.fromEntries(AMENDABLE.map((f) => [f, valueOf(t, f)]));
 const diff = (before, t) => AMENDABLE.filter((f) => JSON.stringify(before[f]) !== JSON.stringify(valueOf(t, f))).map((f) => ({ field: f, from: before[f], to: valueOf(t, f) }));
-function amend(t, by, at, reason, changes) {
-  t.amendments = [...(t.amendments || []), { revision: t.revision, at, by, reason: reason || '', changes }];
-}
+// History, amendments and reversals are shared with the shared-expense route (BT-009), so both write
+// entries with exactly the same mechanics.
+const { amend, history, reverseEntry } = require('../_shared/entries');
 
 async function readUser(ctx) {
   const { value } = await ctx.storage.getJson(store.paths.user(ctx.principal.subject));
@@ -98,11 +98,6 @@ function validateLinks(links) {
   const out = {};
   for (const [k, v] of Object.entries(links)) { const id = fields.optionalId(v, k); if (id) out[k] = id; }
   return out;
-}
-
-function history(t, by, at, changed) {
-  // Never truncated (BT-001-05); growth is bounded by the member quota and the document cap.
-  t.history = [...(t.history || []), { revision: t.revision, at, by, fields: changed }];
 }
 
 async function list(ctx, req) {
@@ -466,21 +461,9 @@ async function reverse(ctx, req) {
     if (t.reversedBy) throw conflict('This entry has already been reversed.', 'already_reversed');
     const reason = fields.text(body.reason, { field: 'Reason', max: 200 });
     if (!reason) throw badRequest('Give a reason for the reversal. It is kept with both entries.', 'reason_required');
-    const rev = {
-      id: newId('txn'), accountId: t.accountId, kind: t.kind, amountMinor: -t.amountMinor, currency: t.currency,
-      payeeId: t.payeeId || null, categoryId: t.categoryId || null, splits: (t.splits || []).map((s) => ({ ...s, amountMinor: -s.amountMinor })),
-      responsibleRef: t.responsibleRef || null, original: null, transferId: null, counterpartAccountId: null,
-      // Dated like the entry it reverses unless told otherwise, so the pair nets out in the same budget
-      // period (financial retest FIN-T4).
-      date: fields.date(body.date, 'Date') || t.date, postedDate: null, status: 'pending', tags: [...(t.tags || [])],
-      notes: `Reversal: ${reason}`, links: { reverses: t.id }, createdBy: member.subject, createdAt: nowIso, revision: 1, deletedAt: null,
-    };
-    history(rev, member.subject, nowIso, ['create', 'reversal']);
-    t.reversedBy = rev.id;
-    t.revision += 1;
-    t.updatedAt = nowIso;
-    amend(t, member.subject, nowIso, reason, [{ field: 'reversedBy', from: null, to: rev.id }]);
-    doc.transactions = [...(doc.transactions || []), rev];
+    // Dated like the entry it reverses unless told otherwise, so the pair nets out in the same budget
+    // period (financial retest FIN-T4).
+    const rev = reverseEntry(doc, t, { by: member.subject, at: nowIso, reason, date: fields.date(body.date, 'Date') || t.date });
     ledger.assertLedgerInRange(doc);
     ledger.assertMemberQuota(doc, member, ctx.env);
     audit.record(doc, { actor: member.subject, action: 'transaction.reverse', targetType: 'transaction', targetId: t.id, scope: `account:${account.id}`, at: nowIso });
