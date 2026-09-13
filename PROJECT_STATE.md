@@ -286,6 +286,13 @@ The medium and low findings are numeric alignment, quick-entry field order and a
 - **Local dev data note:** two large fictional entries dated 2026-09-13 in the local "Fictional Household" were added through the app as the dev user Alice at 15:43–15:44 UTC (ordinary use of the local server, not by an agent). Offer to Terry: move the dev data aside and reseed.
 - **Next increment started:** BT-011-02 Tiptap editor — TaskTracker `T:` `main` is still `a1ec150` (freshest; `Z:` `main` is `40ced2a`, 2026-08-26); read-only archaeology of its editor modules, vendoring and tests is in progress.
 
+## Checkpoint N — first Production release in progress (2026-09-13)
+
+- **Terry's instructions (2026-09-13):** "push to staging and then production". "Staging" means the existing **preview** environment (no separate staging; saved as a standing preference). Terry granted a **one-time** authorization to merge PR #1 (feature/project-foundation → main) for this release — not a standing permission — and authorized provisioning Production storage and settings, with the Production backup key saved under the ignored `.local/` for his offline escrow.
+- **Built since Checkpoint M:** "New workspace…" (`156b6e2`); BT-011-02 step 2 — vendored Tiptap bundle from exact pins with licence notices (33 packages, all MIT), `validate.cjs` rule 10 registering it (`8c1aa27`); the generator moved to `scripts/vendor-tiptap.mjs` because `.gitignore`'s `build/` rule had kept `scripts/build/` out of the commit and CI failed (`56497d8`); `scripts/scan-staged.cjs` allows an address only on a copyright line in a vendored bundle's opening comment (tested); no focus ring on page titles after refresh (Terry's report): focus moves to the heading only on in-app navigation, and programmatically focused headings show no ring.
+- **Release gates so far:** `npm test` 9/9 repository, 182/182 API, 57/57 app; `npm run validate` ok (21 routes); CI `foundation-tests` and `secret-scan` pass on `56497d8`; PR #1 marked ready (merge state clean). Independent release-readiness review of `56497d8` requested.
+- **Production steps:** (1) Terry runs `provision.ps1 -Environment production -AuthorizedProduction` (typed confirmation); (2) `configure-settings.ps1 -Environment production -AuthorizedProduction` with the key escrowed to `.local/`; (3) merge PR #1; (4) Terry runs `deploy.ps1 -Environment production -AuthorizedProduction` from `main` (typed confirmation); (5) verify separately. Terry sets the Production `GOOGLE_CLIENT_ID`/`GOOGLE_CLIENT_SECRET` and redirect URI; DNS unchanged; WORM retention on Production backups still needs his decision.
+
 ## Checks run this checkpoint
 
 - `node --test test/*.test.cjs`: 7 passed, 0 failed (Node v22.23.1).
