@@ -273,6 +273,8 @@ The medium and low findings are numeric alignment, quick-entry field order and a
 
 - `GET /api/backups?workspaceId=&action=history` for anyone who may restore (viewers, outsiders and site administrators get 404): the restore log and the records each replace set aside. A set-aside record is listed only if the caller could see it (entries and bills through their account, accounts by their access rule, merchants and budgets when shared or their own); only summaries are returned; a restore's count is shown only to the person who ran it. Workspace → Backups has "Restore history and records set aside", loaded when opened.
 - **Evidence:** new test in `api/test/backup.test.js` (owner, member, viewer, site administrator, outsider); `npm test` 8/8 repository, 172/172 API, 52/52 app; `npm run validate` ok (21 routes).
+- **Preview verified at `cb2f168`** (includes checkpoints L and M): `deploy.ps1 -Environment preview` exited 0; `/api/site-settings` reports `cb2f16884aaffb5b8ad8288cb72fd4e7ccba27e2`; anonymous `/api/icons` is 401.
+- **Next increment started:** BT-011-02 Tiptap editor — TaskTracker `T:` `main` is still `a1ec150` (freshest; `Z:` `main` is `40ced2a`, 2026-08-26); read-only archaeology of its editor modules, vendoring and tests is in progress.
 
 ## Checks run this checkpoint
 
