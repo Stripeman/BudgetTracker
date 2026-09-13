@@ -36,12 +36,12 @@ const ART = {
   film: [rect(3, 4, 18, 16, 2), p("M7.5 4v16"), p("M16.5 4v16"), p("M3 9h4.5"), p("M3 15h4.5"), p("M16.5 9H21"), p("M16.5 15H21")],
   bag: [p("M5.5 7.5h13l1 13.5h-15z"), p("M9 10V6.5a3 3 0 0 1 6 0V10")],
   plane: [p("M21 15.5v-2l-8-5V3.8a1.5 1.5 0 0 0-3 0v4.7l-8 5v2l8-2.5v5l-2 1.5v1.5l3.5-1 3.5 1v-1.5l-2-1.5v-5z")],
-  book: [p("M4.5 19V5a2.5 2.5 0 0 1 2.5-2.5h12.5v17H7a2.5 2.5 0 0 0 0 5h12.5"), p("M8.5 7h7")],
+  book: [p("M12 6.5C10 5 7 4.5 3 5v14c4-.5 7 0 9 1.5 2-1.5 5-2 9-1.5V5c-4-.5-7 0-9 1.5z"), p("M12 6.5v14")],
   gift: [rect(3, 8, 18, 4.5, 1), p("M5 12.5V21h14v-8.5"), p("M12 8v13"), p("M12 8C10.5 4.5 6.5 4.3 6.5 6.4S10.2 8 12 8z"), p("M12 8c1.5-3.5 5.5-3.7 5.5-1.6S13.8 8 12 8z")],
   receipt: [p("M5.5 2.5v19l2.2-1.4 2.1 1.4 2.2-1.4 2.2 1.4 2.1-1.4 2.2 1.4v-19l-2.2 1.4-2.1-1.4-2.2 1.4-2.2-1.4-2.1 1.4z"), p("M9 8h6"), p("M9 11.5h6"), p("M9 15h3.5")],
   percent: [p("M19 5 5 19"), c(7, 7, 2.5), c(17, 17, 2.5)],
   briefcase: [rect(2.5, 7, 19, 13.5, 2), p("M8.5 7V5a1.8 1.8 0 0 1 1.8-1.8h3.4A1.8 1.8 0 0 1 15.5 5v2"), p("M2.5 12.5h19")],
-  coins: [c(9, 9, 6), p("M14.7 9.4a6 6 0 1 1-5.3 5.3"), p("M9 6.5v5")],
+  coins: [p("M4 7c0-1.4 3.6-2.5 8-2.5s8 1.1 8 2.5-3.6 2.5-8 2.5S4 8.4 4 7z"), p("M4 7v5c0 1.4 3.6 2.5 8 2.5s8-1.1 8-2.5V7"), p("M4 12v5c0 1.4 3.6 2.5 8 2.5s8-1.1 8-2.5v-5")],
   tag: [p("M20.4 13.4l-7 7a1.9 1.9 0 0 1-2.7 0L2.5 12.2V2.5h9.7l8.2 8.2a1.9 1.9 0 0 1 0 2.7z"), c(7.3, 7.3, 1.4)],
   wifi: [p("M2.5 9a14 14 0 0 1 19 0"), p("M5.5 12.5a9.5 9.5 0 0 1 13 0"), p("M8.7 16a5 5 0 0 1 6.6 0"), p("M12 19.6h.01")],
   phone: [rect(6.5, 2.5, 11, 19, 2.2), p("M10.8 18h2.4")],
@@ -54,12 +54,12 @@ const ART = {
   dumbbell: [p("M6.5 6v12"), p("M17.5 6v12"), p("M3.5 9v6"), p("M20.5 9v6"), p("M6.5 12h11")],
   music: [p("M9 18V5.5l11-2v12.5"), c(6, 18, 3), c(17, 16, 3)],
   bank: [p("M3 9.5 12 3.5l9 6"), p("M3 9.5h18"), p("M5.5 10v7.5"), p("M10 10v7.5"), p("M14 10v7.5"), p("M18.5 10v7.5"), p("M3 20.5h18")],
-  "piggy-bank": [p("M5 11.5a7 6.2 0 0 1 12.5-3.5h2l-.8 2.8 1.8 1.2v3.8h-2l-1.2 2v2.7h-3v-2h-3.8v2h-3v-2.7A6 6 0 0 1 5 11.5z"), p("M15 11h.01"), p("M2.5 9.5a2 2 0 0 0 2.6 1.9"), p("M10 7.5h3")],
+  "piggy-bank": [p("M4 12a7 5.5 0 0 1 13.5-2H20v4h-1.8a7 5.5 0 0 1-2.7 2.7V20h-3v-2h-3v2h-3v-3.6A5.5 5.5 0 0 1 4 12z"), p("M10 7.5h3"), p("M15.5 11h.01")],
   wallet: [p("M19.5 7.5V5a1.5 1.5 0 0 0-1.5-1.5H5A2.5 2.5 0 0 0 5 8.5h15.5v12H5a2.5 2.5 0 0 1-2.5-2.5V6"), p("M16 13h5v4h-5a2 2 0 0 1 0-4z")],
   cash: [rect(2.5, 6, 19, 12, 2), c(12, 12, 2.6), p("M6 12h.01"), p("M18 12h.01")],
   "credit-card": [rect(2.5, 5, 19, 14, 2), p("M2.5 10h19"), p("M6 15h4")],
   loan: [c(15.5, 7.5, 4), p("M15.5 6v3"), p("M2.5 14h3l4 1.5h4a1.5 1.5 0 0 1 0 3h-4.5"), p("M13 18.5l6-2.2a1.6 1.6 0 0 1 1.6 2.7l-7.1 3.5H2.5")],
-  mortgage: [p("M3 11.5 12 4l9 7.5"), p("M5.5 10v10h13V10"), c(12, 13.5, 2), p("M12 15.5V20")],
+  mortgage: [p("M3 11.5 12 4l9 7.5"), p("M5.5 10v10h13V10"), p("M14.5 12.5l-5 5"), c(10, 13, 1), c(14, 17, 1)],
   store: [p("M3.5 9 5.5 4h13l2 5z"), p("M4.5 9v11.5h15V9"), p("M9.5 20.5v-6h5v6"), p("M3.5 9a2.8 2.8 0 0 0 5.6 0 2.9 2.9 0 0 0 5.8 0 2.8 2.8 0 0 0 5.6 0")],
   "chart-line": [p("M3.5 3.5v17h17"), p("M7 15l4-4.5 3 3 6-6.5"), p("M16 7h4v4")],
   diamond: [poly("6.5 3.5 17.5 3.5 21.5 9 12 20.5 2.5 9"), p("M2.5 9h19"), p("M9.5 3.5 8 9l4 11.5L16 9l-1.5-5.5")],
@@ -77,7 +77,7 @@ const ART = {
   alert: [p("M12 3.5 21.5 20h-19z"), p("M12 10v4.2"), p("M12 17.2h.01")],
   clock: [c(12, 12, 9), p("M12 7v5.2l3.3 2.3")],
   globe: [c(12, 12, 9), p("M3 12h18"), p("M12 3a13.5 13.5 0 0 1 0 18 13.5 13.5 0 0 1 0-18z")],
-  suitcase: [rect(3, 7, 18, 13.5, 2), p("M9 7V4.5h6V7"), p("M7.5 7v13.5"), p("M16.5 7v13.5")],
+  suitcase: [rect(6, 6, 12, 13, 2), p("M9.5 6V3.5h5V6"), p("M10 9v7"), p("M14 9v7"), p("M9 19v2"), p("M15 19v2")],
 };
 
 const LABELS = {
@@ -87,8 +87,8 @@ const LABELS = {
   briefcase: "Work", coins: "Coins", tag: "Tag", wifi: "Internet", phone: "Phone", droplet: "Water", flame: "Heating", coffee: "Coffee",
   fuel: "Fuel", train: "Train", paw: "Pets", dumbbell: "Fitness", music: "Music", bank: "Bank", "piggy-bank": "Savings", wallet: "Wallet",
   cash: "Cash", "credit-card": "Card", loan: "Loan", mortgage: "Mortgage", store: "Store", "chart-line": "Investment", diamond: "Valuable",
-  scale: "Owed", building: "Office", user: "Person", users: "Group", repeat: "Recurring", calendar: "Calendar", "id-card": "Membership",
-  target: "Goal", filter: "Filter", "chart-pie": "Report", bell: "Alert", alert: "Warning", clock: "Due soon", globe: "Currency", suitcase: "Trip",
+  scale: "Balance", building: "Office", user: "Person", users: "Group", repeat: "Recurring", calendar: "Calendar", "id-card": "Membership",
+  target: "Goal", filter: "Filter", "chart-pie": "Report", bell: "Bell", alert: "Warning", clock: "Clock", globe: "Globe", suitcase: "Trip",
 };
 
 export const FALLBACK = "fallback";

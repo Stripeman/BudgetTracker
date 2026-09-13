@@ -6,7 +6,7 @@
 import { el, mount, announce } from "../dom.js";
 import { createDayNightControl } from "../daynight.js";
 import { createThemePicker } from "../themepicker.js";
-import { pageHead, field, select, sourceBadge, button, input, commitOnConfirm, badge } from "../components.js";
+import { pageHead, field, select, sourceBadge, button, input, commitOnConfirm, badge, categoryLabel } from "../components.js";
 import { sliceFor } from "../../core/store.js";
 import { colourEntries } from "../../core/categories.js";
 import { messageFor } from "../../core/errors.js";
@@ -44,7 +44,7 @@ export function createView(ctx) {
   // Site administrators only (BT-011-05): the icon catalogue. It holds no financial data and gives
   // no access to any workspace.
   // Category colours and icons belong to a workspace, so the card is hidden without one.
-  const colourCard = el("section", { class: "card", "aria-labelledby": "set-colours", hidden: true }, [
+  const colourCard = el("section", { class: "card card--full", "aria-labelledby": "set-colours", hidden: true }, [
     el("h2", { class: "card__title", id: "set-colours", text: "Category colours and icons" }),
     el("p", { class: "field__help", text: "Your own colours and icons for this workspace's categories. They change only what you see; workspace colours and icons are managed on the Workspace page." }),
     colourBox,
@@ -141,7 +141,7 @@ export function createView(ctx) {
       }, { small: true, variant: "ghost", attrs: { "aria-label": `Use workspace colour for ${c.name}` } }) : null;
       // A personal icon (BT-011-05); "Default" is the workspace's icon for the category.
       const iconPick = createIconPicker({
-        value: personalIcons[c.id] || null, inherited: c.icon, name: c.name, label: `${c.name} icon`,
+        value: personalIcons[c.id] || null, inherited: c.icon, name: c.name, label: "Icon", tint: personal[c.id] || c.color,
         onPick: async (id) => {
           const next = { ...personalIcons };
           if (id) next[c.id] = id; else delete next[c.id];
@@ -150,9 +150,12 @@ export function createView(ctx) {
         },
       });
       iconPick.picker.setDisabled(iconsLocked);
-      return el("div", { class: "field", dataset: { category: c.id } }, [
-        el("p", { class: "field__label", id: labelId, text: `${c.name} colour` }), picker.element, iconPick.element, error,
-        el("div", { class: "row" }, [badge(personal[c.id] ? "Your colour" : "Workspace colour", "source"), reset, badge(personalIcons[c.id] ? "Your icon" : "Workspace icon", "source")]),
+      // One compact, named row per category (UXI-3).
+      return el("div", { class: "catrow", role: "group", "aria-labelledby": `${labelId}-name`, dataset: { category: c.id } }, [
+        el("h3", { class: "catrow__name", id: `${labelId}-name` }, [categoryLabel(c.name, personal[c.id] || c.color, personalIcons[c.id] || c.icon)]),
+        el("div", { class: "field" }, [el("p", { class: "field__label", id: labelId, text: "Colour" }), picker.element]),
+        iconPick.element, error,
+        el("div", { class: "row catrow__meta" }, [badge(personal[c.id] ? "Your colour" : "Workspace colour", "source"), reset, badge(personalIcons[c.id] ? "Your icon" : "Workspace icon", "source")]),
       ]);
     });
     mount(colourBox, ...rows);
@@ -168,11 +171,14 @@ export function createView(ctx) {
   // the browser checks type and size first, and the server checks type, size, dimensions and every
   // element and attribute before storing plain shape data.
   let catalogLoaded = false;
-  async function loadCatalog() {
+  let builtInsOpen = false;
+  // After each change the card is rebuilt and focus returns to the same control, found by a
+  // stable key, rather than falling to the page (UXI-5).
+  async function loadCatalog(focusKey = null) {
     let data;
     try { data = await ctx.api.icons(); } catch (err) { mount(catalogBox, el("p", { class: "error-text", role: "alert", text: messageFor(err) })); return; }
     const cat = data.catalog;
-    const after = async (message) => { announce(message); await store.actions.refreshIcons(); await loadCatalog(); };
+    const after = async (message, key) => { announce(message); await store.actions.refreshIcons(); await loadCatalog(key); };
     const note = el("p", { class: "field__help", role: "status" });
     const label = input({ maxlength: "40", autocomplete: "off" });
     const file = el("input", { type: "file", class: "field__input", accept: ".svg,image/svg+xml" });
@@ -183,9 +189,9 @@ export function createView(ctx) {
       if (!f) { note.textContent = "Choose an SVG file."; file.focus(); return; }
       if (!(f.type === "image/svg+xml" || /\.svg$/i.test(f.name))) { note.textContent = "Only SVG files can be added."; file.focus(); return; }
       if (f.size > MAX_ICON_BYTES) { note.textContent = "The file is larger than 8 KB."; file.focus(); return; }
-      try { await ctx.api.iconAction("upload", { label: label.value.trim(), svg: await f.text() }); await after("Icon added."); }
+      try { await ctx.api.iconAction("upload", { label: label.value.trim(), svg: await f.text() }); await after("Icon added.", "upload"); }
       catch (err) { note.textContent = messageFor(err); }
-    }, { variant: "primary" });
+    }, { variant: "primary", attrs: { "data-focus-key": "upload" } });
     const upload = el("div", { class: "form-grid" }, [
       field("Icon name", label), field("SVG file", file, { help: "A square 24 × 24 drawing made only of paths and simple shapes, at most 8 KB. Colours in the file are ignored; icons take the colour of the text." }),
       el("div", { class: "field" }, [add]), note,
@@ -194,26 +200,37 @@ export function createView(ctx) {
       const rename = input({ maxlength: "40", value: c.label, autocomplete: "off", "aria-label": `New name for ${c.label}` });
       return el("li", { class: "row" }, [
         withIcon(c.id, c.label), badge(c.status === "active" ? "Offered" : "Retired", c.status === "active" ? "source" : "closed"),
-        el("span", { class: "app__spacer" }), rename,
-        button("Rename", async () => { try { await ctx.api.renameIcon({ iconId: c.id, label: rename.value.trim() }); await after("Icon renamed."); } catch (err) { note.textContent = messageFor(err); } }, { small: true, attrs: { "aria-label": `Rename ${c.label}` } }),
+        el("span", { class: "app__spacer" }), el("label", { class: "field--inline small" }, ["Name ", rename]),
+        button("Rename", async () => { try { await ctx.api.renameIcon({ iconId: c.id, label: rename.value.trim() }); await after("Icon renamed.", `rn-${c.id}`); } catch (err) { note.textContent = messageFor(err); } }, { small: true, attrs: { "aria-label": `Rename ${c.label}`, "data-focus-key": `rn-${c.id}` } }),
         button(c.status === "active" ? "Retire" : "Offer again", async () => {
-          try { await ctx.api.iconAction(c.status === "active" ? "retire" : "restore", { iconId: c.id }); await after(c.status === "active" ? `${c.label} retired.` : `${c.label} offered again.`); } catch (err) { note.textContent = messageFor(err); }
-        }, { small: true, attrs: { "aria-label": `${c.status === "active" ? "Retire" : "Offer again"}: ${c.label}` } }),
+          try { await ctx.api.iconAction(c.status === "active" ? "retire" : "restore", { iconId: c.id }); await after(c.status === "active" ? `${c.label} retired.` : `${c.label} offered again.`, `rt-${c.id}`); } catch (err) { note.textContent = messageFor(err); }
+        }, { small: true, attrs: { "aria-label": `${c.status === "active" ? "Retire" : "Offer again"}: ${c.label}`, "data-focus-key": `rt-${c.id}` } }),
       ]);
     })) : el("p", { class: "muted small", text: "No custom icons yet." });
-    const builtIns = el("div", { class: "icon-grid" }, cat.builtIn.filter((i) => !i.system).map((i) => {
-      const box = el("input", { type: "checkbox" });
-      box.checked = i.enabled;
-      box.addEventListener("change", async () => {
-        try { await ctx.api.iconAction(box.checked ? "enable" : "disable", { iconId: i.id }); await after(`${i.label} ${box.checked ? "offered" : "switched off"}.`); }
-        catch (err) { box.checked = !box.checked; note.textContent = messageFor(err); }
-      });
-      return el("label", { class: "field--inline" }, [box, withIcon(i.id, i.label)]);
-    }));
+    // The checkboxes form one named group (UXI-5).
+    const builtIns = el("fieldset", { class: "plain-fieldset" }, [
+      el("legend", { class: "sr-only", text: "Built-in icons offered in pickers" }),
+      el("div", { class: "icon-grid" }, cat.builtIn.filter((i) => !i.system).map((i) => {
+        const box = el("input", { type: "checkbox", "data-focus-key": `bi-${i.id}` });
+        box.checked = i.enabled;
+        box.addEventListener("change", async () => {
+          try { await ctx.api.iconAction(box.checked ? "enable" : "disable", { iconId: i.id }); await after(`${i.label} ${box.checked ? "offered" : "switched off"}.`, `bi-${i.id}`); }
+          catch (err) { box.checked = !box.checked; note.textContent = messageFor(err); }
+        });
+        return el("label", { class: "field--inline" }, [box, withIcon(i.id, i.label)]);
+      })),
+    ]);
+    const details = el("details", { class: "more" }, [el("summary", { text: "Built-in icons offered in pickers" }), el("p", { class: "field__help", text: "The money-direction and fallback icons are used by the app itself and are always on." }), builtIns]);
+    details.open = builtInsOpen;
+    details.addEventListener("toggle", () => { builtInsOpen = details.open; });
     mount(catalogBox,
       el("h3", { text: "Add a custom icon" }), upload,
       el("h3", { text: "Custom icons" }), custom,
-      el("details", { class: "more" }, [el("summary", { text: "Built-in icons offered in pickers" }), el("p", { class: "field__help", text: "The money-direction and fallback icons are used by the app itself and are always on." }), builtIns]));
+      details);
+    if (focusKey) {
+      const target = catalogBox.querySelector(`[data-focus-key="${focusKey}"]`);
+      if (target) target.focus();
+    }
   }
 
   let rendered = "";

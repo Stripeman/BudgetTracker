@@ -9,6 +9,18 @@ import { uid } from "./components.js";
 
 const FOCUSABLE = "button, [href], input, select, textarea, summary, [tabindex]";
 
+// Escape belongs to an open list inside the dialog first — the merchant combobox, or a theme,
+// colour or icon picker (its options or its toggle) — so the dialog, and what was typed, stays
+// open; the next Escape closes the dialog (UXI-1).
+export function escapeBelongsToControl(target) {
+  if (!target || !target.getAttribute) return false;
+  if (target.getAttribute("role") === "combobox" && target.getAttribute("aria-expanded") === "true") return true;
+  // The picker's toggle states whether its list is open (aria-expanded), in every DOM.
+  const pick = target.closest ? target.closest(".themepick") : null;
+  const toggle = pick ? pick.querySelector(".themepick__toggle") : null;
+  return !!toggle && toggle.getAttribute("aria-expanded") === "true";
+}
+
 export function openModal({ title, body, actions = [], onClose = () => {} }) {
   const opener = document.activeElement;
   const openerKey = opener && opener.getAttribute ? (opener.getAttribute("aria-label") || opener.textContent || "") : "";
@@ -65,9 +77,8 @@ export function openModal({ title, body, actions = [], onClose = () => {} }) {
   }
 
   function onKey(event) {
-    // An open combobox list is dismissed first; the next Escape closes the dialog (merchant picker).
-    const t = event.target;
-    if (event.key === "Escape" && t && t.getAttribute && t.getAttribute("role") === "combobox" && t.getAttribute("aria-expanded") === "true") return;
+    // An open list is dismissed first; the next Escape closes the dialog.
+    if (event.key === "Escape" && escapeBelongsToControl(event.target)) return;
     if (event.key === "Escape") { event.preventDefault(); close(); return; }
     if (event.key !== "Tab") return;
     const items = focusables();

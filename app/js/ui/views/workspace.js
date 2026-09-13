@@ -59,7 +59,7 @@ export function createView(ctx) {
       el("section", { class: "card", "aria-labelledby": "ws-invite" }, [el("h2", { class: "card__title", id: "ws-invite", text: "Invite someone" }), inviteBox]),
       el("section", { class: "card", "aria-labelledby": "ws-backups" }, [el("h2", { class: "card__title", id: "ws-backups", text: "Backups and restore" }), backupsBox]),
       el("section", { class: "card", "aria-labelledby": "ws-activity" }, [el("h2", { class: "card__title", id: "ws-activity", text: "Recent activity" }), auditBox]),
-      el("section", { class: "card", "aria-labelledby": "ws-colours" }, [el("h2", { class: "card__title", id: "ws-colours", text: "Category colours and icons" }), coloursBox]),
+      el("section", { class: "card card--full", "aria-labelledby": "ws-colours" }, [el("h2", { class: "card__title", id: "ws-colours", text: "Category colours and icons" }), coloursBox]),
       el("section", { class: "card", "aria-labelledby": "ws-types" }, [el("h2", { class: "card__title", id: "ws-types", text: "Icons for types" }), typesBox]),
     ]),
   ]);
@@ -180,7 +180,7 @@ export function createView(ctx) {
       // The category icon (BT-011-05): same rules as the colour; "Default" is the icon it was created with.
       const chosenIcon = c.iconSource === "workspace" ? c.icon : null;
       const iconPick = createIconPicker({
-        value: chosenIcon, inherited: c.defaultIcon, name: c.name, label: `${c.name} icon`,
+        value: chosenIcon, inherited: c.defaultIcon, name: c.name, label: "Icon", tint: c.color,
         onPick: async (id) => {
           const out = await store.actions.write((ws) => api.request("categories", { method: "PATCH", query: { workspaceId: ws }, body: { categoryId: c.id, icon: id || null } }), ["categories"]);
           if (out.ok) { announce(`${c.name}: icon ${id ? "saved" : "reset to default"}.`); return; }
@@ -189,9 +189,13 @@ export function createView(ctx) {
           error.hidden = false;
         },
       });
-      return el("div", { class: "field", dataset: { category: c.id } }, [
-        el("p", { class: "field__label", id: labelId, text: `${c.name} colour` }), picker.element, iconPick.element, error,
-        el("div", { class: "row" }, [badge(c.colorSource === "workspace" ? "Workspace colour" : "Default colour", "source"),
+      // One compact row per category, named by a heading and grouped, so the list scans quickly
+      // (UXI-3); the colour and icon pickers sit side by side on wide screens.
+      return el("div", { class: "catrow", role: "group", "aria-labelledby": `${labelId}-name`, dataset: { category: c.id } }, [
+        el("h3", { class: "catrow__name", id: `${labelId}-name` }, [categoryLabel(c.name, c.color, c.icon)]),
+        el("div", { class: "field" }, [el("p", { class: "field__label", id: labelId, text: "Colour" }), picker.element]),
+        iconPick.element, error,
+        el("div", { class: "row catrow__meta" }, [badge(c.colorSource === "workspace" ? "Workspace colour" : "Default colour", "source"),
           c.colorSource === "workspace" ? button("Reset to default", () => { void patchColour(null); }, { small: true, variant: "ghost", attrs: { "aria-label": `Reset to default: ${c.name} colour` } }) : null,
           badge(chosenIcon ? "Workspace icon" : "Default icon", "source")]),
       ]);
@@ -226,7 +230,7 @@ export function createView(ctx) {
         if (!canEdit) return el("li", {}, [withIcon(typeIcons[key] || inherited, label)]);
         const error = el("p", { class: "error-text small", role: "alert", hidden: true });
         const pick = createIconPicker({
-          value: typeIcons[key] || null, inherited, name: label, label,
+          value: typeIcons[key] || null, inherited, name: label, label: `${label} icon`,
           onPick: async (id) => {
             const out = await store.actions.write((ws) => api.updateTypeIcons(ws, { [key]: id || null }), ["icons", "accounts", "payees", "bills"]);
             if (out.ok) { announce(`${label}: icon ${id ? "saved" : "reset to default"}.`); return; }
@@ -237,7 +241,7 @@ export function createView(ctx) {
         });
         return el("div", { dataset: { typeKey: key } }, [pick.element, error]);
       });
-      const details = el("details", { class: "more" }, [el("summary", { text: g.title }), canEdit ? el("div", { class: "icon-grid" }, items) : el("ul", { class: "stack" }, items)]);
+      const details = el("details", { class: "more" }, [el("summary", { text: g.title }), canEdit ? el("div", { class: "icon-grid icon-grid--wide" }, items) : el("ul", { class: "stack" }, items)]);
       if (openGroups.has(g.kind)) details.open = true;
       details.addEventListener("toggle", () => { if (details.open) openGroups.add(g.kind); else openGroups.delete(g.kind); });
       return details;

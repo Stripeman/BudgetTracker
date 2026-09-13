@@ -35,11 +35,11 @@ const BUILT_IN = Object.freeze([
   ['paw', 'Pets', 'category'], ['dumbbell', 'Fitness', 'category'], ['music', 'Music', 'category'],
   ['bank', 'Bank', 'account'], ['piggy-bank', 'Savings', 'account'], ['wallet', 'Wallet', 'account'], ['cash', 'Cash', 'account'],
   ['credit-card', 'Card', 'account'], ['loan', 'Loan', 'account'], ['mortgage', 'Mortgage', 'account'], ['store', 'Store', 'account'],
-  ['chart-line', 'Investment', 'account'], ['diamond', 'Valuable', 'account'], ['scale', 'Owed', 'account'],
+  ['chart-line', 'Investment', 'account'], ['diamond', 'Valuable', 'account'], ['scale', 'Balance', 'account'],
   ['building', 'Office', 'general'], ['user', 'Person', 'general'], ['users', 'Group', 'general'], ['repeat', 'Recurring', 'general'],
   ['calendar', 'Calendar', 'general'], ['id-card', 'Membership', 'general'], ['target', 'Goal', 'general'], ['filter', 'Filter', 'general'],
-  ['chart-pie', 'Report', 'general'], ['bell', 'Alert', 'general'], ['alert', 'Warning', 'general'], ['clock', 'Due soon', 'general'],
-  ['globe', 'Currency', 'general'], ['suitcase', 'Trip', 'general'],
+  ['chart-pie', 'Report', 'general'], ['bell', 'Bell', 'general'], ['alert', 'Warning', 'general'], ['clock', 'Clock', 'general'],
+  ['globe', 'Globe', 'general'], ['suitcase', 'Trip', 'general'],
 ].map(([id, label, group]) => Object.freeze({ id, label, group })));
 const BUILT_IN_IDS = new Set(BUILT_IN.map((i) => i.id));
 // Always available: the app draws these itself, so they can never be switched off.
@@ -61,7 +61,7 @@ const DEFAULTS = Object.freeze({
   }),
   merchant: Object.freeze({
     retailer: 'store', grocery: 'cart', restaurant: 'utensils', utility: 'bolt', housing: 'home', employer: 'briefcase', bank: 'bank',
-    insurer: 'shield', subscription: 'repeat', transport: 'car', health: 'heart', government: 'building', person: 'user', other: 'store',
+    insurer: 'shield', subscription: 'repeat', transport: 'train', health: 'heart', government: 'building', person: 'user', other: 'store',
   }),
   bill: Object.freeze({
     housing: 'home', utilities: 'bolt', subscription: 'repeat', insurance: 'shield', 'debt-payment': 'loan', membership: 'id-card',

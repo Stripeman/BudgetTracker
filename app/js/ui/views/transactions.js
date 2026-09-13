@@ -22,14 +22,10 @@ import { newIdempotencyKey } from "../../core/api.js";
 import { messageFor } from "../../core/errors.js";
 import { evaluateAmount, isPlainAmount } from "../../core/calc.js";
 import { formatDate, formatAmount, todayIso, KIND_LABELS, MERCHANT_TYPE_LABELS } from "../../core/format.js";
-import { icon, withIcon, directionOf } from "../icons.js";
+import { withIcon } from "../icons.js";
+import { amountWithDirection } from "../components.js";
 
-// Money direction (BT-011-05): in, out, transfer, refund or reversal, beside the amount. The signed
-// amount and the type text still say it in words; the icon is decoration.
-export function amountWithDirection(t, prefs) {
-  const dir = directionOf(t);
-  return el("span", { class: "amount-dir" }, [el("span", { class: `dir dir--${dir}` }, [icon(dir)]), money(t.amount, t.currency, prefs, { masked: false })]);
-}
+export { amountWithDirection };
 
 const PRECISION = { JPY: 0, KRW: 0, ISK: 0, CLP: 0, VND: 0, BHD: 3, KWD: 3, JOD: 3, OMR: 3, TND: 3 };
 const precisionOf = (c) => (c in PRECISION ? PRECISION[c] : 2);
@@ -134,7 +130,7 @@ export function createView(ctx) {
       el("td", { "data-label": "Account" }, [accountIcons.get(t.accountId) ? withIcon(accountIcons.get(t.accountId), t.accountName) : el("span", { text: t.accountName })]),
       el("td", { "data-label": "Category" }, [t.splits.length ? "Split"
         : categories.get(t.categoryId) ? categoryLabel(categories.get(t.categoryId).name, categories.get(t.categoryId).shownColor, categories.get(t.categoryId).shownIcon)
-          : (t.kind === "transfer" ? "—" : "Uncategorized")]),
+          : (t.kind === "transfer" ? "—" : withIcon("tag", "Uncategorized"))]),
       el("td", { "data-label": "Amount", class: "num" }, [amountWithDirection(t, prefs)]),
       el("td", { "data-label": "Status" }, [
         badge(STATUS_LABELS[t.status] || t.status),

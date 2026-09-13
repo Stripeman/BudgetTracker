@@ -112,13 +112,21 @@ try {
         await sleep(400);
         await evaluate(`(() => { const i = document.querySelector('.modal input[list]'); i.value = ${JSON.stringify(args.payee || "Corner Cafe")}; i.dispatchEvent(new Event('change', { bubbles: true })); })()`);
       }
-      // The icon picker (BT-011-05) open in the Add account dialog.
-      if (action === "iconpick") {
+      // The icon picker (BT-011-05) open in the Add account dialog; "iconpickesc" then presses a real
+      // Escape key, which must close only the list and keep the dialog open (UXI-1).
+      if (action === "iconpick" || action === "iconpickesc") {
         await evaluate("location.hash = '#/accounts'");
         await sleep(1200);
         await evaluate("[...document.querySelectorAll('.page-head button')].find(b => /Add/.test(b.textContent)).click()");
         await sleep(500);
         await evaluate("[...document.querySelectorAll('.modal .themepick__toggle')].at(-1).click()");
+        if (action === "iconpickesc") {
+          await sleep(300);
+          for (const type of ["keyDown", "keyUp"]) await cdp.send("Input.dispatchKeyEvent", { type, key: "Escape", code: "Escape", windowsVirtualKeyCode: 27 });
+          await sleep(300);
+          const state = await evaluate("JSON.stringify({ dialogOpen: !!document.querySelector('.modal'), listOpen: [...document.querySelectorAll('.modal .themepick__toggle')].some(t => t.getAttribute('aria-expanded') === 'true'), focusOnToggle: !!(document.activeElement && document.activeElement.classList.contains('themepick__toggle')) })");
+          console.error(`iconpickesc ${state.result.value}`);
+        }
       }
       await sleep(1200);
       const { data } = await cdp.send("Page.captureScreenshot", { format: "png" });

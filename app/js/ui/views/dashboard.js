@@ -71,10 +71,13 @@ export function createView(ctx) {
       ]))));
     }
     const txState = stateView(txns, { empty: "No entries yet. Use “Add expense” to record one.", isEmpty: (d) => !d.transactions.length });
+    // Merchant icons as in Transactions (UXI-9).
+    const merchantIcons = new Map(((sliceFor(state, "payees").data || {}).payees || []).map((p) => [p.id, p.icon || "store"]));
+    const merchantOf = (t) => (t.payeeName ? withIcon(merchantIcons.get(t.payeeId) || "store", t.payeeName) : t.kind === "transfer" ? withIcon("transfer", "Transfer") : el("span", { text: "—" }));
     if (txState) mount(recent, txState);
     else mount(recent, el("ul", { class: "stack" }, txns.data.transactions.slice(0, 8).map((t) => el("li", { class: "row" }, [
       el("span", { class: "muted small", text: formatDate(t.date, dateFormat) }),
-      el("span", { text: t.payeeName || (t.kind === "transfer" ? "Transfer" : "—") }),
+      merchantOf(t),
       el("span", { class: "app__spacer" }),
       amountWithDirection(t, prefs),
     ]))));

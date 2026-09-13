@@ -7,7 +7,9 @@ import { createRequire } from "node:module";
 import { installDom } from "./domdouble.js";
 import { icon, setCatalog, setTypeIcons, BUILT_IN_IDS, SYSTEM_IDS, directionOf, iconEntries, iconLabel, defaultIconFor, builtInIconFor, withIcon } from "../js/ui/icons.js";
 import { createIconPicker, iconChange } from "../js/ui/iconpicker.js";
-import { categoryLabel } from "../js/ui/components.js";
+import { categoryLabel, amountWithDirection } from "../js/ui/components.js";
+import { escapeBelongsToControl } from "../js/ui/modal.js";
+import { DomEvent } from "./domdouble.js";
 
 const require = createRequire(import.meta.url);
 const server = require("../../api/_shared/icons.js");
@@ -130,6 +132,59 @@ describe("BT-011-05 icon pickers", () => {
     assert.equal(iconChange("bag", null), null);
     assert.equal(iconChange(null, null), undefined);
     assert.equal(iconChange(null, "cart"), "cart");
+  });
+
+  test("UXI-1 Escape in an open picker list, or on its toggle, belongs to the list, not the dialog", () => {
+    const p = createIconPicker({ value: null, inherited: "cart", name: "Groceries" });
+    document.body.appendChild(p.element);
+    const toggle = p.element.querySelector(".themepick__toggle");
+    const option = p.element.querySelectorAll('[role="option"]')[1];
+    assert.equal(escapeBelongsToControl(toggle), false, "a closed picker leaves Escape to the dialog");
+    toggle.click();
+    assert.equal(escapeBelongsToControl(option), true);
+    assert.equal(escapeBelongsToControl(toggle), true);
+    const esc = Object.assign(new DomEvent("keydown", { bubbles: true, key: "Escape" }), { key: "Escape" });
+    toggle.dispatchEvent(esc);
+    assert.equal(p.picker.isOpen(), false, "Escape on the toggle closes the list");
+    const combo = document.createElement("input");
+    combo.setAttribute("role", "combobox");
+    combo.setAttribute("aria-expanded", "true");
+    assert.equal(escapeBelongsToControl(combo), true);
+    assert.equal(escapeBelongsToControl(document.createElement("input")), false);
+  });
+
+  test("UXI-2 long picker lists: type-ahead to the next matching name, and PageDown/PageUp", () => {
+    const p = createIconPicker({ value: null, inherited: "cart", name: "Groceries" });
+    const toggle = p.element.querySelector(".themepick__toggle");
+    const list = p.element.querySelector('[role="listbox"]');
+    const options = p.element.querySelectorAll('[role="option"]');
+    const key = (k) => list.dispatchEvent(Object.assign(new DomEvent("keydown", { bubbles: true, key: k }), { key: k }));
+    toggle.click();
+    assert.equal(document.activeElement, options[0], "opens on the current (default) entry");
+    key("h");
+    assert.equal(document.activeElement.textContent, "Home");
+    key("h");
+    assert.equal(document.activeElement.textContent, "Health", "the same letter moves to the next match");
+    key("PageDown");
+    assert.equal(options.indexOf(document.activeElement), options.findIndex((o) => o.textContent === "Health") + 5);
+    key("PageUp");
+    assert.equal(document.activeElement.textContent, "Health");
+  });
+
+  test("UXI-3 an icon picker for a category previews its icons in the category colour", () => {
+    const p = createIconPicker({ value: null, inherited: "cart", name: "Groceries", tint: "#16a34a" });
+    const glyphs = p.element.querySelectorAll(".themepick__icon");
+    assert.ok(glyphs.length > 1);
+    assert.ok(glyphs.every((g) => g.style.getPropertyValue("--swatch") === "#16a34a" && !g.hasAttribute("style")));
+  });
+
+  test("UXI-4 a refund or reversal is named in text beside its amount; in and out rely on the sign", () => {
+    const refund = amountWithDirection({ kind: "refund", amountMinor: 3760, amount: "37.60", currency: "EUR" }, { effective: {} });
+    assert.equal(refund.querySelector(".sr-only").textContent, "Refund or reversal: ");
+    assert.equal(refund.querySelector("svg").getAttribute("aria-hidden"), "true");
+    const out = amountWithDirection({ kind: "expense", amountMinor: -500, amount: "-5.00", currency: "EUR" }, { effective: {} });
+    assert.equal(out.querySelector(".sr-only"), null);
+    assert.equal(out.querySelector("svg").getAttribute("data-icon"), "money-out");
   });
 
   test("a category label with an icon carries the colour on the icon through the CSSOM, beside the name", () => {

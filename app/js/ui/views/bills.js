@@ -117,6 +117,9 @@ export function createView(ctx) {
     const s = stateView(slice, { empty: "No bills yet. Add rent, utilities, subscriptions, insurance, loan payments or income that repeats.", isEmpty: (d) => !d.recurring.length });
     if (s) { mount(cards); mount(attention); mount(listBox, s); return; }
     const { recurring, summary } = slice.data;
+    // Account icons beside account names, as elsewhere (UXI-9).
+    const accountIcons = new Map(((sliceFor(state, "accounts").data || {}).accounts || []).map((a) => [a.id, a.icon]));
+    const accountCell = (b, text) => el("td", { "data-label": "Account" }, [accountIcons.get(b.accountId) ? withIcon(accountIcons.get(b.accountId), text) : el("span", { text })]);
     // Members may record shared bills but only their author or a manager may change them (UX2-015).
     roleNote.textContent = recurring.some((b) => b.canRecord && !b.canEdit) ? "Only the person who added a bill, or an owner or manager, can change, skip, pause or end it." : "";
     mount(cards,
@@ -137,7 +140,7 @@ export function createView(ctx) {
     mount(attention, items.length ? table(["Due", "Bill", "Account", "Amount", ...(anyAction ? ["Actions"] : [])], items.map(({ b, date, overdue }) => el("tr", {}, [
       el("th", { scope: "row", "data-label": "Due" }, [el("span", { text: formatDate(date, eff.dateFormat) }), " ", overdue ? badge("Overdue", "overdue") : badge("Due soon")]),
       el("td", { "data-label": "Bill" }, [withIcon(b.icon, b.name)]),
-      el("td", { "data-label": "Account", text: b.accountName }),
+      accountCell(b, b.accountName),
       el("td", { "data-label": "Amount", class: "num" }, [amountCell(b, plain)]),
       anyAction ? el("td", { "data-label": "" }, [el("div", { class: "row-actions" }, [
         b.canRecord ? button("Review and record", () => void openRecord(ctx, b, date), { small: true, variant: "primary", attrs: { "aria-label": `Review and record ${b.name}, due ${date}` } }) : null,
@@ -151,7 +154,7 @@ export function createView(ctx) {
         b.pausedNow ? [" ", badge("Paused")] : null, b.ended ? [" ", badge("Ended", "closed")] : null,
         b.payeeName ? el("div", { class: "muted small", text: b.payeeName }) : null,
       ].flat()),
-      el("td", { "data-label": "Account", text: b.kind === "transfer" ? `${b.accountName} → ${b.toAccountName || ""}` : b.accountName }),
+      accountCell(b, b.kind === "transfer" ? `${b.accountName} → ${b.toAccountName || ""}` : b.accountName),
       el("td", { "data-label": "Amount", class: "num" }, [amountCell(b, plain)]),
       el("td", { "data-label": "Schedule", text: scheduleLabel(b.schedule, eff.dateFormat) }),
       el("td", { "data-label": "Next due", text: b.ended ? "Ended" : b.nextDue ? formatDate(b.nextDue, eff.dateFormat) : "—" }),

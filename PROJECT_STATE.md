@@ -257,6 +257,11 @@ The medium and low findings are numeric alignment, quick-entry field order and a
 - **Evidence:** `api/test/lifecycle-b.test.js` (4); `npm test` 8/8 repository, 171/171 API, 48/48 app; `npm run validate` ok (21 routes).
 - **Open:** UI for archived budgets, former members and workspace history; ADR-003; A8 ruling; preference history (awaiting Terry, SEC-I7).
 
+## Checkpoint K — icon UX/accessibility review fixed (BT-011-05, 2026-09-13)
+
+- Independent review `docs/reviews/2026-09-13-ux-a11y-review-icons.md`: UXI-1 (Serious: Escape in a picker inside a dialog closed the dialog) fixed — `escapeBelongsToControl()` in `app/js/ui/modal.js`, Escape on an open picker toggle — and verified with a real key press in Edge (`scripts/dev/screenshot.mjs --interact iconpickesc`). UXI-2 type-ahead and paging in the shared picker; UXI-3 compact grouped category rows on full-width cards with colour-tinted icon previews; UXI-4 refund/reversal text for screen readers (`amountWithDirection` moved to `components.js`); UXI-5 focus restore and a named fieldset in the site catalogue; UXI-6, UXI-8 (artwork and labels; Transport merchant default Train), UXI-9 fixed; UXI-7 and UXI-10 accepted with reasons; UXI-11 partly.
+- **Evidence:** `npm test` 8/8 repository, 171/171 API, 52/52 app; `npm run validate` ok (21 routes); full-page screenshots of Workspace, My settings and Dashboard.
+
 ## Checks run this checkpoint
 
 - `node --test test/*.test.cjs`: 7 passed, 0 failed (Node v22.23.1).

@@ -29,7 +29,7 @@ let counter = 0;
 // The circle for a palette or colour, or the icon for an icon entry (BT-011-05). Both are
 // decoration: the name beside them is what is announced.
 const glyph = (entry) => (entry.icon
-  ? el("span", { class: "themepick__icon", "aria-hidden": "true" }, [icon(entry.icon)])
+  ? el("span", { class: "themepick__icon", "aria-hidden": "true", vars: { "--swatch": entry.tint || null } }, [icon(entry.icon)])
   : el("span", { class: "menu__swatch", "aria-hidden": "true", vars: { "--menu-swatch": entry.swatch } }));
 
 // `entries` defaults to the application themes. The category colour picker (BT-011-04) and the icon
@@ -114,14 +114,30 @@ export function createThemePicker({ value, onPick, id = null, labelledBy = null,
     setOpen(!open);
     if (open) focusOption(options.findIndex((o) => o.dataset.theme === current.id));
   });
+  // Escape on the toggle of an open list closes the list only (UXI-1).
+  toggle.addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && open) { e.preventDefault(); e.stopPropagation(); setOpen(false); }
+  });
   list.addEventListener("keydown", (e) => {
     const at = options.indexOf(document.activeElement);
     if (e.key === "ArrowDown") { e.preventDefault(); focusOption(at + 1); }
     else if (e.key === "ArrowUp") { e.preventDefault(); focusOption(at - 1); }
     else if (e.key === "Home") { e.preventDefault(); focusOption(0); }
     else if (e.key === "End") { e.preventDefault(); focusOption(options.length - 1); }
+    // Long lists (the icon picker has over fifty entries): a page at a time, and type-ahead to the
+    // next entry whose name starts with the typed letter (UXI-2, the listbox pattern).
+    else if (e.key === "PageDown") { e.preventDefault(); focusOption(at + 5); }
+    else if (e.key === "PageUp") { e.preventDefault(); focusOption(at - 5); }
     else if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); setOpen(false); toggle.focus(); }
     else if (e.key === "Tab") setOpen(false);
+    else if (typeof e.key === "string" && e.key.length === 1 && /\S/.test(e.key) && !e.ctrlKey && !e.metaKey && !e.altKey) {
+      const ch = e.key.toLowerCase();
+      const n = options.length;
+      for (let i = 1; i <= n; i += 1) {
+        const index = (at + i + n) % n;
+        if (entries[index].label.toLowerCase().startsWith(ch)) { e.preventDefault(); focusOption(index); break; }
+      }
+    }
   });
 
   return {

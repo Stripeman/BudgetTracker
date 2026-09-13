@@ -1,7 +1,7 @@
 // Small shared view helpers. Every list uses `stateView` so loading, error and empty are three
 // different things: a failure is never shown as "nothing here".
 import { el } from "./dom.js";
-import { icon } from "./icons.js";
+import { icon, directionOf, iconLabel } from "./icons.js";
 import { messageFor } from "../core/errors.js";
 import { formatAmount, isNegative } from "../core/format.js";
 import { Status } from "../core/store.js";
@@ -89,6 +89,18 @@ export function categoryLabel(name, color, iconId = null) {
   return el("span", { class: "catlabel" }, [
     color ? el("span", { class: "swatch-dot", "aria-hidden": "true", vars: { "--swatch": color } }) : null,
     el("span", { text: name }),
+  ]);
+}
+
+// Money direction (BT-011-05): in, out, transfer, refund or reversal, beside the amount. In, out
+// and transfer are already said by the sign and the row; a refund or reversal is not, so it is
+// also named in text for assistive technology (UXI-4).
+export function amountWithDirection(t, prefs) {
+  const dir = directionOf(t);
+  return el("span", { class: "amount-dir" }, [
+    el("span", { class: `dir dir--${dir}` }, [icon(dir)]),
+    dir === "reversal" ? el("span", { class: "sr-only", text: `${iconLabel(dir)}: ` }) : null,
+    money(t.amount, t.currency, prefs, { masked: false }),
   ]);
 }
 

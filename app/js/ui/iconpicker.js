@@ -19,10 +19,11 @@ let counter = 0;
  * @param {string} o.name          what the icon is for, used in the accessible names
  * @param {(id: string) => void} [o.onPick]   "" means "use the default"
  */
-export function createIconPicker({ value = null, inherited, name, label = "Icon", onPick }) {
+// `tint` draws the icons in a category's colour, so the choice is previewed as it will appear.
+export function createIconPicker({ value = null, inherited, name, label = "Icon", onPick, tint = null }) {
   const labelId = `iconpick-${++counter}`;
   const picker = createThemePicker({
-    value: value || "", entries: iconEntries({ current: value, inherited }), labelledBy: labelId,
+    value: value || "", entries: iconEntries({ current: value, inherited }).map((e) => ({ ...e, tint })), labelledBy: labelId,
     listLabel: `Icons for ${name}`, namePrefix: `${name} icon`, onPick,
   });
   const element = el("div", { class: "field" }, [el("p", { class: "field__label", id: labelId, text: label }), picker.element]);
