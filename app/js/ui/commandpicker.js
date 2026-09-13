@@ -33,6 +33,16 @@
 //      panel and chose the highlighted row instead. Its "+" is hidden from assistive technology, so
 //      its name is the plain label. Focus returns to the trigger BEFORE the action runs, so a dialog
 //      it opens gives focus back to the trigger when it closes.
+//   Step 2 (BT-004-05, every dropdown in the app goes through app/js/ui/selectpicker.js):
+//   A4 `setLabel()`: the field that hosts the picker names it, so the label, the trigger, the panel,
+//      its list and its search box always use the same words.
+//   A5 Native parity for views: choosing what is already chosen closes the panel and fires nothing,
+//      and a real choice fires `input` then `change`, as a native select does.
+//   A6 Nothing is cut off and nothing is a dead end: the panel is at least as wide as its trigger
+//      (`--pop-min-width`), an empty list says "Nothing to choose from.", a list without a search box
+//      is spoken as "Choose." rather than "Search and choose.", and Tab or Shift+Tab at the panel's
+//      edge closes it and continues from the trigger, so a dialog's own Tab order carries on.
+//   A7 `close()` is public, so a control that is disabled from outside can close its panel.
 import { el, clear } from "./dom.js";
 import { computePlacement } from "../core/popover.js";
 import { registerPopup } from "./popup.js";
@@ -190,7 +200,8 @@ export function createCommandPicker({ select, label = "Choose", placeholder = ""
     // The spoken value is the full description when there is one ("Family — Manager"), so the
     // closed control never says less than the open list.
     const spoken = hit && describeOf ? describeOf(hit.value) || valueText.textContent : valueText.textContent;
-    trigger.setAttribute("aria-label", `${label}: ${spoken}. Search and choose.`);
+    // A6 — a list without a search box is not announced as searchable.
+    trigger.setAttribute("aria-label", `${label}: ${spoken}. ${searchable ? "Search and choose." : "Choose."}`);
   }
 
   // AN OPTION THAT CANNOT BE CHOSEN IS STILL SHOWN, with its reason in its label.
@@ -227,7 +238,9 @@ export function createCommandPicker({ select, label = "Choose", placeholder = ""
     active = Math.min(active, Math.max(0, found.length - 1));
 
     if (!found.length) {
-      list.appendChild(el("p", { class: "cmdpick__none", role: "presentation", text: `Nothing matches “${search.value.trim()}”.` }));
+      // A6 — a list with nothing in it says so, rather than "Nothing matches “”".
+      const term = search.value.trim();
+      list.appendChild(el("p", { class: "cmdpick__none", role: "presentation", text: term ? `Nothing matches “${term}”.` : "Nothing to choose from." }));
     }
 
     found.forEach((option, index) => {
@@ -290,8 +303,15 @@ export function createCommandPicker({ select, label = "Choose", placeholder = ""
     // THE LAST WORD ON WHETHER THIS IS ALLOWED.
     const option = options().find((o) => o.value === value);
     if (!option || option.disabled) return;
+    // A5 — CHOOSING WHAT IS ALREADY CHOSEN CHANGES NOTHING, and a native select reports nothing.
+    if (value === select.value) {
+      close();
+      return;
+    }
     select.value = value;
-    // The select is the state, so telling it it changed is telling everything that listens.
+    // The select is the state, so telling it it changed is telling everything that listens —
+    // `input` then `change`, the order a native select fires them in (A5).
+    select.dispatchEvent(new Event("input", { bubbles: true }));
     select.dispatchEvent(new Event("change", { bubbles: true }));
     paintTrigger();
     close();
@@ -343,6 +363,9 @@ export function createCommandPicker({ select, label = "Choose", placeholder = ""
     const view = doc && doc.defaultView;
     if (!view || typeof trigger.getBoundingClientRect !== "function") return;
     panel.style.removeProperty("--pop-max-height");
+    // A6 — AT LEAST AS WIDE AS THE TRIGGER, set before measuring, so a long option in a wide field
+    // is never cut short by a narrower panel.
+    panel.style.setProperty("--pop-min-width", `${Math.round(trigger.getBoundingClientRect().width)}px`);
     const natural = panel.getBoundingClientRect();
     const at = computePlacement({
       anchor: trigger.getBoundingClientRect(),
@@ -382,6 +405,15 @@ export function createCommandPicker({ select, label = "Choose", placeholder = ""
       // Stopped here so Escape closes the palette rather than a dialog around it.
       event.stopPropagation();
       close();
+      return;
+    }
+    // A6 — TAB AT THE PANEL'S EDGE LEAVES IT as if the panel sat right after its trigger: it closes,
+    // focus goes back to the trigger, and the browser's own Tab (not prevented) moves on from there.
+    // The panel floats on the body, outside any dialog, so a dialog's focus trap never sees it; this
+    // is what keeps the dialog's Tab order going. Inside the panel, Tab moves as usual.
+    if (event.key === "Tab") {
+      const last = createButton || keyHolder;
+      if ((event.shiftKey && event.target === keyHolder) || (!event.shiftKey && event.target === last)) close();
       return;
     }
     // A3 — the create button's own keys are its own: Enter and Space activate it natively.
@@ -476,9 +508,21 @@ export function createCommandPicker({ select, label = "Choose", placeholder = ""
       if (disabled) close({ restoreFocus: false });
     },
     focus: () => trigger.focus(),
+    // A7 — closes the panel without moving focus and without changing the value.
+    close: () => close({ restoreFocus: false }),
     refresh() {
       paintTrigger();
       if (open) paintList();
+    },
+    // A4 — the field that hosts the picker names it; every accessible name follows.
+    setLabel(text) {
+      if (!text) return;
+      label = String(text);
+      search.setAttribute("aria-label", `Search ${label.toLowerCase()}`);
+      search.setAttribute("placeholder", `Search ${label.toLowerCase()}…`);
+      list.setAttribute("aria-label", label);
+      panel.setAttribute("aria-label", label);
+      paintTrigger();
     },
     destroy: () => {
       close({ restoreFocus: false });

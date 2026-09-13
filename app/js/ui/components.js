@@ -5,17 +5,27 @@ import { icon, directionOf, iconLabel, withIcon } from "./icons.js";
 import { messageFor } from "../core/errors.js";
 import { formatAmount, isNegative } from "../core/format.js";
 import { Status } from "../core/store.js";
+import { enhanceSelect, pickerOf, controlElement } from "./selectpicker.js";
+
+export { controlElement };
 
 let fieldCounter = 0;
 export const uid = (prefix = "f") => `${prefix}-${++fieldCounter}`;
 
+// A select with a command picker over it (BT-004-05) is labelled THROUGH ITS TRIGGER: the label's
+// `for`, the spoken name and the help text all go to the button people use, and the field shows the
+// picker. The select itself stays inside, holding the value.
 export function field(label, control, { help, wide = false } = {}) {
-  if (!control.id) control.id = uid();
-  const helpId = help ? `${control.id}-help` : null;
+  const picked = pickerOf(control);
+  if (picked) picked.setLabel(label);
+  const target = picked ? picked.trigger : control;
+  if (!target.id) target.id = uid();
+  const helpId = help ? `${target.id}-help` : null;
+  // Set on the control; an enhanced select carries it over to its trigger.
   if (helpId) control.setAttribute("aria-describedby", helpId);
   return el("div", { class: ["field", wide ? "field--wide" : ""] }, [
-    el("label", { class: "field__label", for: control.id, text: label }),
-    control,
+    el("label", { class: "field__label", for: target.id, text: label }),
+    picked ? picked.element : control,
     help ? el("p", { class: "field__help", id: helpId, text: help }) : null,
   ]);
 }
@@ -32,6 +42,16 @@ export function select(options, value, attrs = {}) {
     node.appendChild(opt);
   }
   if (value !== undefined && value !== null) node.value = String(value);
+  return node;
+}
+
+// The same select, with TaskTracker's command picker over it (BT-004-05). It returns the SELECT, so
+// the view keeps reading and setting it exactly as before; place it with `field()` or
+// `controlElement()`. `picker` takes the adapter's options: `search: false` for a short fixed list,
+// `colorOf`/`badgeOf` for things that have a colour or an icon.
+export function pickerSelect(options, value, attrs = {}, picker = {}) {
+  const node = select(options, value, attrs);
+  enhanceSelect(node, picker);
   return node;
 }
 
