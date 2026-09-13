@@ -28,7 +28,7 @@ export function initialState() {
     workspaces: [], selectedWorkspaceId: null,
     accounts: emptySlice(null), transactions: emptySlice(null), payees: emptySlice(null),
     categories: emptySlice(null), members: emptySlice(null), bills: emptySlice(null),
-    budgets: emptySlice(null), forecast: emptySlice(null),
+    budgets: emptySlice(null), forecast: emptySlice(null), icons: emptySlice(null),
   };
 }
 
@@ -89,15 +89,17 @@ export function createStore({ api }) {
       commit({
         selectedWorkspaceId: id,
         accounts: emptySlice(id), transactions: emptySlice(id), payees: emptySlice(id), categories: emptySlice(id), members: emptySlice(id), bills: emptySlice(id),
-        budgets: emptySlice(id), forecast: emptySlice(id),
+        budgets: emptySlice(id), forecast: emptySlice(id), icons: emptySlice(id),
       });
-      await Promise.all([actions.refreshAccounts(), actions.refreshCategories(), actions.refreshPayees(), actions.refreshMembers()]);
+      await Promise.all([actions.refreshAccounts(), actions.refreshCategories(), actions.refreshPayees(), actions.refreshMembers(), actions.refreshIcons()]);
     },
 
     refreshAccounts: () => loadSlice("accounts", (id) => api.accounts(id)),
     refreshCategories: () => loadSlice("categories", (id) => api.categories(id)),
     refreshPayees: () => loadSlice("payees", (id) => api.payees(id)),
     refreshMembers: () => loadSlice("members", (id) => api.members(id)),
+    // The icon catalogue with this workspace's type icons (BT-011-05).
+    refreshIcons: () => loadSlice("icons", (id) => api.icons(id)),
     refreshTransactions: (filters = {}) => loadSlice("transactions", (id) => api.transactions(id, filters)),
     refreshBills: () => loadSlice("bills", (id) => api.bills(id)),
     refreshBudgets: () => loadSlice("budgets", (id) => api.budgets(id)),

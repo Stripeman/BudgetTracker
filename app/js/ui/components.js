@@ -1,6 +1,7 @@
 // Small shared view helpers. Every list uses `stateView` so loading, error and empty are three
 // different things: a failure is never shown as "nothing here".
 import { el } from "./dom.js";
+import { icon } from "./icons.js";
 import { messageFor } from "../core/errors.js";
 import { formatAmount, isNegative } from "../core/format.js";
 import { Status } from "../core/store.js";
@@ -73,10 +74,18 @@ export function money(decimal, currency, prefs, { masked } = {}) {
   return el("span", { class: "num money--masked" }, [el("span", { "aria-hidden": "true", text }), el("span", { class: "sr-only", text: `${currency} amount hidden (balance masking is on)` })]);
 }
 
-// A category with its colour (BT-011-04). Colour is never the only signal: the name is always
-// beside it, and the dot is hidden from assistive technology. The colour reaches CSS through the
-// CSSOM, never a style attribute.
-export function categoryLabel(name, color) {
+// A category with its colour (BT-011-04) and icon (BT-011-05). Colour is never the only signal: the
+// name is always beside it, and the dot or icon is hidden from assistive technology. With an icon,
+// the icon itself carries the colour (every palette colour has at least 3:1 contrast on every
+// surface), so there is no separate dot. The colour reaches CSS through the CSSOM, never a style
+// attribute.
+export function categoryLabel(name, color, iconId = null) {
+  if (iconId) {
+    return el("span", { class: "catlabel" }, [
+      el("span", { class: "catlabel__icon", "aria-hidden": "true", vars: { "--swatch": color || null } }, [icon(iconId)]),
+      el("span", { text: name }),
+    ]);
+  }
   return el("span", { class: "catlabel" }, [
     color ? el("span", { class: "swatch-dot", "aria-hidden": "true", vars: { "--swatch": color } }) : null,
     el("span", { text: name }),

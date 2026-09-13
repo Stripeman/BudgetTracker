@@ -14,6 +14,11 @@ import { openModal } from "../modal.js";
 import { sliceFor } from "../../core/store.js";
 import { formatDate, formatAmount, todayIso } from "../../core/format.js";
 import { messageFor } from "../../core/errors.js";
+import { withIcon } from "../icons.js";
+import { createIconPicker, iconChange } from "../iconpicker.js";
+
+// Account icons for the forecast tables (BT-011-05), from the accounts the viewer may see.
+const accountIcons = (state) => new Map(((sliceFor(state, "accounts").data || {}).accounts || []).map((a) => [a.id, a.icon]));
 
 const HORIZONS = [{ value: "30", label: "30 days" }, { value: "60", label: "60 days" }, { value: "90", label: "90 days" }, { value: "365", label: "12 months" }];
 const PERIODS = [{ value: "monthly", label: "Monthly" }, { value: "biweekly", label: "Every 2 weeks" }, { value: "weekly", label: "Weekly" }];
@@ -43,9 +48,9 @@ export function createView(ctx) {
   const run = button("Update forecast", () => refresh());
   const element = el("section", {}, [
     el("div", { class: "page-head" }, [el("h1", { text: "Planning" })]),
-    el("div", { class: "page-head" }, [el("h2", { class: "section-title", text: "Budgets" }), budgetActions]),
+    el("div", { class: "page-head" }, [el("h2", { class: "section-title" }, [withIcon("target", "Budgets")]), budgetActions]),
     budgetsBox,
-    el("h2", { class: "section-title", text: "Cash flow" }),
+    el("h2", { class: "section-title" }, [withIcon("chart-line", "Cash flow")]),
     el("p", { class: "muted", text: "Projected balances from today, including bills that are due and not yet recorded, skipped or paused. Only accounts whose balance you can see are included." }),
     el("div", { class: "filters" }, [field("Look ahead", horizon), field("Warn me below", buffer), el("div", { class: "filters__actions" }, [run])]),
     warningsBox, forecastBox,
@@ -88,7 +93,7 @@ export function createView(ctx) {
       mount(forecastBox,
         // One pair of terms, defined where they are used (UX2-003).
         el("p", { class: "muted small", text: "Cautious leaves out estimated income; hopeful leaves out estimated expenses such as variable bills." }),
-        forecastTable(f, plain, eff.dateFormat, "Cash-flow forecast"),
+        forecastTable(f, plain, eff.dateFormat, "Cash-flow forecast", null, accountIcons(state)),
         el("details", { class: "more" }, [el("summary", { text: "How this is worked out" }), el("ul", {}, f.assumptions.map((a) => el("li", { text: a })))]));
       whatIf.setBaseline(f);
     }
@@ -103,14 +108,15 @@ function commitOnEnter(control, fn) {
   control.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); void fn(); } });
 }
 
-function forecastTable(f, prefs, dateFormat, label, compare = null) {
+function forecastTable(f, prefs, dateFormat, label, compare = null, icons = new Map()) {
+  const nameOf = (a) => (icons.get(a.accountId) ? withIcon(icons.get(a.accountId), a.name) : el("span", { text: a.name }));
   const headers = compare ? ["Account", "Today", "Expected end", "With changes", "Lowest with changes"] : ["Account", "Today", "Expected end", "Lowest", "Cautious end", "Hopeful end"];
   return el("div", { class: "table-wrap" }, [el("table", { class: "table table--cards", "aria-label": label }, [
     el("thead", {}, [el("tr", {}, headers.map((h) => el("th", { scope: "col", class: h === "Account" ? "" : "num", text: h })))]),
     el("tbody", {}, f.accounts.map((a) => {
       if (a.error) {
         return el("tr", {}, [
-          el("th", { scope: "row", "data-label": "Account", text: a.name }),
+          el("th", { scope: "row", "data-label": "Account" }, [nameOf(a)]),
           el("td", { "data-label": "Today", class: "num" }, [money(a.start, a.currency, prefs)]),
           el("td", { "data-label": "", colspan: compare ? "3" : "4", text: "Too large to project exactly." }),
         ]);
@@ -119,7 +125,7 @@ function forecastTable(f, prefs, dateFormat, label, compare = null) {
       // One block, so the amount and its date stay together in narrow card rows (UX2-013).
       const lowest = [el("div", {}, [money(a.expected.lowest.amount, a.currency, prefs), el("div", { class: "muted small", text: formatDate(a.expected.lowest.date, dateFormat) })])];
       return el("tr", {}, [
-        el("th", { scope: "row", "data-label": "Account" }, [el("span", { text: a.name }), a.itemsShared ? null : el("div", { class: "muted small", text: "Balance only — entries not shared with you" })]),
+        el("th", { scope: "row", "data-label": "Account" }, [nameOf(a), a.itemsShared ? null : el("div", { class: "muted small", text: "Balance only — entries not shared with you" })]),
         el("td", { "data-label": "Today", class: "num" }, [money(a.start, a.currency, prefs)]),
         compare
           ? el("td", { "data-label": "Expected end", class: "num" }, [base ? money(base.expected.end, a.currency, prefs) : "—"])
@@ -138,10 +144,10 @@ function forecastTable(f, prefs, dateFormat, label, compare = null) {
 
 function budgetCard(ctx, b, prefs, fmt, dateFormat, cats = new Map()) {
   const s = b.status;
-  if (s.error) return el("section", { class: "card", "aria-label": `Budget ${b.name}` }, [el("h3", { class: "card__title", text: b.name }), el("p", { class: "error-text", text: s.explanation })]);
+  if (s.error) return el("section", { class: "card", "aria-label": `Budget ${b.name}` }, [el("h3", { class: "card__title" }, [withIcon(b.icon, b.name)]), el("p", { class: "error-text", text: s.explanation })]);
   const n = (v) => Number(v);
   const lines = s.lines.map((l) => el("tr", {}, [
-    el("th", { scope: "row", "data-label": "Category" }, [categoryLabel(l.category, (cats.get(l.categoryId) || {}).shownColor), meter(n(l.actual) + n(l.committed), n(l.planned) + n(l.carry)), l.over ? el("div", { class: "error-text small", text: `Over by ${fmt(l.available.replace(/^-/, ""), s.currency)}` }) : null]),
+    el("th", { scope: "row", "data-label": "Category" }, [categoryLabel(l.category, (cats.get(l.categoryId) || {}).shownColor, (cats.get(l.categoryId) || {}).shownIcon), meter(n(l.actual) + n(l.committed), n(l.planned) + n(l.carry)), l.over ? el("div", { class: "error-text small", text: `Over by ${fmt(l.available.replace(/^-/, ""), s.currency)}` }) : null]),
     // Budget figures are magnitudes, not money in or out, so they are not coloured as such.
     el("td", { "data-label": "Planned", class: "num" }, [amountText(l.planned, s.currency, prefs)]),
     el("td", { "data-label": "Carried over", class: "num" }, [l.rollover ? amountText(l.carry, s.currency, prefs) : "—"]),
@@ -151,7 +157,7 @@ function budgetCard(ctx, b, prefs, fmt, dateFormat, cats = new Map()) {
   ]));
   return el("section", { class: "card", "aria-label": `Budget ${b.name}` }, [
     el("div", { class: "row" }, [
-      el("h3", { class: "card__title", text: b.name }), b.scope === "shared" ? badge("Shared", "shared") : badge("Private", "private"),
+      el("h3", { class: "card__title" }, [withIcon(b.icon, b.name)]), b.scope === "shared" ? badge("Shared", "shared") : badge("Private", "private"),
       el("span", { class: "muted small", text: `${formatDate(s.period.start, dateFormat)} – ${formatDate(s.period.end, dateFormat)}` }),
       el("span", { class: "app__spacer" }),
       b.canEdit ? button("Edit", () => openBudgetEditor(ctx, b), { small: true, attrs: { "aria-label": `Edit budget ${b.name}` } }) : null,
@@ -183,6 +189,8 @@ function openBudgetEditor(ctx, budget = null) {
   const effectiveFrom = input({ type: "date" });
   effectiveFrom.value = editing ? budget.status.period.start : "";
   const reason = input({ maxlength: "200", placeholder: "Optional" });
+  const chosenIcon = editing && budget.iconSource === "record" ? budget.icon : null;
+  const iconPick = createIconPicker({ value: chosenIcon, inherited: "target", name: editing ? budget.name : "New budget" });
   const linesBox = el("div", { class: "stack" });
   const rows = [];
   // Each line is a numbered group ("Line 2") so its controls are distinguishable; focus moves to a
@@ -218,7 +226,7 @@ function openBudgetEditor(ctx, budget = null) {
   const modal = openModal({
     title: editing ? `Edit ${budget.name}` : "Add budget",
     body: [
-      el("div", { class: "form-grid" }, [field("Name", name), field("Who it is for", scope, { help: "A shared budget counts shared accounts only, so members' private spending never appears in it." }), field("Currency", currency), field("Period", period), field("Starts on", start)]),
+      el("div", { class: "form-grid" }, [field("Name", name), iconPick.element, field("Who it is for", scope, { help: "A shared budget counts shared accounts only, so members' private spending never appears in it." }), field("Currency", currency), field("Period", period), field("Starts on", start)]),
       el("h3", { text: "Categories" }), linesBox, addLine,
       editing ? el("div", { class: "form-grid" }, [
         field("Plan changes apply from", effectiveFrom, { help: "Earlier periods keep the plan they had." }),
@@ -247,12 +255,14 @@ function openBudgetEditor(ctx, budget = null) {
       // Only what changed is sent, so an unchanged plan never gains a new version.
       body = { budgetId: budget.id, revision: budget.revision };
       if (name.value.trim() !== budget.name) body.name = name.value.trim();
+      const icon = iconChange(chosenIcon, iconPick.getValue());
+      if (icon !== undefined) body.icon = icon;
       const planChanged = JSON.stringify(lines) !== JSON.stringify(budget.lines.map((l) => ({ categoryId: l.categoryId, amount: l.amount, rollover: !!l.rollover })))
         || period.value !== budget.period || start.value !== budget.startDate;
       if (planChanged) Object.assign(body, { lines, period: period.value, startDate: start.value, ...(effectiveFrom.value ? { effectiveFrom: effectiveFrom.value } : {}), ...(reason.value.trim() ? { reason: reason.value.trim() } : {}) });
       if (Object.keys(body).length === 2) { announce("Nothing changed."); modal.close(); return; }
     } else {
-      body = { name: name.value.trim(), scope: scope.value, currency: currency.value, period: period.value, startDate: start.value, lines };
+      body = { name: name.value.trim(), scope: scope.value, currency: currency.value, period: period.value, startDate: start.value, lines, ...(iconPick.getValue() ? { icon: iconPick.getValue() } : {}) };
     }
     modal.setBusy(true);
     const out = await ctx.store.actions.write((ws) => (editing ? ctx.api.updateBudget(ws, body) : ctx.api.createBudget(ws, body)), ["budgets"]);
@@ -346,7 +356,7 @@ function createWhatIf(ctx, params) {
       mount(result,
         el("p", { class: "muted small", text: "Nothing was saved. These results use your changes on a copy of today's forecast." }),
         res.forecast.warnings.length ? el("div", { class: "notice notice--warning" }, [el("ul", { class: "stack" }, res.forecast.warnings.map((w) => el("li", { text: warningText(w, fmt, eff.dateFormat) })))]) : null,
-        forecastTable(res.forecast, plain, eff.dateFormat, "What-if result", baseline),
+        forecastTable(res.forecast, plain, eff.dateFormat, "What-if result", baseline, accountIcons(state)),
       );
       announce("What-if calculated. Nothing was saved.");
     } catch (err) {

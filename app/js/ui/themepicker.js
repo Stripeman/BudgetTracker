@@ -22,18 +22,26 @@
 // Swatch colours go through the CSSOM (`vars`), never a style attribute, so the CSP holds.
 import { el } from "./dom.js";
 import { THEMES } from "./theme.js";
+import { icon } from "./icons.js";
 
 let counter = 0;
 
-// `entries` defaults to the application themes. The category colour picker (BT-011-04) reuses the
-// same visual pattern with its own entries, so expense colours stay independent of the app theme.
+// The circle for a palette or colour, or the icon for an icon entry (BT-011-05). Both are
+// decoration: the name beside them is what is announced.
+const glyph = (entry) => (entry.icon
+  ? el("span", { class: "themepick__icon", "aria-hidden": "true" }, [icon(entry.icon)])
+  : el("span", { class: "menu__swatch", "aria-hidden": "true", vars: { "--menu-swatch": entry.swatch } }));
+
+// `entries` defaults to the application themes. The category colour picker (BT-011-04) and the icon
+// picker (BT-011-05) reuse the same visual pattern with their own entries, so expense colours and
+// icons stay independent of the app theme. An entry carries either `swatch` or `icon`.
 export function createThemePicker({ value, onPick, id = null, labelledBy = null, describedBy = null, listLabel = "Colour palette", entries = THEMES, namePrefix = "Theme" } = {}) {
   const listId = `themepick-${++counter}`;
   const nameId = `${listId}-name`;
   const entryOf = (themeId) => entries.find((t) => t.id === themeId) || entries[0];
   let current = entryOf(value);
 
-  const toggleSwatch = el("span", { class: "menu__swatch", "aria-hidden": "true", vars: { "--menu-swatch": current.swatch } });
+  const toggleSwatch = el("span", { class: "themepick__glyph" }, [glyph(current)]);
   const toggleLabel = el("span", { class: "themepick__name", id: nameId, text: current.label });
   const toggle = el("button", {
     class: "themepick__toggle",
@@ -65,7 +73,7 @@ export function createThemePicker({ value, onPick, id = null, labelledBy = null,
         if (typeof onPick === "function") onPick(entry.id);
       },
     }, [
-      el("span", { class: "menu__swatch", "aria-hidden": "true", vars: { "--menu-swatch": entry.swatch } }),
+      glyph(entry),
       el("span", { class: "themepick__name", text: entry.label }),
     ]);
     options.push(option);
@@ -74,7 +82,7 @@ export function createThemePicker({ value, onPick, id = null, labelledBy = null,
 
   function select(themeId) {
     current = entryOf(themeId);
-    toggleSwatch.style.setProperty("--menu-swatch", current.swatch);
+    toggleSwatch.replaceChildren(glyph(current));
     toggleLabel.textContent = current.label;
     if (!labelledBy) toggle.setAttribute("aria-label", `${namePrefix}: ${current.label}`);
     // MATCHED BY ID, never by label text (TaskTracker).

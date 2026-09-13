@@ -168,9 +168,11 @@ export function createShell({ mountPoint, store, router, theme, api }) {
     if (!mountPoint.contains(main)) mount(mountPoint, header, nav, main, footer);
     renderHeader(state);
     renderFooter(state);
-    // Without a workspace there are no sections to navigate, so the nav is hidden (UX-011).
-    const onboarding = !state.workspaces.length && route.id !== "join";
-    nav.hidden = onboarding;
+    // Without a workspace there are no sections to navigate, so the nav is hidden (UX-011). My
+    // settings stays reachable from the account menu: personal preferences, and for a site
+    // administrator the icon catalogue (BT-011-05), need no workspace.
+    const onboarding = !state.workspaces.length && route.id !== "join" && route.id !== "settings";
+    nav.hidden = onboarding || (!state.workspaces.length && route.id === "settings");
     if (onboarding) {
       if (viewKey !== "onboarding") { viewKey = "onboarding"; view = createOnboarding(ctx()); mount(main, view.element); document.title = "Create a workspace · BudgetTracker"; }
       return;

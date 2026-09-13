@@ -81,6 +81,11 @@ assumptions.
   (BT-008-02).
 - Category colours are stored by stable category id, validated server-side for contrast and never
   the only signal (BT-011-04).
+- Icons come only from the central registry by stable id (`app/js/ui/icons.js`, with ids kept
+  equal to `api/_shared/icons.js` by a test) and sit beside visible text. Custom icons enter only
+  through the site-admin upload in `api/_shared/icon-svg.js`, which stores plain shape data — never
+  SVG markup — and the client re-checks it before drawing. Icons are retired or switched off, never
+  deleted, and keep drawing on records that use them (BT-011-05).
 
 ## 5. Public repository hygiene
 

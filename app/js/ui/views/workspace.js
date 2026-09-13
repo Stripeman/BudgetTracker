@@ -10,6 +10,17 @@ import { openModal, confirmModal } from "../modal.js";
 import { sliceFor } from "../../core/store.js";
 import { newIdempotencyKey } from "../../core/api.js";
 import { messageFor } from "../../core/errors.js";
+import { ACCOUNT_TYPE_LABELS, BILL_TYPE_LABELS, MERCHANT_TYPE_LABELS } from "../../core/format.js";
+import { createIconPicker } from "../iconpicker.js";
+import { builtInIconFor, withIcon } from "../icons.js";
+
+// Icons for the workspace's types (BT-011-05): accounts, bills and merchants of a type show this icon
+// unless one was chosen on the record itself.
+const TYPE_GROUPS = [
+  { kind: "account", title: "Account types", labels: ACCOUNT_TYPE_LABELS },
+  { kind: "bill", title: "Bill types", labels: BILL_TYPE_LABELS },
+  { kind: "merchant", title: "Merchant types", labels: MERCHANT_TYPE_LABELS },
+];
 
 const ROLES = [{ value: "viewer", label: "Viewer" }, { value: "member", label: "Member" }, { value: "manager", label: "Manager" }, { value: "owner", label: "Owner" }];
 const ROLE_LABEL = Object.fromEntries(ROLES.map((r) => [r.value, r.label]));
@@ -26,7 +37,7 @@ const ACTIVITY = {
   "recurring.create": "added a bill", "recurring.update": "changed a bill", "recurring.record": "recorded a bill", "recurring.skip": "skipped a bill payment", "recurring.unskip": "undid a skipped bill payment",
   "recurring.pause": "paused a bill", "recurring.resume": "resumed a bill", "recurring.delete": "removed a bill",
   "budget.create": "added a budget", "budget.update": "changed a budget", "budget.delete": "removed a budget",
-  "category.create": "added a category", "category.update": "changed a category", "contact.create": "added a contact", "contact.update": "changed a contact", "contact.delete": "removed a contact",
+  "category.create": "added a category", "category.update": "changed a category", "workspace.type-icons": "changed the icons for account, bill or merchant types", "contact.create": "added a contact", "contact.update": "changed a contact", "contact.delete": "removed a contact",
   "backup.create": "created a backup", "workspace.restore-replace": "restored from a backup (replace)", "workspace.restore-merge": "restored from a backup (merge)", "workspace.restore-create": "created a workspace from a backup",
 };
 const describe = (action) => ACTIVITY[action] || action.replace(/[.-]/g, " ");
@@ -40,6 +51,7 @@ export function createView(ctx) {
   const backupsBox = el("div");
   const auditBox = el("div");
   const coloursBox = el("div", { class: "stack" });
+  const typesBox = el("div", { class: "stack" });
   const element = el("section", {}, [
     pageHead("Workspace"),
     el("div", { class: "grid grid--two" }, [
@@ -47,7 +59,8 @@ export function createView(ctx) {
       el("section", { class: "card", "aria-labelledby": "ws-invite" }, [el("h2", { class: "card__title", id: "ws-invite", text: "Invite someone" }), inviteBox]),
       el("section", { class: "card", "aria-labelledby": "ws-backups" }, [el("h2", { class: "card__title", id: "ws-backups", text: "Backups and restore" }), backupsBox]),
       el("section", { class: "card", "aria-labelledby": "ws-activity" }, [el("h2", { class: "card__title", id: "ws-activity", text: "Recent activity" }), auditBox]),
-      el("section", { class: "card", "aria-labelledby": "ws-colours" }, [el("h2", { class: "card__title", id: "ws-colours", text: "Category colours" }), coloursBox]),
+      el("section", { class: "card", "aria-labelledby": "ws-colours" }, [el("h2", { class: "card__title", id: "ws-colours", text: "Category colours and icons" }), coloursBox]),
+      el("section", { class: "card", "aria-labelledby": "ws-types" }, [el("h2", { class: "card__title", id: "ws-types", text: "Icons for types" }), typesBox]),
     ]),
   ]);
 
@@ -134,17 +147,20 @@ export function createView(ctx) {
     if (!data || !sliceFor(state, "members").data) return;
     const canEdit = ["owner", "manager"].includes(me().role);
     const cats = data.categories.filter((c) => !c.archived);
-    const sig = JSON.stringify([cats.map((c) => [c.id, c.name, c.color, c.colorSource]), canEdit]);
+    const iconsData = sliceFor(state, "icons").data;
+    const sig = JSON.stringify([cats.map((c) => [c.id, c.name, c.color, c.colorSource, c.icon, c.iconSource]), canEdit, iconsData ? iconsData.catalog : null]);
     if (sig === colourSig) return;
     colourSig = sig;
     if (!canEdit) {
-      mount(coloursBox, el("p", { class: "field__help", text: "Owners and managers choose these. You can pick your own colours in My settings." }),
-        el("ul", { class: "stack" }, cats.map((c) => el("li", {}, [categoryLabel(c.name, c.color)]))));
+      mount(coloursBox, el("p", { class: "field__help", text: "Owners and managers choose these. You can pick your own colours and icons in My settings." }),
+        el("ul", { class: "stack" }, cats.map((c) => el("li", {}, [categoryLabel(c.name, c.color, c.icon)]))));
       return;
     }
+    // Focus returns to the same picker (colour or icon) of the same category after a save.
     const active = document.activeElement;
     const focused = active && coloursBox.contains(active) && active.closest ? active.closest("[data-category]") : null;
     const focusId = focused ? focused.dataset.category : null;
+    const focusIndex = focused ? [...focused.querySelectorAll(".themepick__toggle")].indexOf(active) : -1;
     const rows = cats.map((c) => {
       const labelId = `ws-colour-${c.id}`;
       // A failed save puts the previous colour back and says so beside the picker (A11Y2-006).
@@ -161,16 +177,76 @@ export function createView(ctx) {
         value: c.color, entries: colourEntries(data.palette, c.color), labelledBy: labelId,
         listLabel: `Colours for ${c.name}`, namePrefix: `${c.name} colour`, onPick: (hex) => { void patchColour(hex); },
       });
+      // The category icon (BT-011-05): same rules as the colour; "Default" is the icon it was created with.
+      const chosenIcon = c.iconSource === "workspace" ? c.icon : null;
+      const iconPick = createIconPicker({
+        value: chosenIcon, inherited: c.defaultIcon, name: c.name, label: `${c.name} icon`,
+        onPick: async (id) => {
+          const out = await store.actions.write((ws) => api.request("categories", { method: "PATCH", query: { workspaceId: ws }, body: { categoryId: c.id, icon: id || null } }), ["categories"]);
+          if (out.ok) { announce(`${c.name}: icon ${id ? "saved" : "reset to default"}.`); return; }
+          iconPick.select(chosenIcon);
+          error.textContent = messageFor(out.error);
+          error.hidden = false;
+        },
+      });
       return el("div", { class: "field", dataset: { category: c.id } }, [
-        el("p", { class: "field__label", id: labelId, text: c.name }), picker.element, error,
-        el("div", { class: "row" }, [badge(c.colorSource === "workspace" ? "Workspace colour" : "Default", "source"),
-          c.colorSource === "workspace" ? button("Reset to default", () => { void patchColour(null); }, { small: true, variant: "ghost", attrs: { "aria-label": `Reset to default: ${c.name} colour` } }) : null]),
+        el("p", { class: "field__label", id: labelId, text: `${c.name} colour` }), picker.element, iconPick.element, error,
+        el("div", { class: "row" }, [badge(c.colorSource === "workspace" ? "Workspace colour" : "Default colour", "source"),
+          c.colorSource === "workspace" ? button("Reset to default", () => { void patchColour(null); }, { small: true, variant: "ghost", attrs: { "aria-label": `Reset to default: ${c.name} colour` } }) : null,
+          badge(chosenIcon ? "Workspace icon" : "Default icon", "source")]),
       ]);
     });
-    mount(coloursBox, el("p", { class: "field__help", text: "Everyone in the workspace sees these colours unless they pick their own in My settings. Colours are checked so they stay visible on light and dark backgrounds." }), ...rows);
+    mount(coloursBox, el("p", { class: "field__help", text: "Everyone in the workspace sees these colours and icons unless they pick their own in My settings. Colours are checked so they stay visible on light and dark backgrounds. Renaming or archiving a category keeps its colour and icon." }), ...rows);
     if (focusId) {
       const row = rows.find((r) => r.dataset.category === focusId);
-      const toggle = row && row.querySelector(".themepick__toggle");
+      const toggles = row ? [...row.querySelectorAll(".themepick__toggle")] : [];
+      const toggle = toggles[Math.max(0, focusIndex)];
+      if (toggle) toggle.focus();
+    }
+  }
+
+  // Icons for the workspace's account, bill and merchant types (BT-011-05). Owners and managers
+  // choose; everyone else sees the result. Each group is collapsed so the card stays short.
+  let typesSig = "";
+  const openGroups = new Set();
+  function renderTypes(state) {
+    const data = sliceFor(state, "icons").data;
+    if (!data) return;
+    const typeIcons = data.typeIcons || {};
+    const canEdit = !!data.canEditTypeIcons;
+    const sig = JSON.stringify([typeIcons, canEdit, data.catalog]);
+    if (sig === typesSig) return;
+    typesSig = sig;
+    const active = document.activeElement;
+    const focusKey = active && typesBox.contains(active) && active.closest && active.closest("[data-type-key]") ? active.closest("[data-type-key]").dataset.typeKey : null;
+    const groups = TYPE_GROUPS.map((g) => {
+      const items = Object.entries(g.labels).map(([type, label]) => {
+        const key = `${g.kind}.${type}`;
+        const inherited = builtInIconFor(g.kind, type);
+        if (!canEdit) return el("li", {}, [withIcon(typeIcons[key] || inherited, label)]);
+        const error = el("p", { class: "error-text small", role: "alert", hidden: true });
+        const pick = createIconPicker({
+          value: typeIcons[key] || null, inherited, name: label, label,
+          onPick: async (id) => {
+            const out = await store.actions.write((ws) => api.updateTypeIcons(ws, { [key]: id || null }), ["icons", "accounts", "payees", "bills"]);
+            if (out.ok) { announce(`${label}: icon ${id ? "saved" : "reset to default"}.`); return; }
+            pick.select(typeIcons[key] || null);
+            error.textContent = messageFor(out.error);
+            error.hidden = false;
+          },
+        });
+        return el("div", { dataset: { typeKey: key } }, [pick.element, error]);
+      });
+      const details = el("details", { class: "more" }, [el("summary", { text: g.title }), canEdit ? el("div", { class: "icon-grid" }, items) : el("ul", { class: "stack" }, items)]);
+      if (openGroups.has(g.kind)) details.open = true;
+      details.addEventListener("toggle", () => { if (details.open) openGroups.add(g.kind); else openGroups.delete(g.kind); });
+      return details;
+    });
+    mount(typesBox, el("p", { class: "field__help", text: canEdit
+      ? "Accounts, bills and merchants of each type show this icon unless someone chose one for the record itself."
+      : "Owners and managers choose these. Accounts, bills and merchants of each type show this icon unless one was chosen for the record." }), ...groups);
+    if (focusKey) {
+      const toggle = typesBox.querySelector(`[data-type-key="${focusKey}"] .themepick__toggle`);
       if (toggle) toggle.focus();
     }
   }
@@ -178,6 +254,7 @@ export function createView(ctx) {
   let loaded = false;
   function update(state) {
     renderColours(state);
+    renderTypes(state);
     const members = sliceFor(state, "members");
     const s = stateView(members);
     if (s) { mount(membersBox, s); return; }

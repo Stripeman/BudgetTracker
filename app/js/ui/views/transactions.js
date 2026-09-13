@@ -22,6 +22,14 @@ import { newIdempotencyKey } from "../../core/api.js";
 import { messageFor } from "../../core/errors.js";
 import { evaluateAmount, isPlainAmount } from "../../core/calc.js";
 import { formatDate, formatAmount, todayIso, KIND_LABELS, MERCHANT_TYPE_LABELS } from "../../core/format.js";
+import { icon, withIcon, directionOf } from "../icons.js";
+
+// Money direction (BT-011-05): in, out, transfer, refund or reversal, beside the amount. The signed
+// amount and the type text still say it in words; the icon is decoration.
+export function amountWithDirection(t, prefs) {
+  const dir = directionOf(t);
+  return el("span", { class: "amount-dir" }, [el("span", { class: `dir dir--${dir}` }, [icon(dir)]), money(t.amount, t.currency, prefs, { masked: false })]);
+}
 
 const PRECISION = { JPY: 0, KRW: 0, ISK: 0, CLP: 0, VND: 0, BHD: 3, KWD: 3, JOD: 3, OMR: 3, TND: 3 };
 const precisionOf = (c) => (c in PRECISION ? PRECISION[c] : 2);
@@ -46,7 +54,7 @@ export function createView(ctx) {
   const controls = {};
   const activeCount = () => Object.values(filters).filter((v) => v !== undefined && v !== "").length;
   const apply = () => {
-    filterSummary.textContent = activeCount() ? `Filters (${activeCount()} active)` : "Filters";
+    filterSummary.replaceChildren(withIcon("filter", activeCount() ? `Filters (${activeCount()} active)` : "Filters"));
     void ctx.store.actions.refreshTransactions(filters);
   };
   if (activeCount()) filterBox.open = true;
@@ -112,14 +120,22 @@ export function createView(ctx) {
       ])));
     } else mount(summary);
     if (s) { mount(tableBox, s); return; }
+    // Merchant and account icons come from the records themselves (BT-011-05).
+    const merchantIcons = new Map(((sliceFor(state, "payees").data || {}).payees || []).map((p) => [p.id, p.icon || "store"]));
+    const accountIcons = new Map(((sliceFor(state, "accounts").data || {}).accounts || []).map((a) => [a.id, a.icon]));
+    const merchantCell = (t) => {
+      if (t.payeeName) return withIcon(merchantIcons.get(t.payeeId) || "store", t.payeeName);
+      if (t.kind === "transfer") return withIcon("transfer", "Transfer");
+      return el("span", { text: "—" });
+    };
     const rows = txns.data.transactions.map((t) => el("tr", {}, [
       el("th", { scope: "row", "data-label": "Date", text: formatDate(t.date, effective.dateFormat) }),
-      el("td", { "data-label": "Merchant" }, [el("span", { text: t.payeeName || (t.kind === "transfer" ? "Transfer" : "—") }), t.tags.length ? el("div", { class: "muted small", text: t.tags.join(", ") }) : null]),
-      el("td", { "data-label": "Account", text: t.accountName }),
+      el("td", { "data-label": "Merchant" }, [merchantCell(t), t.tags.length ? el("div", { class: "muted small", text: t.tags.join(", ") }) : null]),
+      el("td", { "data-label": "Account" }, [accountIcons.get(t.accountId) ? withIcon(accountIcons.get(t.accountId), t.accountName) : el("span", { text: t.accountName })]),
       el("td", { "data-label": "Category" }, [t.splits.length ? "Split"
-        : categories.get(t.categoryId) ? categoryLabel(categories.get(t.categoryId).name, categories.get(t.categoryId).shownColor)
+        : categories.get(t.categoryId) ? categoryLabel(categories.get(t.categoryId).name, categories.get(t.categoryId).shownColor, categories.get(t.categoryId).shownIcon)
           : (t.kind === "transfer" ? "—" : "Uncategorized")]),
-      el("td", { "data-label": "Amount", class: "num" }, [money(t.amount, t.currency, prefs, { masked: false })]),
+      el("td", { "data-label": "Amount", class: "num" }, [amountWithDirection(t, prefs)]),
       el("td", { "data-label": "Status" }, [
         badge(STATUS_LABELS[t.status] || t.status),
         t.reversedBy ? [" ", badge("Reversed", "closed")] : null,

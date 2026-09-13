@@ -4,6 +4,7 @@ const { newId } = require('./ids');
 const { stampDocument } = require('./schema');
 const audit = require('./audit');
 const colors = require('./colors');
+const icons = require('./icons');
 
 const KINDS = Object.freeze(['personal', 'household', 'group', 'trip']);
 
@@ -23,8 +24,9 @@ function newWorkspaceDoc({ id, name, kind, currency, principal, nowIso }) {
     invitations: [], grants: [], contacts: [], accounts: [], payees: [],
     categories: DEFAULT_CATEGORIES.map(([n, t]) => {
       const catId = newId('cat');
-      // Each category keeps the default colour it was created with (BT-011-04), by id.
-      return { id: catId, name: n, type: t, parentId: null, archived: false, color: null, defaultColor: colors.initialDefault(n, catId) };
+      // Each category keeps the default colour (BT-011-04) and icon (BT-011-05) it was created
+      // with, by id, so a rename changes neither.
+      return { id: catId, name: n, type: t, parentId: null, archived: false, color: null, defaultColor: colors.initialDefault(n, catId), icon: null, defaultIcon: icons.initialCategoryIcon(n, t) };
     }),
     transactions: [], audit: [], idempotency: {},
   };

@@ -4,7 +4,7 @@ Privacy-first budgeting service with accounts, debt tracking, forecasting, trip 
 
 ## Status
 
-Alpha, in active development on `feature/project-foundation`. Built and tested so far: the security and permission foundation, encrypted backups with tested restores, accounts and entries (with amendments, reasons and reversals — nothing is ever deleted), the managed merchant directory, recurring bills, budgets, the cash-flow forecast with what-if, colour-coded categories, and the web app with TaskTracker's day/night control and theme picker. A preview deployment exists for review; Production is not deployed. The [requirement register](docs/REQUIREMENTS.md) says exactly what is complete and what is partial.
+Alpha, in active development on `feature/project-foundation`. Built and tested so far: the security and permission foundation, encrypted backups with tested restores, accounts and entries (with amendments, reasons and reversals — nothing is ever deleted), the managed merchant directory, recurring bills, budgets, the cash-flow forecast with what-if, colour-coded categories, contextual icons (a central registry, money-direction icons, and custom icons only through a validated upload), and the web app with TaskTracker's day/night control and theme picker. A preview deployment exists for review; Production is not deployed. The [requirement register](docs/REQUIREMENTS.md) says exactly what is complete and what is partial.
 
 ## Planned capabilities
 

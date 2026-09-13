@@ -69,6 +69,13 @@ CSP) is reusable if palettes are offered.
 - **Tests:** `app/test/themepicker.test.js` ports TaskTracker's contract assertions and adds the adaptations.
 - **Palettes:** BudgetTracker has 8 of TaskTracker's 21 palettes (same ids, labels and swatches); adding the other 13 needs their light-mode contrast overrides and is tracked under BT-011-03.
 
+## Contextual icons — BT-011-05
+
+- **Archaeology** (`T:` `main` `a1ec150`, read with `git show` only): TaskTracker has no icon registry or icon set. `app/js/ui/dom.js` has `icon(name, { size })` with a single `filter-off` entry; its conventions are a 24 × 24 viewBox, `stroke="currentColor"`, `fill="none"`, stroke width 1.8, round caps and joins, `aria-hidden="true"`, `focusable="false"`, sized in `em`. CSS has `.btn--icon` (2.25rem square) and `.icon { display: block }`. No third-party icon set and no icon licence file.
+- **Reused:** those conventions and the element-by-element `createElementNS` construction (`app/js/ui/icons.js`), and the theme-picker pattern for the icon picker (`app/js/ui/iconpicker.js`).
+- **Adaptations:** an unknown id draws a fallback icon instead of throwing (records can outlive a catalogue entry); an icon may take an accessible name (`role="img"`) when it stands alone; the id list is shared with the server catalogue and checked by a test; custom icons are validated shape data, never markup.
+- **Not copied:** brand logos, Unicode glyph maps, hard-coded colours, the throw on unknown names, and TaskTracker's paste/drop SVG handling, which is not a sanitizer. The artwork is original simple geometry.
+
 ## Rich text editor (Tiptap) — BT-011-02
 
 Canonical at `T:` `main`:

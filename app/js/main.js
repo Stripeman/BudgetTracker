@@ -6,10 +6,21 @@ import { createApiClient } from "./core/api.js";
 import { createStore } from "./core/store.js";
 import { createRouter } from "./core/router.js";
 import { createShell } from "./ui/shell.js";
+import { setCatalog } from "./ui/icons.js";
+import { sliceFor } from "./core/store.js";
 
 const theme = browserThemeController(window);
 const api = createApiClient();
 const store = createStore({ api });
+// The icon catalogue is installed BEFORE the shell subscribes, so every render already draws custom
+// icons and the workspace's type icons (BT-011-05).
+let appliedIcons = null;
+store.subscribe((state) => {
+  const data = sliceFor(state, "icons").data;
+  if (!data || data === appliedIcons) return;
+  appliedIcons = data;
+  setCatalog(data.catalog, data.typeIcons);
+});
 const router = createRouter(window);
 const shell = createShell({ mountPoint: document.getElementById("app"), store, router, theme, api });
 

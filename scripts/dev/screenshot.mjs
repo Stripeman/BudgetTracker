@@ -23,6 +23,8 @@ const ROUTES = (args.routes || "dashboard,transactions,accounts,payees,workspace
 const PORT = Number(args.port || 9333);
 const EDGE = args.edge || "C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe";
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+// --full 1 captures the whole page (up to 6000 px tall) instead of the viewport.
+const FULL = !!args.full;
 
 fs.mkdirSync(OUT, { recursive: true });
 const profile = path.join(ROOT, ".local", `edge-profile-${Date.now()}`);
@@ -66,6 +68,12 @@ function client(url) {
 
 try {
   const cdp = client(await cdpTarget());
+  const capture = async () => {
+    if (!FULL) return cdp.send("Page.captureScreenshot", { format: "png" });
+    const metrics = await cdp.send("Page.getLayoutMetrics");
+    const size = metrics.cssContentSize || metrics.contentSize;
+    return cdp.send("Page.captureScreenshot", { format: "png", captureBeyondViewport: true, clip: { x: 0, y: 0, width: size.width, height: Math.min(size.height, 6000), scale: 1 } });
+  };
   await cdp.send("Page.enable");
   await cdp.send("Runtime.enable");
   await cdp.send("Log.enable");
@@ -81,7 +89,7 @@ try {
       await sleep(300);
       await cdp.send("Page.reload", { ignoreCache: true });
       await sleep(1400);
-      const { data } = await cdp.send("Page.captureScreenshot", { format: "png" });
+      const { data } = await capture();
       const file = path.join(OUT, `${label}-${route}.png`);
       fs.writeFileSync(file, Buffer.from(data, "base64"));
       shots.push(path.relative(ROOT, file));
@@ -103,6 +111,14 @@ try {
         await evaluate("[...document.querySelectorAll('.page-head button')].find(b => /Add/.test(b.textContent)).click()");
         await sleep(400);
         await evaluate(`(() => { const i = document.querySelector('.modal input[list]'); i.value = ${JSON.stringify(args.payee || "Corner Cafe")}; i.dispatchEvent(new Event('change', { bubbles: true })); })()`);
+      }
+      // The icon picker (BT-011-05) open in the Add account dialog.
+      if (action === "iconpick") {
+        await evaluate("location.hash = '#/accounts'");
+        await sleep(1200);
+        await evaluate("[...document.querySelectorAll('.page-head button')].find(b => /Add/.test(b.textContent)).click()");
+        await sleep(500);
+        await evaluate("[...document.querySelectorAll('.modal .themepick__toggle')].at(-1).click()");
       }
       await sleep(1200);
       const { data } = await cdp.send("Page.captureScreenshot", { format: "png" });

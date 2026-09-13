@@ -12,6 +12,8 @@ import { choosableMerchants, canAddEntries } from "./transactions.js";
 import { sliceFor } from "../../core/store.js";
 import { newIdempotencyKey } from "../../core/api.js";
 import { formatDate, formatAmount, todayIso, BILL_TYPE_LABELS } from "../../core/format.js";
+import { withIcon, defaultIconFor } from "../icons.js";
+import { createIconPicker, iconChange } from "../iconpicker.js";
 
 const PRESETS = [
   { value: "weekly", label: "Weekly", freq: "weekly", interval: 1 },
@@ -48,6 +50,7 @@ function describeBillChange(text, dateFormat) {
     case "notes": return "Notes changed";
     case "reminderDays": return "Due-soon window changed";
     case "endDate": return "End date changed";
+    case "icon": return "Icon changed";
     case "terms": return `Amount, merchant, category or responsible person changed from ${d(rest[1])}`;
     case "skip": return `Skipped the payment due ${d(rest[0])}`;
     case "unskip": return `Undid the skip of ${d(rest[0])}`;
@@ -121,7 +124,7 @@ export function createView(ctx) {
     const anyAction = items.some(({ b }) => b.canRecord || b.canEdit);
     mount(attention, items.length ? table(["Due", "Bill", "Account", "Amount", ...(anyAction ? ["Actions"] : [])], items.map(({ b, date, overdue }) => el("tr", {}, [
       el("th", { scope: "row", "data-label": "Due" }, [el("span", { text: formatDate(date, eff.dateFormat) }), " ", overdue ? badge("Overdue", "overdue") : badge("Due soon")]),
-      el("td", { "data-label": "Bill", text: b.name }),
+      el("td", { "data-label": "Bill" }, [withIcon(b.icon, b.name)]),
       el("td", { "data-label": "Account", text: b.accountName }),
       el("td", { "data-label": "Amount", class: "num" }, [amountCell(b, plain)]),
       anyAction ? el("td", { "data-label": "" }, [el("div", { class: "row-actions" }, [
@@ -132,7 +135,7 @@ export function createView(ctx) {
 
     mount(listBox, table(["Bill", "Account", "Amount", "Schedule", "Next due", "Actions"], recurring.map((b) => el("tr", {}, [
       el("th", { scope: "row", "data-label": "Bill" }, [
-        el("strong", { text: b.name }), " ", badge(BILL_TYPE_LABELS[b.billType] || b.billType),
+        withIcon(b.icon, el("strong", { text: b.name })), " ", badge(BILL_TYPE_LABELS[b.billType] || b.billType),
         b.pausedNow ? [" ", badge("Paused")] : null, b.ended ? [" ", badge("Ended", "closed")] : null,
         b.payeeName ? el("div", { class: "muted small", text: b.payeeName }) : null,
       ].flat()),
@@ -353,6 +356,12 @@ export function openBillEditor(ctx, bill = null) {
   const name = input({ maxlength: "80", autocomplete: "off" });
   name.value = b.name || "";
   const billType = select(Object.entries(BILL_TYPE_LABELS).map(([value, label]) => ({ value, label })), b.billType || "housing");
+  // The icon (BT-011-05); "Default" follows the chosen type.
+  const chosenIcon = editing && b.iconSource === "record" ? b.icon : null;
+  const iconBox = el("div");
+  let iconPick = null;
+  const makeIconPicker = (value) => { iconPick = createIconPicker({ value, inherited: defaultIconFor("bill", billType.value), name: b.name || "New bill" }); mount(iconBox, iconPick.element); };
+  makeIconPicker(chosenIcon);
   const direction = select(DIRECTIONS, b.kind === "transfer" ? "transfer" : b.kind === "income" ? "income" : defaultDirection(b.billType || "housing"), { disabled: editing });
   const account = select(accounts.map((a) => ({ value: a.id, label: `${a.name} (${a.currency})` })), b.accountId || (accounts[0] || {}).id, { disabled: editing });
   const toAccount = select(accounts.map((a) => ({ value: a.id, label: `${a.name} (${a.currency})` })), b.toAccountId || "", { disabled: editing });
@@ -395,7 +404,7 @@ export function openBillEditor(ctx, bill = null) {
     field("Category", category), field("Responsible person", responsible),
   ]);
   const syncDirection = () => { transferOnly.hidden = direction.value !== "transfer"; notTransfer.hidden = direction.value === "transfer"; };
-  billType.addEventListener("change", () => { if (!editing) { direction.value = defaultDirection(billType.value); syncDirection(); } });
+  billType.addEventListener("change", () => { makeIconPicker(iconPick.getValue()); if (!editing) { direction.value = defaultDirection(billType.value); syncDirection(); } });
   direction.addEventListener("change", syncDirection);
   preset.addEventListener("change", () => { customBox.hidden = preset.value !== "custom"; });
   account.addEventListener("change", () => {
@@ -410,7 +419,7 @@ export function openBillEditor(ctx, bill = null) {
     : [field("Repeats", preset), customBox, field("First payment", startDate), field("End date (optional)", endDate)];
   const locked = editing ? "Can't be changed. End this bill and add a new one." : undefined;
   const form = el("form", { class: "form-grid", novalidate: true, id: `bill-form-${key}` }, [
-    field("Name", name), field("Type", billType), field("Direction", direction, { help: locked }),
+    field("Name", name), field("Type", billType), iconBox, field("Direction", direction, { help: locked }),
     field("Account", account, { help: locked }), transferOnly,
     field("Amount", amount), field("Amount is", amountType),
     ...scheduleFields,
@@ -440,6 +449,7 @@ export function openBillEditor(ctx, bill = null) {
     if (endDate.value) schedule.endDate = endDate.value;
     const out = { name: name.value.trim(), billType: billType.value, kind: direction.value, accountId: account.value, amount: amount.value.trim(), amountType: amountType.value, schedule, reminderDays: Number(reminder.value || 0) };
     if (notes.value.trim()) out.notes = notes.value;
+    if (iconPick.getValue()) out.icon = iconPick.getValue();
     if (direction.value === "transfer") out.toAccountId = toAccount.value;
     else {
       if (picker.getValue()) out.payeeId = picker.getValue();
@@ -457,6 +467,8 @@ export function openBillEditor(ctx, bill = null) {
     if (notes.value !== (b.notes || "")) out.notes = notes.value;
     if (Number(reminder.value || 0) !== b.reminderDays) out.reminderDays = Number(reminder.value || 0);
     if ((endDate.value || null) !== (b.schedule.endDate || null)) out.endDate = endDate.value || null;
+    const icon = iconChange(chosenIcon, iconPick.getValue());
+    if (icon !== undefined) out.icon = icon;
     const terms = {};
     if (Number(amount.value) !== Number(b.amount)) terms.amount = amount.value.trim();
     if (amountType.value !== b.amountType) terms.amountType = amountType.value;

@@ -12,6 +12,7 @@
 // it is never clipped by a scrolling dialog body.
 import { el } from "./dom.js";
 import { uid } from "./components.js";
+import { icon } from "./icons.js";
 
 export const normalize = (s) => String(s || "").normalize("NFKD").replace(/[̀-ͯ]/g, "").toLowerCase()
   .replace(/&/g, " and ").replace(/['’`]/g, "").replace(/[^a-z0-9]+/g, " ").trim();
@@ -56,7 +57,7 @@ export function createMerchantPicker({ merchants, current = null, onChange = () 
     rows = shown.map((m, i) => el("li", {
       id: `${id}-opt-${i}`, role: "option", class: ["combo__option", i === active ? "combo__option--active" : ""],
       "aria-selected": selected && selected.id === m.id ? "true" : "false", dataset: { index: String(i) },
-    }, [el("span", { text: m.name }), m.visibility === "private" ? el("span", { class: "muted small", text: " · private" }) : null]));
+    }, [icon(m.icon || "store"), el("span", { text: m.name }), m.visibility === "private" ? el("span", { class: "muted small", text: " · private" }) : null]));
     if (canCreate()) {
       rows.push(el("li", {
         id: `${id}-opt-new`, role: "option", class: ["combo__option", "combo__option--create", active === shown.length ? "combo__option--active" : ""],

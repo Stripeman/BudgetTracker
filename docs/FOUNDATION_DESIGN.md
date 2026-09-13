@@ -42,6 +42,9 @@ All changes so far only add optional fields and collections to the version-1 wor
 | Category `color`, `defaultColor`, `history` | No workspace colour; the default is chosen from the palette by category id |
 | Transaction `amendments[]`, `reversedBy`, `links.reverses`, `links.recurringId`/`occurrence` | No amendments; not reversed; not from a bill |
 | User preference `categoryColors` | No personal colours |
+| `icon` on categories (with `defaultIcon`), accounts, merchants, bills (with `iconHistory`) and budgets (with `iconHistory`); workspace `settings.typeIcons` and `settings.typeIconHistory` | No chosen icon: a category uses the default for its original name or type (pinned on its next edit), other records the workspace's icon for their type or the built-in default |
+| User preference `categoryIcons` | No personal icons |
+| Site document `site/icons.json` (`disabled`, `custom[]` as shape data with `status` and `history`, `audit`) | Every built-in icon offered; no custom icons |
 
 Any change that renames, removes or reinterprets a field needs a real migration (in `api/_shared/schema.js`) and a `schemaVersion` bump before release.
 

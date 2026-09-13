@@ -15,17 +15,27 @@ const store = require('../_shared/store');
 const fields = require('../_shared/fields');
 const audit = require('../_shared/audit');
 const colors = require('../_shared/colors');
+const icons = require('../_shared/icons');
 
-const view = (c) => ({
-  id: c.id, name: c.name, type: c.type, parentId: c.parentId || null, archived: !!c.archived,
-  color: colors.effectiveColor(c), colorSource: c.color ? 'workspace' : 'default', defaultColor: colors.defaultColorFor(c),
-});
+// ICONS (BT-011-05) follow the same rules as colours: stored by id with the default the category
+// was created with (`defaultIcon`), the workspace icon for managers and owners (`icon: null`
+// resets it), personal icons in each person's own preferences (`categoryIcons`).
+const view = (c) => {
+  const { icon, iconSource } = icons.effective('category', c);
+  return {
+    id: c.id, name: c.name, type: c.type, parentId: c.parentId || null, archived: !!c.archived,
+    color: colors.effectiveColor(c), colorSource: c.color ? 'workspace' : 'default', defaultColor: colors.defaultColorFor(c),
+    icon, iconSource: iconSource === 'record' ? 'workspace' : 'default', defaultIcon: c.defaultIcon || icons.initialCategoryIcon(c.name, c.type),
+  };
+};
 
 async function list(ctx, req) {
   const wsId = requireId(query(req, 'workspaceId'), 'workspaceId');
   const { doc } = await store.loadWorkspace(ctx, wsId);
   return { body: { categories: (doc.categories || []).map(view), palette: colors.PALETTE } };
 }
+
+const catalogFor = async (ctx, body) => (body.icon !== undefined ? (await icons.readCatalog(ctx.storage)).catalog : null);
 
 function checkParent(doc, parentId, selfId) {
   const id = fields.optionalId(parentId, 'Parent category');
@@ -40,15 +50,18 @@ const colorOrNull = (value) => (value === null ? null : colors.validateColor(val
 
 async function create(ctx, req) {
   const wsId = requireId(query(req, 'workspaceId'), 'workspaceId');
-  const body = fields.onlyKeys(readBody(req), ['name', 'type', 'parentId', 'color']);
+  const body = fields.onlyKeys(readBody(req), ['name', 'type', 'parentId', 'color', 'icon']);
+  const catalog = await catalogFor(ctx, body);
   const { result } = await store.mutateWorkspace(ctx, wsId, (doc, member) => {
     if (!roleAtLeast(member.role, 'manager')) throw forbidden('Only owners and managers can change categories.');
     const nowIso = ctx.nowIso();
     const id = newId('cat');
     const name = fields.text(body.name, { field: 'Name', max: 60, required: true });
+    const type = fields.oneOf(body.type, ['expense', 'income'], 'Type', 'expense');
     const c = {
-      id, name, type: fields.oneOf(body.type, ['expense', 'income'], 'Type', 'expense'), parentId: checkParent(doc, body.parentId), archived: false,
+      id, name, type, parentId: checkParent(doc, body.parentId), archived: false,
       color: body.color === undefined ? null : colorOrNull(body.color), defaultColor: colors.initialDefault(name, id),
+      icon: body.icon === undefined ? null : icons.validateChoice(catalog, body.icon), defaultIcon: icons.initialCategoryIcon(name, type),
       history: [{ at: nowIso, by: member.subject, changes: [{ field: 'create' }] }],
     };
     doc.categories = [...(doc.categories || []), c];
@@ -60,12 +73,15 @@ async function create(ctx, req) {
 
 async function patch(ctx, req) {
   const wsId = requireId(query(req, 'workspaceId'), 'workspaceId');
-  const body = fields.onlyKeys(readBody(req), ['categoryId', 'name', 'parentId', 'archived', 'color']);
+  const body = fields.onlyKeys(readBody(req), ['categoryId', 'name', 'parentId', 'archived', 'color', 'icon']);
   const id = requireId(body.categoryId, 'categoryId');
+  const catalog = await catalogFor(ctx, body);
   const { result } = await store.mutateWorkspace(ctx, wsId, (doc, member) => {
     if (!roleAtLeast(member.role, 'manager')) throw forbidden('Only owners and managers can change categories.');
     const c = (doc.categories || []).find((x) => x.id === id);
     if (!c) throw notFound('Unknown category.');
+    // A category created before icons existed gets its default pinned now, so a rename keeps it.
+    if (!c.defaultIcon) c.defaultIcon = icons.initialCategoryIcon(c.name, c.type);
     const changes = [];
     const set = (field, value) => {
       const from = c[field] === undefined ? null : c[field];
@@ -77,6 +93,7 @@ async function patch(ctx, req) {
     if (body.parentId !== undefined) set('parentId', checkParent(doc, body.parentId, c.id));
     if (body.archived !== undefined) set('archived', fields.bool(body.archived, 'Archived'));
     if (body.color !== undefined) set('color', colorOrNull(body.color));
+    if (body.icon !== undefined) set('icon', icons.validateChoice(catalog, body.icon, { current: c.icon || null }));
     if (changes.length) {
       const nowIso = ctx.nowIso();
       c.history = [...(c.history || []), { at: nowIso, by: member.subject, changes }];

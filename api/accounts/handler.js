@@ -19,10 +19,14 @@ const ledger = require('../_shared/ledger');
 const money = require('../_shared/money');
 const fields = require('../_shared/fields');
 const audit = require('../_shared/audit');
+const icons = require('../_shared/icons');
+
+// The icon catalogue is read only when an icon is being chosen (BT-011-05).
+const catalogFor = async (ctx, body) => (body.icon !== undefined ? (await icons.readCatalog(ctx.storage)).catalog : null);
 
 // `status` is changed only by the close and reopen actions, which need a reason.
-const EDITABLE = ['revision', 'reason', 'name', 'institution', 'maskedNumber', 'terms', 'notes', 'openingBalance', 'openingDate', 'visibility', 'confirmShare'];
-const TRACKED = ['name', 'institution', 'maskedNumber', 'terms', 'notes', 'openingBalanceMinor', 'openingDate', 'visibility'];
+const EDITABLE = ['revision', 'reason', 'name', 'institution', 'maskedNumber', 'terms', 'notes', 'openingBalance', 'openingDate', 'visibility', 'confirmShare', 'icon'];
+const TRACKED = ['name', 'institution', 'maskedNumber', 'terms', 'notes', 'openingBalanceMinor', 'openingDate', 'visibility', 'icon'];
 const snap = (a) => Object.fromEntries(TRACKED.map((f) => [f, a[f] === undefined ? null : structuredClone(a[f])]));
 const changesSince = (before, a) => TRACKED
   .filter((f) => JSON.stringify(before[f]) !== JSON.stringify(a[f] === undefined ? null : a[f]))
@@ -71,7 +75,8 @@ async function list(ctx, req) {
 
 async function create(ctx, req) {
   const wsId = requireId(query(req, 'workspaceId'), 'workspaceId');
-  const body = fields.onlyKeys(readBody(req), ['name', 'type', 'currency', 'visibility', 'openingBalance', 'openingDate', 'institution', 'maskedNumber', 'terms', 'notes']);
+  const body = fields.onlyKeys(readBody(req), ['name', 'type', 'currency', 'visibility', 'openingBalance', 'openingDate', 'institution', 'maskedNumber', 'terms', 'notes', 'icon']);
+  const catalog = await catalogFor(ctx, body);
   const name = fields.text(body.name, { field: 'Name', max: 80, required: true });
   const type = fields.oneOf(body.type, ledger.ACCOUNT_TYPES, 'Type');
   const currency = body.currency;
@@ -85,6 +90,7 @@ async function create(ctx, req) {
     maskedNumber: ledger.maskedNumber(body.maskedNumber),
     terms: ledger.validateTerms(type, body.terms, currency),
     notes: fields.text(body.notes, { field: 'Notes', max: 5000, multiline: true }),
+    icon: body.icon === undefined ? null : icons.validateChoice(catalog, body.icon),
     status: 'open', deletedAt: null, revision: 1, history: [],
   };
   const { result } = await store.mutateWorkspace(ctx, wsId, (doc, member) => {
@@ -104,6 +110,7 @@ async function patch(ctx, req) {
   const wsId = requireId(query(req, 'workspaceId'), 'workspaceId');
   const body = fields.onlyKeys(readBody(req), ['accountId', ...EDITABLE]);
   const accountId = requireId(body.accountId, 'accountId');
+  const catalog = await catalogFor(ctx, body);
   const { result } = await store.mutateWorkspace(ctx, wsId, (doc, member) => {
     const now = ctx.now();
     const account = locate(doc, ctx.principal, accountId, now);
@@ -126,6 +133,10 @@ async function patch(ctx, req) {
     if (body.notes !== undefined) { account.notes = fields.text(body.notes, { field: 'Notes', max: 5000, multiline: true }); changed.push('notes'); }
     if (body.openingBalance !== undefined) { account.openingBalanceMinor = ledger.openingBalance(account.type, body.openingBalance, account.currency); changed.push('openingBalance'); }
     if (body.openingDate !== undefined) { account.openingDate = fields.date(body.openingDate, 'Opening date', { required: true }); changed.push('openingDate'); }
+    if (body.icon !== undefined) {
+      const icon = icons.validateChoice(catalog, body.icon, { current: account.icon || null });
+      if (icon !== (account.icon || null)) { account.icon = icon; changed.push('icon'); }
+    }
     if (body.visibility !== undefined && body.visibility !== account.visibility) {
       if (body.visibility !== 'shared') throw badRequest('A shared account cannot be made private; create a new private account instead.', 'visibility_change');
       if (body.confirmShare !== true) throw badRequest('Sharing exposes this account\'s balance and full history to every workspace member. Confirm with confirmShare: true.', 'confirm_required');

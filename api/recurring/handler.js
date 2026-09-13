@@ -33,9 +33,12 @@ const schedule = require('../_shared/schedule');
 const ledger = require('../_shared/ledger');
 const bills = require('../_shared/bills');
 const merchants = require('../_shared/merchants');
+const icons = require('../_shared/icons');
 
-const CREATE_KEYS = ['name', 'billType', 'kind', 'accountId', 'toAccountId', 'amount', 'amountType', 'schedule', 'categoryId', 'payeeId', 'responsibleRef', 'reminderDays', 'notes', 'tripId', 'trackFrom'];
-const PATCH_KEYS = ['recurringId', 'revision', 'effectiveFrom', 'amount', 'amountType', 'categoryId', 'payeeId', 'responsibleRef', 'name', 'billType', 'notes', 'reminderDays', 'endDate'];
+const CREATE_KEYS = ['name', 'billType', 'kind', 'accountId', 'toAccountId', 'amount', 'amountType', 'schedule', 'categoryId', 'payeeId', 'responsibleRef', 'reminderDays', 'notes', 'tripId', 'trackFrom', 'icon'];
+const PATCH_KEYS = ['recurringId', 'revision', 'effectiveFrom', 'amount', 'amountType', 'categoryId', 'payeeId', 'responsibleRef', 'name', 'billType', 'notes', 'reminderDays', 'endDate', 'icon'];
+// The icon catalogue is read only when an icon is being chosen (BT-011-05).
+const catalogFor = async (ctx, body) => (body.icon !== undefined ? (await icons.readCatalog(ctx.storage)).catalog : null);
 const TERM_KEYS = ['amount', 'amountType', 'categoryId', 'payeeId', 'responsibleRef'];
 const NOT_FOR_TRANSFERS = ['categoryId', 'payeeId', 'responsibleRef'];
 
@@ -117,6 +120,7 @@ function view(doc, r, principal, user, today, now, recorded) {
   const prefix = `${r.id}|`;
   return {
     id: r.id, name: r.name, billType: r.billType, kind: r.kind, currency: c,
+    ...icons.effective('bill', r, doc),
     accountId: r.accountId, accountName: a ? a.name : '',
     // Someone else's private destination is neither named nor identified (SEC-B12).
     toAccountId: dest && can(doc, principal, dest, 'view-balances', now) ? r.toAccountId : null,
@@ -202,6 +206,7 @@ async function create(ctx, req) {
   const wsId = requireId(query(req, 'workspaceId'), 'workspaceId');
   const body = fields.onlyKeys(readBody(req), CREATE_KEYS);
   const user = await readUser(ctx);
+  const catalog = await catalogFor(ctx, body);
   const { result } = await store.mutateWorkspace(ctx, wsId, (doc, member) => {
     const now = ctx.now();
     const nowIso = ctx.nowIso();
@@ -216,6 +221,7 @@ async function create(ctx, req) {
       accountId: a.id, toAccountId: null, currency: a.currency, schedule: sched,
       reminderDays: reminderDays(body.reminderDays, 3), notes: fields.text(body.notes, { field: 'Notes', max: 2000, multiline: true }),
       tripId: tripFor(doc, body.tripId), trackFrom: fields.date(body.trackFrom, 'Track from') || today,
+      icon: body.icon === undefined ? null : icons.validateChoice(catalog, body.icon),
       versions: [], skips: [], pauses: [], resumes: [], createdBy: member.subject, createdAt: nowIso, revision: 1, deletedAt: null, history: [],
     };
     const version = {
@@ -380,6 +386,7 @@ async function patch(ctx, req) {
   const wsId = requireId(query(req, 'workspaceId'), 'workspaceId');
   const body = fields.onlyKeys(readBody(req), PATCH_KEYS);
   const user = await readUser(ctx);
+  const catalog = await catalogFor(ctx, body);
   const { result } = await store.mutateWorkspace(ctx, wsId, (doc, member) => {
     const now = ctx.now();
     const nowIso = ctx.nowIso();
@@ -408,6 +415,15 @@ async function patch(ctx, req) {
     if (body.billType !== undefined) { r.billType = fields.oneOf(body.billType, bills.BILL_TYPES, 'Bill type'); changed.push('billType'); }
     if (body.notes !== undefined) { r.notes = fields.text(body.notes, { field: 'Notes', max: 2000, multiline: true }); changed.push('notes'); }
     if (body.reminderDays !== undefined) { r.reminderDays = reminderDays(body.reminderDays); changed.push('reminderDays'); }
+    if (body.icon !== undefined) {
+      const icon = icons.validateChoice(catalog, body.icon, { current: r.icon || null });
+      if (icon !== (r.icon || null)) {
+        // Before and after are kept in the history (BT-001-05).
+        r.iconHistory = [...(r.iconHistory || []), { at: nowIso, by: member.subject, from: r.icon || null, to: icon }];
+        r.icon = icon;
+        changed.push('icon');
+      }
+    }
     if (body.endDate !== undefined) {
       const endDate = fields.date(body.endDate, 'End date');
       if (endDate && endDate < r.schedule.startDate) throw badRequest('The end date is before the start date.', 'invalid_schedule');

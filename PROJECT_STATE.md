@@ -230,6 +230,14 @@ The medium and low findings are numeric alignment, quick-entry field order and a
 - **Contact lifecycle (audit B12):** archive and restore (reason optional) instead of deletion; before/after history on shared and private contacts, private history visible only to its owner; archived contacts out of selectors and the default list (`includeArchived=1` shows them).
 - **Evidence:** `npm test` 8/8 repository, 134/134 API, 35/35 app; `npm run validate` ok (20 routes).
 
+## Checkpoint H — preview verified at 579568c, contextual icons (2026-09-13)
+
+- **Preview verified:** `deploy.ps1 -Environment preview` of `579568c` exited 0; `/api/site-settings` on the preview host reports `app.commit` `579568c534d7962fe8b47eb39fce4ca8ae68b770`, environment `preview`; the root serves the CSP; anonymous `/api/me` is 401.
+- **BT-011-05 contextual icons (Partial; see the register):** server catalogue `api/_shared/icons.js` (57 stable ids, defaults by type, choice validation, `site/icons.json` with switched-off built-ins and custom icons), validated upload `api/_shared/icon-svg.js` (shape data only, re-checked before serving), route `/api/icons` (21 routes); icon fields on categories (with `defaultIcon`), accounts, merchants, bills, budgets; workspace type icons; personal `categoryIcons`. Client registry `app/js/ui/icons.js` (TaskTracker `icon()` conventions, fallback instead of throw, custom shapes re-validated), icon picker on the theme-picker pattern (`app/js/ui/iconpicker.js`), icons across Dashboard, Transactions (direction icons), Bills, Planning, Accounts (new Edit dialog: name and icon), Merchants, the merchant picker, Workspace (category icons, Icons for types) and My settings (personal category icons; the site catalogue for site administrators, reachable without a workspace). Archaeology recorded in `docs/TASKTRACKER_REUSE.md`; schema additions in `docs/FOUNDATION_DESIGN.md`; rules in CLAUDE.md and AGENTS.md.
+- **Dev tooling:** `scripts/dev/screenshot.mjs` gained `--full 1` (whole page) and `--interact iconpick`.
+- **Evidence:** `npm test` 8/8 repository, 163/163 API, 47/47 app; `npm run validate` ok (21 routes); headless-Edge screenshots (light, dark, 390 px) of every view as Alice and of My settings as the site administrator, no console errors.
+- **Known limits:** native selects (category/account fields, filter options) cannot show icons; debt, trips, reports, exports and charts do not exist yet, so icons there wait for those features.
+
 ## Checks run this checkpoint
 
 - `node --test test/*.test.cjs`: 7 passed, 0 failed (Node v22.23.1).
@@ -240,7 +248,7 @@ The medium and low findings are numeric alignment, quick-entry field order and a
 
 ## Unfinished work and blockers
 
-- **Application status.** The API (20 routes), the frontend shell and the preview deployment exist; no real financial data may be used until Terry authorizes Production. The feature modules listed as Planned or Partial in `docs/REQUIREMENTS.md` remain.
+- **Application status.** The API (21 routes), the frontend shell and the preview deployment exist; no real financial data may be used until Terry authorizes Production. The feature modules listed as Planned or Partial in `docs/REQUIREMENTS.md` remain.
 - **Staging.** By Terry's instruction there is no separate Staging app yet; the design keeps it addable (named environments, per-environment settings and storage). Production storage, deployment and DNS need his explicit authorization.
 - **Agents use Terry's admin token**, so branch protection is not technically enforced against agents. A non-admin bot identity is recommended (Terry's action).
 - **Unverified rows in the reuse inventory.** The attachments, people picker, settings and local-runtime rows still need re-verification against `T:` `main`.
@@ -268,10 +276,11 @@ The medium and low findings are numeric alignment, quick-entry field order and a
 
 ## Exact next steps
 
-Checkpoints B–E are done (see above). Keep the CI job names `secret-scan` and `foundation-tests`; branch protection requires them. Next, in order:
+Checkpoints B–H are done (see above). Keep the CI job names `secret-scan` and `foundation-tests`; branch protection requires them. Next, in order:
 
-1. **BT-001-05 no destructive deletion** — apply the read-only deletion audit: amendments with actor, time and reason for financial corrections; void/archive/close states instead of deletion; no history/audit truncation without sealing; tests proving no physical-delete path.
-2. **BT-007-01 managed merchants** — extend payees into the merchant directory (stable ids, normalization, duplicates, status, defaults, contact details); searchable merchant dropdown with inline creation in quick entry and bills; Merchants tab create/edit/archive/reopen/history.
-3. **BT-011-03 theme picker** — port TaskTracker's canonical picker (archaeology of `T:` `main` in progress) into the account menu and My settings.
-4. **BT-011-04 category colours** and **Bills / Planning UI** (BT-008-01/02), then an independent security review of the bills, budgets and forecast surfaces and a UX/accessibility retest.
-5. Continue BT-009/010 → BT-011-02/012/007 imports, updating this file at each checkpoint.
+1. **BT-011-05 follow-up** — apply the independent security review of the icon catalogue and upload; a UX/accessibility pass over the icon picker and the Icons for types card in a real browser; redeploy preview and verify `app.commit`.
+2. **BT-001-05 remainder** — restore replace supersedes instead of removing (A7) with a restore record; lifecycle states for budgets, members and workspaces; implement ADR-003; idempotency ruling (A8); backup retention/immutability (A11/A12, infrastructure, needs Terry).
+3. **BT-011-02 Tiptap editor** (archaeology of `T:` `main` first), then receipts/attachments, imports and reconciliation.
+4. **BT-009 shared expenses and settlement, BT-010 trips and currency** (icons for trips and trip accounts follow), debt planning, goals and alerts.
+5. **BT-012 reports and exports** (icons in reports, legends and exports follow), site settings UI, offline, rate limiting, scheduled backups and Key Vault, the remaining 13 TaskTracker palettes.
+6. **Needs Terry:** add the preview Google redirect URI; any Production, DNS or Staging decision.

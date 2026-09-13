@@ -9,11 +9,14 @@ import { openModal } from "../modal.js";
 import { sliceFor } from "../../core/store.js";
 import { formatDate, todayIso, MERCHANT_TYPE_LABELS } from "../../core/format.js";
 import { normalize } from "../merchantpicker.js";
+import { withIcon, iconLabel, defaultIconFor } from "../icons.js";
+import { createIconPicker, iconChange } from "../iconpicker.js";
 
 const FIELD_LABELS = {
   name: "Name", aliases: "Other names", type: "Type", contact: "Contact details", customerNumber: "Customer number",
   openedOn: "Date opened", closedOn: "Date closed", closeReason: "Reason closed", status: "Status", visibility: "Sharing",
   defaultCategoryId: "Default category", defaultAccountId: "Default account", defaultCurrency: "Default currency", tags: "Tags", notes: "Notes",
+  icon: "Icon",
 };
 const stamp = (iso) => String(iso || "").replace("T", " ").slice(0, 16);
 
@@ -60,7 +63,7 @@ export function createView(ctx) {
         return stats.map((st, i) => el("tr", {}, [
           el("th", { scope: "row", "data-label": "Merchant" }, i === 0
             ? [
-              el("strong", { text: p.name }), " ",
+              withIcon(p.icon || "store", el("strong", { text: p.name })), " ",
               p.visibility === "shared" ? badge("Shared", "shared") : badge("Private", "private"), " ",
               p.status === "closed" ? badge(p.closedOn ? `Closed ${formatDate(p.closedOn, dateFormat)}` : "Closed", "closed") : null,
               p.type && p.type !== "other" ? el("div", { class: "muted small", text: MERCHANT_TYPE_LABELS[p.type] || p.type }) : null,
@@ -113,6 +116,7 @@ function historyList(merchant, lookups) {
         const parts = ["website", "address", "phone", "email"].filter((k) => ((c.from || {})[k] || "") !== ((c.to || {})[k] || ""));
         return `Contact details: ${parts.join(", ") || "updated"} changed`;
       }
+      if (c.field === "icon") return `Icon: ${c.from ? iconLabel(c.from) : "Default"} → ${c.to ? iconLabel(c.to) : "Default"}`;
       return `${FIELD_LABELS[c.field] || c.field}: ${describeValue(c.from, lookups)} → ${describeValue(c.to, lookups)}`;
     }).join("; ");
     return el("li", {}, [el("div", { class: "muted small", text: `${stamp(h.at)} · ${h.by}` }), el("div", { text: what }), h.reason ? el("div", { class: "muted small", text: `Reason: ${h.reason}` }) : null]);
@@ -137,6 +141,13 @@ export function openMerchantEditor(ctx, merchant = null) {
   const visibilityEditable = !editing || (m.visibility === "private" && m.ownedBySelf && canShare);
   if (!visibilityEditable) visibility.disabled = true;
   const type = select(Object.entries(MERCHANT_TYPE_LABELS).map(([value, label]) => ({ value, label })), m.type || "other");
+  // The icon (BT-011-05); "Default" follows the chosen type.
+  const chosenIcon = editing && m.iconSource === "record" ? m.icon : null;
+  const iconBox = el("div");
+  let iconPick = null;
+  const makeIconPicker = (value) => { iconPick = createIconPicker({ value, inherited: defaultIconFor("merchant", type.value), name: m.name || "New merchant" }); mount(iconBox, iconPick.element); };
+  makeIconPicker(chosenIcon);
+  type.addEventListener("change", () => makeIconPicker(iconPick.getValue()));
   const website = input({ type: "url", value: c.website || "", placeholder: "https://" });
   const phone = input({ type: "tel", value: c.phone || "" });
   const email = input({ type: "email", value: c.email || "" });
@@ -169,13 +180,15 @@ export function openMerchantEditor(ctx, merchant = null) {
       openedOn: openedOn.value || null, defaultCategoryId: defaultCategory.value || null, defaultAccountId: defaultAccount.value || null,
       defaultCurrency: defaultCurrency.value.trim().toUpperCase() || null, tags: list(tags.value), notes: notes.value,
     };
-    if (!editing) return { ...values, visibility: visibility.value, ...(allowDuplicate ? { allowDuplicate: true } : {}) };
+    if (!editing) return { ...values, visibility: visibility.value, ...(iconPick.getValue() ? { icon: iconPick.getValue() } : {}), ...(allowDuplicate ? { allowDuplicate: true } : {}) };
     // Only changed fields are sent, so the history records real changes.
     const out = { payeeId: m.id, revision: m.revision };
     const same = (a, b) => JSON.stringify(a ?? null) === JSON.stringify(b ?? null);
     const before = { name: m.name, type: m.type || "other", aliases: m.aliases || [], contact: { website: c.website || "", address: c.address || "", phone: c.phone || "", email: c.email || "" }, customerNumber: m.customerNumber || "", openedOn: m.openedOn || null, defaultCategoryId: m.defaultCategoryId || null, defaultAccountId: m.defaultAccountId || null, defaultCurrency: m.defaultCurrency || null, tags: m.tags || [], notes: m.notes || "" };
     for (const [k, v] of Object.entries(values)) if (!same(v, before[k])) out[k] = v;
     if (visibilityEditable && visibility.value !== m.visibility) out.visibility = visibility.value;
+    const icon = iconChange(chosenIcon, iconPick.getValue());
+    if (icon !== undefined) out.icon = icon;
     if (reason.value.trim()) out.reason = reason.value.trim();
     if (allowDuplicate) out.allowDuplicate = true;
     return out;
@@ -187,7 +200,7 @@ export function openMerchantEditor(ctx, merchant = null) {
   const anyway = button("Save as a separate merchant", () => void submit(true), { attrs: { hidden: true } });
   const cancel = button("Cancel", () => modal.close());
   const form = el("form", { class: "form-grid", novalidate: true, id: formId }, [
-    field("Name", name), field("Sharing", visibility, { help: editing && !visibilityEditable ? "A shared merchant stays shared." : undefined }), field("Type", type),
+    field("Name", name), field("Sharing", visibility, { help: editing && !visibilityEditable ? "A shared merchant stays shared." : undefined }), field("Type", type), iconBox,
     field("Other names", aliases, { help: "Names you might search for, like an abbreviation." }),
     el("details", { class: "more" }, [el("summary", { text: "Contact and account details" }), el("div", { class: "form-grid" }, [
       field("Website", website), field("Phone", phone), field("Email", email), field("Customer or account number", customerNumber), field("Date opened", openedOn), field("Address", address, { wide: true }),

@@ -21,8 +21,11 @@ const money = require('../_shared/money');
 const fields = require('../_shared/fields');
 const audit = require('../_shared/audit');
 const merchants = require('../_shared/merchants');
+const icons = require('../_shared/icons');
 
-const DETAIL_KEYS = ['name', 'type', 'aliases', 'contact', 'customerNumber', 'openedOn', 'defaultCategoryId', 'defaultAccountId', 'defaultCurrency', 'tags', 'notes'];
+const DETAIL_KEYS = ['name', 'type', 'aliases', 'contact', 'customerNumber', 'openedOn', 'defaultCategoryId', 'defaultAccountId', 'defaultCurrency', 'tags', 'notes', 'icon'];
+// The icon catalogue is read only when an icon is being chosen (BT-011-05).
+const catalogFor = async (ctx, body) => (body.icon !== undefined ? (await icons.readCatalog(ctx.storage)).catalog : null);
 const EMPTY_CONTACT = Object.freeze({ website: '', address: '', phone: '', email: '' });
 
 function aliases(value) {
@@ -80,6 +83,8 @@ function view(doc, p, principal, member, stats, now) {
     id: p.id, name: p.name, normalizedName: p.normalizedName || merchants.normalizeName(p.name), visibility: p.visibility,
     status: merchants.statusOf(p), ownedBySelf: p.ownerSubject === principal.subject, referenceOnly: !full, stats: stats || [],
     aliases: [], notes: '', defaultCategoryId: null,
+    // Seen by name only: a generic merchant icon, never the owner's choice or type.
+    icon: icons.DEFAULTS.merchant.other, iconSource: 'default',
   };
   if (!full) return out;
   const acct = p.defaultAccountId && (doc.accounts || []).find((a) => a.id === p.defaultAccountId && !a.deletedAt);
@@ -90,6 +95,7 @@ function view(doc, p, principal, member, stats, now) {
     openedOn: p.openedOn || null, closedOn: p.closedOn || null, closeReason: p.closeReason || '',
     defaultAccountId: acct && can(doc, principal, acct, 'view-transactions', now) ? acct.id : null,
     defaultCurrency: p.defaultCurrency || null, tags: p.tags || [], revision: p.revision || 1,
+    ...icons.effective('merchant', p, doc),
     canEdit: !!member && mayEdit(p, member),
     // Others see a once-private merchant's history only from when it was shared, and without the
     // values it had before (security review SEC-B11).
@@ -188,6 +194,7 @@ function suggest(doc, ctx, req, txns, now) {
 async function create(ctx, req) {
   const wsId = requireId(query(req, 'workspaceId'), 'workspaceId');
   const body = fields.onlyKeys(readBody(req), [...DETAIL_KEYS, 'visibility', 'accountId', 'allowDuplicate']);
+  const catalog = await catalogFor(ctx, body);
   const { result } = await store.mutateWorkspace(ctx, wsId, (doc, member) => {
     const now = ctx.now();
     const nowIso = ctx.nowIso();
@@ -217,6 +224,7 @@ async function create(ctx, req) {
       openedOn: fields.date(body.openedOn, 'Date opened'), closedOn: null, closeReason: '', status: 'active',
       defaultCategoryId: category(doc, body.defaultCategoryId), defaultAccountId: defaultAccount(doc, ctx.principal, body.defaultAccountId, visibility, now),
       defaultCurrency: currency(body.defaultCurrency), tags: fields.tags(body.tags), notes: fields.text(body.notes, { field: 'Notes', max: 5000, multiline: true }),
+      icon: body.icon === undefined ? null : icons.validateChoice(catalog, body.icon),
       attachments: [], createdAt: nowIso, createdBy: member.subject, revision: 1, deletedAt: null,
       history: [{ revision: 1, at: nowIso, by: member.subject, changes: [{ field: 'create' }] }],
     };
@@ -266,6 +274,7 @@ async function patch(ctx, req) {
   const wsId = requireId(query(req, 'workspaceId'), 'workspaceId');
   const body = fields.onlyKeys(readBody(req), ['payeeId', 'revision', 'reason', 'visibility', 'allowDuplicate', ...DETAIL_KEYS]);
   const id = requireId(body.payeeId, 'payeeId');
+  const catalog = await catalogFor(ctx, body);
   const { result } = await store.mutateWorkspace(ctx, wsId, (doc, member) => {
     const now = ctx.now();
     const nowIso = ctx.nowIso();
@@ -303,6 +312,7 @@ async function patch(ctx, req) {
     if (body.defaultCurrency !== undefined) set('defaultCurrency', currency(body.defaultCurrency));
     if (body.tags !== undefined) set('tags', fields.tags(body.tags));
     if (body.notes !== undefined) set('notes', fields.text(body.notes, { field: 'Notes', max: 5000, multiline: true }));
+    if (body.icon !== undefined) set('icon', icons.validateChoice(catalog, body.icon, { current: p.icon || null }));
     commit(doc, p, member, nowIso, changes, reason, 'payee.update', ctx.env);
     return { payee: view(doc, p, ctx.principal, member, [], now) };
   });

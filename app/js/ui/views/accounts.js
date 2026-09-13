@@ -7,6 +7,8 @@ import { openModal } from "../modal.js";
 import { sliceFor } from "../../core/store.js";
 import { newIdempotencyKey } from "../../core/api.js";
 import { ACCOUNT_TYPE_LABELS, todayIso } from "../../core/format.js";
+import { withIcon, defaultIconFor } from "../icons.js";
+import { createIconPicker, iconChange } from "../iconpicker.js";
 
 const CURRENCIES = ["EUR", "USD", "GBP", "CHF", "SEK", "NOK", "DKK", "PLN", "CZK", "HUF", "CAD", "AUD", "NZD", "JPY", "SGD", "HKD", "INR", "ZAR"];
 const GRANTABLE = [["view-balances", "See balance"], ["view-transactions", "See entries"], ["create", "Add entries"], ["edit", "Edit entries"], ["delete", "Delete entries"], ["comment", "Comment"], ["download-receipts", "Download receipts"], ["export", "Export"]];
@@ -28,7 +30,7 @@ export function createView(ctx) {
       el("thead", {}, [el("tr", {}, ["Account", "Type", "Who can see it", "Balance", "Actions"].map((h) => el("th", { scope: "col", class: h === "Balance" ? "num" : "", text: h })))]),
       el("tbody", {}, accounts.data.accounts.filter((a) => !a.deletedAt).map((a) => el("tr", {}, [
         el("th", { scope: "row", "data-label": "Account" }, [
-          el("strong", { text: a.name }), a.status === "closed" ? " " : null, a.status === "closed" ? badge("Closed", "closed") : null,
+          withIcon(a.icon, el("strong", { text: a.name })), a.status === "closed" ? " " : null, a.status === "closed" ? badge("Closed", "closed") : null,
           a.institution ? el("div", { class: "muted small", text: `${a.institution}${a.maskedNumber ? ` ·· ${a.maskedNumber}` : ""}` }) : null,
         ]),
         el("td", { "data-label": "Type", text: `${ACCOUNT_TYPE_LABELS[a.type] || a.type} · ${a.currency}` }),
@@ -36,6 +38,7 @@ export function createView(ctx) {
         el("td", { "data-label": "Balance", class: "num" }, [a.balance !== undefined ? money(a.balance, a.currency, prefs) : el("span", { class: "muted small", text: "Not shared with you" })]),
         el("td", { "data-label": "" }, [el("div", { class: "row-actions" }, [
           button("Who can see this", () => openWhoCanSee(ctx, a), { small: true, attrs: { "aria-label": `Who can see ${a.name}` } }),
+          canManage(a, role) ? button("Edit", () => openEditAccount(ctx, a), { small: true, attrs: { "aria-label": `Edit ${a.name}` } }) : null,
           canManage(a, role) ? button(a.status === "closed" ? "Reopen" : "Close", () => openLifecycle(ctx, a), { small: true, attrs: { "aria-label": `${a.status === "closed" ? "Reopen" : "Close"} ${a.name}` } }) : null,
         ])]),
       ]))),
@@ -84,10 +87,45 @@ function openLifecycle(ctx, account) {
   });
 }
 
+// Name and icon (BT-011-05). Every change is kept in the account's history with the reason.
+function openEditAccount(ctx, account) {
+  const name = input({ required: true, maxlength: "80", value: account.name, autocomplete: "off" });
+  const chosen = account.iconSource === "record" ? account.icon : null;
+  const iconPick = createIconPicker({ value: chosen, inherited: chosen ? defaultIconFor("account", account.type) : account.icon, name: account.name });
+  const reason = input({ maxlength: "200", placeholder: "Optional", autocomplete: "off" });
+  const save = button("Save changes", async () => {
+    modal.setError("");
+    if (!name.value.trim()) { name.setAttribute("aria-invalid", "true"); name.setAttribute("aria-errormessage", modal.errorId); modal.setError("Give the account a name."); name.focus(); return; }
+    const body = { accountId: account.id, revision: account.revision };
+    if (name.value.trim() !== account.name) body.name = name.value.trim();
+    const icon = iconChange(chosen, iconPick.getValue());
+    if (icon !== undefined) body.icon = icon;
+    if (Object.keys(body).length === 2) { announce("Nothing changed."); modal.close(); return; }
+    if (reason.value.trim()) body.reason = reason.value.trim();
+    modal.setBusy(true);
+    const out = await ctx.store.actions.write((ws) => ctx.api.updateAccount(ws, body), ["accounts"]);
+    modal.setBusy(false);
+    if (!out.ok) { modal.setError(out.error); return; }
+    announce("Account saved.");
+    modal.close();
+  }, { variant: "primary" });
+  const modal = openModal({
+    title: `Edit ${account.name}`,
+    body: [el("div", { class: "form-grid" }, [field("Name", name), iconPick.element, field("Reason for this change", reason, { wide: true })])],
+    actions: [button("Cancel", () => modal.close()), save],
+  });
+}
+
 function openAddAccount(ctx) {
   const key = newIdempotencyKey();
   const name = input({ required: true, maxlength: "80" });
   const type = select(Object.entries(ACCOUNT_TYPE_LABELS).map(([value, label]) => ({ value, label })), "checking");
+  // The "Default" icon follows the chosen type (BT-011-05).
+  const iconBox = el("div");
+  let iconPick = null;
+  const makeIconPicker = (value = null) => { iconPick = createIconPicker({ value, inherited: defaultIconFor("account", type.value), name: "New account" }); mount(iconBox, iconPick.element); };
+  makeIconPicker();
+  type.addEventListener("change", () => makeIconPicker(iconPick.getValue()));
   const currency = select(CURRENCIES.map((c) => ({ value: c, label: c })), (ctx.store.getState().workspaces.find((w) => w.id === ctx.store.getState().selectedWorkspaceId) || {}).reportingCurrency || "EUR");
   const visibility = select([{ value: "private", label: "Private — only you (you can share it later)" }, { value: "shared", label: "Shared — every workspace member per their role" }], "private");
   const opening = input({ inputmode: "decimal", placeholder: "0.00" });
@@ -101,6 +139,7 @@ function openAddAccount(ctx) {
     if (opening.value.trim()) body.openingBalance = opening.value.trim();
     if (institution.value.trim()) body.institution = institution.value.trim();
     if (last.value.trim()) body.maskedNumber = last.value.trim();
+    if (iconPick.getValue()) body.icon = iconPick.getValue();
     const out = await ctx.store.actions.write((ws) => ctx.api.createAccount(ws, body, key), ["accounts"]);
     modal.setBusy(false);
     if (!out.ok) { modal.setError(out.error); return; }
@@ -110,7 +149,7 @@ function openAddAccount(ctx) {
   const modal = openModal({
     title: "Add account",
     body: [el("div", { class: "form-grid" }, [
-      field("Name", name), field("Type", type), field("Currency", currency),
+      field("Name", name), field("Type", type), iconBox, field("Currency", currency),
       field("Who can see it", visibility, { wide: true, help: "New accounts are private by default. Workspace owners cannot see private accounts. Only owners and managers can create shared accounts." }),
       field("Opening balance", opening, { help: "Loans and other debts: enter the amount owed as a negative number, e.g. -20000.00." }),
       field("Opening date", openingDate), field("Institution", institution), field("Account number", last, { help: "Never store a full account or card number." }),

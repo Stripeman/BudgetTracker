@@ -12,6 +12,7 @@ const site = require('../_shared/site');
 const money = require('../_shared/money');
 const fields = require('../_shared/fields');
 const colors = require('../_shared/colors');
+const icons = require('../_shared/icons');
 
 // Personal category colours (BT-011-04): { <categoryId>: "#rrggbb" }, validated like workspace
 // colours. Keys must be category ids, so no key can reach an object's prototype.
@@ -23,6 +24,22 @@ function categoryColors(v) {
   for (const [id, hex] of entries) {
     if (!/^cat_[A-Za-z0-9_-]{1,64}$/.test(id)) throw badRequest('Category id is not valid.', 'invalid_id');
     out[id] = colors.validateColor(hex, 'Category colour');
+  }
+  return out;
+}
+
+// Personal category icons (BT-011-05): { <categoryId>: <iconId> }, validated against the catalogue.
+// An icon already in the person's preferences stays accepted even if it was later switched off.
+function categoryIcons(v, { catalog, stored }) {
+  if (!v || typeof v !== 'object' || Array.isArray(v)) throw badRequest('Category icons must be an object.', 'invalid_field');
+  const entries = Object.entries(v);
+  if (entries.length > 500) throw badRequest('Too many category icons.', 'invalid_field');
+  const before = (stored && stored.categoryIcons) || {};
+  const out = {};
+  for (const [id, icon] of entries) {
+    if (!/^cat_[A-Za-z0-9_-]{1,64}$/.test(id)) throw badRequest('Category id is not valid.', 'invalid_id');
+    if (icon === null) throw badRequest('Leave a category out to use the workspace icon.', 'invalid_icon');
+    out[id] = icons.validateChoice(catalog, icon, { current: Object.prototype.hasOwnProperty.call(before, id) ? before[id] : null, field: 'Category icon' });
   }
   return out;
 }
@@ -45,8 +62,9 @@ const VALIDATORS = {
   },
   favoritePayees: (v) => { if (!Array.isArray(v) || v.length > 50 || !v.every(isSafeId)) throw badRequest('Favourite payees are not valid.', 'invalid_field'); return [...new Set(v)]; },
   categoryColors,
+  categoryIcons,
 };
-const BUILT_IN = { locale: 'en', timeZone: 'UTC', dateFormat: 'iso', numberFormat: '1,234.56', displayCurrency: null, balanceMasking: false, defaultWorkspaceId: null, dashboardWidgets: ['balances', 'upcoming', 'budgets', 'recent'], favoritePayees: [], categoryColors: {} };
+const BUILT_IN = { locale: 'en', timeZone: 'UTC', dateFormat: 'iso', numberFormat: '1,234.56', displayCurrency: null, balanceMasking: false, defaultWorkspaceId: null, dashboardWidgets: ['balances', 'upcoming', 'budgets', 'recent'], favoritePayees: [], categoryColors: {}, categoryIcons: {} };
 
 function resolve(stored, siteDoc) {
   const effective = {};
@@ -75,8 +93,13 @@ async function put(ctx, req) {
   for (const key of Object.keys(body)) {
     if ((siteDoc.locked || []).includes(key)) throw forbidden(`${key} is set by the site and cannot be changed personally.`);
   }
+  const extra = {};
+  if (body.categoryIcons !== undefined && body.categoryIcons !== null) {
+    extra.catalog = (await icons.readCatalog(ctx.storage)).catalog;
+    extra.stored = (await store.ensureUser(ctx)).preferences || {};
+  }
   const clean = {};
-  for (const [key, value] of Object.entries(body)) clean[key] = value === null ? null : VALIDATORS[key](value);
+  for (const [key, value] of Object.entries(body)) clean[key] = value === null ? null : VALIDATORS[key](value, extra);
   const stored = await store.mutateUser(ctx, (user) => {
     const prefs = { ...(user.preferences || {}) };
     for (const [key, value] of Object.entries(clean)) { if (value === null) delete prefs[key]; else prefs[key] = value; }

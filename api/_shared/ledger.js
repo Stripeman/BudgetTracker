@@ -10,6 +10,7 @@ const { badRequest } = require('./http');
 const money = require('./money');
 const fields = require('./fields');
 const { capabilitiesFor } = require('./authz');
+const icons = require('./icons');
 
 const ACCOUNT_TYPES = Object.freeze(['checking', 'savings', 'cash', 'credit-card', 'loan', 'mortgage',
   'merchant-credit', 'investment', 'other-asset', 'other-liability']);
@@ -157,6 +158,7 @@ function accountView(doc, principal, account, now) {
     openingDate: account.openingDate, status: account.status || 'open', deletedAt: account.deletedAt || null,
     ownedBySelf: account.visibility === 'private' && account.ownerSubject === principal.subject,
     capabilities: [...caps].sort(), notes: account.notes || '', revision: account.revision || 1,
+    ...icons.effective('account', account, doc),
   };
   if (caps.has('view-balances')) {
     out.openingBalance = money.toDecimal(account.openingBalanceMinor, account.currency);

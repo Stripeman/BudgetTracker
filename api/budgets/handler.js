@@ -15,8 +15,11 @@ const fields = require('../_shared/fields');
 const audit = require('../_shared/audit');
 const budgeting = require('../_shared/budgeting');
 const ledger = require('../_shared/ledger');
+const icons = require('../_shared/icons');
 
 const PERIODS = ['monthly', 'weekly', 'biweekly'];
+// The icon catalogue is read only when an icon is being chosen (BT-011-05).
+const catalogFor = async (ctx, body) => (body.icon !== undefined ? (await icons.readCatalog(ctx.storage)).catalog : null);
 
 function visibleTo(budget, member) {
   return !budget.deletedAt && (budget.scope === 'shared' || budget.ownerSubject === member.subject);
@@ -48,6 +51,7 @@ function view(doc, budget, member, today, now) {
   const lineView = (l) => ({ categoryId: l.categoryId, amount: money.toDecimal(l.amountMinor, budget.currency), rollover: l.rollover });
   return {
     id: budget.id, name: budget.name, scope: budget.scope, currency: budget.currency, period: terms.period, startDate: terms.startDate,
+    ...icons.effective('budget', budget, doc),
     revision: budget.revision, ownedBySelf: budget.ownerSubject === member.subject, canEdit: mayEdit(budget, member),
     lines: terms.lines.map(lineView),
     versions: (budget.versions || []).map((v) => ({ effectiveFrom: v.effectiveFrom, period: v.period, reason: v.reason || '', by: v.createdBy ? names.get(v.createdBy) || 'Former member' : null, lines: v.lines.map(lineView) })),
@@ -65,7 +69,8 @@ async function list(ctx, req) {
 
 async function create(ctx, req) {
   const wsId = requireId(query(req, 'workspaceId'), 'workspaceId');
-  const body = fields.onlyKeys(readBody(req), ['name', 'scope', 'currency', 'period', 'startDate', 'lines']);
+  const body = fields.onlyKeys(readBody(req), ['name', 'scope', 'currency', 'period', 'startDate', 'lines', 'icon']);
+  const catalog = await catalogFor(ctx, body);
   const { result } = await store.mutateWorkspace(ctx, wsId, (doc, member) => {
     const scope = fields.oneOf(body.scope, ['shared', 'private'], 'Scope', 'private');
     if (scope === 'shared' && !roleAtLeast(member.role, 'manager')) throw forbidden('Only owners and managers can create shared budgets.');
@@ -77,6 +82,7 @@ async function create(ctx, req) {
       period: fields.oneOf(body.period, PERIODS, 'Period', 'monthly'),
       startDate: fields.date(body.startDate, 'Start date') || `${nowIso.slice(0, 7)}-01`,
       lines: validLines(body.lines, currency, doc), ownerSubject: member.subject, createdBy: member.subject, createdAt: nowIso, revision: 1, deletedAt: null,
+      icon: body.icon === undefined ? null : icons.validateChoice(catalog, body.icon),
     };
     budget.versions = [{ effectiveFrom: budget.startDate, period: budget.period, startDate: budget.startDate, lines: budget.lines, createdAt: nowIso, createdBy: member.subject, reason: '' }];
     doc.budgets = [...(doc.budgets || []), budget];
@@ -96,13 +102,23 @@ function locate(doc, member, id) {
 
 async function patch(ctx, req) {
   const wsId = requireId(query(req, 'workspaceId'), 'workspaceId');
-  const body = fields.onlyKeys(readBody(req), ['budgetId', 'revision', 'name', 'lines', 'period', 'startDate', 'effectiveFrom', 'reason']);
+  const body = fields.onlyKeys(readBody(req), ['budgetId', 'revision', 'name', 'lines', 'period', 'startDate', 'effectiveFrom', 'reason', 'icon']);
   const id = requireId(body.budgetId, 'budgetId');
+  const catalog = await catalogFor(ctx, body);
   const { result } = await store.mutateWorkspace(ctx, wsId, (doc, member) => {
     const b = locate(doc, member, id);
     if (body.revision !== b.revision) throw conflict('This budget changed since you loaded it. Reload to see the latest version.', 'stale_revision');
     const changed = [];
     if (body.name !== undefined) { b.name = fields.text(body.name, { field: 'Name', max: 80, required: true }); changed.push('name'); }
+    if (body.icon !== undefined) {
+      const icon = icons.validateChoice(catalog, body.icon, { current: b.icon || null });
+      if (icon !== (b.icon || null)) {
+        // Before and after are kept (BT-001-05).
+        b.iconHistory = [...(b.iconHistory || []), { at: ctx.nowIso(), by: member.subject, from: b.icon || null, to: icon }];
+        b.icon = icon;
+        changed.push('icon');
+      }
+    }
     if (body.lines !== undefined || body.period !== undefined || body.startDate !== undefined) {
       // A plan change is a new version from a date — by default the start of the current period —
       // so earlier periods keep the plan they had (audit B13). Earlier versions are never edited.
