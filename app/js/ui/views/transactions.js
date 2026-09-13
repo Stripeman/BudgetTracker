@@ -13,7 +13,7 @@
 // merchants are not offered, but an entry keeps the merchant it already has. Edits send only the
 // fields that changed, and an entry keeps its category even if that category has been archived.
 import { el, mount, announce } from "../dom.js";
-import { stateView, money, button, field, input, select, badge, categoryLabel } from "../components.js";
+import { stateView, money, button, field, input, pickerSelect, categoryBadges, iconBadges, badge, categoryLabel } from "../components.js";
 import { categoryIndex } from "../../core/categories.js";
 import { openModal } from "../modal.js";
 import { createMerchantPicker } from "../merchantpicker.js";
@@ -22,7 +22,7 @@ import { newIdempotencyKey } from "../../core/api.js";
 import { messageFor } from "../../core/errors.js";
 import { evaluateAmount, isPlainAmount } from "../../core/calc.js";
 import { formatDate, formatAmount, todayIso, KIND_LABELS, MERCHANT_TYPE_LABELS } from "../../core/format.js";
-import { withIcon } from "../icons.js";
+import { icon, withIcon, defaultIconFor } from "../icons.js";
 import { amountWithDirection, transferLabel } from "../components.js";
 
 export { amountWithDirection };
@@ -115,17 +115,18 @@ export function createView(ctx) {
       announce("Filters cleared.");
     }, { small: true });
     // History filters keep closed merchants and archived categories, labelled, so their history
-    // stays reachable (BT-001-05).
+    // stays reachable (BT-001-05). The dropdowns are TaskTracker's command picker (BT-004-05), with
+    // the icon or colour each record shows everywhere else.
     mount(filterGrid,
       filterControl("Search", "q", input({ type: "search", placeholder: "Merchant, note or tag" })),
-      filterControl("Merchant", "payeeId", select(any.concat(payees.payees.map((p) => ({ value: p.id, label: p.status === "closed" ? `${p.name} (closed)` : p.name }))))),
-      filterControl("Account", "accountId", select(any.concat(accounts.accounts.map((a) => ({ value: a.id, label: a.name }))))),
-      filterControl("Category", "categoryId", select(any.concat(categories.categories.map((c) => ({ value: c.id, label: c.archived ? `${c.name} (archived)` : c.name }))))),
+      filterControl("Merchant", "payeeId", pickerSelect(any.concat(payees.payees.map((p) => ({ value: p.id, label: p.status === "closed" ? `${p.name} (closed)` : p.name }))), "", {}, { badgeOf: iconBadges(payees.payees, "store") })),
+      filterControl("Account", "accountId", pickerSelect(any.concat(accounts.accounts.map((a) => ({ value: a.id, label: a.name }))), "", {}, { badgeOf: iconBadges(accounts.accounts) })),
+      filterControl("Category", "categoryId", pickerSelect(any.concat(categories.categories.map((c) => ({ value: c.id, label: c.archived ? `${c.name} (archived)` : c.name }))), "", {}, { badgeOf: categoryBadges(state) })),
       filterControl("From", "from", input({ type: "date" })),
       filterControl("To", "to", input({ type: "date" })),
       filterControl("Min amount", "min", input({ inputmode: "decimal", placeholder: "0.00" })),
       filterControl("Max amount", "max", input({ inputmode: "decimal" })),
-      filterControl("Status", "status", select(any.concat(Object.entries(STATUS_LABELS).map(([value, label]) => ({ value, label }))))),
+      filterControl("Status", "status", pickerSelect(any.concat(Object.entries(STATUS_LABELS).map(([value, label]) => ({ value, label }))), "", {}, { search: false })),
       el("div", { class: "filters__actions" }, [clear]),
     );
   }
@@ -325,16 +326,19 @@ export function openQuickEntry(ctx, { transaction } = {}) {
 
   const amount = input({ inputmode: "decimal", autocomplete: "off", required: true, placeholder: "0.00 or 12.50+3.20", value: editing ? transaction.amount.replace(/^-/, "") : "" });
   const amountPreview = el("p", { class: "field__help", "aria-live": "polite" });
-  const account = select(accounts.map((a) => ({ value: a.id, label: `${a.name} (${a.currency})` })), editing ? transaction.accountId : (accounts[0] || {}).id, { disabled: editing });
-  const category = select([{ value: "", label: "Uncategorized" }].concat(categories.map((c) => ({ value: c.id, label: c.archived ? `${c.name} (archived)` : c.name }))), editing ? transaction.categoryId || "" : "", { disabled: isTransfer });
+  // The dropdowns are TaskTracker's command picker (BT-004-05); suggestions, hints and the reversal
+  // lock below still work on the selects, and the pickers follow them.
+  const accountMarks = iconBadges(allAccounts);
+  const account = pickerSelect(accounts.map((a) => ({ value: a.id, label: `${a.name} (${a.currency})` })), editing ? transaction.accountId : (accounts[0] || {}).id, { disabled: editing }, { badgeOf: accountMarks });
+  const category = pickerSelect([{ value: "", label: "Uncategorized" }].concat(categories.map((c) => ({ value: c.id, label: c.archived ? `${c.name} (archived)` : c.name }))), editing ? transaction.categoryId || "" : "", { disabled: isTransfer }, { badgeOf: categoryBadges(state) });
   const date = input({ type: "date", value: editing ? transaction.date : todayIso() });
-  const kind = select(Object.entries(KIND_LABELS).map(([value, label]) => ({ value, label })), editing ? transaction.kind : "expense", { disabled: isTransfer });
-  const toAccount = select(accounts.map((a) => ({ value: a.id, label: `${a.name} (${a.currency})` })), "");
+  const kind = pickerSelect(Object.entries(KIND_LABELS).map(([value, label]) => ({ value, label })), editing ? transaction.kind : "expense", { disabled: isTransfer }, { search: false });
+  const toAccount = pickerSelect(accounts.map((a) => ({ value: a.id, label: `${a.name} (${a.currency})` })), "", {}, { badgeOf: accountMarks });
   const toAmount = input({ inputmode: "decimal", placeholder: "Amount received" });
   const rate = input({ inputmode: "decimal", placeholder: "Exchange rate" });
   const tags = input({ placeholder: "Comma separated", value: editing ? transaction.tags.join(", ") : "" });
   const notes = el("textarea", { class: "field__input", maxlength: "5000", text: editing ? transaction.notes : "" });
-  const status = select([{ value: "pending", label: "Pending" }, { value: "cleared", label: "Cleared" }].concat(editing ? [{ value: "reconciled", label: "Reconciled" }] : []), editing ? transaction.status : "pending");
+  const status = pickerSelect([{ value: "pending", label: "Pending" }, { value: "cleared", label: "Cleared" }].concat(editing ? [{ value: "reconciled", label: "Reconciled" }] : []), editing ? transaction.status : "pending", {}, { search: false });
   // Corrections keep their reason with the entry's history (BT-001-05).
   const reason = input({ maxlength: "200", autocomplete: "off", placeholder: "Why is this being changed?" });
 
@@ -381,7 +385,8 @@ export function openQuickEntry(ctx, { transaction } = {}) {
   }
 
   const createName = input({ maxlength: "80", autocomplete: "off" });
-  const createType = select(Object.entries(MERCHANT_TYPE_LABELS).map(([value, label]) => ({ value, label })), "other");
+  // Each merchant type with its default icon (BT-011-05); fourteen types, so the picker searches.
+  const createType = pickerSelect(Object.entries(MERCHANT_TYPE_LABELS).map(([value, label]) => ({ value, label })), "other", {}, { search: false, badgeOf: (v) => icon(defaultIconFor("merchant", v)) });
   const createNote = el("p", { class: "field__help" });
   const createError = el("p", { class: "error-text", role: "alert", hidden: true, id: `${key}-create-error` });
   const createActions = el("div", { class: "inline-create__actions" });
