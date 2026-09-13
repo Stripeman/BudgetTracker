@@ -15,8 +15,11 @@ test('BT-003-03 blocks private paths regardless of ignore rules', () => {
     ['photos/receipt.jpg', 'image-outside-assets']]) {
     assert.ok(rules(scanPath(file)).includes(rule), `${file} should raise ${rule}`);
   }
+  assert.ok(rules(scanPath('backups/ws.json')).includes('private-data-directory'), 'root backups/ still blocked');
+  assert.ok(rules(scanPath('api/__blobstorage__/x')).includes('emulator-state'), 'emulator state blocked at any depth');
   for (const file of ['.env.example', 'api/test/fixtures/fictional-bank.csv', 'app/assets/icon.png',
-    'docs/PROJECT_BRIEF.md', 'api/_shared/money.js']) {
+    'docs/PROJECT_BRIEF.md', 'api/_shared/money.js', 'api/backups/handler.js', 'api/backups/function.json',
+    'scripts/recovery/drill.cjs']) {
     assert.deepEqual(scanPath(file), [], `${file} should be allowed`);
   }
 });

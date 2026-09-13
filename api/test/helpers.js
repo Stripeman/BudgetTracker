@@ -21,11 +21,19 @@ function principalHeader(user, overrides = {}) {
   return Buffer.from(JSON.stringify(p)).toString('base64');
 }
 
+// Fictional test-only backup keys, generated per process; never real key material.
+const { randomBytes } = require('node:crypto');
+const TEST_KEYS = { k1: randomBytes(32).toString('base64'), k2: randomBytes(32).toString('base64') };
+
 function harness(options = {}) {
   const storage = options.storage || createMemoryStorage();
+  const backupStorage = options.backupStorage || createMemoryStorage();
   let t = Date.parse(options.start || '2026-09-13T10:00:00Z');
   const clock = { now: () => t, advance: (ms) => { t += ms; }, iso: () => new Date(t).toISOString() };
-  const env = { BT_SITE_ADMINS: 'dave@example.com', BT_ENVIRONMENT: 'local', ...(options.env || {}) };
+  const env = {
+    BT_SITE_ADMINS: 'dave@example.com', BT_ENVIRONMENT: 'local',
+    BT_BACKUP_KEYS: `k1:${TEST_KEYS.k1}`, BT_BACKUP_ACTIVE_KEY: 'k1', ...(options.env || {}),
+  };
   const handlers = {};
   async function call(route, method, { user, as, query = {}, body, headers = {}, csrf = true } = {}) {
     if (!handlers[route]) handlers[route] = require(`../${route}/handler.js`);
@@ -33,10 +41,10 @@ function harness(options = {}) {
     const who = user || (as ? USERS[as] : null);
     if (who) h['x-ms-client-principal'] = principalHeader(who);
     if (csrf && method !== 'GET') h['x-bt-request'] = '1';
-    const res = await invoke(handlers[route], { method, headers: h, query, body }, { storage, env, now: clock.now, log: () => {} }, (ROUTES[route] || {}).options || {});
+    const res = await invoke(handlers[route], { method, headers: h, query, body }, { storage, backupStorage, env, now: clock.now, log: () => {} }, (ROUTES[route] || {}).options || {});
     return { status: res.status, body: res.body ? JSON.parse(res.body) : null, headers: res.headers };
   }
-  return { storage, clock, env, call };
+  return { storage, backupStorage, clock, env, call };
 }
 
 // Household fixture used by the permission matrix:
@@ -64,4 +72,4 @@ async function household(h) {
   return { ws, q, joint, aliceSavings, bobCard, secret, grocery, memberId };
 }
 
-module.exports = { USERS, principalHeader, harness, household };
+module.exports = { USERS, TEST_KEYS, principalHeader, harness, household };

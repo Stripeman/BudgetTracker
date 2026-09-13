@@ -24,7 +24,10 @@ const FORBIDDEN_PATHS = [
   [/\.(ofx|qfx|qif|mt940|camt|sta)$/i, 'bank-export'],
   [/\.(xlsx|xls|numbers|ods)$/i, 'spreadsheet'],
   [/\.(docx|doc|pdf)$/i, 'document'],
-  [/(^|\/)(private-data|data|exports|imports|receipts|attachments|backups|restore-staging|__blobstorage__|__queuestorage__|\.azurite)\//i, 'private-data-directory'],
+  // Root-anchored like .gitignore: these names are private-data folders at the repository root.
+  // Source directories with the same name (for example api/backups/) are code, not data.
+  [/^(private-data|data|exports|imports|receipts|attachments|backups|restore-staging)\//i, 'private-data-directory'],
+  [/(^|\/)(__blobstorage__|__queuestorage__|\.azurite|\.azurelite)\//i, 'emulator-state'],
   [/(^|\/)__azurite_db_[^/]*\.json$/i, 'emulator-state'],
   [/\.tfstate(\.|$)/i, 'terraform-state'],
   [/(^|\/)(history\.jsonl|sessions\/)/i, 'agent-session-output'],

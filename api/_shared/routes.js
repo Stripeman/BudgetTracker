@@ -15,6 +15,8 @@ const ROUTES = Object.freeze({
   people: { methods: ['GET'] },
   preferences: { methods: ['GET', 'PUT'] },
   audit: { methods: ['GET'] },
+  backups: { methods: ['GET', 'POST'] },
+  restore: { methods: ['POST'] },
   'site-settings': { methods: ['GET', 'PUT'], options: { anonymous: true } },
   roles: { methods: ['POST'], options: { anonymous: true, csrfExempt: true } },
 });

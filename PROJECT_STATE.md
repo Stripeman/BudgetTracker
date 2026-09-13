@@ -78,6 +78,25 @@
 - The blob adapter has not been exercised against Azure or Azurite.
 - No independent security or financial review of checkpoint B yet; schedule both at the end of the BT-002 milestone.
 
+## Checkpoint C — BT-002 encrypted backups and tested restores (2026-09-13)
+
+**Built.**
+- `api/_shared/archive.js`: archive format v1. The header (workspace, archive id, schema, time, key id, reason) is authenticated as AES-256-GCM AAD. Each workspace has its own HKDF-derived key. The workspace is checked before decryption. Keys come from `BT_BACKUP_KEYS` and `BT_BACKUP_ACTIVE_KEY` and can be rotated.
+- `api/_shared/backup.js`: financial invariants, a manifest, validation of the serialized bytes followed by a test decrypt, and caller-scoped restore planning for create-new, merge and replace.
+- Routes: `/api/backups` (list and create; owners and managers; never downloadable) and `/api/restore` (preview and execute).
+- A backup-storage dependency that must be separate from data storage.
+- The operator drill `scripts/recovery/drill.cjs`.
+- An executable `docs/RECOVERY_RUNBOOK.md`.
+
+**Review findings applied.** Prototype findings 2 (authenticated header and per-workspace keys), 3 (validate the bytes that are encrypted, then test-decrypt), 5 (summary-only preview), 7 (size limits and indexed checks) and 8 (generic errors).
+
+**Results.**
+- `npm test`: 7/7 repository tests and 55/55 API tests.
+- `npm run validate`: ok (17 routes).
+- Mutation checks in a scratchpad copy killed six mutants: resurrecting grants, skipping the workspace pre-check, a scope that ignores ownership, no recovery point, no preview-ETag check, and no final `ifMatch`. The last one is killed by the concurrent-edit race test.
+
+**Not operational (pending Staging).** Scheduled backups, immutable retention, Key Vault custody, monitoring and alerts, a measured RPO/RTO drill, and service-level disaster restore into live storage.
+
 ## Checks run this checkpoint
 
 - `node --test test/*.test.cjs`: 7 passed, 0 failed (Node v22.23.1).
@@ -117,6 +136,6 @@
 ## Exact next steps
 
 1. **Checkpoint B: done** (see above). Keep the CI job names `secret-scan` and `foundation-tests`; branch protection requires them.
-2. **Checkpoint C: BT-002.** Encrypted workspace backup and restore (review findings 2–5, 7–9), tests covering corruption, interruption, attachments, balances and revoked grants, and a runbook update. Obtain security and financial reviews.
+2. **Checkpoint C: done.** Run independent security-privacy and financial-accuracy reviews of commits `04f6bf9` and the checkpoint C commit (the BT-001/BT-002 milestone). Apply accepted findings with retests.
 3. **Checkpoint D: BT-004 and BT-011-01.** Local dev server, frontend shell following TaskTracker's core patterns, the faithful day/night Appearance control port with its tests, and a fictional seed. Obtain UX and accessibility review.
 4. Continue BT-006 → BT-008 → BT-009/010 → BT-011/012/007 in brief order, updating this file at each checkpoint.

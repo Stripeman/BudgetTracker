@@ -12,6 +12,29 @@ const { createBlobStorage, createFileStorage } = require('./storage');
 
 const MUTATING = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
 let cachedStorage = null;
+let cachedBackupStorage = null;
+
+// Backup storage is SEPARATE from data storage (different container or directory) so compromise or
+// deletion of live data cannot reach the recovery points through the same path. Immutable retention
+// and access policies on it are infrastructure controls recorded in the recovery runbook.
+function backupStorageFor(env) {
+  if (cachedBackupStorage) return cachedBackupStorage;
+  const mode = env.BT_BACKUP_STORAGE;
+  if (mode === 'blob') {
+    if (env.BT_BACKUP_CONTAINER === env.BT_DATA_CONTAINER && env.BT_BACKUP_CONNECTION_STRING === env.BT_STORAGE_CONNECTION_STRING) {
+      throw unavailable('backup_not_configured', 'Backup storage must be separate from data storage.');
+    }
+    cachedBackupStorage = createBlobStorage({ connectionString: env.BT_BACKUP_CONNECTION_STRING, container: env.BT_BACKUP_CONTAINER });
+  } else if (mode === 'file') {
+    if (env.BT_LOCAL_DEV !== '1' || env.WEBSITE_SITE_NAME || env.WEBSITE_INSTANCE_ID || !env.BT_BACKUP_DIR || env.BT_BACKUP_DIR === env.BT_FILE_STORAGE_DIR) {
+      throw unavailable('backup_not_configured', 'Local backup storage is only available in local development, in its own directory.');
+    }
+    cachedBackupStorage = createFileStorage(env.BT_BACKUP_DIR);
+  } else {
+    throw unavailable('backup_not_configured', 'Backups are not configured.');
+  }
+  return cachedBackupStorage;
+}
 
 // Storage selection fails closed. File storage is local development only and is refused when
 // Azure environment markers are present, so it can never be what a deployment uses.
@@ -47,6 +70,7 @@ async function invoke(handlers, req, deps, options = {}) {
     const now = deps.now || (() => Date.now());
     const ctx = Object.freeze({
       principal, env, storage, now, requestId, log: deps.log,
+      backupStorage: () => deps.backupStorage || backupStorageFor(env),
       nowIso: () => new Date(now()).toISOString(),
       siteAdmin: principal ? isSiteAdmin(principal, env) : false,
     });
@@ -64,4 +88,4 @@ function route(handlers, options = {}) {
   };
 }
 
-module.exports = { invoke, route, storageFor, _resetStorage: () => { cachedStorage = null; } };
+module.exports = { invoke, route, storageFor, backupStorageFor, _resetStorage: () => { cachedStorage = null; cachedBackupStorage = null; } };
