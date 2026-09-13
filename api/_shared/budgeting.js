@@ -182,8 +182,9 @@ function forecast(doc, principal, { today, horizonDays, bufferMinor = null, buff
       }
       out[name] = { end: money.toDecimal(bal, a.currency), lowest: { amount: money.toDecimal(min.minor, a.currency), date: min.date }, belowBufferFrom: below };
       // Cash-flow conflicts are reported on the expected projection, naming the obligations that
-      // lead up to the shortfall (most recent last, at most five).
-      if (name === 'expected') {
+      // lead up to the shortfall (most recent last, at most five). Liabilities (loans, cards) are
+      // normally negative, so only asset accounts are warned about.
+      if (name === 'expected' && !ledger.LIABILITY_TYPES.has(a.type)) {
         const names = (xs) => [...new Set(xs || [])].slice(-5);
         if (firstBelowZero.date) out.warnings.push({ type: 'below-zero', date: firstBelowZero.date, balance: money.toDecimal(firstBelowZero.minor, a.currency), obligations: names(crossing.zero) });
         if (below && buffer !== null) out.warnings.push({ type: 'below-buffer', date: below, buffer: money.toDecimal(buffer, a.currency), obligations: names(crossing.buffer) });

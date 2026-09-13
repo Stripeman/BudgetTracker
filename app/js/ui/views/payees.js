@@ -4,7 +4,7 @@
 // merchant. Closed merchants stay listed (Show: Active / Closed / All) and keep their history.
 // Every change shows who made it, when, what changed and why.
 import { el, mount, announce } from "../dom.js";
-import { pageHead, stateView, badge, button, money, field, input, select } from "../components.js";
+import { stateView, badge, button, amountText, field, input, select } from "../components.js";
 import { openModal } from "../modal.js";
 import { sliceFor } from "../../core/store.js";
 import { formatDate, todayIso, MERCHANT_TYPE_LABELS } from "../../core/format.js";
@@ -60,9 +60,10 @@ export function createView(ctx) {
               p.referenceOnly ? el("div", { class: "muted small", text: "Seen through an entry shared with you" }) : null,
             ]
             : [el("span", { class: "muted small", text: `${p.name} (${st.currency})` })]),
-          el("td", { "data-label": "Spent", class: "num" }, [st ? money(st.gross, st.currency, plain) : "—"]),
-          el("td", { "data-label": "Refunds", class: "num" }, [st ? money(st.refunds, st.currency, plain) : "—"]),
-          el("td", { "data-label": "Net", class: "num" }, [st ? money(st.net, st.currency, plain) : "—"]),
+          // Spending totals are magnitudes: not coloured as money in (green) or out.
+          el("td", { "data-label": "Spent", class: "num" }, [st ? amountText(st.gross, st.currency, plain) : "—"]),
+          el("td", { "data-label": "Refunds", class: "num" }, [st ? amountText(st.refunds, st.currency, plain) : "—"]),
+          el("td", { "data-label": "Net", class: "num" }, [st ? amountText(st.net, st.currency, plain) : "—"]),
           el("td", { "data-label": "Entries", class: "num", text: st ? String(st.count) : "0" }),
           el("td", { "data-label": "Last entry", text: st ? formatDate(st.lastDate, dateFormat) : "" }),
           el("td", { "data-label": "" }, i === 0 ? [el("div", { class: "row-actions" }, [

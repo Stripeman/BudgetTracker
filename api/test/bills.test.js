@@ -211,9 +211,11 @@ describe('BT-008-02 bills: skips, pauses, overdue and reminders', () => {
     const checking = ok(await h.call('accounts', 'POST', { as: 'alice', query: q, body: { name: 'Checking', type: 'checking', currency: 'EUR', openingBalance: '100.00', openingDate: '2026-09-01' } }), 201).account;
     ok(await create(h, q, 'alice', { name: 'Rent', billType: 'housing', accountId: checking.id, amount: '800.00', schedule: monthly('2026-10-01') }), 201);
     ok(await create(h, q, 'alice', { name: 'Salary', billType: 'income', accountId: checking.id, amount: '2000.00', schedule: monthly('2026-10-03') }), 201);
+    // A liability is normally negative: it must not produce a "below zero" warning.
+    ok(await h.call('accounts', 'POST', { as: 'alice', query: q, body: { name: 'Family Loan', type: 'other-liability', currency: 'EUR', openingBalance: '-300.00' } }), 201);
     const fc = ok(await h.call('forecast', 'GET', { as: 'alice', query: { ...q, horizon: '30' } })).forecast;
     assert.deepEqual(fc.warnings, [{ accountId: checking.id, accountName: 'Checking', currency: 'EUR', type: 'below-zero', date: '2026-10-01', balance: '-700.00', obligations: ['Rent'] }]);
-    assert.equal(fc.accounts[0].expected.end, '1300.00');
+    assert.equal(fc.accounts.find((a) => a.name === 'Checking').expected.end, '1300.00');
   });
 });
 

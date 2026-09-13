@@ -73,6 +73,13 @@ export function money(decimal, currency, prefs, { masked } = {}) {
   return el("span", { class: "num money--masked" }, [el("span", { "aria-hidden": "true", text }), el("span", { class: "sr-only", text: `${currency} amount hidden (balance masking is on)` })]);
 }
 
+// A plain figure (a planned amount, spending total or similar magnitude) that is neither money in
+// nor money out, so it is not coloured as either; `alert` marks a shortfall.
+export function amountText(decimal, currency, prefs, { alert = false } = {}) {
+  const effective = (prefs && prefs.effective) || {};
+  return el("span", { class: ["num", alert ? "money--alert" : ""], text: formatAmount(decimal, currency, { numberFormat: effective.numberFormat }) });
+}
+
 // Selects that move the person somewhere or save something commit only on an explicit choice —
 // a pointer pick, Enter, or leaving the control — never on each arrow key (WCAG 3.2.2, A11Y-002).
 export function commitOnConfirm(selectEl, onCommit) {

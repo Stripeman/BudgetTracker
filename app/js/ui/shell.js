@@ -20,6 +20,7 @@ import { Status } from "../core/store.js";
 import * as dashboard from "./views/dashboard.js";
 import * as transactions from "./views/transactions.js";
 import * as bills from "./views/bills.js";
+import * as planning from "./views/planning.js";
 import * as accounts from "./views/accounts.js";
 import * as payees from "./views/payees.js";
 import * as settings from "./views/settings.js";
@@ -28,7 +29,7 @@ import * as join from "./views/join.js";
 import { renderLanding, createOnboarding } from "./views/landing.js";
 import { messageFor } from "../core/errors.js";
 
-const VIEWS = { dashboard, transactions, bills, accounts, payees, settings, workspace, join };
+const VIEWS = { dashboard, transactions, bills, planning, accounts, payees, settings, workspace, join };
 
 export function createShell({ mountPoint, store, router, theme, api }) {
   const header = el("header", { class: "app__header" });

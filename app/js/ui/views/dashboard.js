@@ -6,14 +6,18 @@ import { pageHead, stateView, money, accessBadge, button } from "../components.j
 import { sliceFor } from "../../core/store.js";
 import { ACCOUNT_TYPE_LABELS, formatDate } from "../../core/format.js";
 import { openQuickEntry, canAddEntries } from "./transactions.js";
+import { warningText } from "./planning.js";
+import { formatAmount } from "../../core/format.js";
 
 export function createView(ctx) {
   const totals = el("div", { class: "grid grid--cards" });
+  const alerts = el("div");
   const accountsBox = el("div");
   const recent = el("div");
   const actions = el("div", { class: "page-head__actions" });
   const element = el("section", {}, [
     el("div", { class: "page-head" }, [el("h1", { text: "Dashboard" }), actions]),
+    alerts,
     totals,
     el("div", { class: "grid grid--two" }, [
       el("section", { class: "card", "aria-labelledby": "dash-accounts" }, [el("h2", { class: "card__title", id: "dash-accounts", text: "Accounts" }), accountsBox]),
@@ -21,10 +25,21 @@ export function createView(ctx) {
     ]),
   ]);
   void ctx.store.actions.refreshTransactions({ limit: 8 });
+  void ctx.store.actions.refreshBills();
+  void ctx.store.actions.refreshForecast({ horizon: "30" });
 
   function update(state) {
     const prefs = state.preferences;
     const dateFormat = prefs && prefs.effective && prefs.effective.dateFormat;
+    // Needs attention (BT-008): overdue and due-soon bills, and 30-day cash-flow warnings.
+    const fmt = (v, c) => formatAmount(v, c, { numberFormat: prefs && prefs.effective && prefs.effective.numberFormat });
+    const billData = sliceFor(state, "bills").data;
+    const forecast = sliceFor(state, "forecast").data;
+    const items = [];
+    if (billData && billData.summary.overdue) items.push(el("li", {}, [el("a", { href: "#/bills", text: `${billData.summary.overdue} overdue bill payment${billData.summary.overdue === 1 ? "" : "s"}` }), " — review and record or skip."]));
+    if (billData && billData.summary.dueSoon) items.push(el("li", {}, [el("a", { href: "#/bills", text: `${billData.summary.dueSoon} bill payment${billData.summary.dueSoon === 1 ? "" : "s"} due soon` })]));
+    if (forecast) for (const w of forecast.forecast.warnings) items.push(el("li", {}, [el("a", { href: "#/planning", text: warningText(w, fmt, dateFormat) })]));
+    mount(alerts, items.length ? el("section", { class: "notice notice--warning", "aria-labelledby": "dash-alerts" }, [el("h2", { class: "card__title", id: "dash-alerts", text: "Needs attention" }), el("ul", { class: "stack" }, items)]) : null);
     const accounts = sliceFor(state, "accounts");
     const txns = sliceFor(state, "transactions");
     mount(actions, canAddEntries(state)

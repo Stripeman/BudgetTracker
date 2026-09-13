@@ -28,12 +28,14 @@ export function initialState() {
     workspaces: [], selectedWorkspaceId: null,
     accounts: emptySlice(null), transactions: emptySlice(null), payees: emptySlice(null),
     categories: emptySlice(null), members: emptySlice(null), bills: emptySlice(null),
+    budgets: emptySlice(null), forecast: emptySlice(null),
   };
 }
 
 export function createStore({ api }) {
   let state = deepFreeze(initialState());
   let generation = 0;
+  let lastForecast = { horizon: "90" };
   const listeners = new Set();
 
   function commit(patch) {
@@ -87,6 +89,7 @@ export function createStore({ api }) {
       commit({
         selectedWorkspaceId: id,
         accounts: emptySlice(id), transactions: emptySlice(id), payees: emptySlice(id), categories: emptySlice(id), members: emptySlice(id), bills: emptySlice(id),
+        budgets: emptySlice(id), forecast: emptySlice(id),
       });
       await Promise.all([actions.refreshAccounts(), actions.refreshCategories(), actions.refreshPayees(), actions.refreshMembers()]);
     },
@@ -97,6 +100,9 @@ export function createStore({ api }) {
     refreshMembers: () => loadSlice("members", (id) => api.members(id)),
     refreshTransactions: (filters = {}) => loadSlice("transactions", (id) => api.transactions(id, filters)),
     refreshBills: () => loadSlice("bills", (id) => api.bills(id)),
+    refreshBudgets: () => loadSlice("budgets", (id) => api.budgets(id)),
+    // The last forecast parameters are kept, so a refresh after a write keeps the chosen horizon.
+    refreshForecast: (params) => { if (params) lastForecast = params; return loadSlice("forecast", (id) => api.forecast(id, lastForecast)); },
 
     async createWorkspace(body, key) {
       const out = await api.createWorkspace(body, key);
