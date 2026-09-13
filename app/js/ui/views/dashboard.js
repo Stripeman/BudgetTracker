@@ -9,7 +9,7 @@ import { openQuickEntry, canAddEntries, addEntriesBlocked, amountWithDirection }
 import { warningText } from "./planning.js";
 import { formatAmount } from "../../core/format.js";
 import { icon, withIcon } from "../icons.js";
-import { openGroupExpense, balanceLabel } from "./group.js";
+import { openGroupExpense, balanceLabel, shownTables } from "./group.js";
 
 // A card title with its icon (BT-011-05); the words name the card, the icon is decoration.
 const titled = (id, iconId, text, tag = "h2") => el(tag, { class: "card__title", id }, [withIcon(iconId, text)]);
@@ -69,11 +69,12 @@ export function createView(ctx) {
     if (sharedKind) {
       const g = sliceFor(state, "group");
       const data = g.data;
-      const table = data && (data.balances.find((b) => b.currency === data.currency) || data.balances[0]);
-      const mine = table && table.rows.find((r) => r.ref === data.permissions.selfRef);
+      // The viewer's balance in every currency where it is open, not only the reporting currency
+      // (financial review finding 3).
+      const mine = data ? shownTables(data).map((t) => [t, t.rows.find((r) => r.ref === data.permissions.selfRef)]).filter(([, r]) => r && !/^-?0(\.0+)?$/.test(String(r.net))) : [];
       mount(shared, el("section", { class: "card", "aria-labelledby": "dash-shared" }, [
         titled("dash-shared", "users", "Your balance in this group"),
-        data ? el("div", { class: "card__value" }, [mine ? balanceLabel(mine, table.currency, fmt, { self: true, subject: "You" }) : el("span", { class: "muted", text: "You are settled up" })]) : stateView(g),
+        data ? el("div", { class: "card__value" }, mine.length ? mine.map(([t, r]) => el("div", {}, [balanceLabel(r, t.currency, fmt, { self: true, subject: "You" })])) : [el("span", { class: "muted", text: "You are settled up" })]) : stateView(g),
         data ? el("p", { class: "card__meta" }, [`${data.expenses.filter((e) => e.status !== "void").length} shared expenses recorded. `, el("a", { href: "#/group", text: "Open Shared expenses" })]) : null,
       ]));
     } else mount(shared);

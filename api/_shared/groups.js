@@ -360,6 +360,14 @@ function balances(doc, order, { ensureCurrency = null } = {}) {
   return out;
 }
 
+// Currencies in which someone's balance is not zero (confirmed payments only). A workspace's reporting
+// currency cannot change while any exists, and a payment may be recorded in any of them so an earlier
+// currency's balance can always be cleared (financial review finding 3).
+function openCurrencies(doc) {
+  const refs = participants(doc, null).map((p) => p.ref);
+  return balances(doc, refs).filter((b) => b.rows.some((r) => r.netMinor !== 0)).map((b) => b.currency);
+}
+
 // ---- personal ledger ---------------------------------------------------------------------------
 // The entries a person's own account should hold for one record (the brief's EUR 300 dinner rule):
 //   expense    what they paid is charged to their account: their own share as spending (`expense`),
@@ -433,5 +441,5 @@ function memberIds(doc) {
 module.exports = {
   METHODS, SETTLEMENT_STATES, MAX_LINES, MAX_GROUP_MINOR, HUNDRED_PERCENT,
   percentUnits, percentText, positiveAmount, computeShares, normalizeSplit, normalizePayers, participantChecker,
-  participants, recordRefs, sumByRef, balances, desiredEntries, invariantProblem, memberIds,
+  participants, recordRefs, sumByRef, balances, openCurrencies, desiredEntries, invariantProblem, memberIds,
 };

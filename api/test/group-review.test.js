@@ -202,3 +202,55 @@ describe('finding 5: a reported payment counts in suggestions only up to what is
     }
   });
 });
+
+describe('finding 3: changing the reporting currency never strands an open balance', () => {
+  const setCurrency = (h, f, as, reportingCurrency) => h.call('workspaces', 'PATCH', { as, query: { id: f.ws.id }, body: { settings: { reportingCurrency } } });
+  test('the change is refused while any group balance is not zero, and allowed once everyone is settled up', async () => {
+    const h = harness();
+    const f = await fixture(h);
+    // EUR 90.00 paid by Alice, shared by Alice and Bob: Alice +45.00, Bob −45.00.
+    await addExpense(h, f, 'alice', { description: 'Fictional food', amount: '90.00', payers: [{ ref: f.refs.alice }], split: equal(f.refs.alice, f.refs.bob) });
+    const refused = await setCurrency(h, f, 'alice', 'USD');
+    assert.equal(refused.status, 409);
+    assert.equal(refused.body.error.code, 'group_balances_open');
+    assert.match(refused.body.error.message, /EUR/);
+    assert.match(refused.body.error.message, /settle/i);
+    assert.equal((await view(h, f)).currency, 'EUR', 'unchanged');
+    // Other settings still change.
+    ok(await h.call('workspaces', 'PATCH', { as: 'alice', query: { id: f.ws.id }, body: { settings: { weekStart: 0 } } }));
+    // A reported payment is not enough: balances count confirmed payments only.
+    const s = await settle(h, f, 'bob', { from: f.refs.bob, to: f.refs.alice, amount: '45.00' });
+    assert.equal((await setCurrency(h, f, 'alice', 'USD')).body.error.code, 'group_balances_open');
+    ok(await act(h, f, 'alice', 'confirm', { settlementId: s.id, revision: s.revision }));
+    ok(await setCurrency(h, f, 'alice', 'USD'));
+    assert.equal((await view(h, f)).currency, 'USD');
+  });
+
+  test('a balance left in the earlier currency can still be settled in it, and is shown', async () => {
+    const h = harness();
+    const f = await fixture(h);
+    await addExpense(h, f, 'alice', { description: 'Fictional food', amount: '90.00', payers: [{ ref: f.refs.alice }], split: equal(f.refs.alice, f.refs.bob) });
+    const s = await settle(h, f, 'alice', { from: f.refs.bob, to: f.refs.alice, amount: '45.00' });
+    ok(await setCurrency(h, f, 'alice', 'USD'));
+    // The EUR payment is withdrawn afterwards, so Bob owes EUR 45.00 again in a workspace now in USD.
+    ok(await act(h, f, 'alice', 'void', { settlementId: s.id, revision: s.revision, reason: 'Recorded by mistake' }));
+    let v = await view(h, f, 'bob');
+    assert.equal(v.currency, 'USD');
+    const eur = v.balances.find((b) => b.currency === 'EUR');
+    assert.deepEqual(eur.rows.filter((r) => r.netMinor).map((r) => [r.ref, r.net]), [[f.refs.alice, '45.00'], [f.refs.bob, '-45.00']]);
+    assert.deepEqual(eur.suggestions.map((x) => [x.from, x.to, x.amount]), [[f.refs.bob, f.refs.alice, '45.00']]);
+    // Settling in EUR is allowed because EUR has an open balance; a currency with none is not.
+    const paid = await settle(h, f, 'bob', { from: f.refs.bob, to: f.refs.alice, amount: '45.00', currency: 'EUR' });
+    assert.equal(paid.currency, 'EUR');
+    ok(await act(h, f, 'alice', 'confirm', { settlementId: paid.id, revision: paid.revision }));
+    v = await view(h, f, 'bob');
+    assert.ok(v.balances.find((b) => b.currency === 'EUR').rows.every((r) => r.netMinor === 0), 'EUR settled');
+    const gbp = await act(h, f, 'bob', 'settle', { from: f.refs.bob, to: f.refs.alice, amount: '1.00', currency: 'GBP' });
+    assert.equal(gbp.status, 400);
+    assert.equal(gbp.body.error.code, 'currency_not_supported');
+    // Now EUR is settled, a new EUR payment is refused too; expenses stay in the reporting currency.
+    assert.equal((await act(h, f, 'bob', 'settle', { from: f.refs.bob, to: f.refs.alice, amount: '1.00', currency: 'EUR' })).body.error.code, 'currency_not_supported');
+    assert.equal((await G(h, f, 'alice', 'POST', { body: { description: 'x', amount: '1.00', currency: 'EUR', payers: [{ ref: f.refs.alice }], split: equal(f.refs.alice) } })).body.error.code, 'currency_not_supported');
+    ok(await act(h, f, 'bob', 'settle', { from: f.refs.bob, to: f.refs.alice, amount: '1.00', currency: 'USD' }), 201);
+  });
+});

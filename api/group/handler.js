@@ -64,11 +64,20 @@ function requireWriter(member) {
   if (!writer(member)) throw forbidden('Viewers can see shared expenses but cannot add or change them.');
 }
 const reportingCurrency = (doc) => (doc.settings && doc.settings.reportingCurrency) || 'EUR';
-// One currency per workspace in this increment (multi-currency group totals are pending, BT-009).
+// New expenses are in the reporting currency only in this increment (multi-currency group totals are
+// pending, BT-009).
 function currencyOf(doc, value) {
   const c = reportingCurrency(doc);
   if (value !== undefined && value !== null && value !== c) throw badRequest(`Shared expenses in this workspace are in ${c}. Other currencies are not supported yet.`, 'currency_not_supported');
   return c;
+}
+// A payment may also be in any currency that still has an open balance, so a balance left in an
+// earlier reporting currency can always be cleared (financial review finding 3).
+function settlementCurrency(doc, value) {
+  const c = reportingCurrency(doc);
+  if (value === undefined || value === null || value === c) return c;
+  if (typeof value === 'string' && groups.openCurrencies(doc).includes(value)) return value;
+  throw badRequest(`Payments in this workspace are in ${c}, or in a currency that still has an open balance. Nobody owes anything in that currency.`, 'currency_not_supported');
 }
 const nameOf = (doc, subject) => { const m = model.memberBySubject(doc, subject); return m ? m.name || 'Member' : 'Former member'; };
 
@@ -389,7 +398,7 @@ async function createSettlement(ctx, req) {
   const { result } = await store.mutateWorkspace(ctx, wsId, (doc, member) => {
     requireWriter(member);
     const nowIso = ctx.nowIso();
-    const currency = currencyOf(doc, body.currency);
+    const currency = settlementCurrency(doc, body.currency);
     const check = groups.participantChecker(doc);
     const from = check(body.from);
     const to = check(body.to);

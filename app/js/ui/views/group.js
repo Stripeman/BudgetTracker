@@ -57,6 +57,17 @@ export function balanceLabel(row, currency, fmt, { self = false, subject = "" } 
   return el("span", { class: "amount-dir" }, [arrow(gets ? "money-in" : "money-out"), el("span", { text: `${lead}${verb} ${amount}` })]);
 }
 
+// The balance tables to show: the reporting currency's, then every other currency in which someone's
+// balance is still open, so a balance left from before a change of reporting currency is never hidden
+// behind "settled up" (financial review finding 3).
+export function shownTables(data) {
+  const open = (b) => b.rows.some((r) => !isZero(r.net));
+  const reporting = data.balances.filter((b) => b.currency === data.currency);
+  const others = data.balances.filter((b) => b.currency !== data.currency && open(b));
+  const out = [...reporting, ...others];
+  return out.length ? out : data.balances.slice(0, 1);
+}
+
 export function createView(ctx) {
   const actions = el("div", { class: "page-head__actions" });
   const intro = el("p", { class: "muted" });
@@ -106,19 +117,21 @@ export function createView(ctx) {
       ]))),
     ]) : null);
 
-    const table = data.balances.find((b) => b.currency === data.currency) || data.balances[0];
-    renderBalances(table, data, fmt, nameOf);
-    renderSettle(table, data, fmt, nameOf, me);
+    const tables = shownTables(data);
+    renderBalances(tables, data, fmt, nameOf);
+    renderSettle(tables, data, fmt, nameOf, me);
     renderExpenses(data, fmt, nameOf, me, effective.dateFormat, state);
     renderPayments(data, fmt, nameOf, me, effective.dateFormat, state);
   }
 
-  function renderBalances(table, data, fmt, nameOf) {
+  // One table per currency shown (the reporting currency, then any other with an open balance).
+  function renderBalances(tables, data, fmt, nameOf) {
     const active = new Set(data.participants.filter((p) => p.active).map((p) => p.ref));
-    const rows = table ? table.rows.filter((r) => active.has(r.ref) || !isZero(r.paid) || !isZero(r.share) || !isZero(r.net)) : [];
-    if (!rows.length) { mount(balancesBox, el("div", { class: "state", text: "No one is in this group yet." })); return; }
-    const c = table.currency;
+    const blocks = tables.map((table) => [table, table.rows.filter((r) => active.has(r.ref) || !isZero(r.paid) || !isZero(r.share) || !isZero(r.net))]).filter(([, rows]) => rows.length);
+    if (!blocks.length) { mount(balancesBox, el("div", { class: "state", text: "No one is in this group yet." })); return; }
     mount(balancesBox,
+      ...blocks.flatMap(([table, rows]) => { const c = table.currency; return [
+      blocks.length > 1 ? el("h3", { class: "section-title", text: `In ${c}` }) : null,
       el("div", { class: "table-wrap" }, [el("table", { class: "table table--cards" }, [
         el("caption", { class: "sr-only", text: `Balances in ${c}. Paid minus share, plus payments made, minus payments received.` }),
         el("thead", {}, [el("tr", {}, ["Person", "Paid", "Share", "Paid back", "Received", "Balance", "Not counted yet"].map((h, i) => el("th", { scope: "col", class: i && i < 6 ? "num" : "", text: h })))]),
@@ -141,25 +154,29 @@ export function createView(ctx) {
             el("td", { "data-label": "Not counted yet", class: "small" }, [pending.length ? el("span", { class: "muted", text: pending.join("; ") }) : el("span", { class: "muted", text: "—" })]),
           ]);
         })),
-      ])]),
+      ])])]; }),
       el("p", { class: "card__meta", text: "Balance = paid − share + payments made − payments received. Only confirmed payments count." }),
     );
   }
 
-  function renderSettle(table, data, fmt, nameOf, me) {
-    const c = table ? table.currency : data.currency;
+  // Suggested or direct payments for every currency shown; each is recorded in its own currency.
+  function renderSettle(tables, data, fmt, nameOf, me) {
     const toggle = (value, label) => el("button", { type: "button", class: "btn btn--small", "aria-pressed": mode === value ? "true" : "false", text: label, onClick: () => { mode = value; update(ctx.store.getState()); } });
-    const list = table ? (mode === "suggested" ? table.suggestions : table.direct) : [];
+    const lists = tables.map((t) => [t, mode === "suggested" ? t.suggestions : t.direct]).filter(([, list]) => list.length);
+    const labelled = lists.length > 1 || lists.some(([t]) => t.currency !== data.currency);
     mount(settleBox,
       el("div", { class: "seg", role: "group", "aria-label": "How to settle" }, [toggle("suggested", "Fewest payments"), toggle("direct", "Keep who owes whom")]),
       el("p", { class: "muted small", text: mode === "suggested" ? "The fewest payments that settle everyone." : "Each person pays back the people who paid for them, without passing debts along." }),
-      list.length ? el("ul", { class: "stack" }, list.map((s) => el("li", { class: "row" }, [
-        s.from === me ? arrow("money-out") : s.to === me ? arrow("money-in") : null,
-        el("span", { text: `${nameOf(s.from)} ${s.from === me ? "pay" : "pays"} ${s.to === me ? "you" : nameOf(s.to)}` }),
-        el("span", { class: "app__spacer" }),
-        amountText(s.amount, c),
-        data.permissions.canAdd ? button("Record payment", () => openRecordPayment(ctx, { from: s.from, to: s.to, amount: s.amount }), { small: true, attrs: { "aria-label": `Record payment of ${fmt(s.amount, c)} from ${nameOf(s.from)} to ${nameOf(s.to)}` } }) : null,
-      ]))) : el("div", { class: "state", text: "Everyone is settled up." }),
+      ...(lists.length ? lists.flatMap(([t, list]) => { const c = t.currency; return [
+        labelled ? el("h3", { class: "section-title", text: `In ${c}` }) : null,
+        el("ul", { class: "stack" }, list.map((s) => el("li", { class: "row" }, [
+          s.from === me ? arrow("money-out") : s.to === me ? arrow("money-in") : null,
+          el("span", { text: `${nameOf(s.from)} ${s.from === me ? "pay" : "pays"} ${s.to === me ? "you" : nameOf(s.to)}` }),
+          el("span", { class: "app__spacer" }),
+          amountText(s.amount, c),
+          data.permissions.canAdd ? button("Record payment", () => openRecordPayment(ctx, { from: s.from, to: s.to, amount: s.amount, currency: c }), { small: true, attrs: { "aria-label": `Record payment of ${fmt(s.amount, c)} from ${nameOf(s.from)} to ${nameOf(s.to)}` } }) : null,
+        ]))),
+      ]; }) : [el("div", { class: "state", text: "Everyone is settled up." })]),
       el("p", { class: "card__meta", text: data.basis }),
     );
   }
@@ -418,10 +435,13 @@ export function openGroupExpense(ctx, { expense = null } = {}) {
 // Recording a payment never moves money: it records that someone says they paid. The receiver
 // confirms it (a manager or owner for a contact); someone recording money they received themselves
 // is the confirmation.
-export function openRecordPayment(ctx, { from = null, to = null, amount: preset = "" } = {}) {
+export function openRecordPayment(ctx, { from = null, to = null, amount: preset = "", currency: presetCurrency = null } = {}) {
   const state = ctx.store.getState();
   const data = groupData(state);
   if (!data) { announce("Shared expenses are still loading. Try again in a moment."); void ctx.store.actions.refreshGroup(); return null; }
+  // A suggested payment in an earlier currency with an open balance is recorded in that currency
+  // (financial review finding 3); otherwise the reporting currency.
+  const currency = presetCurrency || data.currency;
   const me = data.permissions.selfRef;
   const people = data.participants.filter((p) => p.active);
   const options = people.map((p) => ({ value: p.ref, label: `${p.name}${p.self ? " (you)" : ""}${p.type === "contact" ? " · contact" : ""}` }));
@@ -431,7 +451,7 @@ export function openRecordPayment(ctx, { from = null, to = null, amount: preset 
   const amount = input({ inputmode: "decimal", autocomplete: "off", required: true, placeholder: "0.00", value: preset });
   const date = input({ type: "date", value: todayIso() });
   const methodText = input({ maxlength: "60", autocomplete: "off", placeholder: "Cash, bank transfer…" });
-  const mine = ledgerAccounts(state, data.currency);
+  const mine = ledgerAccounts(state, currency);
   const ledgerBox = el("input", { type: "checkbox", id: `${key}-ledger` });
   const ledgerAccount = select(mine.map((a) => ({ value: a.id, label: `${a.name} (${a.currency})` })), (mine[0] || {}).id);
   const ledgerField = el("div", { class: "field--wide stack" }, [
@@ -451,7 +471,7 @@ export function openRecordPayment(ctx, { from = null, to = null, amount: preset 
   const formId = `${key}-form`;
   const save = el("button", { type: "submit", class: "btn btn--primary", text: "Record payment", form: formId });
   const form = el("form", { class: "form-grid", novalidate: true, id: formId }, [
-    field("From", fromSel), field("To", toSel), field(`Amount (${data.currency})`, amount), field("Date", date),
+    field("From", fromSel), field("To", toSel), field(`Amount (${currency})`, amount), field("Date", date),
     field("How it was paid (optional)", methodText, { wide: true }), note, ledgerField,
   ]);
   const modal = openModal({ title: "Record a payment", body: [form], actions: [button("Cancel", () => modal.close()), save] });
@@ -460,11 +480,11 @@ export function openRecordPayment(ctx, { from = null, to = null, amount: preset 
     modal.setError("");
     amount.removeAttribute("aria-invalid");
     const raw = amount.value.trim();
-    const value = isPlainAmount(raw) ? raw : evaluateAmount(raw, precisionOf(data.currency));
-    const minor = value ? parseAmount(value, data.currency) : null;
+    const value = isPlainAmount(raw) ? raw : evaluateAmount(raw, precisionOf(currency));
+    const minor = value ? parseAmount(value, currency) : null;
     if (!minor) { amount.setAttribute("aria-invalid", "true"); amount.setAttribute("aria-errormessage", modal.errorId); modal.setError("Enter the amount paid, more than zero."); amount.focus(); return; }
     if (fromSel.value === toSel.value) { modal.setError("A payment needs two different people."); return; }
-    const body = { from: fromSel.value, to: toSel.value, amount: formatMinor(minor, data.currency), date: date.value };
+    const body = { from: fromSel.value, to: toSel.value, amount: formatMinor(minor, currency), currency, date: date.value };
     if (methodText.value.trim()) body.method = methodText.value.trim();
     const withLedger = !ledgerField.hidden && ledgerBox.checked && ledgerAccount.value;
     if (withLedger) body.ledger = { accountId: ledgerAccount.value };
