@@ -131,6 +131,23 @@ Resource providers `Microsoft.OperationalInsights` and `Microsoft.Insights` were
 - Production storage not created and DNS not changed.
 - Google OAuth client pending: Terry must create BudgetTracker's own client and set `GOOGLE_CLIENT_ID`/`GOOGLE_CLIENT_SECRET` himself (see `docs/DEPLOYMENT.md`). Until then, preview sign-in fails closed.
 
+## Checkpoint D — frontend shell, Appearance control, local runtime (2026-09-13)
+
+**Built.**
+- `index.html` and the four stylesheets: tokens ported from TaskTracker, with light-mode accent contrast overrides, plus base, layout and components (including the day/night block verbatim).
+- The day/night Appearance control: a faithful port of TaskTracker's `daynight.js` with a `locked` adaptation, mounted in the account menu and My settings.
+- `app/js/core` (api, errors, store, router, format, calc) and `app/js/ui` (dom port, theme port, shell, modal, components, views).
+- The loopback dev server `scripts/dev/server.mjs` on port 4380, never 4280/7071/10000–10002, using file storage in `.local/` with fictional sign-in; the fictional seed; the headless-Edge screenshot tool.
+- `validate.cjs` frontend checks.
+
+**Evidence.**
+- `npm test`: 7/7 repository, 75/75 API and 15/15 app tests. `npm run validate` ok.
+- Real HTTP against the dev server: `/api/me` returns 401 signed out and 200 as fictional Alice; a POST without the CSRF header returns 403; Alice (owner) does not see Bob's private card.
+- Headless Edge 153 screenshots (under the ignored `.local/shots`) for all views at desktop light, desktop dark and narrow width, plus the account menu and quick-entry suggestions. No console errors or exceptions when signed in; signed out, only the expected 401 from `/api/me`.
+- Fixed from the screenshots: list indentation, a `[hidden]` override, suggestion hint placement with `aria-describedby`, and checkbox layout.
+
+**Not verified.** Keyboard and screen-reader walkthroughs, and independent UX, usability and accessibility reviews. There is no deployed preview yet.
+
 ## Checks run this checkpoint
 
 - `node --test test/*.test.cjs`: 7 passed, 0 failed (Node v22.23.1).

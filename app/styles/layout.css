@@ -1,0 +1,48 @@
+.app { min-height: 100vh; display: flex; flex-direction: column; }
+
+.app__header {
+  position: sticky; top: 0; z-index: 20;
+  display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-3);
+  min-height: var(--header-height); padding: var(--space-2) var(--space-4);
+  background: var(--surface); border-bottom: 1px solid var(--border);
+}
+.app__brand { display: flex; align-items: center; gap: var(--space-2); font-weight: var(--weight-bold); color: var(--text); text-decoration: none; }
+.app__brand img { width: 1.5rem; height: 1.5rem; }
+.app__spacer { flex: 1; }
+
+.app__nav {
+  display: flex; gap: var(--space-1); overflow-x: auto;
+  padding: 0 var(--space-4); background: var(--surface); border-bottom: 1px solid var(--border);
+}
+.app__nav a {
+  padding: var(--space-3) var(--space-3); color: var(--text-muted); text-decoration: none;
+  border-bottom: 2px solid transparent; white-space: nowrap; font-size: var(--text-sm); font-weight: var(--weight-medium);
+}
+.app__nav a:hover { color: var(--text); }
+.app__nav a[aria-current="page"] { color: var(--text); border-bottom-color: var(--accent); }
+
+.app__main { flex: 1; width: 100%; max-width: var(--content-max); margin: 0 auto; padding: var(--space-5) var(--space-4) var(--space-8); }
+.app__main:focus { outline: none; }
+
+.app__footer {
+  display: flex; flex-wrap: wrap; gap: var(--space-2); align-items: center; justify-content: space-between;
+  padding: var(--space-3) var(--space-4); color: var(--text-subtle); font-size: var(--text-xs);
+  border-top: 1px solid var(--border); background: var(--surface);
+}
+
+.page-head { display: flex; flex-wrap: wrap; align-items: flex-end; justify-content: space-between; gap: var(--space-3); margin-bottom: var(--space-4); }
+.page-head h1 { margin: 0; }
+.page-head__actions { display: flex; flex-wrap: wrap; gap: var(--space-2); }
+
+.grid { display: grid; gap: var(--space-4); }
+.grid--cards { grid-template-columns: repeat(auto-fill, minmax(16rem, 1fr)); }
+.grid--two { grid-template-columns: repeat(auto-fit, minmax(20rem, 1fr)); }
+
+.stack { display: flex; flex-direction: column; gap: var(--space-3); }
+ul.stack, ol.stack { list-style: none; margin: 0; padding: 0; }
+.row { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); }
+
+@media (max-width: 40rem) {
+  .app__main { padding: var(--space-4) var(--space-3) var(--space-8); }
+  .app__header { padding: var(--space-2) var(--space-3); }
+}

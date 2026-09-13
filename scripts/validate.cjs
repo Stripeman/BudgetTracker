@@ -75,6 +75,33 @@ for (const file of walk(path.join(ROOT, 'api'))) {
   if (/\beval\s*\(|new Function\s*\(|require\(['"]node:child_process['"]\)|require\(['"]child_process['"]\)|innerHTML/.test(text)) fail(`${rel} uses a forbidden API`);
 }
 
+// 8. Frontend: no inline script/style in index.html, fetch only in app/js/core/api.js, no
+//    innerHTML/outerHTML/insertAdjacentHTML/document.write/eval, no style attributes (the CSP
+//    forbids them; use el(..., { vars })), and every relative import resolves to a real file.
+const indexHtml = read('index.html');
+if (/<script(?![^>]*\bsrc=)[^>]*>/i.test(indexHtml) || /<style[\s>]/i.test(indexHtml) || /\sstyle\s*=/i.test(indexHtml) || /\son[a-z]+\s*=/i.test(indexHtml)) {
+  fail('index.html must not contain inline script, style or event-handler attributes');
+}
+const appFiles = [];
+const walkApp = (dir) => {
+  for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+    const p = path.join(dir, e.name);
+    if (e.isDirectory()) { if (e.name !== 'test') walkApp(p); } else if (p.endsWith('.js')) appFiles.push(p);
+  }
+};
+if (fs.existsSync(path.join(ROOT, 'app/js'))) walkApp(path.join(ROOT, 'app/js'));
+for (const file of appFiles) {
+  const rel = path.relative(ROOT, file).replace(/\\/g, '/');
+  const text = fs.readFileSync(file, 'utf8');
+  if (rel !== 'app/js/core/api.js' && /\bfetch\s*\(/.test(text)) fail(`${rel} calls fetch; only app/js/core/api.js may`);
+  if (/\.(innerHTML|outerHTML)\s*=|insertAdjacentHTML|document\.write|\beval\s*\(|new Function\s*\(/.test(text)) fail(`${rel} uses an HTML-injection or eval API`);
+  if (/setAttribute\(\s*['"]style['"]|\.style\.cssText|\bstyle\s*:\s*['"`]/.test(text)) fail(`${rel} sets an inline style; use el(..., { vars })`);
+  if (rel.startsWith('app/js/core/') && /\b(document|window)\./.test(text) && !/globalThis/.test(text)) fail(`${rel} touches the DOM; core modules must stay DOM-free`);
+  for (const m of text.matchAll(/^\s*import\s[^'"]*['"](\.[^'"]+)['"]/gm)) {
+    if (!fs.existsSync(path.resolve(path.dirname(file), m[1]))) fail(`${rel} imports missing ${m[1]}`);
+  }
+}
+
 const ignore = read('.gitignore');
 for (const pattern of ['.env', 'local.settings.json', '*.pem', '/backups/', '/exports/', '/receipts/', '/.local/', '*.sqlite']) {
   if (!ignore.split(/\r?\n/).includes(pattern)) fail(`.gitignore no longer contains ${pattern}`);

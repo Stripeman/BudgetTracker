@@ -1,0 +1,122 @@
+// Real-browser screenshots of the LOCAL dev server with a FICTIONAL signed-in user, via the Chrome
+// DevTools Protocol in headless Microsoft Edge. Evidence for UX/accessibility review; it proves
+// layout and rendering, which the Node DOM double cannot.
+//
+//   node scripts/dev/screenshot.mjs --user alice --out .local/shots [--routes dashboard,accounts]
+//
+// Uses an isolated throwaway profile under .local/, a debugging port on loopback (default 9333),
+// and only the local dev server (refuses any other origin). Screenshots may show fictional data
+// only and are written under .local/ (ignored by Git).
+import { spawn } from "node:child_process";
+import fs from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+
+const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
+const args = Object.fromEntries(process.argv.slice(2).reduce((acc, v, i, all) => (v.startsWith("--") ? [...acc, [v.slice(2), all[i + 1]]] : acc), []));
+const BASE = args.base || "http://127.0.0.1:4380";
+if (!/^http:\/\/127\.0\.0\.1:\d+$/.test(BASE)) { console.error("Screenshots are only taken of the local dev server."); process.exit(2); }
+const OUT = path.resolve(ROOT, args.out || ".local/shots");
+if (!OUT.startsWith(path.join(ROOT, ".local"))) { console.error("Output must be under .local/."); process.exit(2); }
+const USER = args.user || "";
+const ROUTES = (args.routes || "dashboard,transactions,accounts,payees,workspace,settings").split(",");
+const PORT = Number(args.port || 9333);
+const EDGE = args.edge || "C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe";
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+fs.mkdirSync(OUT, { recursive: true });
+const profile = path.join(ROOT, ".local", `edge-profile-${Date.now()}`);
+const edge = spawn(EDGE, ["--headless=new", `--remote-debugging-port=${PORT}`, "--remote-debugging-address=127.0.0.1", `--user-data-dir=${profile}`, "--no-first-run", "--disable-extensions", "--window-size=1280,900", "about:blank"], { stdio: "ignore" });
+
+async function cdpTarget() {
+  for (let i = 0; i < 50; i += 1) {
+    try {
+      const list = await (await fetch(`http://127.0.0.1:${PORT}/json/list`)).json();
+      const page = list.find((t) => t.type === "page");
+      if (page) return page.webSocketDebuggerUrl;
+    } catch { /* not up yet */ }
+    await sleep(200);
+  }
+  throw new Error("Edge did not start");
+}
+
+function client(url) {
+  const ws = new WebSocket(url);
+  let id = 0;
+  const pending = new Map();
+  const events = [];
+  ws.addEventListener("message", (m) => {
+    const msg = JSON.parse(m.data);
+    if (msg.id && pending.has(msg.id)) { pending.get(msg.id)(msg); pending.delete(msg.id); } else events.push(msg);
+  });
+  const ready = new Promise((r) => ws.addEventListener("open", r));
+  return {
+    events,
+    async send(method, params = {}) {
+      await ready;
+      const msgId = ++id;
+      ws.send(JSON.stringify({ id: msgId, method, params }));
+      const msg = await new Promise((r) => pending.set(msgId, r));
+      if (msg.error) throw new Error(`${method}: ${msg.error.message}`);
+      return msg.result;
+    },
+    close: () => ws.close(),
+  };
+}
+
+try {
+  const cdp = client(await cdpTarget());
+  await cdp.send("Page.enable");
+  await cdp.send("Runtime.enable");
+  await cdp.send("Log.enable");
+  if (USER) await cdp.send("Network.setCookie", { name: "bt_dev_user", value: USER, url: BASE, httpOnly: true, sameSite: "Strict" });
+  const shots = [];
+  for (const [label, width, height, mode] of [["desktop-light", 1280, 900, "light"], ["desktop-dark", 1280, 900, "dark"], ["narrow-light", 390, 844, "light"]]) {
+    await cdp.send("Emulation.setDeviceMetricsOverride", { width, height, deviceScaleFactor: 1, mobile: width < 600 });
+    await cdp.send("Emulation.setEmulatedMedia", { features: [{ name: "prefers-color-scheme", value: mode }, { name: "prefers-reduced-motion", value: "reduce" }] });
+    for (const route of USER ? ROUTES : ["landing"]) {
+      // Navigate, then RELOAD: a hash-only navigation keeps the page alive, and its colour mode
+      // would then depend on media-change event timing rather than on the emulated preference.
+      await cdp.send("Page.navigate", { url: `${BASE}/${USER ? `#/${route}` : ""}` });
+      await sleep(300);
+      await cdp.send("Page.reload", { ignoreCache: true });
+      await sleep(1400);
+      const { data } = await cdp.send("Page.captureScreenshot", { format: "png" });
+      const file = path.join(OUT, `${label}-${route}.png`);
+      fs.writeFileSync(file, Buffer.from(data, "base64"));
+      shots.push(path.relative(ROOT, file));
+    }
+  }
+  // Interaction evidence (desktop light): the account menu with the day/night control, and quick
+  // entry after choosing a known merchant (explained, editable suggestions).
+  if (USER && args.interact) {
+    await cdp.send("Emulation.setDeviceMetricsOverride", { width: 1280, height: 900, deviceScaleFactor: 1, mobile: false });
+    await cdp.send("Emulation.setEmulatedMedia", { features: [{ name: "prefers-color-scheme", value: "light" }, { name: "prefers-reduced-motion", value: "reduce" }] });
+    const evaluate = (expression) => cdp.send("Runtime.evaluate", { expression, awaitPromise: true });
+    for (const action of args.interact.split(",")) {
+      await cdp.send("Page.navigate", { url: `${BASE}/#/dashboard` });
+      await sleep(300);
+      await cdp.send("Page.reload", { ignoreCache: true });
+      await sleep(1500);
+      if (action === "menu") await evaluate("document.querySelector('.avatar').click()");
+      if (action === "quick") {
+        await evaluate("[...document.querySelectorAll('.page-head button')].find(b => /Add/.test(b.textContent)).click()");
+        await sleep(400);
+        await evaluate(`(() => { const i = document.querySelector('.modal input[list]'); i.value = ${JSON.stringify(args.payee || "Corner Cafe")}; i.dispatchEvent(new Event('change', { bubbles: true })); })()`);
+      }
+      await sleep(1200);
+      const { data } = await cdp.send("Page.captureScreenshot", { format: "png" });
+      const file = path.join(OUT, `interact-${action}.png`);
+      fs.writeFileSync(file, Buffer.from(data, "base64"));
+      shots.push(path.relative(ROOT, file));
+    }
+  }
+  const problems = cdp.events.filter((e) => e.method === "Runtime.exceptionThrown" || (e.method === "Log.entryAdded" && ["error"].includes(e.params.entry.level)))
+    .map((e) => (e.method === "Runtime.exceptionThrown" ? `exception: ${e.params.exceptionDetails.exception ? e.params.exceptionDetails.exception.description : e.params.exceptionDetails.text}` : `console ${e.params.entry.level}: ${e.params.entry.text}`));
+  console.log(JSON.stringify({ shots, problems: [...new Set(problems)].slice(0, 20) }, null, 2));
+  cdp.close();
+} finally {
+  edge.kill();
+  await sleep(500);
+  fs.rmSync(profile, { recursive: true, force: true, maxRetries: 5 });
+}

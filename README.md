@@ -76,6 +76,14 @@ Never connect any of this to real financial data.
 
 **Deployment.** See [Deployment](docs/DEPLOYMENT.md): one BudgetTracker Static Web App with an isolated preview environment. Production and the `budget.remsik.org` DNS require Terry's explicit authorization.
 
-**Local runtime.** Never use or stop ports 4280, 7071 or 10000–10002; they belong to another local application. BudgetTracker's local dev server binds 127.0.0.1 on its own port.
+**Local runtime (fictional data only).**
+
+```powershell
+npm run seed:dev   # once: fictional household in .local/dev-data (refuses if data exists)
+npm run dev        # http://127.0.0.1:4380 — pick a fictional user on the local sign-in page
+node scripts/dev/screenshot.mjs --user alice --out .local/shots --interact menu,quick   # headless Edge evidence
+```
+
+The dev server binds 127.0.0.1 only and uses file storage under the ignored `.local/`. It refuses to start where Azure environment markers exist. Its sign-in page offers fictional identities and exists only locally; the API itself has no bypass. Never use or stop ports 4280, 7071 or 10000–10002: they belong to another local application. Set `BT_DEV_PORT` to use a different free port.
 
 **Further documentation.** The [foundation design](docs/FOUNDATION_DESIGN.md), [recovery procedure](docs/RECOVERY_RUNBOOK.md), [TaskTracker inventory](docs/TASKTRACKER_REUSE.md) and [Word comparison](docs/BRIEF_RECONCILIATION.md) record decisions and gaps. See PROJECT_STATE.md for current status and next steps.
