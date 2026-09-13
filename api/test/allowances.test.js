@@ -48,6 +48,47 @@ describe('BT-006-04 owners set each member\'s storage allowance', () => {
     assert.equal(aliceSelf.allowanceBytes, undefined, 'owners have no allowance');
   });
 
+  test('LA1 managers see that an allowance changed, not the sizes', async () => {
+    const h = harness();
+    const f = await household(h);
+    ok(await h.call('members', 'PATCH', { as: 'alice', query: f.q, body: { memberId: f.memberId('Bob'), role: 'manager' } }));
+    ok(await setAllowance(h, f, 'alice', f.memberId('Carol'), 8));
+    const carolFor = async (as) => ok(await h.call('members', 'GET', { as, query: { ...f.q, includeFormer: '1' } })).members.find((m) => m.id === f.memberId('Carol')).history.find((e) => e.event === 'allowance');
+    assert.equal((await carolFor('alice')).to, 8 * MB);
+    const asBob = await carolFor('bob');
+    assert.equal(asBob.from, undefined);
+    assert.equal(asBob.to, undefined);
+  });
+
+  test('LA2 a rejoining member starts with the default allowance; the reset is kept in history', async () => {
+    const h = harness();
+    const f = await household(h);
+    const carolId = f.memberId('Carol');
+    ok(await setAllowance(h, f, 'alice', carolId, 12));
+    ok(await h.call('members', 'DELETE', { as: 'alice', query: f.q, body: { memberId: carolId, reason: 'Fictional test' } }));
+    const inv = ok(await h.call('invitations', 'POST', { as: 'alice', query: f.q, body: { email: 'carol@example.com', role: 'viewer' } }), 201);
+    ok(await h.call('invitations', 'POST', { as: 'carol', query: { action: 'accept' }, body: { workspaceId: f.ws.id, token: inv.token } }));
+    const carol = (await members(h, f, 'alice')).find((m) => m.id === carolId);
+    assert.equal(carol.allowanceBytes, 2 * MB, 'before the fix the earlier 12 MB came back');
+  });
+
+  test('LA3 an owner cannot set their own allowance, not even while demoting themselves', async () => {
+    const h = harness();
+    const f = await household(h);
+    ok(await h.call('members', 'PATCH', { as: 'alice', query: f.q, body: { memberId: f.memberId('Bob'), role: 'owner' } }));
+    code(await h.call('members', 'PATCH', { as: 'alice', query: f.q, body: { memberId: f.memberId('Alice'), role: 'member', allowanceMb: 12 } }), 409, 'own_allowance');
+    assert.equal((await members(h, f, 'alice')).find((m) => m.self).role, 'owner', 'the whole request was refused');
+  });
+
+  test('LA4 a failed join leaves no workspace id in the person\'s own list', async () => {
+    const h = harness();
+    const f = await household(h);
+    assert.equal((await h.call('invitations', 'POST', { as: 'eve', query: { action: 'accept' }, body: { workspaceId: f.ws.id, token: 'fictional-bad-token-0001' } })).status, 404);
+    const store = require('../_shared/store');
+    const { value } = await h.storage.getJson(store.paths.user('google:g-eve'));
+    assert.equal((value && value.workspaceIds ? value.workspaceIds : []).includes(f.ws.id), false);
+  });
+
   test('only owners may set allowances, only for members who are not owners, and only to the listed sizes', async () => {
     const h = harness();
     const f = await household(h);
@@ -55,7 +96,9 @@ describe('BT-006-04 owners set each member\'s storage allowance', () => {
     code(await setAllowance(h, f, 'bob', bobId, 12), 403, 'forbidden');
     code(await setAllowance(h, f, 'carol', bobId, 12), 403, 'forbidden');
     assert.equal((await setAllowance(h, f, 'dave', bobId, 12)).status, 404, 'site administration gives no workspace access');
-    code(await setAllowance(h, f, 'alice', f.memberId('Alice'), 4), 409, 'owner_allowance');
+    code(await setAllowance(h, f, 'alice', f.memberId('Alice'), 4), 409, 'own_allowance');
+    ok(await h.call('members', 'PATCH', { as: 'alice', query: f.q, body: { memberId: f.memberId('Carol'), role: 'owner' } }));
+    code(await setAllowance(h, f, 'alice', f.memberId('Carol'), 4), 409, 'owner_allowance');
     for (const bad of [0, 3, 13, '4', 4.5, -1]) assert.equal((await setAllowance(h, f, 'alice', bobId, bad)).status, 400, String(bad));
     code(await h.call('members', 'PATCH', { as: 'alice', query: f.q, body: { memberId: bobId } }), 400, 'missing_field');
   });

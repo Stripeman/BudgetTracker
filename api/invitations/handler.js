@@ -19,6 +19,7 @@ const model = require('../_shared/workspace-model');
 const fields = require('../_shared/fields');
 const audit = require('../_shared/audit');
 const site = require('../_shared/site');
+const ledger = require('../_shared/ledger');
 
 const TTL_MS = 7 * 24 * 60 * 60 * 1000;
 
@@ -109,13 +110,33 @@ async function accept(ctx, req) {
   // The person's own workspace list is updated FIRST, so a full personal document refuses the join
   // before any membership exists instead of leaving a member whose list lacks the workspace (security
   // recheck L7). A stray id there is harmless: the list re-checks membership for every workspace.
+  let added = false;
   await store.mutateUser(ctx, (user) => {
     if ((user.workspaceIds || []).includes(wsId)) return undefined;
     user.workspaceIds = [...(user.workspaceIds || []), wsId];
+    added = true;
     return true;
   });
-  // The caller is not yet a member, so this is the one write that bypasses mutateWorkspace's
-  // membership check; the token + email match is the authorization.
+  try {
+    await join(ctx, wsId, body, (value) => { joined = value; });
+  } catch (e) {
+    // A failed join takes back the id it just added, so failed attempts leave nothing behind (LA4).
+    if (added) {
+      await store.mutateUser(ctx, (user) => {
+        if (!(user.workspaceIds || []).includes(wsId)) return undefined;
+        user.workspaceIds = user.workspaceIds.filter((id) => id !== wsId);
+        return true;
+      });
+    }
+    throw e;
+  }
+  return { body: { workspaceId: wsId, ...joined } };
+}
+
+// The caller is not yet a member, so this is the one write that bypasses mutateWorkspace's
+// membership check; the token + email match is the authorization.
+async function join(ctx, wsId, body, setJoined) {
+  let joined = null;
   await update(ctx.storage, store.paths.workspace(wsId), (value) => {
     const doc = readDocument('workspace', value);
     if (!doc) throw notFound('This invitation is not valid for your account.');
@@ -129,6 +150,12 @@ async function accept(ctx, req) {
       // A rejoin starts a new membership period; the earlier one stays in the history (audit B15).
       existing.history = [...(existing.history || []), { at: nowIso, by: ctx.principal.subject, event: 'rejoined', from: existing.role, to: inv.role, invitationId: inv.id }];
       existing.status = 'active'; existing.role = inv.role; existing.rejoinedAt = nowIso;
+      // Nothing from an earlier membership comes back, including a storage allowance; the reset is
+      // kept in the history (security check LA2).
+      if (Number.isSafeInteger(existing.allowanceBytes)) {
+        existing.history = [...existing.history, { at: nowIso, by: ctx.principal.subject, event: 'allowance', from: existing.allowanceBytes, to: ledger.quotaLimit(ctx.env, null) }];
+        delete existing.allowanceBytes;
+      }
       existing.email = ctx.principal.email; existing.name = ctx.principal.name || existing.name;
       member = existing;
     } else {
@@ -148,7 +175,7 @@ async function accept(ctx, req) {
     store.assertFits(ctx, stamped, 'This workspace is full, so no one can join it until its owner makes room.');
     return stamped;
   });
-  return { body: { workspaceId: wsId, ...joined } };
+  setJoined(joined);
 }
 
 async function post(ctx, req) {

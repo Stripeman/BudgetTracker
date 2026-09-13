@@ -41,7 +41,10 @@ async function list(ctx, req) {
   if (query(req, 'includeFormer') !== '1') return { body: { members } };
   if (member.role !== 'owner' && member.role !== 'manager') throw forbidden('Only owners and managers can see former members.');
   const names = new Map((doc.members || []).map((m) => [m.subject, m.name || 'Member']));
-  const historyOf = (m) => (m.history || []).map((h) => ({ ...h, by: names.get(h.by) || 'Former member' }));
+  // Allowance sizes are for owners, who set them; managers see only that one changed (security check LA1).
+  const historyOf = (m) => (m.history || []).map((h) => (h.event === 'allowance' && member.role !== 'owner'
+    ? { at: h.at, event: h.event, by: names.get(h.by) || 'Former member' }
+    : { ...h, by: names.get(h.by) || 'Former member' }));
   return {
     body: {
       members: members.map((v) => ({ ...v, history: historyOf(model.findMember(doc, v.id)) })),
@@ -76,6 +79,8 @@ async function changeMember(ctx, req) {
       audit.record(doc, { actor: me.subject, action: 'member.role', targetType: 'member', targetId: target.id, at: nowIso, fields: ['role'] });
     }
     if (allowanceMb !== undefined) {
+      // Not even an owner demoting themselves in the same request (security check LA3).
+      if (target.subject === me.subject) throw conflict('You cannot set your own storage allowance.', 'own_allowance');
       if (target.role === 'owner') throw conflict('Owners have no storage allowance; the workspace limit applies to them.', 'owner_allowance');
       const to = allowanceMb * MB;
       const from = ledger.quotaLimit(ctx.env, target);

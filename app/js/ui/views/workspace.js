@@ -178,7 +178,7 @@ export function createView(ctx) {
   const describeMember = (h) => {
     if (h.event === "role") return `role ${ROLE_LABEL[h.from] || h.from} → ${ROLE_LABEL[h.to] || h.to}`;
     if (h.event === "rejoined") return `rejoined as ${ROLE_LABEL[h.to] || h.to}`;
-    if (h.event === "allowance") return `storage allowance ${sizeLabel(h.from)} → ${sizeLabel(h.to)}`;
+    if (h.event === "allowance") return h.from === undefined ? "storage allowance changed" : `storage allowance ${sizeLabel(h.from)} → ${sizeLabel(h.to)}`;
     return `${MEMBER_EVENTS[h.event] || h.event}${h.reason ? ` — ${h.reason}` : ""}`;
   };
   async function loadFormer() {
