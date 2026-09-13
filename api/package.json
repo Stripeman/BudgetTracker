@@ -1,0 +1,12 @@
+{
+  "name": "budget-tracker-api",
+  "version": "0.1.0-alpha.1",
+  "description": "Azure Functions API for BudgetTracker: identity, workspaces, permissions, ledger, backups.",
+  "private": true,
+  "scripts": {
+    "test": "node --test --test-concurrency=1 test/*.test.js"
+  },
+  "dependencies": {
+    "@azure/storage-blob": "12.33.0"
+  }
+}

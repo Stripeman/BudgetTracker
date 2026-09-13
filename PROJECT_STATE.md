@@ -33,6 +33,51 @@
 5. **Independent review** of `lib/foundation.cjs`: verdict PARTIAL. The findings are recorded in `docs/FOUNDATION_DESIGN.md` and must be fixed in the production port.
 6. **Reuse inventory corrected** (BT-004-01), plus new child requirements BT-011-01 (day/night Appearance control, reuse required) and BT-011-02 (Tiptap editor).
 
+## Checkpoint B — BT-001 API foundation and BT-006 ledger core (2026-09-13)
+
+**Built.** An Azure Functions v3 API under `api/`, with 15 routes generated from `api/_shared/routes.js`:
+- me, workspaces, members, invitations, grants
+- accounts, transactions, payees, categories
+- contacts, people, preferences, audit
+- site-settings, roles
+
+**Design.** ADR-002 in `docs/FOUNDATION_DESIGN.md`:
+- single trusted identity adapter
+- CSRF header
+- corrupt-refusing storage (memory, file and blob backends)
+- one workspace per document with atomic ETag writes and idempotency keys
+- record revisions
+- a site-admin-free authorization model with expiring, revocable grants on private accounts
+- ISO 4217 integer money
+
+**Review findings applied.** Prototype findings 1 (membership required even for owners; ownership maps to a capability set; publish never granted) and 6 (null-prototype frozen principal; own-property checks; safe JSON parsing). Finding 4 applies to money: server-side precision table, `typeof` before regex, `-0` normalized, bounded magnitude.
+
+**Tooling.**
+- `staticwebapp.config.json`: Google only, rolesSource, fail-closed `/api/*`, strict CSP and security headers
+- root `package.json` scripts
+- `scripts/validate.cjs`
+- the CI `foundation-tests` job now runs `npm ci --prefix api`, `npm test` and `npm run validate`, with the job name unchanged
+- `@azure/storage-blob` 12.33.0: `npm audit` found 0 vulnerabilities
+
+**Results.**
+- `npm test`: 7/7 repository tests and 41/41 API tests, exit 0
+- `npm run validate`: ok (15 routes), exit 0
+
+**Mutation checks** (a scratchpad copy; the repository was never mutated):
+
+| Mutant | Result |
+|---|---|
+| workspace owner sees private accounts | killed (5 failures) |
+| grant expiry ignored | killed (1) |
+| membership skipped in authz | killed (4, after adding `authz.test.js`) |
+| own-property check removed | killed (1) |
+| explicit publish guard removed | survived as an equivalent mutant: publish is in no capability set |
+
+**Not verified.**
+- No real Azure Functions host, SWA or Google sign-in has been run. `func` and `swa` are not installed.
+- The blob adapter has not been exercised against Azure or Azurite.
+- No independent security or financial review of checkpoint B yet; schedule both at the end of the BT-002 milestone.
+
 ## Checks run this checkpoint
 
 - `node --test test/*.test.cjs`: 7 passed, 0 failed (Node v22.23.1).
@@ -71,12 +116,7 @@
 
 ## Exact next steps
 
-1. **Checkpoint B: BT-001 API foundation.**
-   - Create `package.json`, `api/` with `host.json`, `_shared/` (http, ids, identity, storage adapters, schema, money, authz, audit, workspace store) and a validator script.
-   - Implement workspace, member, invitation, contact, grant and preferences routes.
-   - Write a negative permission-matrix test suite covering direct ids, cross-workspace access, a site admin, a workspace owner against a private account, and revoked or expired grants.
-   - Apply review findings 1 and 6.
-   - Add CI running `npm test`, keeping the job names `secret-scan` and `foundation-tests` because branch protection depends on them.
+1. **Checkpoint B: done** (see above). Keep the CI job names `secret-scan` and `foundation-tests`; branch protection requires them.
 2. **Checkpoint C: BT-002.** Encrypted workspace backup and restore (review findings 2–5, 7–9), tests covering corruption, interruption, attachments, balances and revoked grants, and a runbook update. Obtain security and financial reviews.
 3. **Checkpoint D: BT-004 and BT-011-01.** Local dev server, frontend shell following TaskTracker's core patterns, the faithful day/night Appearance control port with its tests, and a fictional seed. Obtain UX and accessibility review.
 4. Continue BT-006 → BT-008 → BT-009/010 → BT-011/012/007 in brief order, updating this file at each checkpoint.

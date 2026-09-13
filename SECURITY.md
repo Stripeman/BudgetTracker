@@ -37,4 +37,5 @@ Read-only GitHub API inspection observed secret scanning and push protection ena
   - valid IBANs
 
   The hook then runs gitleaks 8.30.1. That binary was downloaded to the ignored `.local/bin` and its SHA-256 checked against the release checksums. The hook is per-clone and can be bypassed locally; CI is the enforced layer.
+- **Identity ingress assumption.** The API trusts `x-ms-client-principal` only because the managed Functions app is reachable solely through Static Web Apps, which sets that header after Google sign-in. Bring-your-own Functions, a directly exposed Functions host or port 7071 would break this assumption. The local dev server injects fictional principals on loopback only. Local file storage is refused whenever Azure environment markers are present.
 - **Prototype review.** An independent review found the foundation prototype PARTIAL. The findings, and the properties the production port must have, are recorded in `docs/FOUNDATION_DESIGN.md`.

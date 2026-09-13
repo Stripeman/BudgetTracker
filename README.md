@@ -57,7 +57,20 @@ git config core.hooksPath .githooks
 
 The hook runs `node scripts/scan-staged.cjs`, which checks staged paths and content and runs gitleaks when it finds it in `.local/bin` or on PATH.
 
-**Tests.** Run `node --test test/*.test.cjs` (verified with Node v22.23.1). The suite covers the local authorization/encrypted-snapshot prototype and the staged scanner. The prototype has no trusted identity adapter, durable storage, executable restore or running application. Never connect it to real financial data.
+**Commands** (Node 22):
+
+```powershell
+npm ci --prefix api        # install API dependencies
+npm test                   # repository tests plus API tests (permission matrix, ledger, money, storage)
+npm run validate           # route registry, SWA config, versions, forbidden APIs, ignore rules
+npm run generate:functions # regenerate api/<route>/function.json and index.js from the registry
+```
+
+**What the API covers so far.** Identity, workspaces, members, invitations, grants, contacts, people selectors, preferences, site settings, audit, accounts, payees, categories and transactions. The legacy `lib/foundation.cjs` prototype remains for reference only; the API supersedes it.
+
+**What is not built yet.** Frontend, local dev server, backups and restores.
+
+Never connect any of this to real financial data.
 
 **Remote controls.** `main` is protected: a PR is required, the `secret-scan` and `foundation-tests` checks must pass, the rule is enforced for admins, and force-push and deletion are blocked. Dependabot security updates are enabled.
 

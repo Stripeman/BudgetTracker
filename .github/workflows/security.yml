@@ -20,10 +20,13 @@ jobs:
           GITLEAKS_ENABLE_COMMENTS: 'false'
           GITLEAKS_ENABLE_UPLOAD_ARTIFACT: 'false'
           GITLEAKS_ENABLE_SUMMARY: 'false'
+  # Job name is a required status check on main; do not rename it.
   foundation-tests:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           persist-credentials: false
-      - run: node --test test/*.test.cjs
+      - run: npm ci --prefix api --no-audit --no-fund
+      - run: npm test
+      - run: npm run validate

@@ -1,0 +1,15 @@
+{
+  "name": "budget-tracker",
+  "version": "0.1.0-alpha.1",
+  "private": true,
+  "type": "module",
+  "description": "Privacy-first budgeting service with accounts, debt tracking, forecasting, trip planning, shared expenses, and multiple currencies.",
+  "scripts": {
+    "test": "npm run test:repo && npm run test:api",
+    "test:repo": "node --test test/*.test.cjs",
+    "test:api": "npm --prefix api test",
+    "validate": "node scripts/validate.cjs",
+    "generate:functions": "node scripts/generate-functions.cjs",
+    "build": "npm test && npm run validate"
+  }
+}
