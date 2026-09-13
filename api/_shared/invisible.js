@@ -7,7 +7,8 @@
 // paragraph separators, bidirectional embeddings and overrides, invisible operators and isolates,
 // the byte-order mark, interlinear annotation and object replacement controls, and tag characters.
 //
-// Also shorthand format controls and musical-notation format controls (security retest SEC-U6).
+// Also shorthand format controls, musical-notation format controls, Egyptian hieroglyph format
+// controls, the Khitan filler and unassigned ignorable code points (security retests SEC-U6, SEC-V6).
 //
 // Deliberately ALLOWED: zero-width non-joiner and joiner (U+200C, U+200D), which Persian and other
 // scripts and emoji sequences need; variation selectors (U+FE00-FE0F, which emoji use, and
@@ -18,7 +19,7 @@
 const INVISIBLE_RANGES = Object.freeze([
   [0x00ad, 0x00ad], [0x034f, 0x034f], [0x061c, 0x061c], [0x115f, 0x1160], [0x17b4, 0x17b5], [0x180e, 0x180e],
   [0x200b, 0x200b], [0x200e, 0x200f], [0x2028, 0x202e], [0x2060, 0x206f], [0x3164, 0x3164],
-  [0xfeff, 0xfeff], [0xffa0, 0xffa0], [0xfff0, 0xfffb], [0x1bca0, 0x1bca3], [0x1d173, 0x1d17a], [0xe0000, 0xe007f],
+  [0xfeff, 0xfeff], [0xffa0, 0xffa0], [0xfff0, 0xfffb], [0x13430, 0x1343f], [0x16fe4, 0x16fe4], [0x1bca0, 0x1bca3], [0x1d173, 0x1d17a], [0xe0000, 0xe007f], [0xe01f0, 0xe0fff],
 ]);
 
 const inRanges = (c, ranges) => ranges.some(([a, b]) => c >= a && c <= b);

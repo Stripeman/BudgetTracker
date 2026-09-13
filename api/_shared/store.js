@@ -31,6 +31,14 @@ const MAX_WORKSPACE_BYTES = 12 * 1024 * 1024;
 // reserved headroom above the cap, so a full workspace can always be administered (security
 // review finding 1). `BT_WORKSPACE_MAX_BYTES` exists only so tests can exercise the cap quickly.
 const HEADROOM_BYTES = 512 * 1024;
+// Only half of the headroom is open to anyone but an owner, so no manager or member can use it all
+// up and leave the owner unable to demote, remove or archive (security recheck SEC-V1).
+// `BT_WORKSPACE_HEADROOM_BYTES` may only lower it (tests).
+const headroomFor = (env, member) => {
+  const configured = Number(env && env.BT_WORKSPACE_HEADROOM_BYTES);
+  const total = Number.isSafeInteger(configured) && configured > 0 && configured < HEADROOM_BYTES ? configured : HEADROOM_BYTES;
+  return member && member.role === 'owner' ? total : Math.floor(total / 2);
+};
 const maxBytes = (env) => {
   const configured = Number(env && env.BT_WORKSPACE_MAX_BYTES);
   return Number.isSafeInteger(configured) && configured > 0 && configured < MAX_WORKSPACE_BYTES ? configured : MAX_WORKSPACE_BYTES;
@@ -101,7 +109,7 @@ async function mutateWorkspace(ctx, wsId, fn, { idempotencyKey, idempotencyScope
     doc.revision = (Number.isSafeInteger(doc.revision) ? doc.revision : 0) + 1;
     doc.updatedAt = new Date(nowMs).toISOString();
     const stamped = stampDocument('workspace', doc);
-    if (Buffer.byteLength(JSON.stringify(stamped)) > maxBytes(ctx.env) + (allowHeadroom ? HEADROOM_BYTES : 0)) {
+    if (Buffer.byteLength(JSON.stringify(stamped)) > maxBytes(ctx.env) + (allowHeadroom ? headroomFor(ctx.env, member) : 0)) {
       throw conflict('This workspace has reached its storage limit. Archive older data before adding more.', 'workspace_full');
     }
     return stamped;
@@ -129,15 +137,24 @@ async function ensureUser(ctx) {
   return readDocument('user', out.value);
 }
 
+// A person's own document (profile, preferences, private contacts) is capped too (SEC-V4). Writes
+// that do not grow it are always allowed.
+const MAX_USER_BYTES = 1024 * 1024;
 async function mutateUser(ctx, fn) {
   const nowIso = new Date(ctx.now()).toISOString();
   let result;
   await update(ctx.storage, paths.user(ctx.principal.subject), (value) => {
     const doc = readDocument('user', value) || newUserDoc(ctx.principal, nowIso);
+    const before = Buffer.byteLength(JSON.stringify(doc));
     result = fn(doc);
     if (result === undefined) return undefined;
     doc.updatedAt = nowIso;
-    return stampDocument('user', doc);
+    const stamped = stampDocument('user', doc);
+    const configured = Number(ctx.env && ctx.env.BT_USER_MAX_BYTES);
+    const limit = Number.isSafeInteger(configured) && configured > 0 && configured < MAX_USER_BYTES ? configured : MAX_USER_BYTES;
+    const after = Buffer.byteLength(JSON.stringify(stamped));
+    if (after > before && after > limit) throw conflict('Your personal storage is full, so this change cannot be saved.', 'profile_full');
+    return stamped;
   });
   return result;
 }
@@ -149,6 +166,14 @@ const requestHash = (body) => sha256Hex(JSON.stringify(body));
 function assertFits(ctx, doc) {
   if (Buffer.byteLength(JSON.stringify(doc)) > maxBytes(ctx.env)) {
     throw conflict('This workspace has reached its storage limit, so this restore cannot be written. Nothing was changed.', 'workspace_full');
+  }
+}
+
+// Whether a small headroom write (an audit entry) by this member would still fit, checked BEFORE
+// work that cannot be undone, such as writing a backup archive (SEC-V1).
+function assertRoomForHeadroomWrite(ctx, doc, member, margin = 2048) {
+  if (Buffer.byteLength(JSON.stringify(doc)) + margin > maxBytes(ctx.env) + headroomFor(ctx.env, member)) {
+    throw conflict('This workspace has reached its storage limit. Nothing was changed.', 'workspace_full');
   }
 }
 
@@ -183,4 +208,4 @@ function recordCreation(ctx, user, id) {
   user.workspaceCreations = [...(user.workspaceCreations || []), { id, at: new Date(nowMs).toISOString() }];
 }
 
-module.exports = { paths, loadWorkspace, mutateWorkspace, ensureUser, mutateUser, newUserDoc, requestHash, assertFits, assertCanCreateWorkspace, recordCreation, MAX_WORKSPACE_BYTES, MAX_WORKSPACES_PER_PERSON };
+module.exports = { paths, loadWorkspace, mutateWorkspace, ensureUser, mutateUser, newUserDoc, requestHash, assertFits, assertRoomForHeadroomWrite, assertCanCreateWorkspace, recordCreation, MAX_WORKSPACE_BYTES, MAX_WORKSPACES_PER_PERSON };

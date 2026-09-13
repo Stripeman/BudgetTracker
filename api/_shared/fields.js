@@ -90,7 +90,8 @@ function email(value, field, { required = false } = {}) {
     if (required) throw badRequest(`${field} is required.`, 'missing_field');
     return '';
   }
-  if (!EMAIL_RE.test(out) || out.length > 254) throw badRequest(`${field} is not a valid email address.`, 'invalid_email');
+  // Addresses are shown to other members too, so invisible and direction-changing characters are refused (SEC-V2).
+  if (!EMAIL_RE.test(out) || out.length > 254 || invisible.firstForbidden(out) !== null) throw badRequest(`${field} is not a valid email address.`, 'invalid_email');
   return out;
 }
 

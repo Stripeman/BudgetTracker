@@ -37,6 +37,9 @@ function claim(claims, type) {
   return '';
 }
 
+const invisible = require('./invisible');
+const CONTROLS = [[0x00, 0x1f], [0x7f, 0x9f]];
+
 function principalFrom(req, env) {
   const raw = header(req, PRINCIPAL_HEADER);
   if (typeof raw !== 'string' || raw.length === 0 || raw.length > 16384) return null;
@@ -56,7 +59,9 @@ function principalFrom(req, env) {
   out.subject = `${provider}:${userId}`;
   out.provider = provider;
   out.email = email;
-  out.name = name && !name.includes('@') ? name : '';
+  // The provider's display name is shown to other members, so one carrying control, invisible or
+  // direction-changing characters is not used at all (security recheck SEC-V2).
+  out.name = name && !name.includes('@') && invisible.firstForbidden(name, CONTROLS) === null ? name : '';
   return Object.freeze(out);
 }
 

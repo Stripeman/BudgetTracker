@@ -45,16 +45,25 @@ async function createBackup(ctx, wsId, { reason, actor }) {
 // counted one by one) before its archive is written, and a failed restore still counts (security
 // retest SEC-T1). Twice the completed-restore limit, so a few stale attempts do not lock anyone out.
 const MEMBER_RECOVERY_POINTS_PER_DAY = 6;
+// On-demand backups per workspace per day, owners included: each writes a full encrypted archive
+// and an audit entry (security recheck SEC-V1).
+const ON_DEMAND_PER_DAY = 12;
 const DAY_MS = 24 * 60 * 60 * 1000;
-async function reserveRecoveryPoint(ctx, wsId, subject) {
+// One ETag-guarded update of the backup index, so parallel requests are counted one by one.
+// Reservations from before `kind` existed were recovery points.
+async function reserve(ctx, wsId, { subject, kind, perPerson, perWorkspace, message, code }) {
   const nowMs = ctx.now();
   await update(ctx.backupStorage(), indexPath(wsId), (idx) => {
     const value = idx || { archives: [] };
-    const recent = (value.reservations || []).filter((r) => r.by === subject && nowMs - Date.parse(r.at) < DAY_MS).length;
-    if (recent >= MEMBER_RECOVERY_POINTS_PER_DAY) throw new HttpError(429, 'restore_limit', 'You have tried to restore too many times today in this workspace. Try again tomorrow or ask an owner.');
-    return { ...value, reservations: [...(value.reservations || []), { by: subject, at: new Date(nowMs).toISOString() }] };
+    const recent = (value.reservations || []).filter((r) => (r.kind || 'recovery-point') === kind && nowMs - Date.parse(r.at) < DAY_MS);
+    if ((perPerson && recent.filter((r) => r.by === subject).length >= perPerson) || (perWorkspace && recent.length >= perWorkspace)) throw new HttpError(429, code, message);
+    return { ...value, reservations: [...(value.reservations || []), { by: subject, kind, at: new Date(nowMs).toISOString() }] };
   });
 }
+const reserveRecoveryPoint = (ctx, wsId, subject) => reserve(ctx, wsId, {
+  subject, kind: 'recovery-point', perPerson: MEMBER_RECOVERY_POINTS_PER_DAY, code: 'restore_limit',
+  message: 'You have tried to restore too many times today in this workspace. Try again tomorrow or ask an owner.',
+});
 
 async function list(ctx, req) {
   const wsId = requireId(query(req, 'workspaceId'), 'workspaceId');
@@ -138,10 +147,16 @@ async function create(ctx, req) {
   const wsId = requireId(query(req, 'workspaceId'), 'workspaceId');
   const body = fields.onlyKeys(readBody(req), ['reason']);
   const reason = fields.oneOf(body.reason, ['on-demand', 'before-change'], 'Reason', 'on-demand');
-  const { member } = await store.loadWorkspace(ctx, wsId);
+  const { doc, member } = await store.loadWorkspace(ctx, wsId);
   if (!roleAtLeast(member.role, 'manager')) throw forbidden('Only owners and managers can create backups.');
   const { site: siteDoc } = await site.readSite(ctx.storage);
   if (siteDoc.backupPolicy && siteDoc.backupPolicy.onDemand === false) throw forbidden('On-demand backups are disabled by the site administrator.');
+  // Checked before the archive is written, so a backup never exists without its audit entry, and
+  // limited per workspace per day, counted atomically in the backup index (security recheck SEC-V1).
+  // A workspace that fails an integrity check is refused before anything is stored, even a reservation.
+  backup.checkInvariants(doc);
+  store.assertRoomForHeadroomWrite(ctx, doc, member);
+  await reserve(ctx, wsId, { subject: member.subject, kind: 'on-demand', perWorkspace: ON_DEMAND_PER_DAY, message: `This workspace has had ${ON_DEMAND_PER_DAY} backups made today. Try again tomorrow.`, code: 'backup_limit' });
   const { entry } = await createBackup(ctx, wsId, { reason, actor: member.subject });
   await store.mutateWorkspace(ctx, wsId, (doc, me) => {
     audit.record(doc, { actor: me.subject, action: 'backup.create', targetType: 'backup', targetId: entry.archiveId, scope: 'managers', at: ctx.nowIso() });

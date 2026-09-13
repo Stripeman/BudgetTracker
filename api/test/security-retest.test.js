@@ -124,6 +124,75 @@ describe('SEC-U3 recovery points of private restores are listed without the memb
   });
 });
 
+describe('SEC-V1 the headroom kept for administering a full workspace', () => {
+  test('on-demand backups are limited to 12 a day per workspace', async () => {
+    const h = harness();
+    const f = await household(h);
+    for (let i = 0; i < 12; i += 1) ok(await h.call('backups', 'POST', { as: 'alice', query: f.q, body: {} }), 201);
+    code(await h.call('backups', 'POST', { as: 'alice', query: f.q, body: {} }), 429, 'backup_limit');
+    h.clock.advance(DAY + 1000);
+    ok(await h.call('backups', 'POST', { as: 'alice', query: f.q, body: {} }), 201);
+  });
+
+  test('a manager cannot use up the headroom, so the owner can still administer a full workspace', async () => {
+    const h = harness();
+    const f = await household(h);
+    ok(await h.call('members', 'PATCH', { as: 'alice', query: f.q, body: { memberId: f.memberId('Bob'), role: 'manager' } }));
+    // The workspace is exactly full, with a small headroom (both only for tests).
+    h.env.BT_WORKSPACE_MAX_BYTES = String(Buffer.byteLength(JSON.stringify(await stored(h, f))));
+    h.env.BT_WORKSPACE_HEADROOM_BYTES = '6000';
+    const statuses = [];
+    for (let i = 0; i < 12; i += 1) statuses.push((await h.call('backups', 'POST', { as: 'bob', query: f.q, body: {} })).status);
+    // Before the fix a manager's backups filled all the headroom and froze the owner out.
+    assert.ok(statuses.includes(409), statuses.join(','));
+    assert.equal((await h.backupStorage.list('')).filter((n) => n.endsWith('.btbk')).length, statuses.filter((s) => s === 201).length, 'no archive without its audit entry');
+    ok(await h.call('members', 'PATCH', { as: 'alice', query: f.q, body: { memberId: f.memberId('Bob'), role: 'member' } }));
+  });
+});
+
+describe('SEC-V2 display names and emails refuse invisible and direction-changing characters', () => {
+  test('a provider display name with a right-to-left override is not used', () => {
+    const { principalHeader } = require('./helpers');
+    const identity = require('../_shared/identity');
+    const name = `Mal${String.fromCodePoint(0x202e)}lory`;
+    const p = identity.principalFrom({ headers: { 'x-ms-client-principal': principalHeader({ userId: 'g-mallory', email: 'mallory@example.com', name }) } }, {});
+    assert.ok(p, 'the person can still sign in');
+    assert.equal(p.name, '');
+  });
+
+  test('an email with a right-to-left override is refused', async () => {
+    const h = harness();
+    const f = await household(h);
+    const res = await h.call('contacts', 'POST', { as: 'alice', body: { scope: 'workspace', workspaceId: f.ws.id, name: 'Fictional Plumber', email: `plumber${String.fromCodePoint(0x202e)}@example.com` } });
+    code(res, 400, 'invalid_email');
+  });
+});
+
+describe('SEC-V4 a person\'s own document is capped', () => {
+  test('private contacts stop at the personal storage limit', async () => {
+    const h = harness({ env: { BT_USER_MAX_BYTES: '6000' } });
+    let refused = null;
+    for (let i = 0; i < 200 && !refused; i += 1) {
+      const res = await h.call('contacts', 'POST', { as: 'eve', body: { scope: 'private', name: `Fictional Private ${i}` } });
+      if (res.status !== 201) refused = res;
+    }
+    assert.ok(refused, 'creation is stopped');
+    code(refused, 409, 'profile_full');
+  });
+});
+
+describe('SEC-V5 retry records count against a member while they exist', () => {
+  test('a member\'s idempotency records add to their charge', () => {
+    const bob = { subject: 'google:g-bob', role: 'member' };
+    const doc = { accounts: [], transactions: [], payees: [], recurring: [], budgets: [], idempotency: {} };
+    const before = ledger.memberCharge(doc, bob);
+    doc.idempotency['google:g-bob|fictional-key-0001'] = { at: '2026-09-13T10:00:00.000Z', scope: 'x', hash: null, result: { notes: 'x'.repeat(1000) } };
+    doc.idempotency['google:g-alice|fictional-key-0002'] = { at: '2026-09-13T10:00:00.000Z', scope: 'x', hash: null, result: { notes: 'x'.repeat(1000) } };
+    assert.ok(ledger.memberCharge(doc, bob) - before > 1000, 'Bob\'s record counts');
+    assert.ok(ledger.memberCharge(doc, bob) - before < 2000, 'Alice\'s record does not count against Bob');
+  });
+});
+
 describe('SEC-T3 a bill into an account the viewer cannot see', () => {
   test('does not reveal whether that account was closed or removed', async () => {
     const h = harness();

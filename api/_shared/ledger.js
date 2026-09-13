@@ -241,9 +241,11 @@ const quotaLimit = (env) => {
   const configured = Number(env && env.BT_MEMBER_QUOTA_BYTES);
   return Number.isSafeInteger(configured) && configured > 0 && configured < PRIVATE_QUOTA_BYTES ? configured : PRIVATE_QUOTA_BYTES;
 };
-// Nothing is ever deleted (BT-001-05), so the message does not suggest removing records.
+// Nothing is ever deleted (BT-001-05), so the message does not suggest removing records. There is
+// no control for raising an allowance yet, so it does not promise one (SEC-V3; Terry to decide how
+// allowances are set).
 function quotaExceeded() {
-  const e = badRequest('You have reached your storage allowance in this workspace. Ask the workspace owner about raising it.', 'member_quota_exceeded');
+  const e = badRequest('You have reached your storage allowance in this workspace, so this change cannot be saved. Allowances are fixed for now; the workspace owner can still make changes.', 'member_quota_exceeded');
   e.status = 409;
   return e;
 }
@@ -254,9 +256,16 @@ function assertMemberQuota(doc, member, env) {
 // What a member is charged: the larger of what their records take now and all the growth their
 // writes have caused (the usage counter kept by store.mutateWorkspace, security retest SEC-U1). The
 // counter starts at zero for data written before it existed, which the record measure still covers.
+// The member's idempotency records (kept 48 hours for safe retries) are added while they exist:
+// they stop counting when they expire, so they are not in the permanent counter (SEC-V5).
 function memberCharge(doc, member) {
   const usage = doc.memberUsage && typeof doc.memberUsage === 'object' && Object.prototype.hasOwnProperty.call(doc.memberUsage, member.subject) ? doc.memberUsage[member.subject] : 0;
-  return Math.max(memberBytes(doc, member), Number.isSafeInteger(usage) ? usage : 0);
+  let retries = 0;
+  const prefix = `${member.subject}|`;
+  for (const [k, v] of Object.entries(doc.idempotency && typeof doc.idempotency === 'object' ? doc.idempotency : {})) {
+    if (k.startsWith(prefix)) retries += Buffer.byteLength(k) + Buffer.byteLength(JSON.stringify(v));
+  }
+  return Math.max(memberBytes(doc, member), Number.isSafeInteger(usage) ? usage : 0) + retries;
 }
 // The quota's one measure: bytes a member's records take in the workspace document. Store writes
 // use it too, so any write that grows a member past it is refused (security retest SEC-T2).
