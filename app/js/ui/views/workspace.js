@@ -320,7 +320,7 @@ function openRestore(ctx, wsId, archive) {
       execute.disabled = !previewData.canExecute;
       confirmText.hidden = mode.value !== "replace";
       mount(summary,
-        el("p", { class: "notice", text: `Preview only — nothing has changed. In your scope: ${previewData.scope.accounts} accounts, ${previewData.scope.transactions} entries. Changes: ${previewData.changes.add} added, ${previewData.changes.update} updated, ${previewData.changes.remove} removed.` }),
+        el("p", { class: "notice", text: `Preview only — nothing has changed. In your scope: ${previewData.scope.accounts} accounts, ${previewData.scope.transactions} entries. Changes: ${previewData.changes.add} added, ${previewData.changes.update} updated, ${previewData.changes.remove} taken out of the lists.${previewData.excluded.setAside ? ` ${previewData.excluded.setAside} current records are set aside and kept in the workspace history — nothing is deleted.` : ""}` }),
         el("p", { class: "small", text: `Totals after: ${previewData.totalsAfter.map((t) => `${t.currency} ${t.amount}`).join(", ") || "none"}` }),
         previewData.excluded.otherMembersPrivateRecords ? el("p", { class: "small muted", text: "Other members' private records are outside your restore and stay as they are." }) : null,
         el("p", { class: "small muted", text: previewData.permissions }),

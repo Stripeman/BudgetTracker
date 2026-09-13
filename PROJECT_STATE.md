@@ -241,6 +241,12 @@ The medium and low findings are numeric alignment, quick-entry field order and a
 - **Evidence after the fixes:** `npm test` 8/8 repository, 166/166 API, 48/48 app; `npm run validate` ok (21 routes).
 - **Preview verified at `f6e1cec`:** `deploy.ps1 -Environment preview` exited 0; `/api/site-settings` reported `f6e1cecba3cb90521a4334f7541d9ce5f14ef771` about 30 s after the static files updated (the API lags the static content briefly); anonymous `/api/icons` is 401; `app/js/ui/icons.js` is served. Signed-in checks on the preview still need the Google redirect URI (Terry).
 
+## Checkpoint I — restore replace never drops records (BT-001-05 A7, 2026-09-13)
+
+- **Behaviour:** a replace restore still makes the lists match the backup inside the caller's scope, but every current record it replaces with a different backup version, or that did not exist when the backup was made, is moved whole into the workspace's append-only `superseded` collection with `collection`, `reason` (`replaced-by-backup` / `not-in-backup`), `archiveId`, `at` and `by`. Identical records are untouched. Every replace or merge appends to `restores[]` with its recovery point and the number set aside. The preview reports `excluded.setAside` and says records are set aside and kept, not removed. No route exposes `superseded` yet; an authorized history view is a follow-up.
+- **Files:** `api/_shared/backup.js` (`plan`, `finalize`), `api/restore/handler.js`, `app/js/ui/views/workspace.js` (preview wording), `api/test/backup.test.js`, audit row A7, register BT-001-05, schema additions table.
+- **Evidence:** `npm test` 8/8 repository, 167/167 API, 48/48 app; `npm run validate` ok (21 routes).
+
 ## Checks run this checkpoint
 
 - `node --test test/*.test.cjs`: 7 passed, 0 failed (Node v22.23.1).
@@ -282,7 +288,7 @@ The medium and low findings are numeric alignment, quick-entry field order and a
 Checkpoints B–H are done (see above). Keep the CI job names `secret-scan` and `foundation-tests`; branch protection requires them. Next, in order:
 
 1. **BT-011-05 follow-up** — apply the independent security review of the icon catalogue and upload; a UX/accessibility pass over the icon picker and the Icons for types card in a real browser; redeploy preview and verify `app.commit`.
-2. **BT-001-05 remainder** — restore replace supersedes instead of removing (A7) with a restore record; lifecycle states for budgets, members and workspaces; implement ADR-003; idempotency ruling (A8); backup retention/immutability (A11/A12, infrastructure, needs Terry).
+2. **BT-001-05 remainder** — an authorized view of `superseded` records and `restores[]`; lifecycle states for budgets, members and workspaces; implement ADR-003; idempotency ruling (A8); backup retention/immutability (A11/A12, infrastructure, needs Terry).
 3. **BT-011-02 Tiptap editor** (archaeology of `T:` `main` first), then receipts/attachments, imports and reconciliation.
 4. **BT-009 shared expenses and settlement, BT-010 trips and currency** (icons for trips and trip accounts follow), debt planning, goals and alerts.
 5. **BT-012 reports and exports** (icons in reports, legends and exports follow), site settings UI, offline, rate limiting, scheduled backups and Key Vault, the remaining 13 TaskTracker palettes.

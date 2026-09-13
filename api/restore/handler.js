@@ -39,7 +39,7 @@ async function load(ctx, body) {
 async function preview(ctx, req) {
   const body = fields.onlyKeys(readBody(req), ['workspaceId', 'archiveId', 'mode']);
   const { mode, doc, etag, member, opened, archiveId } = await load(ctx, body);
-  const { summary } = backup.plan({ current: doc, archived: opened.doc, mode, principal: ctx.principal, member, nowIso: ctx.nowIso(), newWorkspaceId: 'ws_preview' });
+  const { summary } = backup.plan({ current: doc, archived: opened.doc, mode, principal: ctx.principal, member, nowIso: ctx.nowIso(), newWorkspaceId: 'ws_preview', archiveId });
   return {
     body: {
       archive: { archiveId, createdAt: opened.header.createdAt, reason: opened.header.reason, schemaVersion: opened.header.schemaVersion },
@@ -92,7 +92,7 @@ async function execute(ctx, req) {
     throw conflict('The workspace changed since the preview. Preview again before restoring.', 'stale_preview');
   }
   if (mode === 'replace' && body.confirm !== 'REPLACE') throw badRequest('Replacing requires confirm: "REPLACE".', 'confirm_required');
-  const { summary, next, attachments } = backup.plan({ current: doc, archived: opened.doc, mode, principal: ctx.principal, member, nowIso });
+  const { summary, next, attachments } = backup.plan({ current: doc, archived: opened.doc, mode, principal: ctx.principal, member, nowIso, archiveId });
   backup.ensureRestorable(summary);
   // 1. Recovery point of the current state. If this fails, nothing else happens.
   const { entry, sourceEtag } = await backups.createBackup(ctx, wsId, { reason: 'pre-restore', actor: ctx.principal.subject });
@@ -100,7 +100,7 @@ async function execute(ctx, req) {
   // 2. Attachments are immutable and content-addressed; writing them first changes no record.
   await writeAttachments(ctx, wsId, opened.attachments, attachments);
   // 3. One conditional write. A concurrent change makes it fail without effect.
-  const finalDoc = backup.finalize(next, { actor: ctx.principal.subject, nowIso, archiveId, mode });
+  const finalDoc = backup.finalize(next, { actor: ctx.principal.subject, nowIso, archiveId, mode, recoveryPoint: entry.archiveId, setAside: summary.excluded.setAside || 0 });
   try { await ctx.storage.putJson(store.paths.workspace(wsId), finalDoc, { ifMatch: etag }); } catch (e) {
     if (e instanceof PreconditionFailed) throw conflict('The workspace changed during the restore. Nothing was changed; a recovery point was kept.', 'stale_preview');
     throw e;

@@ -232,7 +232,7 @@ function totals(accounts, balanceMap) {
 }
 
 // Produces the preview summary and, for execution, the next document. Pure: no storage access.
-function plan({ current, archived, mode, principal, member, nowIso, newWorkspaceId }) {
+function plan({ current, archived, mode, principal, member, nowIso, newWorkspaceId, archiveId = null }) {
   const scopeNow = current ? scopeFor(current, principal.subject, member.role) : null;
   const scopeArc = scopeFor(archived, principal.subject, member.role);
   const arc = inScope(archived, scopeArc);
@@ -273,12 +273,25 @@ function plan({ current, archived, mode, principal, member, nowIso, newWorkspace
     const cur = inScope(current, scopeNow);
     next = structuredClone(current);
     if (mode === 'replace') {
+      // NOTHING IS DROPPED (BT-001-05, audit A7): a current record that the backup's version replaces,
+      // or that did not exist when the backup was made, leaves the live lists but is kept whole in
+      // the append-only `superseded` collection with who, when, why and the archive it came from.
+      // Identical records are simply kept.
+      const setAside = [];
       for (const c of COLLECTIONS) {
-        const archivedIds = new Set(arc[c].map((r) => r.id));
-        const drop = new Set(cur[c].filter((r) => !KEEP_ON_REPLACE.has(c) || archivedIds.has(r.id)).map((r) => r.id));
+        const archivedById = new Map(arc[c].map((r) => [r.id, r]));
+        const drop = new Set(cur[c].filter((r) => !KEEP_ON_REPLACE.has(c) || archivedById.has(r.id)).map((r) => r.id));
+        for (const r of cur[c]) {
+          if (!drop.has(r.id)) continue;
+          const incoming = archivedById.get(r.id);
+          if (incoming && JSON.stringify(incoming) === JSON.stringify(r)) continue;
+          setAside.push({ id: newId('sup'), collection: c, reason: incoming ? 'replaced-by-backup' : 'not-in-backup', archiveId, at: nowIso, by: principal.subject, record: structuredClone(r) });
+        }
         const add = arc[c].filter((r) => !((next[c] || []).some((x) => x.id === r.id) && !drop.has(r.id)));
         next[c] = [...(next[c] || []).filter((r) => !drop.has(r.id)), ...add];
       }
+      next.superseded = [...(current.superseded || []), ...setAside];
+      excluded.setAside = setAside.length;
     } else {
       let skipped = 0;
       for (const c of COLLECTIONS) {
@@ -332,17 +345,19 @@ function plan({ current, archived, mode, principal, member, nowIso, newWorkspace
     totalsAfter: totals(after.accounts, balances(next)),
     totalsNow: current ? totals(inScope(current, scopeNow).accounts, balances(current)) : [],
     permissions: 'Archived memberships, grants and invitations are never restored. Current access is kept; a new workspace starts with only you as owner.',
-    warnings: mode === 'replace' ? ['Replace removes records created after this backup within your restore scope. A recovery point is created first.'] : [],
+    warnings: mode === 'replace' ? ['Replace sets aside records created or changed after this backup within your restore scope: they leave the lists but are kept in the workspace history. A recovery point is created first.'] : [],
     blockers,
     attachmentsInScope: referenced.size,
   };
   return { summary, next: blockers.length ? null : next, attachments: referenced };
 }
 
-function finalize(next, { actor, nowIso, archiveId, mode }) {
+function finalize(next, { actor, nowIso, archiveId, mode, recoveryPoint = null, setAside = 0 }) {
   next.revision = (Number.isSafeInteger(next.revision) ? next.revision : 0) + 1;
   next.updatedAt = nowIso;
   if (mode === 'create-new') next.restoredFrom = { archiveId, at: nowIso };
+  // Every restore into this workspace leaves a record of itself; never truncated (BT-001-05).
+  else next.restores = [...(next.restores || []), { id: newId('rst'), archiveId, mode, at: nowIso, by: actor, recoveryPoint, setAside }];
   audit.record(next, { actor, action: mode === 'create-new' ? 'workspace.restore-create' : `workspace.restore-${mode}`, targetType: 'backup', targetId: archiveId, at: nowIso });
   return stampDocument('workspace', next);
 }

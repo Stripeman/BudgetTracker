@@ -44,6 +44,7 @@ All changes so far only add optional fields and collections to the version-1 wor
 | User preference `categoryColors` | No personal colours |
 | `icon` on categories (with `defaultIcon`), accounts, merchants, bills (with `iconHistory`) and budgets (with `iconHistory`); workspace `settings.typeIcons` and `settings.typeIconHistory` | No chosen icon: a category uses the default for its original name or type (pinned on its next edit), other records the workspace's icon for their type or the built-in default |
 | User preference `categoryIcons` | No personal icons |
+| Workspace `superseded[]` (records set aside by a replace restore: `collection`, `reason`, `archiveId`, `at`, `by`, whole `record`) and `restores[]` (`archiveId`, `mode`, `at`, `by`, `recoveryPoint`, `setAside`) | Nothing set aside; no restore recorded in the document (the audit log still has restore entries) |
 | Site document `site/icons.json` (`disabled`, `custom[]` as shape data with `status` and `history`, `audit`) | Every built-in icon offered; no custom icons |
 
 Any change that renames, removes or reinterprets a field needs a real migration (in `api/_shared/schema.js`) and a `schemaVersion` bump before release.

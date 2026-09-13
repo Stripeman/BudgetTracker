@@ -153,6 +153,34 @@ describe('BT-002 replace', () => {
     void bob;
   });
 
+  test('BT-001-05 A7 replace sets records aside with who, when, why and the archive — it never drops them', async () => {
+    const h = harness();
+    const f = await household(h);
+    const id = await backupNow(h, f);
+    const extra = (await h.call('transactions', 'POST', { as: 'alice', query: f.q, body: { accountId: f.joint.id, kind: 'expense', amount: '7.00', notes: 'after the backup' } })).body.transactions[0];
+    await h.call('transactions', 'PATCH', { as: 'alice', query: f.q, body: { transactionId: f.grocery.id, revision: 1, notes: 'edited after the backup' } });
+    const pv = (await preview(h, f, 'alice', id, 'replace')).body;
+    assert.equal(pv.excluded.setAside, 2);
+    assert.match(pv.warnings[0], /kept in the workspace history/);
+    const res = await execute(h, f, 'alice', { archiveId: id, mode: 'replace', expectedEtag: pv.expectedEtag, confirm: 'REPLACE' });
+    assert.equal(res.status, 200, JSON.stringify(res.body));
+    const live = (await h.call('transactions', 'GET', { as: 'alice', query: { ...f.q, accountId: f.joint.id } })).body.transactions;
+    assert.deepEqual(live.map((t) => [t.id, t.notes]), [[f.grocery.id, '']], 'the lists show the backup version');
+    const { value: doc } = await h.storage.getJson(`workspaces/${f.ws.id}/workspace.json`);
+    const aside = doc.superseded.map((s) => [s.collection, s.reason, s.record.id, s.record.notes, s.archiveId, s.by]);
+    assert.deepEqual(aside.sort(), [
+      ['transactions', 'not-in-backup', extra.id, 'after the backup', id, 'google:g-alice'],
+      ['transactions', 'replaced-by-backup', f.grocery.id, 'edited after the backup', id, 'google:g-alice'],
+    ].sort());
+    assert.deepEqual(doc.restores.map((r) => [r.archiveId, r.mode, r.recoveryPoint, r.setAside]), [[id, 'replace', res.body.recoveryPoint, 2]]);
+    // A second replace keeps what the first one set aside.
+    const pv2 = (await preview(h, f, 'alice', id, 'replace')).body;
+    assert.equal((await execute(h, f, 'alice', { archiveId: id, mode: 'replace', expectedEtag: pv2.expectedEtag, confirm: 'REPLACE' })).status, 200);
+    const { value: doc2 } = await h.storage.getJson(`workspaces/${f.ws.id}/workspace.json`);
+    assert.equal(doc2.superseded.length, 2);
+    assert.equal(doc2.restores.length, 2);
+  });
+
   test('a stale preview is refused and a failed swap leaves the workspace unchanged', async () => {
     const h = harness();
     const f = await household(h);
