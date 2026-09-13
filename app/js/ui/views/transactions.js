@@ -23,7 +23,7 @@ import { messageFor } from "../../core/errors.js";
 import { evaluateAmount, isPlainAmount } from "../../core/calc.js";
 import { formatDate, formatAmount, todayIso, KIND_LABELS, MERCHANT_TYPE_LABELS } from "../../core/format.js";
 import { withIcon } from "../icons.js";
-import { amountWithDirection } from "../components.js";
+import { amountWithDirection, transferLabel } from "../components.js";
 
 export { amountWithDirection };
 
@@ -118,10 +118,11 @@ export function createView(ctx) {
     if (s) { mount(tableBox, s); return; }
     // Merchant and account icons come from the records themselves (BT-011-05).
     const merchantIcons = new Map(((sliceFor(state, "payees").data || {}).payees || []).map((p) => [p.id, p.icon || "store"]));
-    const accountIcons = new Map(((sliceFor(state, "accounts").data || {}).accounts || []).map((a) => [a.id, a.icon]));
+    const accountsById = new Map(((sliceFor(state, "accounts").data || {}).accounts || []).map((a) => [a.id, a]));
+    const accountIcons = new Map([...accountsById].map(([id, a]) => [id, a.icon]));
     const merchantCell = (t) => {
       if (t.payeeName) return withIcon(merchantIcons.get(t.payeeId) || "store", t.payeeName);
-      if (t.kind === "transfer") return withIcon("transfer", "Transfer");
+      if (t.kind === "transfer") return transferLabel(t, accountsById);
       return el("span", { text: "—" });
     };
     const rows = txns.data.transactions.map((t) => el("tr", {}, [

@@ -18,7 +18,7 @@ Status key: **Fixed** (with the commit that fixed it), **Open**.
 | A6 | bill "resume" rewrites or drops pause records | the original pause range | High | **Fixed** (`ab27260`, resumes are separate records; tested) |
 | A7 | restore "replace" removes in-scope records created after the backup and overwrites changed ones | the current records (only the encrypted recovery point keeps them) | High | **Fixed**: replaced and not-in-backup records move whole into the append-only `superseded` collection with who, when, why and the archive; each replace or merge appends to `restores[]` with its recovery point; both are viewable in the restore history, filtered to what each person may see (`api/test/backup.test.js`, A7) |
 | A8 | idempotency records pruned after 48 h | the cached replay response | Medium | Open (needs a ruling: cache, not record) |
-| A9 | preference set to null deletes the key | the prior value | Low | Open |
+| A9 | preference set to null deletes the key | the prior value | Low | **Resolved by Terry's ruling** (2026-09-13): personal display preferences need no history |
 | A10 | audit `fields` list capped at 30 | long field lists | Low | **Fixed** (`ab27260`) |
 | A11 | backup `retentionDays` implies pruning (none implemented) | — | Medium | Open (rename to minimum retention) |
 | A12 | blob soft-delete purges after 14/35 days; no WORM | storage-level deletions | Medium | Open (infrastructure, needs Terry) |
@@ -45,7 +45,7 @@ Status key: **Fixed** (with the commit that fixed it), **Open**.
 | B15 | member role and rejoin overwrite membership | membership periods | Medium | **Fixed** (append-only member history of role changes, removals with an optional reason, departures and rejoins; former members listed for owners and managers; tested) |
 | B16 | workspace edits overwrite; unarchive loses who/when | settings history | Medium | **Fixed** (before/after workspace history with reason; archive and restore appended to `lifecycle`; visible to owners and managers; tested) |
 | B17 | site settings overwritten; audit keeps names only | prior settings | Medium | Open |
-| B18 | profile and preference overwrites | prior values | Low | Open |
+| B18 | profile and preference overwrites | prior values | Low | Preferences **resolved by Terry's ruling** (no history needed); profile fields Open |
 | B19 | invitation replace/revoke lacks `closedBy` and audit | who closed it | Low | Open |
 
 ## C. Soft-delete paths

@@ -2,7 +2,7 @@
 // money, shared accounts and accounts others shared with them; accounts; recent entries; and the
 // primary "Add expense" action when at least one account accepts new entries.
 import { el, mount } from "../dom.js";
-import { pageHead, stateView, money, accessBadge, button } from "../components.js";
+import { pageHead, stateView, money, accessBadge, button, transferLabel } from "../components.js";
 import { sliceFor } from "../../core/store.js";
 import { ACCOUNT_TYPE_LABELS, formatDate } from "../../core/format.js";
 import { openQuickEntry, canAddEntries, amountWithDirection } from "./transactions.js";
@@ -73,7 +73,8 @@ export function createView(ctx) {
     const txState = stateView(txns, { empty: "No entries yet. Use “Add expense” to record one.", isEmpty: (d) => !d.transactions.length });
     // Merchant icons as in Transactions (UXI-9).
     const merchantIcons = new Map(((sliceFor(state, "payees").data || {}).payees || []).map((p) => [p.id, p.icon || "store"]));
-    const merchantOf = (t) => (t.payeeName ? withIcon(merchantIcons.get(t.payeeId) || "store", t.payeeName) : t.kind === "transfer" ? withIcon("transfer", "Transfer") : el("span", { text: "—" }));
+    const accountsById = new Map(((accounts.data || {}).accounts || []).map((a) => [a.id, a]));
+    const merchantOf = (t) => (t.payeeName ? withIcon(merchantIcons.get(t.payeeId) || "store", t.payeeName) : t.kind === "transfer" ? transferLabel(t, accountsById) : el("span", { text: "—" }));
     if (txState) mount(recent, txState);
     else mount(recent, el("ul", { class: "stack" }, txns.data.transactions.slice(0, 8).map((t) => el("li", { class: "row" }, [
       el("span", { class: "muted small", text: formatDate(t.date, dateFormat) }),

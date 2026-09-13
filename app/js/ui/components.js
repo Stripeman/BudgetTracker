@@ -1,7 +1,7 @@
 // Small shared view helpers. Every list uses `stateView` so loading, error and empty are three
 // different things: a failure is never shown as "nothing here".
 import { el } from "./dom.js";
-import { icon, directionOf, iconLabel } from "./icons.js";
+import { icon, directionOf, iconLabel, withIcon } from "./icons.js";
 import { messageFor } from "../core/errors.js";
 import { formatAmount, isNegative } from "../core/format.js";
 import { Status } from "../core/store.js";
@@ -102,6 +102,14 @@ export function amountWithDirection(t, prefs) {
     dir === "reversal" ? el("span", { class: "sr-only", text: `${iconLabel(dir)}: ` }) : null,
     money(t.amount, t.currency, prefs, { masked: false }),
   ]);
+}
+
+// A transfer leg names where the money went or came from, with that account's icon — no two-way
+// arrow (Terry, 2026-09-13). An account the viewer cannot see is "another account".
+export function transferLabel(t, accountsById) {
+  const other = accountsById.get(t.counterpartAccountId);
+  const minor = t.amountMinor !== undefined ? t.amountMinor : Number(String(t.amount || "0").replace(/[^0-9.-]/g, ""));
+  return withIcon(other && other.icon ? other.icon : "bank", `Transfer ${minor < 0 ? "to" : "from"} ${other ? other.name : "another account"}`);
 }
 
 // A plain figure (a planned amount, spending total or similar magnitude) that is neither money in

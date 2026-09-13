@@ -78,6 +78,8 @@ CSP) is reusable if palettes are offered.
 
 ## Rich text editor (Tiptap) — BT-011-02
 
+Detailed archaeology, gaps and the reduced schema and plan: `docs/reviews/2026-09-13-editor-archaeology.md` (2026-09-13, `T:` `main` `a1ec150`). Key points: ProseMirror JSON in a versioned envelope, never HTML; rendering through `el()`; the vendored bundle needs a registered-bundle exemption in `scripts/validate.cjs`; keep the MIT notices (TaskTracker's build strips them); BudgetTracker's server validator must be stricter (content model, undeclared keys, text checks, canonical `href`, tight limits).
+
 Canonical at `T:` `main`:
 
 - **Engine and bundle.** Tiptap 3.30.5 (`@tiptap/core`, `starter-kit`, `extension-heading`,

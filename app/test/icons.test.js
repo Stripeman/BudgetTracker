@@ -7,7 +7,7 @@ import { createRequire } from "node:module";
 import { installDom } from "./domdouble.js";
 import { icon, setCatalog, setTypeIcons, BUILT_IN_IDS, SYSTEM_IDS, directionOf, iconEntries, iconLabel, defaultIconFor, builtInIconFor, withIcon } from "../js/ui/icons.js";
 import { createIconPicker, iconChange } from "../js/ui/iconpicker.js";
-import { categoryLabel, amountWithDirection } from "../js/ui/components.js";
+import { categoryLabel, amountWithDirection, transferLabel } from "../js/ui/components.js";
 import { escapeBelongsToControl } from "../js/ui/modal.js";
 import { DomEvent } from "./domdouble.js";
 
@@ -68,11 +68,13 @@ describe("BT-011-05 icon registry", () => {
     for (const id of ["ico_evil000001", "ico_evil000002", "ico_evil000003", "not-a-custom-id"]) assert.equal(icon(id).getAttribute("data-icon"), "fallback", id);
   });
 
-  test("money direction: in is up, out is down, transfers go both ways, refunds and reversals return", () => {
+  test("money direction: in is up, out is down — never both ways; refunds and reversals return", () => {
     assert.equal(directionOf({ kind: "income", amountMinor: 500 }), "money-in");
     assert.equal(directionOf({ kind: "expense", amountMinor: -500 }), "money-out");
     assert.equal(directionOf({ kind: "adjustment", amount: "-3.00" }), "money-out");
-    assert.equal(directionOf({ kind: "transfer", amountMinor: -500 }), "transfer");
+    // Terry, 2026-09-13: a transfer leg shows only whether money leaves or arrives in this account.
+    assert.equal(directionOf({ kind: "transfer", amountMinor: -500 }), "money-out");
+    assert.equal(directionOf({ kind: "transfer", amountMinor: 500 }), "money-in");
     assert.equal(directionOf({ kind: "refund", amountMinor: 500 }), "reversal");
     assert.equal(directionOf({ kind: "expense", amountMinor: 500, links: { reverses: "txn_1" } }), "reversal");
     assert.deepEqual(tags(icon("money-in")).length > 0 && icon("money-in").getAttribute("data-icon"), "money-in");
@@ -185,6 +187,17 @@ describe("BT-011-05 icon pickers", () => {
     const out = amountWithDirection({ kind: "expense", amountMinor: -500, amount: "-5.00", currency: "EUR" }, { effective: {} });
     assert.equal(out.querySelector(".sr-only"), null);
     assert.equal(out.querySelector("svg").getAttribute("data-icon"), "money-out");
+  });
+
+  test("a transfer leg names the other account with its icon, and says to or from — no two-way arrow", () => {
+    const accounts = new Map([["acc_card", { id: "acc_card", name: "Household Card", icon: "credit-card" }]]);
+    const out = transferLabel({ kind: "transfer", amountMinor: -25000, counterpartAccountId: "acc_card" }, accounts);
+    assert.equal(out.textContent, "Transfer to Household Card");
+    assert.equal(out.querySelector("svg").getAttribute("data-icon"), "credit-card");
+    const inbound = transferLabel({ kind: "transfer", amountMinor: 25000, counterpartAccountId: "acc_hidden" }, accounts);
+    assert.equal(inbound.textContent, "Transfer from another account");
+    assert.equal(inbound.querySelector("svg").getAttribute("data-icon"), "bank");
+    assert.ok(![out, inbound].some((n) => n.querySelector('[data-icon="transfer"]')));
   });
 
   test("a category label with an icon carries the colour on the icon through the CSSOM, beside the name", () => {

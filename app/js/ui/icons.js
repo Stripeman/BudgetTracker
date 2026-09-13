@@ -177,11 +177,11 @@ export function withIcon(id, content, { className = "" } = {}) {
   return el("span", { class: ["iconlabel", className].filter(Boolean).join(" ") }, [icon(id), typeof content === "string" ? el("span", { text: content }) : content]);
 }
 
-// Money direction (BT-011-05): in (upward), out (downward), transfer (both ways), and refunds or
-// reversals (a return arrow), decided from the entry itself.
+// Money direction (BT-011-05): an arrow says only whether money comes in (upward) or goes out
+// (downward) — never both ways (Terry, 2026-09-13). A transfer leg is in or out by its own sign;
+// refunds and reversals keep a return arrow. Decided from the entry itself.
 export function directionOf(t) {
   if ((t.links && t.links.reverses) || t.kind === "refund") return "reversal";
-  if (t.kind === "transfer") return "transfer";
   const minor = t.amountMinor !== undefined ? t.amountMinor : Number(String(t.amount || "0").replace(/[^0-9.-]/g, ""));
   return minor >= 0 ? "money-in" : "money-out";
 }
