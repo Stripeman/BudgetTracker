@@ -120,8 +120,17 @@ async function accept(ctx, req) {
   try {
     await join(ctx, wsId, body, (value) => { joined = value; });
   } catch (e) {
-    // A failed join takes back the id it just added, so failed attempts leave nothing behind (LA4).
-    if (added) {
+    // A failed join takes back the id it just added, so failed attempts leave nothing behind (LA4) —
+    // unless the person is a member by now (a parallel accept with a good link, or a write that landed
+    // before the error), whose list must keep it (security recheck LR1). If that cannot be checked,
+    // the harmless stray id stays.
+    let memberNow = true;
+    try {
+      const { value } = await ctx.storage.getJson(store.paths.workspace(wsId));
+      const doc = readDocument('workspace', value);
+      memberNow = !!(doc && activeMember(doc, ctx.principal));
+    } catch { memberNow = true; }
+    if (added && !memberNow) {
       await store.mutateUser(ctx, (user) => {
         if (!(user.workspaceIds || []).includes(wsId)) return undefined;
         user.workspaceIds = user.workspaceIds.filter((id) => id !== wsId);

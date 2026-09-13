@@ -89,6 +89,22 @@ describe('BT-006-04 owners set each member\'s storage allowance', () => {
     assert.equal((value && value.workspaceIds ? value.workspaceIds : []).includes(f.ws.id), false);
   });
 
+  test('LR1 a failed accept racing a good one never takes the workspace out of the new member\'s list', async () => {
+    const store = require('../_shared/store');
+    const frank = { userId: 'g-frank', email: 'frank@example.com', name: 'Frank Fictional' };
+    for (let round = 0; round < 8; round += 1) {
+      const h = harness();
+      const f = await household(h);
+      const inv = ok(await h.call('invitations', 'POST', { as: 'alice', query: f.q, body: { email: frank.email, role: 'viewer' } }), 201);
+      const accept = (token) => h.call('invitations', 'POST', { user: frank, query: { action: 'accept' }, body: { workspaceId: f.ws.id, token } });
+      const [bad, good] = await Promise.all([accept('fictional-bad-token-0001'), accept(inv.token)]);
+      assert.equal(good.status, 200, JSON.stringify(good.body));
+      assert.ok([200, 404].includes(bad.status), String(bad.status));
+      const { value } = await h.storage.getJson(store.paths.user('google:g-frank'));
+      assert.ok(value.workspaceIds.includes(f.ws.id), `round ${round}: the member's list keeps the workspace`);
+    }
+  });
+
   test('only owners may set allowances, only for members who are not owners, and only to the listed sizes', async () => {
     const h = harness();
     const f = await household(h);
