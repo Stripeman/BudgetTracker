@@ -110,6 +110,31 @@ function normalizeSplit(input, totalMinor, currency, checkRef) {
   return { method, lines };
 }
 
+// The same rules as normalizeSplit, applied to a STORED split (amounts already in minor units), for
+// the backup and restore integrity check (financial review finding 6). True when the split is one the
+// API would never have stored.
+function storedSplitBroken(split, totalMinor) {
+  if (!split || typeof split !== 'object' || !METHODS.includes(split.method)) return true;
+  const lines = split.lines;
+  if (!Array.isArray(lines) || !lines.length || lines.length > MAX_LINES) return true;
+  if (lines.some((l) => !l || typeof l.ref !== 'string')) return true;
+  if (unique(lines.map((l) => l.ref)).length !== lines.length) return true;
+  if (split.method === 'equal') return lines.some((l) => l.value !== null);
+  if (split.method === 'shares') return lines.some((l) => !Number.isInteger(l.value) || l.value < 1 || l.value > MAX_SHARES);
+  if (split.method === 'percentages') {
+    let sum = 0;
+    for (const l of lines) {
+      let units;
+      try { units = percentUnits(l.value); } catch { return true; }
+      if (percentText(units) !== l.value) return true;
+      sum += units;
+    }
+    return sum !== HUNDRED_PERCENT;
+  }
+  if (lines.some((l) => !money.isMinor(l.value) || l.value <= 0 || l.value > MAX_GROUP_MINOR)) return true;
+  try { return money.sum(lines.map((l) => l.value)) !== totalMinor; } catch { return true; }
+}
+
 // Who paid: one or more { ref, amount } that add up exactly to the total. A single payer may leave
 // the amount out; it is then the total.
 function normalizePayers(input, totalMinor, currency, checkRef) {
@@ -350,10 +375,12 @@ function invariantProblem(doc) {
     if (unique(e.payers.map((p) => p.ref)).length !== e.payers.length || total(e.payers) !== e.amountMinor) return 'group expense payers';
     if (e.shares.some((s) => !refOk(s.ref) || !money.isMinor(s.amountMinor) || s.amountMinor < 0)) return 'group expense shares';
     if (total(e.shares) !== e.amountMinor) return 'group expense shares';
-    // The stored shares are exactly what the stored split gives: one canonical calculation.
+    // The stored split follows the rules the API applies, and the stored shares are exactly what it
+    // gives: one canonical calculation.
+    if (storedSplitBroken(e.split, e.amountMinor)) return 'group expense split';
     let expected;
     try {
-      if (!e.split || !METHODS.includes(e.split.method) || !Array.isArray(e.split.lines) || e.split.lines.length !== e.shares.length) throw new Error('split');
+      if (e.split.lines.length !== e.shares.length) throw new Error('split');
       expected = computeShares(e.amountMinor, e.split).shares;
     } catch { return 'group expense shares'; }
     if (expected.some((s, i) => s.ref !== e.shares[i].ref || s.amountMinor !== e.shares[i].amountMinor)) return 'group expense shares';

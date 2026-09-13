@@ -61,3 +61,51 @@ describe('finding 4 / S3: group link keys are server-only', () => {
     assert.equal((await view(h, f)).expenses[0].myLedger.needsReview, false);
   });
 });
+
+describe('finding 6: the backup integrity check applies the split rules the API applies', () => {
+  const EQUAL = { method: 'equal', lines: [{ ref: 'member:a', value: null }, { ref: 'member:b', value: null }] };
+  // One expense of 90.00 paid by a, with shares exactly what the stored split gives (when it can be
+  // computed at all), so only the split rule itself can be at fault.
+  const docWith = (split) => {
+    let shares;
+    try { shares = groups.computeShares(9000, split).shares.map(({ ref, amountMinor }) => ({ ref, amountMinor })); } catch { shares = [{ ref: 'member:a', amountMinor: 4500 }, { ref: 'member:b', amountMinor: 4500 }]; }
+    return { members: [{ id: 'a' }, { id: 'b' }], contacts: [], categories: [], groupSettlements: [],
+      groupExpenses: [{ id: 'x', currency: 'EUR', amountMinor: 9000, payers: [{ ref: 'member:a', amountMinor: 9000 }], split, shares }] };
+  };
+  test('valid stored splits of every method pass', () => {
+    for (const split of [
+      EQUAL,
+      { method: 'shares', lines: [{ ref: 'member:a', value: 2 }, { ref: 'member:b', value: 1 }] },
+      { method: 'percentages', lines: [{ ref: 'member:a', value: '60' }, { ref: 'member:b', value: '40' }] },
+      { method: 'amounts', lines: [{ ref: 'member:a', value: 5000 }, { ref: 'member:b', value: 4000 }] },
+    ]) assert.equal(groups.invariantProblem(docWith(split)), null, split.method);
+  });
+  test('percentages not totalling 100, zero or oversized weights, zero amounts, values on an equal split, non-canonical percentages and repeated people are refused', () => {
+    for (const [label, split] of [
+      // 50 % + 40 % = 90 %: the API refuses it (split_percent_total); the shares 5000 / 4000 still add up to 9000.
+      ['percent total', { method: 'percentages', lines: [{ ref: 'member:a', value: '50' }, { ref: 'member:b', value: '40' }] }],
+      ['zero weight', { method: 'shares', lines: [{ ref: 'member:a', value: 0 }, { ref: 'member:b', value: 1 }] }],
+      ['weight too big', { method: 'shares', lines: [{ ref: 'member:a', value: 1001 }, { ref: 'member:b', value: 1 }] }],
+      ['fractional weight', { method: 'shares', lines: [{ ref: 'member:a', value: 1.5 }, { ref: 'member:b', value: 1 }] }],
+      ['zero amount', { method: 'amounts', lines: [{ ref: 'member:a', value: 0 }, { ref: 'member:b', value: 9000 }] }],
+      ['equal with value', { method: 'equal', lines: [{ ref: 'member:a', value: 1 }, { ref: 'member:b', value: null }] }],
+      ['non-canonical percent', { method: 'percentages', lines: [{ ref: 'member:a', value: '50.0' }, { ref: 'member:b', value: '50' }] }],
+      ['repeated person', { method: 'equal', lines: [{ ref: 'member:a', value: null }, { ref: 'member:a', value: null }] }],
+    ]) assert.equal(groups.invariantProblem(docWith(split)), 'group expense split', label);
+  });
+  test('a backup of a workspace whose stored split breaks the rule is refused', async () => {
+    const h = harness();
+    const f = await fixture(h);
+    await addExpense(h, f, 'alice', { description: 'Fictional museum', amount: '90.00', payers: [{ ref: f.refs.alice }], split: { method: 'percentages', lines: [{ ref: f.refs.alice, value: '50' }, { ref: f.refs.bob, value: '50' }] } });
+    const name = `workspaces/${f.ws.id}/workspace.json`;
+    const { value } = await h.storage.getJson(name);
+    // 50/40 with the shares recomputed so they still add up to 90.00 (5000 + 4000).
+    value.groupExpenses[0].split.lines[1].value = '40';
+    value.groupExpenses[0].shares = groups.computeShares(9000, value.groupExpenses[0].split).shares.map(({ ref, amountMinor }) => ({ ref, amountMinor }));
+    await h.storage.putJson(name, value);
+    const res = await h.call('backups', 'POST', { as: 'alice', query: f.q, body: {} });
+    assert.equal(res.status, 422);
+    assert.equal(res.body.error.code, 'backup_invalid');
+    assert.match(res.body.error.message, /group expense split/);
+  });
+});
