@@ -118,6 +118,8 @@ async function accept(ctx, req) {
     const existing = model.memberBySubject(doc, ctx.principal.subject);
     let member;
     if (existing) {
+      // A rejoin starts a new membership period; the earlier one stays in the history (audit B15).
+      existing.history = [...(existing.history || []), { at: nowIso, by: ctx.principal.subject, event: 'rejoined', from: existing.role, to: inv.role, invitationId: inv.id }];
       existing.status = 'active'; existing.role = inv.role; existing.rejoinedAt = nowIso;
       existing.email = ctx.principal.email; existing.name = ctx.principal.name || existing.name;
       member = existing;

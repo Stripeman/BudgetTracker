@@ -16,10 +16,27 @@ const model = require('../_shared/workspace-model');
 const fields = require('../_shared/fields');
 const audit = require('../_shared/audit');
 
+// includeFormer=1 (owners and managers) adds former members with their membership history, so
+// removals and role changes stay visible (BT-001-05, audit B15/D6).
 async function list(ctx, req) {
   const wsId = requireId(query(req, 'workspaceId'), 'workspaceId');
   const { doc, member } = await store.loadWorkspace(ctx, wsId);
-  return { body: { members: model.activeMembers(doc).map((m) => model.memberView(m, member)) } };
+  const members = model.activeMembers(doc).map((m) => model.memberView(m, member));
+  if (query(req, 'includeFormer') !== '1') return { body: { members } };
+  if (member.role !== 'owner' && member.role !== 'manager') throw forbidden('Only owners and managers can see former members.');
+  const names = new Map((doc.members || []).map((m) => [m.subject, m.name || 'Member']));
+  const historyOf = (m) => (m.history || []).map((h) => ({ ...h, by: names.get(h.by) || 'Former member' }));
+  return {
+    body: {
+      members: members.map((v) => ({ ...v, history: historyOf(model.findMember(doc, v.id)) })),
+      former: (doc.members || []).filter((m) => m.status !== 'active').map((m) => ({ ...model.memberView(m, member), removedAt: m.removedAt || null, history: historyOf(m) })),
+    },
+  };
+}
+
+// Membership history, append-only: role changes, removals, departures and rejoins.
+function addHistory(m, entry) {
+  m.history = [...(m.history || []), entry];
 }
 
 async function changeRole(ctx, req) {
@@ -35,6 +52,7 @@ async function changeRole(ctx, req) {
     if (target.role === 'owner' && role !== 'owner' && model.activeOwners(doc).length <= 1) {
       throw conflict('A workspace must keep at least one owner. Make someone else an owner first.', 'last_owner');
     }
+    addHistory(target, { at: ctx.nowIso(), by: me.subject, event: 'role', from: target.role, to: role });
     target.role = role;
     audit.record(doc, { actor: me.subject, action: 'member.role', targetType: 'member', targetId: target.id, at: ctx.nowIso(), fields: ['role'] });
     return { member: model.memberView(target, me) };
@@ -57,7 +75,7 @@ function revokeFor(doc, subject, nowIso, actor) {
 
 async function remove(ctx, req) {
   const wsId = requireId(query(req, 'workspaceId'), 'workspaceId');
-  const body = fields.onlyKeys(readBody(req), ['memberId']);
+  const body = fields.onlyKeys(readBody(req), ['memberId', 'reason']);
   const memberId = requireId(body.memberId, 'memberId');
   const { result } = await store.mutateWorkspace(ctx, wsId, (doc, me) => {
     const target = model.findMember(doc, memberId);
@@ -68,6 +86,7 @@ async function remove(ctx, req) {
       throw conflict('A workspace must keep at least one owner. Transfer ownership first.', 'last_owner');
     }
     const nowIso = ctx.nowIso();
+    addHistory(target, { at: nowIso, by: me.subject, event: self ? 'left' : 'removed', role: target.role, reason: fields.text(body.reason, { field: 'Reason', max: 200 }) });
     target.status = 'removed';
     target.removedAt = nowIso;
     target.removedBy = me.subject;

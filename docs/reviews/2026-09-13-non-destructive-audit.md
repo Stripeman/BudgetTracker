@@ -38,12 +38,12 @@ Status key: **Fixed** (with the commit that fixed it), **Open**.
 | B8 | account terms and fields overwritten | APR, limits, payment terms, names | High/Medium | **Fixed** (every account edit keeps before/after values and an optional reason; tested) |
 | B9 | account close has no who/why | lifecycle | Medium | **Fixed** (close/reopen actions with revision and reason in the account history; tested) |
 | B10 | payee edits overwrite with no history or revision | names, aliases, defaults | Medium | **Fixed** by BT-007-01 (revision check, before/after history with reason) |
-| B11 | category edits overwrite with no history | names, parents | Medium | Open |
+| B11 | category edits overwrite with no history | names, parents | Medium | **Fixed** (before/after history on every category change, with the colour and icon work) |
 | B12 | contact edits overwrite; private changes unaudited | contact details | Medium | **Fixed** (before/after history on shared and private contacts, private history visible to its owner only; archive and restore; tested) |
 | B13 | budget lines replaced; past periods recomputed from current lines | historical budget performance | High | **Fixed** (plan versions from a date; tested) |
-| B14 | bill name/type/notes/reminder/end date overwritten | prior values | Medium | Open |
-| B15 | member role and rejoin overwrite membership | membership periods | Medium | Open |
-| B16 | workspace edits overwrite; unarchive loses who/when | settings history | Medium | Open |
+| B14 | bill name/type/notes/reminder/end date overwritten | prior values | Medium | **Fixed** (history entries keep before/after `changes`; shown in the bill history; `api/test/lifecycle-b.test.js`) |
+| B15 | member role and rejoin overwrite membership | membership periods | Medium | **Fixed** (append-only member history of role changes, removals with an optional reason, departures and rejoins; former members listed for owners and managers; tested) |
+| B16 | workspace edits overwrite; unarchive loses who/when | settings history | Medium | **Fixed** (before/after workspace history with reason; archive and restore appended to `lifecycle`; visible to owners and managers; tested) |
 | B17 | site settings overwritten; audit keeps names only | prior settings | Medium | Open |
 | B18 | profile and preference overwrites | prior values | Low | Open |
 | B19 | invitation replace/revoke lacks `closedBy` and audit | who closed it | Low | Open |
@@ -54,7 +54,7 @@ Transactions, accounts, payees, categories, contacts, members, grants, invitatio
 
 ## D. Dropdowns and history views
 
-D1 closed accounts offered for new entries (UI and server) — **Fixed** (server refuses entries, transfers in, bills and bill payments on closed accounts; the UI no longer offers them; tested). D2 archived categories accepted by the server — Open; deleted payees re-matched by name — **Fixed** (merchant ids). D3 history filters hide removed merchants and deleted accounts — merchants **fixed** (closed merchants stay in the list, labelled); accounts Open. D4 no "show deleted" or restore in the UI — Open. D5 no archived/closed sections — merchants **fixed**; accounts Open. D6 no former-members list or budget/bill activity labels — Open. D7 budgets drop deleted accounts from past periods — Open. D8 payee statistics and the transaction list use different visibility filters — Open.
+D1 closed accounts offered for new entries (UI and server) — **Fixed** (server refuses entries, transfers in, bills and bill payments on closed accounts; the UI no longer offers them; tested). D2 archived categories accepted by the server — Open; deleted payees re-matched by name — **Fixed** (merchant ids). D3 history filters hide removed merchants and deleted accounts — merchants **fixed** (closed merchants stay in the list, labelled); accounts Open. D4 no "show deleted" or restore in the UI — Open. D5 no archived/closed sections — merchants **fixed**; accounts Open. D6 no former-members list or budget/bill activity labels — former members **fixed** in the API (`includeFormer=1`); budget archive/restore **fixed** (archived with a reason, listed with `includeArchived=1`, restorable); UI lists still Open. D7 budgets drop deleted accounts from past periods — Open. D8 payee statistics and the transaction list use different visibility filters — Open.
 
 ## E. Size caps
 

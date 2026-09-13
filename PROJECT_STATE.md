@@ -247,6 +247,16 @@ The medium and low findings are numeric alignment, quick-entry field order and a
 - **Files:** `api/_shared/backup.js` (`plan`, `finalize`), `api/restore/handler.js`, `app/js/ui/views/workspace.js` (preview wording), `api/test/backup.test.js`, audit row A7, register BT-001-05, schema additions table.
 - **Evidence:** `npm test` 8/8 repository, 167/167 API, 48/48 app; `npm run validate` ok (21 routes).
 
+## Checkpoint J — lifecycle and history for bills, budgets, members and workspaces (BT-001-05, 2026-09-13)
+
+- **B14 bills:** detail edits (name, type, notes, due-soon window, end date, icon) keep before/after `changes` in the bill history; the Bills history dialog shows them.
+- **Budgets:** `DELETE` archives with an optional reason (history, `deletedBy`, `archiveReason`); `GET ?includeArchived=1` lists archived budgets; `POST ?action=restore` restores (revision-checked). Name and icon edits keep before/after with an optional reason.
+- **B15 members:** append-only member history of role changes, removals (optional reason), departures and rejoins (from the invitation accept); `GET members?includeFormer=1` for owners and managers lists former members with their history (403 for others).
+- **B16 workspaces:** name and settings edits keep before/after with an optional reason (an unchanged save records nothing); archive and restore append to `lifecycle` with who, when and reason; owners and managers see both on `GET ?id=`.
+- **B11** was already fixed by the category colour/icon work (audit row updated).
+- **Evidence:** `api/test/lifecycle-b.test.js` (4); `npm test` 8/8 repository, 171/171 API, 48/48 app; `npm run validate` ok (21 routes).
+- **Open:** UI for archived budgets, former members and workspace history; ADR-003; A8 ruling; preference history (awaiting Terry, SEC-I7).
+
 ## Checks run this checkpoint
 
 - `node --test test/*.test.cjs`: 7 passed, 0 failed (Node v22.23.1).

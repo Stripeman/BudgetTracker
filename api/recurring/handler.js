@@ -86,9 +86,10 @@ function tripFor(doc, value) {
   return id;
 }
 
-function history(r, by, at, changed) {
+function history(r, by, at, changed, changes = []) {
   // Never truncated (BT-001-05); growth is bounded by the member quota and the document cap.
-  r.history = [...(r.history || []), { revision: r.revision, at, by, fields: changed }];
+  // `changes` keeps the before and after values of detail edits (audit B14).
+  r.history = [...(r.history || []), { revision: r.revision, at, by, fields: changed, ...(changes.length ? { changes } : {}) }];
 }
 
 function locate(doc, principal, id, now) {
@@ -137,7 +138,7 @@ function view(doc, r, principal, user, today, now, recorded) {
     ended: !!(r.schedule.endDate && r.schedule.endDate < today),
     versions: r.versions.map(termsView),
     recordedCount: [...recorded.keys()].filter((k) => k.startsWith(prefix)).length,
-    history: (r.history || []).slice(-20).map((h) => ({ at: h.at, by: names.get(h.by) || 'Former member', fields: h.fields })),
+    history: (r.history || []).slice(-20).map((h) => ({ at: h.at, by: names.get(h.by) || 'Former member', fields: h.fields, changes: h.changes || [] })),
     revision: r.revision,
     canEdit: a ? canChangeRecord(doc, principal, a, r, 'edit', now) : false,
     canDelete: a ? canChangeRecord(doc, principal, a, r, 'delete', now) : false,
@@ -395,6 +396,8 @@ async function patch(ctx, req) {
     if (!Number.isSafeInteger(body.revision)) throw badRequest('revision is required so a stale edit cannot overwrite a newer one.', 'missing_revision');
     if (body.revision !== r.revision) throw conflict('This bill changed since you loaded it. Reload to see the latest version.', 'stale_revision');
     const changed = [];
+    const details = [];
+    const note = (field, from, to) => { if (JSON.stringify(from ?? null) !== JSON.stringify(to ?? null)) details.push({ field, from: from ?? null, to: to ?? null }); };
     let effectiveFrom = null;
     if (TERM_KEYS.some((k) => body[k] !== undefined)) {
       if (r.kind === 'transfer' && NOT_FOR_TRANSFERS.some((k) => body[k] !== undefined)) throw badRequest('Transfers between accounts have no category, payee or responsible person.', 'invalid_transfer');
@@ -411,15 +414,16 @@ async function patch(ctx, req) {
     } else if (body.effectiveFrom !== undefined) {
       throw badRequest('An effective date applies only to amount, category, payee or responsible-person changes.', 'invalid_field');
     }
-    if (body.name !== undefined) { r.name = fields.text(body.name, { field: 'Name', max: 80, required: true }); changed.push('name'); }
-    if (body.billType !== undefined) { r.billType = fields.oneOf(body.billType, bills.BILL_TYPES, 'Bill type'); changed.push('billType'); }
-    if (body.notes !== undefined) { r.notes = fields.text(body.notes, { field: 'Notes', max: 2000, multiline: true }); changed.push('notes'); }
-    if (body.reminderDays !== undefined) { r.reminderDays = reminderDays(body.reminderDays); changed.push('reminderDays'); }
+    if (body.name !== undefined) { const v = fields.text(body.name, { field: 'Name', max: 80, required: true }); note('name', r.name, v); r.name = v; changed.push('name'); }
+    if (body.billType !== undefined) { const v = fields.oneOf(body.billType, bills.BILL_TYPES, 'Bill type'); note('billType', r.billType, v); r.billType = v; changed.push('billType'); }
+    if (body.notes !== undefined) { const v = fields.text(body.notes, { field: 'Notes', max: 2000, multiline: true }); note('notes', r.notes || '', v); r.notes = v; changed.push('notes'); }
+    if (body.reminderDays !== undefined) { const v = reminderDays(body.reminderDays); note('reminderDays', r.reminderDays, v); r.reminderDays = v; changed.push('reminderDays'); }
     if (body.icon !== undefined) {
       const icon = icons.validateChoice(catalog, body.icon, { current: r.icon || null });
       if (icon !== (r.icon || null)) {
         // Before and after are kept in the history (BT-001-05).
         r.iconHistory = [...(r.iconHistory || []), { at: nowIso, by: member.subject, from: r.icon || null, to: icon }];
+        note('icon', r.icon || null, icon);
         r.icon = icon;
         changed.push('icon');
       }
@@ -427,13 +431,14 @@ async function patch(ctx, req) {
     if (body.endDate !== undefined) {
       const endDate = fields.date(body.endDate, 'End date');
       if (endDate && endDate < r.schedule.startDate) throw badRequest('The end date is before the start date.', 'invalid_schedule');
+      note('endDate', r.schedule.endDate || null, endDate || null);
       r.schedule = { ...r.schedule, endDate: endDate || null };
       changed.push('endDate');
     }
     if (changed.length) {
       r.revision += 1;
       r.updatedAt = nowIso;
-      history(r, member.subject, nowIso, changed.map((c) => (c === 'terms' ? `terms from ${effectiveFrom}` : c)));
+      history(r, member.subject, nowIso, changed.map((c) => (c === 'terms' ? `terms from ${effectiveFrom}` : c)), details);
       ledger.assertMemberQuota(doc, member, ctx.env);
       audit.record(doc, { actor: member.subject, action: 'recurring.update', targetType: 'recurring', targetId: r.id, scope: `account:${a.id}`, at: nowIso, fields: changed });
     }

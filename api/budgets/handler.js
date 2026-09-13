@@ -21,8 +21,17 @@ const PERIODS = ['monthly', 'weekly', 'biweekly'];
 // The icon catalogue is read only when an icon is being chosen (BT-011-05).
 const catalogFor = async (ctx, body) => (body.icon !== undefined ? (await icons.readCatalog(ctx.storage)).catalog : null);
 
-function visibleTo(budget, member) {
-  return !budget.deletedAt && (budget.scope === 'shared' || budget.ownerSubject === member.subject);
+// Budgets are archived, never deleted (BT-001-05): `deletedAt` marks an archived budget, which is
+// listed with includeArchived=1 and can be restored.
+function visibleTo(budget, member, { archived = false } = {}) {
+  return (archived || !budget.deletedAt) && (budget.scope === 'shared' || budget.ownerSubject === member.subject);
+}
+
+// Before/after values of every change to the budget itself, with who, when and why. The plan has
+// its own versions.
+function recordHistory(b, by, at, changes, reason = '') {
+  if (!changes.length) return;
+  b.history = [...(b.history || []), { at, by, changes, reason }];
 }
 function mayEdit(budget, member) {
   return budget.scope === 'shared' ? roleAtLeast(member.role, 'manager') : budget.ownerSubject === member.subject;
@@ -53,6 +62,8 @@ function view(doc, budget, member, today, now) {
     id: budget.id, name: budget.name, scope: budget.scope, currency: budget.currency, period: terms.period, startDate: terms.startDate,
     ...icons.effective('budget', budget, doc),
     revision: budget.revision, ownedBySelf: budget.ownerSubject === member.subject, canEdit: mayEdit(budget, member),
+    archived: !!budget.deletedAt, archivedAt: budget.deletedAt || null, archiveReason: budget.archiveReason || '',
+    history: (budget.history || []).map((h) => ({ at: h.at, by: names.get(h.by) || 'Former member', changes: h.changes, reason: h.reason || '' })),
     lines: terms.lines.map(lineView),
     versions: (budget.versions || []).map((v) => ({ effectiveFrom: v.effectiveFrom, period: v.period, reason: v.reason || '', by: v.createdBy ? names.get(v.createdBy) || 'Former member' : null, lines: v.lines.map(lineView) })),
     status: budgeting.budgetStatus(doc, budget, today, now),
@@ -63,7 +74,8 @@ async function list(ctx, req) {
   const wsId = requireId(query(req, 'workspaceId'), 'workspaceId');
   const { doc, member } = await store.loadWorkspace(ctx, wsId);
   const today = fields.date(query(req, 'date'), 'Date') || ctx.nowIso().slice(0, 10);
-  const budgets = (doc.budgets || []).filter((b) => visibleTo(b, member)).map((b) => view(doc, b, member, today, ctx.now()));
+  const archived = query(req, 'includeArchived') === '1';
+  const budgets = (doc.budgets || []).filter((b) => visibleTo(b, member, { archived })).map((b) => view(doc, b, member, today, ctx.now()));
   return { body: { budgets, today } };
 }
 
@@ -93,9 +105,9 @@ async function create(ctx, req) {
   return { status: 201, body: result };
 }
 
-function locate(doc, member, id) {
+function locate(doc, member, id, { archived = false } = {}) {
   const b = (doc.budgets || []).find((x) => x.id === id);
-  if (!b || !visibleTo(b, member)) throw notFound('Unknown budget.');
+  if (!b || !visibleTo(b, member, { archived })) throw notFound('Unknown budget.');
   if (!mayEdit(b, member)) throw forbidden('You cannot change this budget.');
   return b;
 }
@@ -109,16 +121,22 @@ async function patch(ctx, req) {
     const b = locate(doc, member, id);
     if (body.revision !== b.revision) throw conflict('This budget changed since you loaded it. Reload to see the latest version.', 'stale_revision');
     const changed = [];
-    if (body.name !== undefined) { b.name = fields.text(body.name, { field: 'Name', max: 80, required: true }); changed.push('name'); }
+    const details = [];
+    if (body.name !== undefined) {
+      const name = fields.text(body.name, { field: 'Name', max: 80, required: true });
+      if (name !== b.name) { details.push({ field: 'name', from: b.name, to: name }); b.name = name; changed.push('name'); }
+    }
     if (body.icon !== undefined) {
       const icon = icons.validateChoice(catalog, body.icon, { current: b.icon || null });
       if (icon !== (b.icon || null)) {
         // Before and after are kept (BT-001-05).
         b.iconHistory = [...(b.iconHistory || []), { at: ctx.nowIso(), by: member.subject, from: b.icon || null, to: icon }];
+        details.push({ field: 'icon', from: b.icon || null, to: icon });
         b.icon = icon;
         changed.push('icon');
       }
     }
+    recordHistory(b, member.subject, ctx.nowIso(), details, fields.text(body.reason, { field: 'Reason', max: 200 }));
     if (body.lines !== undefined || body.period !== undefined || body.startDate !== undefined) {
       // A plan change is a new version from a date — by default the start of the current period —
       // so earlier periods keep the plan they had (audit B13). Earlier versions are never edited.
@@ -152,19 +170,36 @@ async function patch(ctx, req) {
   return { body: result };
 }
 
-async function remove(ctx, req) {
-  const wsId = requireId(query(req, 'workspaceId'), 'workspaceId');
-  const body = fields.onlyKeys(readBody(req), ['budgetId', 'revision']);
-  const id = requireId(body.budgetId, 'budgetId');
-  const { result } = await store.mutateWorkspace(ctx, wsId, (doc, member) => {
-    const b = locate(doc, member, id);
-    if (body.revision !== b.revision) throw conflict('This budget changed since you loaded it.', 'stale_revision');
-    b.deletedAt = ctx.nowIso();
-    b.revision += 1;
-    audit.record(doc, { actor: member.subject, action: 'budget.delete', targetType: 'budget', targetId: b.id, scope: b.scope === 'shared' ? 'members' : `self:${member.subject}`, at: ctx.nowIso() });
-    return { removed: b.id };
-  }, { allowHeadroom: true });
-  return { body: result };
+// DELETE archives a budget (it leaves the list; its plan, versions and history stay) and
+// POST ?action=restore brings it back. Both keep who, when and the optional reason.
+function lifecycle(archive) {
+  return async (ctx, req) => {
+    const wsId = requireId(query(req, 'workspaceId'), 'workspaceId');
+    const body = fields.onlyKeys(readBody(req), ['budgetId', 'revision', 'reason']);
+    const id = requireId(body.budgetId, 'budgetId');
+    const { result } = await store.mutateWorkspace(ctx, wsId, (doc, member) => {
+      const b = locate(doc, member, id, { archived: !archive });
+      if (body.revision !== b.revision) throw conflict('This budget changed since you loaded it.', 'stale_revision');
+      if (!archive && !b.deletedAt) throw conflict('This budget is not archived.', 'not_archived');
+      const nowIso = ctx.nowIso();
+      const reason = fields.text(body.reason, { field: 'Reason', max: 200 });
+      recordHistory(b, member.subject, nowIso, [{ field: 'archived', from: !archive, to: archive }], reason);
+      b.deletedAt = archive ? nowIso : null;
+      b.deletedBy = archive ? member.subject : null;
+      b.archiveReason = archive ? reason : '';
+      b.revision += 1;
+      audit.record(doc, { actor: member.subject, action: archive ? 'budget.delete' : 'budget.restore', targetType: 'budget', targetId: b.id, scope: b.scope === 'shared' ? 'members' : `self:${member.subject}`, at: nowIso });
+      return archive ? { removed: b.id, archived: true } : { budget: view(doc, b, member, nowIso.slice(0, 10), ctx.now()) };
+    }, { allowHeadroom: archive });
+    return { body: result };
+  };
 }
 
-module.exports = { GET: list, POST: create, PATCH: patch, DELETE: remove };
+async function post(ctx, req) {
+  const action = query(req, 'action');
+  if (action === undefined) return create(ctx, req);
+  if (action === 'restore') return lifecycle(false)(ctx, req);
+  throw notFound();
+}
+
+module.exports = { GET: list, POST: post, PATCH: patch, DELETE: lifecycle(true) };

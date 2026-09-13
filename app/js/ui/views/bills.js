@@ -12,7 +12,7 @@ import { choosableMerchants, canAddEntries } from "./transactions.js";
 import { sliceFor } from "../../core/store.js";
 import { newIdempotencyKey } from "../../core/api.js";
 import { formatDate, formatAmount, todayIso, BILL_TYPE_LABELS } from "../../core/format.js";
-import { withIcon, defaultIconFor } from "../icons.js";
+import { withIcon, defaultIconFor, iconLabel } from "../icons.js";
 import { createIconPicker, iconChange } from "../iconpicker.js";
 
 const PRESETS = [
@@ -58,6 +58,18 @@ function describeBillChange(text, dateFormat) {
     case "resume": return `Resumed from ${d(rest[0])}`;
     default: return text;
   }
+}
+
+const BILL_FIELD_LABELS = { name: "Name", billType: "Type", notes: "Notes", reminderDays: "Due-soon window", endDate: "End date", icon: "Icon" };
+
+function describeValue(field, v, dateFormat) {
+  if (v === null || v === undefined || v === "") return "—";
+  if (field === "billType") return BILL_TYPE_LABELS[v] || v;
+  if (field === "icon") return iconLabel(v);
+  if (field === "reminderDays") return `${v} day${v === 1 ? "" : "s"}`;
+  if (field === "endDate") return formatDate(v, dateFormat);
+  const s = String(v);
+  return s.length > 60 ? `${s.slice(0, 57)}…` : s;
 }
 
 function amountCell(b, prefs) {
@@ -308,7 +320,12 @@ function openHistory(ctx, bill) {
       el("h3", { text: "Pauses" }),
       bill.pauses.length ? el("ul", { class: "history-list" }, bill.pauses.map((p) => el("li", { text: `${formatDate(p.from, eff.dateFormat)} to ${p.until ? formatDate(p.until, eff.dateFormat) : "until resumed"}` }))) : el("p", { class: "muted", text: "None." }),
       el("h3", { text: "Changes" }),
-      el("ul", { class: "history-list" }, bill.history.slice().reverse().map((h) => el("li", {}, [el("div", { class: "muted small", text: `${stamp(h.at)} · ${h.by}` }), el("div", { text: h.fields.map((x) => describeBillChange(x, eff.dateFormat)).join("; ") })]))),
+      el("ul", { class: "history-list" }, bill.history.slice().reverse().map((h) => el("li", {}, [
+        el("div", { class: "muted small", text: `${stamp(h.at)} · ${h.by}` }),
+        el("div", { text: h.fields.map((x) => describeBillChange(x, eff.dateFormat)).join("; ") }),
+        // Before and after values of detail changes (BT-001-05, audit B14).
+        (h.changes || []).length ? el("div", { class: "muted small", text: h.changes.map((c) => `${BILL_FIELD_LABELS[c.field] || c.field}: ${describeValue(c.field, c.from, eff.dateFormat)} → ${describeValue(c.field, c.to, eff.dateFormat)}`).join("; ") }) : null,
+      ]))),
     ],
     actions: [close],
   });

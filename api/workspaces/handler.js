@@ -29,11 +29,23 @@ async function list(ctx) {
   return { body: { workspaces: out } };
 }
 
+// Owners and managers also see the workspace's change history and lifecycle (BT-001-05, B16).
 async function get(ctx, req) {
   const id = query(req, 'id');
   if (!id) return list(ctx);
   const { doc, etag, member } = await store.loadWorkspace(ctx, id);
-  return { body: { workspace: { ...model.summary(doc, member), settings: doc.settings }, etag }, headers: { ETag: etag } };
+  const workspace = { ...model.summary(doc, member), settings: doc.settings };
+  if (roleAtLeast(member.role, 'manager')) {
+    const names = new Map((doc.members || []).map((m) => [m.subject, m.name || 'Member']));
+    const named = (list) => (list || []).map((h) => ({ ...h, by: names.get(h.by) || 'Former member' }));
+    workspace.history = named(doc.history);
+    workspace.lifecycle = named(doc.lifecycle);
+  }
+  return { body: { workspace, etag }, headers: { ETag: etag } };
+}
+
+function addLifecycle(doc, entry) {
+  doc.lifecycle = [...(doc.lifecycle || []), entry];
 }
 
 async function create(ctx, req) {
@@ -71,18 +83,22 @@ async function create(ctx, req) {
 
 async function patch(ctx, req) {
   const id = requireId(query(req, 'id'), 'id');
-  const body = fields.onlyKeys(readBody(req), ['name', 'settings']);
+  const body = fields.onlyKeys(readBody(req), ['name', 'settings', 'reason']);
   const { result } = await store.mutateWorkspace(ctx, id, (doc, member) => {
     if (!roleAtLeast(member.role, 'manager')) throw forbidden('Only owners and managers can change workspace settings.');
     const changed = [];
-    if (body.name !== undefined) { doc.name = fields.text(body.name, { field: 'Name', max: 80, required: true }); changed.push('name'); }
+    const changes = [];
+    // Records before and after for each real change (audit B16).
+    const set = (field, from, to, apply) => { if (JSON.stringify(from ?? null) === JSON.stringify(to ?? null)) return; apply(); changed.push(field); changes.push({ field, from: from ?? null, to: to ?? null }); };
+    if (body.name !== undefined) { const v = fields.text(body.name, { field: 'Name', max: 80, required: true }); set('name', doc.name, v, () => { doc.name = v; }); }
     if (body.settings !== undefined) {
       const s = fields.onlyKeys(body.settings || {}, ['reportingCurrency', 'budgetPeriod', 'weekStart']);
-      if (s.reportingCurrency !== undefined) { money.precisionOf(s.reportingCurrency); doc.settings.reportingCurrency = s.reportingCurrency; changed.push('settings.reportingCurrency'); }
-      if (s.budgetPeriod !== undefined) { doc.settings.budgetPeriod = fields.oneOf(s.budgetPeriod, ['weekly', 'biweekly', 'monthly', 'custom'], 'Budget period'); changed.push('settings.budgetPeriod'); }
-      if (s.weekStart !== undefined) { if (![0, 1, 6].includes(s.weekStart)) throw badRequest('Week start must be 0, 1 or 6.', 'invalid_field'); doc.settings.weekStart = s.weekStart; changed.push('settings.weekStart'); }
+      if (s.reportingCurrency !== undefined) { money.precisionOf(s.reportingCurrency); set('settings.reportingCurrency', doc.settings.reportingCurrency, s.reportingCurrency, () => { doc.settings.reportingCurrency = s.reportingCurrency; }); }
+      if (s.budgetPeriod !== undefined) { const v = fields.oneOf(s.budgetPeriod, ['weekly', 'biweekly', 'monthly', 'custom'], 'Budget period'); set('settings.budgetPeriod', doc.settings.budgetPeriod, v, () => { doc.settings.budgetPeriod = v; }); }
+      if (s.weekStart !== undefined) { if (![0, 1, 6].includes(s.weekStart)) throw badRequest('Week start must be 0, 1 or 6.', 'invalid_field'); set('settings.weekStart', doc.settings.weekStart, s.weekStart, () => { doc.settings.weekStart = s.weekStart; }); }
     }
     if (!changed.length) return undefined;
+    doc.history = [...(doc.history || []), { at: ctx.nowIso(), by: member.subject, changes, reason: fields.text(body.reason, { field: 'Reason', max: 200 }) }];
     audit.record(doc, { actor: member.subject, action: 'workspace.update', targetType: 'workspace', targetId: doc.id, at: ctx.nowIso(), fields: changed });
     return { workspace: model.summary(doc, member) };
   }, { expectedEtag: header(req, 'if-match') || undefined });
@@ -92,11 +108,13 @@ async function patch(ctx, req) {
 
 async function archive(ctx, req) {
   const id = requireId(query(req, 'id'), 'id');
+  const body = fields.onlyKeys(readBody(req), ['reason']);
   const { result } = await store.mutateWorkspace(ctx, id, (doc, member) => {
     if (member.role !== 'owner') throw forbidden('Only an owner can archive a workspace.');
     if (doc.status === 'archived') return { workspace: model.summary(doc, member) };
     doc.status = 'archived';
     doc.archivedAt = ctx.nowIso();
+    addLifecycle(doc, { at: doc.archivedAt, by: member.subject, state: 'archived', reason: fields.text(body.reason, { field: 'Reason', max: 200 }) });
     audit.record(doc, { actor: member.subject, action: 'workspace.archive', targetType: 'workspace', targetId: doc.id, at: ctx.nowIso() });
     return { workspace: model.summary(doc, member) };
   }, { allowHeadroom: true });
@@ -106,9 +124,12 @@ async function archive(ctx, req) {
 async function post(ctx, req) {
   if (query(req, 'action') === 'restore') {
     const id = requireId(query(req, 'id'), 'id');
+    const body = fields.onlyKeys(readBody(req), ['reason']);
     const { result } = await store.mutateWorkspace(ctx, id, (doc, member) => {
       if (member.role !== 'owner') throw forbidden('Only an owner can restore a workspace.');
       if (doc.status !== 'archived') return { workspace: model.summary(doc, member) };
+      // The archive period stays in the lifecycle; only the current state changes (audit B16).
+      addLifecycle(doc, { at: ctx.nowIso(), by: member.subject, state: 'active', reason: fields.text(body.reason, { field: 'Reason', max: 200 }) });
       doc.status = 'active';
       doc.archivedAt = null;
       audit.record(doc, { actor: member.subject, action: 'workspace.restore', targetType: 'workspace', targetId: doc.id, at: ctx.nowIso() });
