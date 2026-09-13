@@ -35,8 +35,8 @@ Status key: **Fixed** (with the commit that fixed it), **Open**.
 | B5 | edit form drops an archived category | the entry's category (silently recategorized) | High | **Fixed** (`e34c1ca`) |
 | B6 | edit form always sends `payeeName`; deleted payees re-matched | the entry's merchant link | High | **Fixed** by BT-007-01 (merchants by id; closed merchants keep links) |
 | B7 | edit form sends unchanged fields | history signal | Medium | **Fixed** (`e34c1ca`; the server also records only real changes) |
-| B8 | account terms and fields overwritten | APR, limits, payment terms, names | High/Medium | Open — versioned terms |
-| B9 | account close has no who/why | lifecycle | Medium | Open |
+| B8 | account terms and fields overwritten | APR, limits, payment terms, names | High/Medium | **Fixed** (every account edit keeps before/after values and an optional reason; tested) |
+| B9 | account close has no who/why | lifecycle | Medium | **Fixed** (close/reopen actions with revision and reason in the account history; tested) |
 | B10 | payee edits overwrite with no history or revision | names, aliases, defaults | Medium | **Fixed** by BT-007-01 (revision check, before/after history with reason) |
 | B11 | category edits overwrite with no history | names, parents | Medium | Open |
 | B12 | contact edits overwrite; private changes unaudited | contact details | Medium | Open |
@@ -54,7 +54,7 @@ Transactions, accounts, payees, categories, contacts, members, grants, invitatio
 
 ## D. Dropdowns and history views
 
-D1 closed accounts offered for new entries (UI and server) — Open. D2 archived categories accepted by the server — Open; deleted payees re-matched by name — **Fixed** (merchant ids). D3 history filters hide removed merchants and deleted accounts — merchants **fixed** (closed merchants stay in the list, labelled); accounts Open. D4 no "show deleted" or restore in the UI — Open. D5 no archived/closed sections — merchants **fixed**; accounts Open. D6 no former-members list or budget/bill activity labels — Open. D7 budgets drop deleted accounts from past periods — Open. D8 payee statistics and the transaction list use different visibility filters — Open.
+D1 closed accounts offered for new entries (UI and server) — **Fixed** (server refuses entries, transfers in, bills and bill payments on closed accounts; the UI no longer offers them; tested). D2 archived categories accepted by the server — Open; deleted payees re-matched by name — **Fixed** (merchant ids). D3 history filters hide removed merchants and deleted accounts — merchants **fixed** (closed merchants stay in the list, labelled); accounts Open. D4 no "show deleted" or restore in the UI — Open. D5 no archived/closed sections — merchants **fixed**; accounts Open. D6 no former-members list or budget/bill activity labels — Open. D7 budgets drop deleted accounts from past periods — Open. D8 payee statistics and the transaction list use different visibility filters — Open.
 
 ## E. Size caps
 

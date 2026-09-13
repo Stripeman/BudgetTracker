@@ -48,6 +48,8 @@ function accountFor(doc, principal, id, capability, now) {
   const a = (doc.accounts || []).find((x) => x.id === id && !x.deletedAt);
   if (!a || !can(doc, principal, a, 'view-transactions', now)) throw notFound('Unknown account.');
   if (capability && !can(doc, principal, a, capability, now)) throw forbidden(`You do not have ${capability} permission on this account.`);
+  // A closed account takes no new bills (BT-001-05, audit D1).
+  if (capability === 'create' && a.status === 'closed') throw conflict(`${a.name} is closed. Reopen it on the Accounts page first.`, 'account_closed');
   return a;
 }
 
@@ -255,6 +257,7 @@ async function record(ctx, req) {
     const nowIso = ctx.nowIso();
     const { r, a } = locate(doc, ctx.principal, requireId(body.recurringId, 'recurringId'), now);
     if (!can(doc, ctx.principal, a, 'create', now)) throw forbidden('You cannot add entries to this account.');
+    if (a.status === 'closed') throw conflict(`${a.name} is closed. Reopen it on the Accounts page to record this payment.`, 'account_closed');
     const occurrence = requireOccurrence(r, body.occurrence);
     const status = bills.occurrenceStatus(r, occurrence, bills.recordedSet(doc));
     if (status === 'recorded') throw conflict('This occurrence is already recorded.', 'already_recorded');
@@ -280,6 +283,7 @@ async function record(ctx, req) {
       // Permission first, so the answer never reveals whether someone else's account still exists (SEC-B12).
       if (!dest || !can(doc, ctx.principal, dest, 'create', now)) throw forbidden('You cannot add entries to the destination account.');
       if (dest.deletedAt) throw conflict('The destination account no longer exists.', 'destination_missing');
+      if (dest.status === 'closed') throw conflict(`${dest.name} is closed. Reopen it to record this transfer.`, 'account_closed');
       const transferId = newId('xfr');
       const leg = (accountId, amountMinor, counterpartAccountId) => ({
         ...base, id: newId('txn'), accountId, kind: 'transfer', amountMinor, currency: r.currency, transferId, counterpartAccountId,

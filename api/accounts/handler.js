@@ -2,9 +2,13 @@
 // /api/accounts?workspaceId=
 //   GET                         accounts the caller may see (balances only with view-balances)
 //   POST   {...}                create; shared accounts need manager+, private any active member
-//   PATCH  { accountId, ... }   edit settings (private owner, or manager+ for shared)
-//   DELETE { accountId }        soft delete (recoverable); history is kept
-//   POST   ?action=restore { accountId }
+//   PATCH  { accountId, revision, reason?, ... }   edit settings (private owner, or manager+ for shared)
+//   POST   ?action=close  { accountId, revision, reason, closedOn? }   no new entries; history stays
+//   POST   ?action=reopen { accountId, revision, reason? }
+//   DELETE { accountId, reason } remove from lists (never erased; recoverable); history is kept
+//   POST   ?action=restore { accountId, reason? }
+// Nothing is physically deleted and every change keeps its before/after values, author, time and
+// reason in the account's history (BT-001-05).
 // Making a private account shared is a publication within the workspace and requires
 // `confirmShare: true`. Currency and type are fixed after creation.
 const { readBody, query, header, badRequest, forbidden, notFound, conflict } = require('../_shared/http');
@@ -16,7 +20,13 @@ const money = require('../_shared/money');
 const fields = require('../_shared/fields');
 const audit = require('../_shared/audit');
 
-const EDITABLE = ['revision', 'name', 'institution', 'maskedNumber', 'terms', 'notes', 'status', 'openingBalance', 'openingDate', 'visibility', 'confirmShare'];
+// `status` is changed only by the close and reopen actions, which need a reason.
+const EDITABLE = ['revision', 'reason', 'name', 'institution', 'maskedNumber', 'terms', 'notes', 'openingBalance', 'openingDate', 'visibility', 'confirmShare'];
+const TRACKED = ['name', 'institution', 'maskedNumber', 'terms', 'notes', 'openingBalanceMinor', 'openingDate', 'visibility'];
+const snap = (a) => Object.fromEntries(TRACKED.map((f) => [f, a[f] === undefined ? null : structuredClone(a[f])]));
+const changesSince = (before, a) => TRACKED
+  .filter((f) => JSON.stringify(before[f]) !== JSON.stringify(a[f] === undefined ? null : a[f]))
+  .map((f) => ({ field: f, from: before[f], to: a[f] === undefined ? null : structuredClone(a[f]) }));
 
 function mayManage(account, member) {
   if (account.visibility === 'private') return account.ownerSubject === member.subject;
@@ -102,6 +112,8 @@ async function patch(ctx, req) {
     if (!Number.isSafeInteger(body.revision)) throw badRequest('revision is required so a stale edit cannot overwrite a newer one.', 'missing_revision');
     if (body.revision !== (account.revision || 1)) throw conflict('This account changed since you loaded it. Reload to see the latest version.', 'stale_revision');
     const before = { openingBalanceMinor: account.openingBalanceMinor, openingDate: account.openingDate };
+    const beforeAll = snap(account);
+    const reason = fields.text(body.reason, { field: 'Reason', max: 200 });
     if ((body.openingBalance !== undefined || body.openingDate !== undefined)
         && (doc.transactions || []).some((t) => t.accountId === account.id && !t.deletedAt && t.status === 'reconciled')) {
       throw conflict('This account has reconciled entries. Opening balance and date are locked to keep reconciled statements correct.', 'reconciled_locked');
@@ -112,7 +124,6 @@ async function patch(ctx, req) {
     if (body.maskedNumber !== undefined) { account.maskedNumber = ledger.maskedNumber(body.maskedNumber); changed.push('maskedNumber'); }
     if (body.terms !== undefined) { account.terms = ledger.validateTerms(account.type, body.terms, account.currency); changed.push('terms'); }
     if (body.notes !== undefined) { account.notes = fields.text(body.notes, { field: 'Notes', max: 5000, multiline: true }); changed.push('notes'); }
-    if (body.status !== undefined) { account.status = fields.oneOf(body.status, ['open', 'closed'], 'Status'); changed.push('status'); }
     if (body.openingBalance !== undefined) { account.openingBalanceMinor = ledger.openingBalance(account.type, body.openingBalance, account.currency); changed.push('openingBalance'); }
     if (body.openingDate !== undefined) { account.openingDate = fields.date(body.openingDate, 'Opening date', { required: true }); changed.push('openingDate'); }
     if (body.visibility !== undefined && body.visibility !== account.visibility) {
@@ -132,7 +143,9 @@ async function patch(ctx, req) {
     account.revision = (account.revision || 1) + 1;
     // Corrective history on the record itself (visible only to those who can see the account),
     // including before/after opening values; the workspace audit log keeps field names only.
-    const entry = { revision: account.revision, at: account.updatedAt, by: member.subject, fields: changed };
+    // Every change keeps its before and after values (terms such as credit limit or APR included)
+    // and the optional reason (audit B8).
+    const entry = { revision: account.revision, at: account.updatedAt, by: member.subject, fields: changed, changes: changesSince(beforeAll, account), reason };
     if (changed.includes('openingBalance') || changed.includes('openingDate')) {
       entry.before = before;
       entry.after = { openingBalanceMinor: account.openingBalanceMinor, openingDate: account.openingDate };
@@ -148,14 +161,20 @@ async function patch(ctx, req) {
 function setDeleted(deleted) {
   return async (ctx, req) => {
     const wsId = requireId(query(req, 'workspaceId'), 'workspaceId');
-    const body = fields.onlyKeys(readBody(req), ['accountId']);
+    const body = fields.onlyKeys(readBody(req), ['accountId', 'reason']);
     const accountId = requireId(body.accountId, 'accountId');
     const { result } = await store.mutateWorkspace(ctx, wsId, (doc, member) => {
       const account = locate(doc, ctx.principal, accountId, ctx.now());
       if (!mayManage(account, member)) throw forbidden('Only the account owner (or a manager for shared accounts) can do that.');
       if (Boolean(account.deletedAt) === deleted) return { account: ledger.accountView(doc, ctx.principal, account, ctx.now()) };
-      account.deletedAt = deleted ? ctx.nowIso() : null;
+      // Removing an account hides it from lists; it is never erased, and the reason is kept.
+      const reason = fields.text(body.reason, { field: 'Reason', max: 200 });
+      if (deleted && !reason) throw badRequest('Give a reason for removing this account. It is kept with its history.', 'reason_required');
+      const nowIso = ctx.nowIso();
+      account.deletedAt = deleted ? nowIso : null;
       account.deletedBy = deleted ? member.subject : null;
+      account.revision = (account.revision || 1) + 1;
+      account.history = [...(account.history || []), { revision: account.revision, at: nowIso, by: member.subject, fields: ['deleted'], changes: [{ field: 'deleted', from: !deleted, to: deleted }], reason }];
       audit.record(doc, { actor: member.subject, action: deleted ? 'account.delete' : 'account.restore', targetType: 'account', targetId: account.id, scope: `account:${account.id}`, at: ctx.nowIso() });
       return { account: ledger.accountView(doc, ctx.principal, account, ctx.now()) };
     }, { allowHeadroom: deleted });
@@ -163,9 +182,49 @@ function setDeleted(deleted) {
   };
 }
 
+// Closing keeps the account and its history visible but refuses new entries and bills on it;
+// reopening allows them again. Both need the current revision; closing needs a reason.
+function lifecycle(action) {
+  return async (ctx, req) => {
+    const wsId = requireId(query(req, 'workspaceId'), 'workspaceId');
+    const body = fields.onlyKeys(readBody(req), action === 'close' ? ['accountId', 'revision', 'reason', 'closedOn'] : ['accountId', 'revision', 'reason']);
+    const accountId = requireId(body.accountId, 'accountId');
+    const { result } = await store.mutateWorkspace(ctx, wsId, (doc, member) => {
+      const now = ctx.now();
+      const nowIso = ctx.nowIso();
+      const account = locate(doc, ctx.principal, accountId, now);
+      if (!mayManage(account, member)) throw forbidden('Only the account owner (or a manager for shared accounts) can close or reopen it.');
+      if (!Number.isSafeInteger(body.revision)) throw badRequest('revision is required so a stale change cannot overwrite a newer one.', 'missing_revision');
+      if (body.revision !== (account.revision || 1)) throw conflict('This account changed since you loaded it. Reload to see the latest version.', 'stale_revision');
+      const reason = fields.text(body.reason, { field: 'Reason', max: 200 });
+      const from = account.status || 'open';
+      if (action === 'close') {
+        if (from === 'closed') throw conflict('This account is already closed.', 'already_closed');
+        if (!reason) throw badRequest('Give a reason for closing this account. It is kept with its history.', 'reason_required');
+        account.status = 'closed';
+        account.closedOn = fields.date(body.closedOn, 'Date closed') || nowIso.slice(0, 10);
+      } else {
+        if (from !== 'closed') throw conflict('This account is not closed.', 'not_closed');
+        account.status = 'open';
+      }
+      account.revision = (account.revision || 1) + 1;
+      account.updatedAt = nowIso;
+      account.updatedBy = member.subject;
+      account.history = [...(account.history || []), {
+        revision: account.revision, at: nowIso, by: member.subject, fields: ['status'],
+        changes: [{ field: 'status', from, to: account.status }], reason, ...(action === 'close' ? { closedOn: account.closedOn } : {}),
+      }];
+      audit.record(doc, { actor: member.subject, action: `account.${action}`, targetType: 'account', targetId: account.id, scope: `account:${account.id}`, at: nowIso });
+      return { account: ledger.accountView(doc, ctx.principal, account, now) };
+    });
+    return { body: result };
+  };
+}
+
 async function post(ctx, req) {
   const action = query(req, 'action');
   if (action === 'restore') return setDeleted(false)(ctx, req);
+  if (action === 'close' || action === 'reopen') return lifecycle(action)(ctx, req);
   if (action !== undefined) throw notFound();
   return create(ctx, req);
 }

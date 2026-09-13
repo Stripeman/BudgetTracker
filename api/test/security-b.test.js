@@ -111,7 +111,7 @@ describe('SEC-B6 and SEC-B7 bill payments stay single and bills follow their acc
     const h = harness();
     const f = await household(h);
     const b = ok(await bill(h, f.q, 'alice', { name: 'Rent', accountId: f.joint.id, amount: '800.00', schedule: monthly('2026-10-01') }), 201).recurring;
-    ok(await h.call('accounts', 'DELETE', { as: 'alice', query: f.q, body: { accountId: f.joint.id } }));
+    ok(await h.call('accounts', 'DELETE', { as: 'alice', query: f.q, body: { accountId: f.joint.id, reason: 'Account moved banks' } }));
     assert.equal((await act(h, f.q, 'bob', 'record', { recurringId: b.id, occurrence: '2026-10-01' })).status, 404);
     assert.deepEqual(ok(await h.call('recurring', 'GET', { as: 'carol', query: f.q })).recurring, []);
   });

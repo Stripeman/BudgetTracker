@@ -51,6 +51,8 @@ function accountFor(doc, principal, accountId, capability, now) {
   const account = (doc.accounts || []).find((a) => a.id === accountId && !a.deletedAt);
   if (!account || capabilitiesFor(doc, principal, account, now).size === 0) throw notFound('Unknown account.');
   if (capability && !can(doc, principal, account, capability, now)) throw forbidden(`You do not have ${capability} permission on this account.`);
+  // A closed account keeps its history but takes no new entries (BT-001-05, audit D1).
+  if (capability === 'create' && account.status === 'closed') throw conflict(`${account.name} is closed. Reopen it on the Accounts page to add entries.`, 'account_closed');
   return account;
 }
 

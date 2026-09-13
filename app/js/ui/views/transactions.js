@@ -30,7 +30,7 @@ const STATUS_LABELS = { pending: "Pending", cleared: "Cleared", reconciled: "Rec
 // True when at least one visible account accepts new entries from this person (UX-001).
 export function canAddEntries(state) {
   const data = sliceFor(state, "accounts").data;
-  return !!(data && data.accounts.some((a) => !a.deletedAt && a.capabilities.includes("create")));
+  return !!(data && data.accounts.some((a) => !a.deletedAt && a.status !== "closed" && a.capabilities.includes("create")));
 }
 
 export function createView(ctx) {
@@ -261,7 +261,8 @@ export function choosableMerchants(merchants, account) {
 export function openQuickEntry(ctx, { transaction } = {}) {
   const state = ctx.store.getState();
   const allAccounts = ((sliceFor(state, "accounts").data || {}).accounts || []);
-  const accounts = allAccounts.filter((a) => !a.deletedAt && a.capabilities.includes("create"));
+  // Closed accounts take no new entries, so they are not offered (BT-001-05); an edit keeps its account.
+  const accounts = allAccounts.filter((a) => !a.deletedAt && a.status !== "closed" && a.capabilities.includes("create"));
   const editing = !!transaction;
   // An entry keeps its category even if that category has since been archived (audit B5).
   const categories = ((sliceFor(state, "categories").data || {}).categories || [])

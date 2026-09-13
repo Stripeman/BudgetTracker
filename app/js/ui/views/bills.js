@@ -279,7 +279,8 @@ export function openBillEditor(ctx, bill = null) {
   const editing = !!bill;
   const key = newIdempotencyKey();
   const allAccounts = ((sliceFor(state, "accounts").data || {}).accounts || []);
-  const accounts = allAccounts.filter((a) => !a.deletedAt && a.capabilities.includes("create"));
+  // Closed accounts take no new bills, so they are not offered (BT-001-05).
+  const accounts = allAccounts.filter((a) => !a.deletedAt && a.status !== "closed" && a.capabilities.includes("create"));
   if (!editing && !accounts.length) return;
   const categories = ((sliceFor(state, "categories").data || {}).categories || []).filter((c) => !c.archived || (editing && c.id === bill.categoryId));
   let merchants = ((sliceFor(state, "payees").data || {}).payees || []);

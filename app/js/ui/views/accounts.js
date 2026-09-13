@@ -11,10 +11,15 @@ import { ACCOUNT_TYPE_LABELS, todayIso } from "../../core/format.js";
 const CURRENCIES = ["EUR", "USD", "GBP", "CHF", "SEK", "NOK", "DKK", "PLN", "CZK", "HUF", "CAD", "AUD", "NZD", "JPY", "SGD", "HKD", "INR", "ZAR"];
 const GRANTABLE = [["view-balances", "See balance"], ["view-transactions", "See entries"], ["create", "Add entries"], ["edit", "Edit entries"], ["delete", "Delete entries"], ["comment", "Comment"], ["download-receipts", "Download receipts"], ["export", "Export"]];
 
+// Who may close or reopen: the owner of a private account, or an owner or manager for a shared one.
+// Presentation only; the server decides.
+const canManage = (a, role) => a.ownedBySelf || (a.visibility === "shared" && (role === "owner" || role === "manager"));
+
 export function createView(ctx) {
   const box = el("div");
   const element = el("section", {}, [pageHead("Accounts", [button("Add account", () => openAddAccount(ctx), { variant: "primary" })]), box]);
   function update(state) {
+    const role = ((state.workspaces || []).find((w) => w.id === state.selectedWorkspaceId) || {}).role;
     const prefs = state.preferences;
     const accounts = sliceFor(state, "accounts");
     const s = stateView(accounts, { empty: "No accounts yet. Add a bank account, card, cash wallet or loan.", isEmpty: (d) => !d.accounts.length });
@@ -22,15 +27,61 @@ export function createView(ctx) {
     mount(box, el("div", { class: "table-wrap" }, [el("table", { class: "table table--cards", "aria-label": "Accounts" }, [
       el("thead", {}, [el("tr", {}, ["Account", "Type", "Who can see it", "Balance", "Actions"].map((h) => el("th", { scope: "col", class: h === "Balance" ? "num" : "", text: h })))]),
       el("tbody", {}, accounts.data.accounts.filter((a) => !a.deletedAt).map((a) => el("tr", {}, [
-        el("th", { scope: "row", "data-label": "Account" }, [el("strong", { text: a.name }), a.institution ? el("div", { class: "muted small", text: `${a.institution}${a.maskedNumber ? ` ·· ${a.maskedNumber}` : ""}` }) : null]),
+        el("th", { scope: "row", "data-label": "Account" }, [
+          el("strong", { text: a.name }), a.status === "closed" ? " " : null, a.status === "closed" ? badge("Closed", "closed") : null,
+          a.institution ? el("div", { class: "muted small", text: `${a.institution}${a.maskedNumber ? ` ·· ${a.maskedNumber}` : ""}` }) : null,
+        ]),
         el("td", { "data-label": "Type", text: `${ACCOUNT_TYPE_LABELS[a.type] || a.type} · ${a.currency}` }),
         el("td", { "data-label": "Who can see it" }, [accessBadge(a)]),
         el("td", { "data-label": "Balance", class: "num" }, [a.balance !== undefined ? money(a.balance, a.currency, prefs) : el("span", { class: "muted small", text: "Not shared with you" })]),
-        el("td", { "data-label": "" }, [button("Who can see this", () => openWhoCanSee(ctx, a), { small: true, attrs: { "aria-label": `Who can see ${a.name}` } })]),
+        el("td", { "data-label": "" }, [el("div", { class: "row-actions" }, [
+          button("Who can see this", () => openWhoCanSee(ctx, a), { small: true, attrs: { "aria-label": `Who can see ${a.name}` } }),
+          canManage(a, role) ? button(a.status === "closed" ? "Reopen" : "Close", () => openLifecycle(ctx, a), { small: true, attrs: { "aria-label": `${a.status === "closed" ? "Reopen" : "Close"} ${a.name}` } }) : null,
+        ])]),
       ]))),
     ])]));
   }
   return { element, update };
+}
+
+// Closing keeps the account, its balance and its history; it only stops new entries and bills.
+function openLifecycle(ctx, account) {
+  const closing = account.status !== "closed";
+  const reason = input({ maxlength: "200", autocomplete: "off" });
+  const closedOn = input({ type: "date" });
+  closedOn.value = todayIso();
+  const confirm = button(closing ? "Close account" : "Reopen account", async () => {
+    modal.setError("");
+    if (closing && !reason.value.trim()) {
+      reason.setAttribute("aria-invalid", "true");
+      reason.setAttribute("aria-errormessage", modal.errorId);
+      modal.setError("Give a reason for closing this account.");
+      reason.focus();
+      return;
+    }
+    const body = { accountId: account.id, revision: account.revision };
+    if (reason.value.trim()) body.reason = reason.value.trim();
+    if (closing && closedOn.value) body.closedOn = closedOn.value;
+    modal.setBusy(true);
+    const out = await ctx.store.actions.write((ws) => ctx.api.accountAction(ws, closing ? "close" : "reopen", body), ["accounts"]);
+    modal.setBusy(false);
+    if (!out.ok) { modal.setError(out.error); return; }
+    announce(closing ? `${account.name} closed. Its history stays.` : `${account.name} reopened.`);
+    modal.close();
+  }, { variant: "primary" });
+  const modal = openModal({
+    title: closing ? `Close ${account.name}?` : `Reopen ${account.name}?`,
+    body: [
+      el("p", { text: closing
+        ? "No new entries or bills can be added to it. Its balance, entries and history stay exactly as they are, and you can reopen it later."
+        : "New entries and bills can be added to it again. Its history is unchanged." }),
+      el("div", { class: "form-grid" }, [
+        field("Reason", reason, { help: closing ? "Required. It is kept with the account's history." : "Optional." }),
+        closing ? field("Date closed", closedOn) : null,
+      ]),
+    ],
+    actions: [button("Cancel", () => modal.close()), confirm],
+  });
 }
 
 function openAddAccount(ctx) {
