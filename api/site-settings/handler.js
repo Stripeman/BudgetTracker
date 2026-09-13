@@ -10,14 +10,18 @@ const store = require('../_shared/store');
 const site = require('../_shared/site');
 const fields = require('../_shared/fields');
 const { newId } = require('../_shared/ids');
+const { appInfo } = require('../_shared/version');
 
 const EDITABLE = ['branding', 'defaults', 'locked', 'modules', 'publicSharingEnabled', 'invitationPolicy', 'uploadLimitBytes', 'exchangeRateProvider', 'announcement', 'maintenanceMessage', 'backupPolicy'];
 const LOCKABLE = ['themeMode', 'themePalette', 'editorToolbar', 'balanceMasking', 'dateFormat', 'locale'];
 
+// The application version, environment and deployed commit are public (the repository is public),
+// so anyone can verify which build a deployment runs without signing in.
 async function get(ctx) {
   const { site: doc, etag } = await site.readSite(ctx.storage);
-  if (ctx.principal && ctx.siteAdmin) return { body: { settings: { ...doc, audit: undefined }, etag, admin: true } };
-  return { body: { settings: site.publicView(doc, !!ctx.principal) } };
+  const app = appInfo(ctx.env);
+  if (ctx.principal && ctx.siteAdmin) return { body: { settings: { ...doc, audit: undefined }, etag, admin: true, app } };
+  return { body: { settings: site.publicView(doc, !!ctx.principal), app } };
 }
 
 function clean(body, current) {

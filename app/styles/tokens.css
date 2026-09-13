@@ -52,8 +52,9 @@
   --control-radius: var(--radius-sm);
   --control-font-size: var(--text-sm);
   --control-surface: var(--surface);
-  --control-border: var(--border);
-  --control-border-hover: var(--border-strong);
+  /* Input boundaries need 3:1 against their surface (WCAG 1.4.11, A11Y-009); set per mode below. */
+  --control-border: var(--control-edge);
+  --control-border-hover: var(--text-muted);
   --control-border-active: var(--accent);
   --control-disabled-opacity: 0.6;
 
@@ -82,6 +83,7 @@
   --overlay: rgb(17 22 29 / 0.45);
   --money-in: #0a7d55;
   --color-danger-text: #b91c1c;
+  --control-edge: #858f9e;
 }
 
 /* ---------- mode: dark ---------- */
@@ -101,11 +103,13 @@
   --shadow: 0 6px 24px rgb(0 0 0 / 0.45);
   --money-in: #4ade80;
   --color-danger-text: #fca5a5;
+  --control-edge: #5f6f8a;
 }
 
 /* ---------- themes: accent only ---------- */
-:root[data-theme="midnight"] { --accent: #3b82f6; --accent-hover: #2f6fdc; --accent-soft: rgb(59 130 246 / 0.14); --accent-contrast: #ffffff; }
-:root[data-theme="slate"] { --accent: #64748b; --accent-hover: #52607a; --accent-soft: rgb(100 116 139 / 0.16); --accent-contrast: #ffffff; }
+/* Dark-mode accents carry dark ink where white text on the accent would fail 4.5:1 (A11Y-004). */
+:root[data-theme="midnight"] { --accent: #3b82f6; --accent-hover: #5b95f7; --accent-soft: rgb(59 130 246 / 0.14); --accent-contrast: #0b1220; }
+:root[data-theme="slate"] { --accent: #94a3b8; --accent-hover: #aab6c7; --accent-soft: rgb(148 163 184 / 0.16); --accent-contrast: #0b1220; }
 :root[data-theme="forest"] { --accent: #10b981; --accent-hover: #0d9d6d; --accent-soft: rgb(16 185 129 / 0.15); --accent-contrast: #04231a; }
 :root[data-theme="solar"] { --accent: #f59e0b; --accent-hover: #d98708; --accent-soft: rgb(245 158 11 / 0.16); --accent-contrast: #241802; }
 :root[data-theme="teal"] { --accent: #14b8a6; --accent-hover: #119c8d; --accent-soft: rgb(20 184 166 / 0.15); --accent-contrast: #0b1220; }
@@ -115,7 +119,8 @@
 
 /* Light-mode accents darkened for contrast (values from TaskTracker). */
 :root[data-mode="light"][data-theme="midnight"] { --accent: #2563eb; --accent-hover: #1d4fd0; --accent-contrast: #ffffff; }
-:root[data-mode="light"][data-theme="forest"] { --accent: #0a8a60; --accent-hover: #077352; --accent-contrast: #ffffff; }
+:root[data-mode="light"][data-theme="slate"] { --accent: #52607a; --accent-hover: #414d63; --accent-contrast: #ffffff; }
+:root[data-mode="light"][data-theme="forest"] { --accent: #077352; --accent-hover: #065f44; --accent-contrast: #ffffff; }
 :root[data-mode="light"][data-theme="solar"] { --accent: #b45309; --accent-hover: #92400e; --accent-contrast: #ffffff; }
 :root[data-mode="light"][data-theme="teal"] { --accent: #0e8478; --accent-hover: #0c7066; --accent-contrast: #ffffff; }
 :root[data-mode="light"][data-theme="rose"] { --accent: #d73753; --accent-hover: #b72f47; --accent-contrast: #ffffff; }

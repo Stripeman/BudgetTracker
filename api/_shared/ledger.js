@@ -135,9 +135,22 @@ function balanceOf(doc, account) {
   return total === 0 ? 0 : total;
 }
 
+// How the viewer relates to an account (UX review UX-002): their own private account, a shared
+// account, or someone else's private account shared with them by explicit grant. For the last,
+// the owner's name is shown — a grantee already knows whose account it is, and without it a
+// "Private" badge on an account that is not theirs is misleading.
+function accessOf(account, principal) {
+  if (account.visibility === 'shared') return 'shared';
+  return account.ownerSubject === principal.subject ? 'own' : 'granted';
+}
+
 function accountView(doc, principal, account, now) {
   const caps = capabilitiesFor(doc, principal, account, now);
+  const access = accessOf(account, principal);
+  const owner = access === 'granted' ? (doc.members || []).find((m) => m.subject === account.ownerSubject) : null;
   const out = {
+    access,
+    ownerName: access === 'granted' ? (owner && owner.name) || 'Another member' : null,
     id: account.id, name: account.name, type: account.type, currency: account.currency,
     visibility: account.visibility, liability: LIABILITY_TYPES.has(account.type),
     institution: account.institution || '', maskedNumber: account.maskedNumber || '',
@@ -239,5 +252,5 @@ function assertMemberQuota(doc, member, env) {
 module.exports = {
   assertMemberQuota,
   ACCOUNT_TYPES, LIABILITY_TYPES, TX_KINDS, OUTFLOW, INFLOW, TX_STATUSES, NEVER_POSITIVE_OPENING, validateTerms, maskedNumber,
-  balanceOf, accountView, signedAmount, validateSplits, transactionView, visiblePayees, classify, openingBalance, assertLedgerInRange,
+  balanceOf, accountView, accessOf, signedAmount, validateSplits, transactionView, visiblePayees, classify, openingBalance, assertLedgerInRange,
 };

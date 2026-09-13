@@ -1,13 +1,30 @@
 // Workspace administration: members and roles, invitations (with an access preview and a one-time
-// link), shared contacts, backups and restores (preview first, errors in the modal, replace needs
-// typed confirmation), and the audit history. Every control is presentation; the server enforces.
+// link), backups and restores (preview first, errors in the modal, replace needs typed
+// confirmation, last successful backup shown), and recent activity in plain language. Every
+// control is presentation; the server enforces.
 import { el, mount, announce } from "../dom.js";
-import { pageHead, stateView, field, input, select, button, badge } from "../components.js";
+import { pageHead, stateView, field, input, select, button, badge, commitOnConfirm } from "../components.js";
 import { openModal, confirmModal } from "../modal.js";
 import { sliceFor } from "../../core/store.js";
 import { newIdempotencyKey } from "../../core/api.js";
 
 const ROLES = [{ value: "viewer", label: "Viewer" }, { value: "member", label: "Member" }, { value: "manager", label: "Manager" }, { value: "owner", label: "Owner" }];
+const ROLE_LABEL = Object.fromEntries(ROLES.map((r) => [r.value, r.label]));
+
+// Plain-language activity (UX-007). Unknown actions fall back to readable words.
+const ACTIVITY = {
+  "workspace.create": "created the workspace", "workspace.update": "changed workspace settings", "workspace.archive": "archived the workspace", "workspace.restore": "restored the workspace",
+  "member.role": "changed a member's role", "member.remove": "removed a member", "member.leave": "left the workspace",
+  "invitation.create": "invited someone", "invitation.revoke": "cancelled an invitation", "invitation.accept": "joined the workspace",
+  "grant.create": "shared an account", "grant.revoke": "stopped sharing an account",
+  "account.create": "added an account", "account.update": "changed an account", "account.delete": "deleted an account", "account.restore": "restored an account",
+  "transaction.create": "added an entry", "transaction.update": "edited an entry", "transaction.delete": "deleted an entry", "transaction.restore": "restored an entry",
+  "payee.create": "added a merchant", "payee.update": "changed a merchant", "payee.delete": "removed a merchant",
+  "category.create": "added a category", "category.update": "changed a category", "contact.create": "added a contact", "contact.update": "changed a contact", "contact.delete": "removed a contact",
+  "backup.create": "created a backup", "workspace.restore-replace": "restored from a backup (replace)", "workspace.restore-merge": "restored from a backup (merge)", "workspace.restore-create": "created a workspace from a backup",
+};
+const describe = (action) => ACTIVITY[action] || action.replace(/[.-]/g, " ");
+const stamp = (iso) => iso.replace("T", " ").slice(0, 16);
 
 export function createView(ctx) {
   const { api, store } = ctx;
@@ -19,10 +36,10 @@ export function createView(ctx) {
   const element = el("section", {}, [
     pageHead("Workspace"),
     el("div", { class: "grid grid--two" }, [
-      el("section", { class: "card" }, [el("h2", { class: "card__title", text: "Members" }), membersBox]),
-      el("section", { class: "card" }, [el("h2", { class: "card__title", text: "Invite someone" }), inviteBox]),
-      el("section", { class: "card" }, [el("h2", { class: "card__title", text: "Backups and restore" }), backupsBox]),
-      el("section", { class: "card" }, [el("h2", { class: "card__title", text: "Recent activity" }), auditBox]),
+      el("section", { class: "card", "aria-labelledby": "ws-members" }, [el("h2", { class: "card__title", id: "ws-members", text: "Members" }), membersBox]),
+      el("section", { class: "card", "aria-labelledby": "ws-invite" }, [el("h2", { class: "card__title", id: "ws-invite", text: "Invite someone" }), inviteBox]),
+      el("section", { class: "card", "aria-labelledby": "ws-backups" }, [el("h2", { class: "card__title", id: "ws-backups", text: "Backups and restore" }), backupsBox]),
+      el("section", { class: "card", "aria-labelledby": "ws-activity" }, [el("h2", { class: "card__title", id: "ws-activity", text: "Recent activity" }), auditBox]),
     ]),
   ]);
 
@@ -30,15 +47,20 @@ export function createView(ctx) {
 
   async function loadInvites() {
     const role = me().role;
+    if (role !== "owner" && role !== "manager") {
+      mount(inviteBox, el("p", { class: "muted", text: "Owners and managers invite people. Ask one of them if someone should join." }));
+      return;
+    }
     const email = input({ type: "email", placeholder: "person@example.com", autocomplete: "off" });
     const roleSel = select(ROLES.filter((r) => role === "owner" || r.value !== "owner"), "member");
     const result = el("div", { "aria-live": "polite" });
+    const pending = el("div");
     const send = button("Create invitation", async () => {
-      result.textContent = "";
+      mount(result);
       try {
         const out = await api.invite(wsId, { email: email.value, role: roleSel.value });
         const link = `${location.origin}/#/join?ws=${encodeURIComponent(wsId)}&token=${encodeURIComponent(out.token)}`;
-        const linkField = input({ readonly: true, value: link, "aria-label": "Invitation link" });
+        const linkField = input({ readonly: true, value: link });
         mount(result,
           el("p", { class: "notice", text: out.accessPreview.summary }),
           field("Invitation link (shown once)", linkField, { help: "Share it only with that person. It works only for their Google account and expires in 7 days." }));
@@ -46,38 +68,42 @@ export function createView(ctx) {
         await renderPending();
       } catch (err) { mount(result, el("p", { class: "error-text", role: "alert", text: err.message })); }
     }, { variant: "primary" });
-    const pending = el("div");
     async function renderPending() {
       try {
         const data = await api.invitations(wsId);
+        if (!data.invitations.length) { mount(pending, el("p", { class: "muted small", text: "No pending invitations." })); return; }
         mount(pending, el("ul", { class: "stack" }, data.invitations.map((i) => el("li", { class: "row" }, [
-          el("span", { text: i.email }), badge(i.role), el("span", { class: "muted small", text: `until ${i.expiresAt.slice(0, 10)}` }),
-          button("Revoke", async () => { await api.request("invitations", { method: "DELETE", query: { workspaceId: wsId }, body: { invitationId: i.id } }); await renderPending(); }, { small: true, variant: "ghost" }),
+          el("span", { text: i.email }), badge(ROLE_LABEL[i.role] || i.role), el("span", { class: "muted small", text: `until ${i.expiresAt.slice(0, 10)}` }),
+          button("Cancel invitation", async () => {
+            try { await api.request("invitations", { method: "DELETE", query: { workspaceId: wsId }, body: { invitationId: i.id } }); announce("Invitation cancelled."); await renderPending(); }
+            catch (err) { mount(result, el("p", { class: "error-text", role: "alert", text: err.message })); }
+          }, { small: true, variant: "ghost" }),
         ]))));
-      } catch (err) { mount(pending); }
+      } catch (err) { mount(pending, el("p", { class: "error-text", role: "alert", text: err.message })); }
     }
-    if (role === "owner" || role === "manager") {
-      mount(inviteBox, el("div", { class: "stack" }, [field("Email", email), field("Role", roleSel, { help: "No role can see members' private accounts." }), send, result, el("h3", { text: "Pending" }), pending]));
-      await renderPending();
-    } else mount(inviteBox, el("p", { class: "muted", text: "Only owners and managers can invite people." }));
+    mount(inviteBox, el("div", { class: "stack" }, [field("Email", email), field("Role", roleSel, { help: "No role can see members' private accounts." }), send, result, el("h3", { text: "Pending invitations" }), pending]));
+    await renderPending();
   }
 
   async function loadBackups() {
     const role = me().role;
     if (role !== "owner" && role !== "manager") {
-      mount(backupsBox, el("p", { class: "muted", text: "Owners and managers manage backups. You can restore your own private accounts from a backup through an owner." }));
+      mount(backupsBox, el("p", { class: "muted", text: "Owners and managers manage backups for this workspace." }));
       return;
     }
+    const status = el("p", { class: "field__help", role: "status" });
     try {
       const data = await api.backups(wsId);
       const create = button("Create backup now", async () => {
         try { await api.createBackup(wsId); announce("Backup created."); await loadBackups(); } catch (err) { mount(status, el("span", { class: "error-text", text: err.message })); }
       }, { variant: "primary" });
-      const status = el("p", { class: "field__help", role: "status" });
-      mount(backupsBox, el("p", { class: "field__help", text: data.policy }), create, status,
+      const last = data.archives[0];
+      mount(backupsBox,
+        el("p", { class: "small", text: last ? `Last backup: ${stamp(last.createdAt)} (${last.reason}).` : "No backups yet." }),
+        el("p", { class: "field__help", text: data.policy }), create, status,
         el("ul", { class: "stack" }, data.archives.map((a) => el("li", { class: "row" }, [
-          el("span", { text: a.createdAt.replace("T", " ").slice(0, 16) }), badge(a.reason), el("span", { class: "muted small", text: a.createdBy }),
-          el("span", { class: "app__spacer" }), button("Restore…", () => openRestore(ctx, wsId, a), { small: true }),
+          el("span", { text: stamp(a.createdAt) }), badge(a.reason), el("span", { class: "muted small", text: a.createdBy }),
+          el("span", { class: "app__spacer" }), button("Restore…", () => openRestore(ctx, wsId, a), { small: true, attrs: { "aria-label": `Restore from ${stamp(a.createdAt)}` } }),
         ]))));
     } catch (err) { mount(backupsBox, el("p", { class: "error-text", role: "alert", text: err.message })); }
   }
@@ -85,10 +111,11 @@ export function createView(ctx) {
   async function loadAudit() {
     try {
       const data = await api.audit(wsId);
+      if (!data.entries.length) { mount(auditBox, el("p", { class: "muted small", text: "No activity yet." })); return; }
       mount(auditBox, el("ul", { class: "stack small" }, data.entries.slice(0, 25).map((e) => el("li", {}, [
-        el("span", { class: "muted", text: `${e.at.replace("T", " ").slice(0, 16)} · ` }), el("strong", { text: e.actorSelf ? "You" : e.actor }), ` ${e.action.replace(/[.-]/g, " ")}`,
+        el("span", { class: "muted", text: `${stamp(e.at)} · ` }), el("strong", { text: e.actorSelf ? "You" : e.actor }), ` ${describe(e.action)}`,
       ]))));
-    } catch (err) { mount(auditBox, el("p", { class: "error-text", text: err.message })); }
+    } catch (err) { mount(auditBox, el("p", { class: "error-text", role: "alert", text: err.message })); }
   }
 
   let loaded = false;
@@ -97,19 +124,44 @@ export function createView(ctx) {
     const s = stateView(members);
     if (s) { mount(membersBox, s); return; }
     const role = me().role;
+    const owners = members.data.members.filter((m) => m.role === "owner").length;
     mount(membersBox, el("ul", { class: "stack" }, members.data.members.map((m) => {
-      const roleSel = select(ROLES, m.role, { "aria-label": `Role for ${m.name}`, disabled: role !== "owner" });
-      roleSel.addEventListener("change", async () => {
-        const out = await store.actions.write((ws) => api.request("members", { method: "PATCH", query: { workspaceId: ws }, body: { memberId: m.id, role: roleSel.value } }), ["members"]);
-        if (!out.ok) { roleSel.value = m.role; announce(out.error.message); }
-      });
-      const remove = (role === "owner" || m.self) ? button(m.self ? "Leave" : "Remove", () => confirmModal({
+      const soleOwner = m.role === "owner" && owners <= 1;
+      let roleControl;
+      if (role === "owner" && !soleOwner) {
+        // Commits only on an explicit choice (A11Y-002), and making someone an owner asks first.
+        roleControl = select(ROLES, m.role, { "aria-label": `Role for ${m.name}` });
+        const change = async (value) => {
+          const out = await store.actions.write((ws) => api.request("members", { method: "PATCH", query: { workspaceId: ws }, body: { memberId: m.id, role: value } }), ["members"]);
+          if (!out.ok) { committer.reset(m.role); announce(out.error.message); } else announce(`${m.name} is now ${ROLE_LABEL[value]}.`);
+          return out;
+        };
+        const committer = commitOnConfirm(roleControl, (value) => {
+          if (value !== "owner") { void change(value); return; }
+          // Show the current role until the promotion is confirmed; a confirmed change re-renders.
+          committer.reset(m.role);
+          confirmModal({
+            title: `Make ${m.name} an owner?`, message: "Owners manage members, shared accounts and backups. Owners still cannot see anyone's private accounts.",
+            confirmLabel: "Make owner", onConfirm: () => change(value),
+          });
+        });
+      } else {
+        // Read-only roles are text, not a greyed-out control that looks broken (UX-010).
+        roleControl = el("span", { class: "badge", text: ROLE_LABEL[m.role] || m.role, title: soleOwner ? "A workspace always keeps at least one owner." : null });
+      }
+      const canRemove = !soleOwner && (role === "owner" || m.self);
+      const remove = canRemove ? button(m.self ? "Leave workspace" : "Remove", () => confirmModal({
         title: m.self ? "Leave this workspace?" : `Remove ${m.name}?`,
-        message: "Their access and any access they gave or received on private accounts is revoked. Their past entries keep their attribution.",
+        message: m.self
+          ? "You lose access to its shared accounts. Access you gave or received on private accounts ends. Your past entries keep your name."
+          : "Their access, and any access they gave or received on private accounts, ends now. Their past entries keep their name.",
         confirmLabel: m.self ? "Leave" : "Remove", danger: true,
         onConfirm: () => store.actions.write((ws) => api.request("members", { method: "DELETE", query: { workspaceId: ws }, body: { memberId: m.id } }), ["members", "accounts"]),
-      }), { small: true, variant: "ghost" }) : null;
-      return el("li", { class: "row" }, [el("strong", { text: m.name }), m.self ? badge("you") : null, m.email ? el("span", { class: "muted small", text: m.email }) : null, el("span", { class: "app__spacer" }), roleSel, remove]);
+      }), { small: true, variant: "danger" }) : null;
+      return el("li", { class: "row" }, [
+        el("strong", { text: m.name }), m.self ? badge("you") : null, m.email ? el("span", { class: "muted small", text: m.email }) : null,
+        el("span", { class: "app__spacer" }), roleControl, remove,
+      ]);
     })));
     if (!loaded) { loaded = true; void loadInvites(); void loadBackups(); void loadAudit(); }
   }
@@ -133,7 +185,7 @@ function openRestore(ctx, wsId, archive) {
       execute.disabled = !previewData.canExecute;
       confirmText.hidden = mode.value !== "replace";
       mount(summary,
-        el("p", { class: "notice", text: `Preview only — nothing has changed. In your scope: ${previewData.scope.accounts} accounts, ${previewData.scope.transactions} entries. Changes: +${previewData.changes.add} added, ${previewData.changes.update} updated, ${previewData.changes.remove} removed.` }),
+        el("p", { class: "notice", text: `Preview only — nothing has changed. In your scope: ${previewData.scope.accounts} accounts, ${previewData.scope.transactions} entries. Changes: ${previewData.changes.add} added, ${previewData.changes.update} updated, ${previewData.changes.remove} removed.` }),
         el("p", { class: "small", text: `Totals after: ${previewData.totalsAfter.map((t) => `${t.currency} ${t.amount}`).join(", ") || "none"}` }),
         previewData.excluded.otherMembersPrivateRecords ? el("p", { class: "small muted", text: "Other members' private records are outside your restore and stay as they are." }) : null,
         el("p", { class: "small muted", text: previewData.permissions }),
@@ -156,8 +208,9 @@ function openRestore(ctx, wsId, archive) {
       modal.close();
       if (out.workspace) {
         const list = await ctx.api.workspaces();
-        ctx.store.actions.selectWorkspace(out.workspace.id);
         void list;
+        await ctx.store.actions.init();
+        await ctx.store.actions.selectWorkspace(out.workspace.id);
       } else await ctx.store.actions.selectWorkspace(wsId);
     } catch (err) {
       modal.setBusy(false);
@@ -166,7 +219,7 @@ function openRestore(ctx, wsId, archive) {
   }, { variant: "danger", attrs: { disabled: true } });
   mode.addEventListener("change", () => { previewData = null; execute.disabled = true; mount(summary); confirmText.hidden = true; });
   const modal = openModal({
-    title: `Restore from ${archive.createdAt.slice(0, 16).replace("T", " ")}`,
+    title: `Restore from ${stamp(archive.createdAt)}`,
     body: [field("What should happen", mode), summary, confirmText],
     actions: [button("Cancel", () => modal.close()), preview, execute],
   });

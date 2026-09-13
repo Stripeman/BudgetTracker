@@ -42,7 +42,9 @@ export function badge(text, variant = "") {
   return el("span", { class: ["badge", variant ? `badge--${variant}` : ""], text });
 }
 
-const SOURCE_LABELS = { personal: "Customized", site: "Inherited from site", locked: "Locked by site", default: "Default" };
+// Three states, as the brief asks (UX-009): a value you chose, a value inherited from the site or
+// the built-in default, or a value the site has locked.
+const SOURCE_LABELS = { personal: "Customized", site: "Inherited", default: "Inherited", locked: "Locked by site" };
 export function sourceBadge(source) {
   return badge(SOURCE_LABELS[source] || source, "source");
 }
@@ -53,13 +55,39 @@ export function visibilityBadge(visibility) {
     : badge("Private", "private");
 }
 
+// Who an account belongs to, from the viewer's side (UX-002): "Private · yours", "Shared", or
+// "Private · Alice's · shared with you".
+export function accessBadge(account) {
+  if (account.access === "shared") return badge("Shared with workspace", "shared");
+  if (account.access === "granted") return badge(`Private · ${account.ownerName}'s · shared with you`, "private");
+  return badge("Private · yours", "private");
+}
+
 export function money(decimal, currency, prefs, { masked } = {}) {
   const effective = (prefs && prefs.effective) || {};
   const hide = masked !== undefined ? masked : !!effective.balanceMasking;
   const text = formatAmount(decimal, currency, { numberFormat: effective.numberFormat, masked: hide });
-  const node = el("span", { class: ["num", hide ? "money--masked" : isNegative(decimal) ? "money--out" : "money--in"], text });
-  if (hide) node.setAttribute("aria-label", "Amount hidden (balance masking is on)");
-  return node;
+  if (!hide) return el("span", { class: ["num", isNegative(decimal) ? "money--out" : "money--in"], text });
+  // Masked amounts are explained in real (visually hidden) text; aria-label on a plain span is
+  // ignored by many screen readers (A11Y-019).
+  return el("span", { class: "num money--masked" }, [el("span", { "aria-hidden": "true", text }), el("span", { class: "sr-only", text: `${currency} amount hidden (balance masking is on)` })]);
+}
+
+// Selects that move the person somewhere or save something commit only on an explicit choice —
+// a pointer pick, Enter, or leaving the control — never on each arrow key (WCAG 3.2.2, A11Y-002).
+export function commitOnConfirm(selectEl, onCommit) {
+  let last = selectEl.value;
+  let browsing = false;
+  const commit = () => { browsing = false; if (selectEl.value !== last) { last = selectEl.value; onCommit(selectEl.value); } };
+  selectEl.addEventListener("keydown", (e) => {
+    if (["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", "Home", "End", "PageUp", "PageDown"].includes(e.key) || (e.key.length === 1 && !e.ctrlKey && !e.metaKey)) browsing = true;
+    if (e.key === "Enter") { e.preventDefault(); commit(); }
+    if (e.key === "Escape") { selectEl.value = last; browsing = false; }
+  });
+  selectEl.addEventListener("pointerdown", () => { browsing = false; });
+  selectEl.addEventListener("change", () => { if (!browsing) commit(); });
+  selectEl.addEventListener("blur", commit);
+  return { reset(value) { last = value; selectEl.value = value; } };
 }
 
 export function stateView(slice, { empty = "Nothing here yet.", isEmpty = () => false } = {}) {

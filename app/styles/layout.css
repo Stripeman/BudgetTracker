@@ -19,6 +19,8 @@
   border-bottom: 2px solid transparent; white-space: nowrap; font-size: var(--text-sm); font-weight: var(--weight-medium);
 }
 .app__nav a:hover { color: var(--text); }
+/* The nav clips overflow, so its focus ring is drawn inside the link (A11Y-012). */
+.app__nav a:focus-visible { outline-offset: -3px; }
 .app__nav a[aria-current="page"] { color: var(--text); border-bottom-color: var(--accent); }
 
 .app__main { flex: 1; width: 100%; max-width: var(--content-max); margin: 0 auto; padding: var(--space-5) var(--space-4) var(--space-8); }
@@ -26,7 +28,7 @@
 
 .app__footer {
   display: flex; flex-wrap: wrap; gap: var(--space-2); align-items: center; justify-content: space-between;
-  padding: var(--space-3) var(--space-4); color: var(--text-subtle); font-size: var(--text-xs);
+  padding: var(--space-3) var(--space-4); color: var(--text-muted); font-size: var(--text-xs);
   border-top: 1px solid var(--border); background: var(--surface);
 }
 
@@ -35,8 +37,9 @@
 .page-head__actions { display: flex; flex-wrap: wrap; gap: var(--space-2); }
 
 .grid { display: grid; gap: var(--space-4); }
-.grid--cards { grid-template-columns: repeat(auto-fill, minmax(16rem, 1fr)); }
-.grid--two { grid-template-columns: repeat(auto-fit, minmax(20rem, 1fr)); }
+/* min(…, 100%) keeps every grid within a 320px viewport without horizontal scrolling (A11Y-008). */
+.grid--cards { grid-template-columns: repeat(auto-fill, minmax(min(16rem, 100%), 1fr)); }
+.grid--two { grid-template-columns: repeat(auto-fit, minmax(min(20rem, 100%), 1fr)); }
 
 .stack { display: flex; flex-direction: column; gap: var(--space-3); }
 ul.stack, ol.stack { list-style: none; margin: 0; padding: 0; }
@@ -44,5 +47,10 @@ ul.stack, ol.stack { list-style: none; margin: 0; padding: 0; }
 
 @media (max-width: 40rem) {
   .app__main { padding: var(--space-4) var(--space-3) var(--space-8); }
-  .app__header { padding: var(--space-2) var(--space-3); }
+  .app__header { padding: var(--space-2) var(--space-3); flex-wrap: nowrap; }
+  .app__header select { max-width: 11rem; }
+  .app__brand span { display: none; }
+  /* Every section stays reachable: the nav wraps instead of hiding tabs off-screen (UX-004). */
+  .app__nav { flex-wrap: wrap; overflow-x: visible; padding: 0 var(--space-2); }
+  .app__nav a { padding: var(--space-2); }
 }

@@ -38,13 +38,25 @@ async function list(ctx, req) {
     .filter((a) => !a.deletedAt || (includeDeleted && mayManage(a, member)));
   const accounts = visible.map((a) => ledger.accountView(doc, ctx.principal, a, now));
   // Net position per currency over accounts whose balances this person may see. Accounts they
-  // cannot see contribute nothing — totals never reveal hidden balances.
+  // cannot see contribute nothing — totals never reveal hidden balances. The breakdown separates
+  // the viewer's own money, shared accounts, and accounts someone else shared with them, so a
+  // grantee's headline figure is not silently inflated by another person's savings (UX-002).
   const totals = {};
   for (const a of accounts) {
     if (a.deletedAt || a.balanceMinor === undefined) continue;
-    totals[a.currency] = money.sum([totals[a.currency] || 0, a.balanceMinor]);
+    const t = totals[a.currency] || (totals[a.currency] = { all: 0, own: 0, shared: 0, granted: 0 });
+    t.all = money.sum([t.all, a.balanceMinor]);
+    t[a.access] = money.sum([t[a.access], a.balanceMinor]);
   }
-  return { body: { accounts, totals: Object.entries(totals).map(([currency, minor]) => ({ currency, minor, amount: money.toDecimal(minor, currency) })) } };
+  return {
+    body: {
+      accounts,
+      totals: Object.entries(totals).map(([currency, t]) => ({
+        currency, minor: t.all, amount: money.toDecimal(t.all, currency),
+        breakdown: { own: money.toDecimal(t.own, currency), shared: money.toDecimal(t.shared, currency), granted: money.toDecimal(t.granted, currency) },
+      })),
+    },
+  };
 }
 
 async function create(ctx, req) {

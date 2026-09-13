@@ -29,7 +29,7 @@
 textarea.field__input { min-height: 5rem; resize: vertical; }
 .field--inline { display: flex; flex-direction: row; align-items: center; gap: var(--space-2); }
 .field input[type="checkbox"] { align-self: flex-start; width: 1.1rem; height: 1.1rem; margin: var(--space-1) 0; }
-.form-grid { display: grid; gap: var(--space-3); grid-template-columns: repeat(auto-fit, minmax(12rem, 1fr)); }
+.form-grid { display: grid; gap: var(--space-3); grid-template-columns: repeat(auto-fit, minmax(min(12rem, 100%), 1fr)); }
 .form-grid .field--wide { grid-column: 1 / -1; }
 
 .suggestion {
@@ -48,7 +48,19 @@ textarea.field__input { min-height: 5rem; resize: vertical; }
 .table th { background: var(--surface-sunken); font-weight: var(--weight-medium); color: var(--text-muted); position: sticky; top: 0; }
 .table tbody tr:hover { background: var(--surface-sunken); }
 .table tr:last-child td { border-bottom: 0; }
-.num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.num, .table .num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+
+/* Narrow screens: tables become labelled card rows so the amount is always visible (UX-004).
+   Each cell carries data-label; the label is drawn by CSS, never by inline style. */
+@media (max-width: 40rem) {
+  .table--cards thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+  .table--cards, .table--cards tbody, .table--cards tr, .table--cards td { display: block; width: 100%; }
+  .table--cards tr { padding: var(--space-3); border-bottom: 1px solid var(--border); }
+  .table--cards td { border: 0; padding: var(--space-1) 0; display: flex; justify-content: space-between; gap: var(--space-3); text-align: right; }
+  .table--cards td::before { content: attr(data-label); color: var(--text-muted); font-size: var(--text-xs); text-align: left; }
+  .table--cards td[data-label=""]::before { content: none; }
+  .table--cards td.num { font-size: var(--text-base); font-weight: var(--weight-medium); }
+}
 .money--in { color: var(--money-in); }
 .money--out { color: var(--money-out); }
 .money--masked { letter-spacing: 0.1em; color: var(--text-subtle); }
@@ -89,7 +101,17 @@ textarea.field__input { min-height: 5rem; resize: vertical; }
 
 /* ---------- modal ---------- */
 .modal-backdrop { position: fixed; inset: 0; z-index: 60; background: var(--overlay); display: flex; align-items: flex-start; justify-content: center; padding: var(--space-6) var(--space-3); overflow-y: auto; }
-.modal { width: 100%; max-width: 40rem; background: var(--surface-raised); border-radius: var(--radius-lg); box-shadow: var(--shadow); border: 1px solid var(--border); }
+.modal {
+  width: 100%; max-width: 40rem; max-height: calc(100vh - 2 * var(--space-4)); display: flex; flex-direction: column;
+  background: var(--surface-raised); border-radius: var(--radius-lg); box-shadow: var(--shadow); border: 1px solid var(--border);
+}
+.modal__body { overflow-y: auto; }
+/* The action bar stays visible while the body scrolls, so Save is never below the fold (UX-005). */
+.modal__foot { position: sticky; bottom: 0; background: var(--surface-raised); padding-top: var(--space-3); border-top: 1px solid var(--border); border-radius: 0 0 var(--radius-lg) var(--radius-lg); }
+.modal-backdrop { padding: var(--space-4) var(--space-3); }
+.more { grid-column: 1 / -1; }
+.more > summary { cursor: pointer; font-size: var(--text-sm); font-weight: var(--weight-medium); color: var(--accent); padding: var(--space-2) 0; }
+.more[open] > summary { margin-bottom: var(--space-2); }
 .modal__head { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); padding: var(--space-4) var(--space-4) 0; }
 .modal__head h2 { margin: 0; }
 .modal__body { padding: var(--space-4); }
@@ -99,7 +121,14 @@ textarea.field__input { min-height: 5rem; resize: vertical; }
 .modal__error { margin: 0 var(--space-4) var(--space-3); padding: var(--space-3); border-radius: var(--radius); border: 1px solid var(--color-danger); color: var(--color-danger-text); font-size: var(--text-sm); }
 
 /* ---------- filters ---------- */
-.filters { display: grid; gap: var(--space-2); grid-template-columns: repeat(auto-fit, minmax(9rem, 1fr)); padding: var(--space-3); margin-bottom: var(--space-3); background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-lg); }
+.filters-box { margin-bottom: var(--space-3); background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-lg); }
+.filters-box > summary { cursor: pointer; padding: var(--space-3); font-weight: var(--weight-medium); font-size: var(--text-sm); }
+.filters { display: grid; gap: var(--space-2); grid-template-columns: repeat(auto-fit, minmax(min(9rem, 100%), 1fr)); padding: 0 var(--space-3) var(--space-3); }
+.table th[scope="row"] { font-weight: var(--weight-medium); color: var(--text); background: transparent; position: static; }
+.filters__actions { grid-column: 1 / -1; display: flex; justify-content: flex-end; }
+.row-actions { display: flex; flex-wrap: wrap; gap: var(--space-3); justify-content: flex-end; }
+.breakdown { list-style: none; margin: var(--space-2) 0 0; padding: 0; font-size: var(--text-xs); color: var(--text-muted); display: grid; gap: 2px; }
+.breakdown li { display: flex; justify-content: space-between; gap: var(--space-3); }
 .summary { display: flex; flex-wrap: wrap; gap: var(--space-4); margin-bottom: var(--space-3); font-size: var(--text-sm); }
 .summary strong { font-variant-numeric: tabular-nums; }
 

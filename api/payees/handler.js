@@ -85,13 +85,14 @@ function suggest(doc, ctx, req, txns) {
   const suggestion = {
     payeeId, basedOn: history.length,
     categoryId: cat ? cat.v : payee.defaultCategoryId || null,
-    categoryReason: cat ? `Used in ${cat.c} of your last ${history.length} visible entries for ${payee.name}.` : payee.defaultCategoryId ? 'Payee default category.' : null,
+    // Plain-language reasons (UX-006). "Your" entries means entries this person may see.
+    categoryReason: cat ? `You used this in ${cat.c} of your last ${history.length} ${payee.name} entries.` : payee.defaultCategoryId ? `The usual category for ${payee.name}.` : null,
     accountId: acc ? acc.v : null,
-    accountReason: acc ? `Used in ${acc.c} of your last ${history.length} visible entries.` : null,
+    accountReason: acc ? `You paid ${payee.name} from this account in ${acc.c} of your last ${history.length} entries.` : null,
     kind: last ? last.kind : 'expense',
     amount: last ? money.toDecimal(Math.abs(last.amountMinor), last.currency) : null,
     currency: last ? last.currency : null,
-    amountReason: last ? `Your most recent visible entry on ${last.date}.` : null,
+    amountReason: last ? `From your last ${payee.name} entry (${last.date}).` : null,
     tags: last ? last.tags || [] : [],
     splits: last && (last.splits || []).length ? last.splits.map((s) => ({ categoryId: s.categoryId, amount: money.toDecimal(Math.abs(s.amountMinor), last.currency) })) : [],
   };

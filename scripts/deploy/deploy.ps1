@@ -64,4 +64,9 @@ try {
   Remove-Item Env:SWA_CLI_DEPLOYMENT_TOKEN -ErrorAction SilentlyContinue
   $token = $null
 }
+# Record the exact deployed commit (non-secret) so the running app reports it publicly through
+# /api/site-settings `app.commit` and the footer. Only after a successful deploy.
+$envArgs = if ($swaEnv -eq 'production') { @() } else { @('--environment-name', $swaEnv) }
+az staticwebapp appsettings set -n $SwaName -g $ResourceGroup --subscription $SubscriptionId @envArgs --setting-names "BT_COMMIT=$commit" --only-show-errors | Out-Null
+if ($LASTEXITCODE -ne 0) { Write-Warning 'Deployed, but BT_COMMIT could not be recorded; the app will report the previous commit.' }
 Write-Host "Deployed commit $commit to $swaEnv. Now verify the running application separately."

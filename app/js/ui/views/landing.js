@@ -2,8 +2,9 @@ import { el } from "../dom.js";
 import { field, input, select, button } from "../components.js";
 import { AUTH, newIdempotencyKey } from "../../core/api.js";
 
+// The signed-out page is a real main landmark with the skip link's target (A11Y-013).
 export function renderLanding() {
-  return el("div", { class: "landing" }, [
+  return el("main", { class: "landing", id: "main", tabindex: "-1" }, [
     el("h1", { class: "landing__title", text: "BudgetTracker" }),
     el("p", { text: "Private budgeting for individuals, households and travel groups." }),
     el("ul", { class: "landing__points" }, [
@@ -35,6 +36,7 @@ export function createOnboarding({ store }) {
   const element = el("section", { class: "landing" }, [
     el("h1", { text: "Create your first workspace" }),
     el("p", { class: "muted", text: "A workspace holds accounts and budgets. You can keep it personal or invite others later; private accounts stay private either way." }),
+    el("p", { class: "notice", text: "Were you invited to someone's workspace? Open the invitation link you were sent — it works only for the Google account it was sent to. Site administrators do not see anyone's finances." }),
     el("div", { class: "stack" }, [field("Name", name), field("Kind", kind), field("Reporting currency", currency), error, create]),
   ]);
   return { element, update() {} };

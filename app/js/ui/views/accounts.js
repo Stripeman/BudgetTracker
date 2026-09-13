@@ -2,7 +2,7 @@
 // "Who can see this" with explicit grants for private accounts (owner only). The server decides
 // everything; these controls only present what it allows.
 import { el, mount, announce } from "../dom.js";
-import { pageHead, stateView, money, visibilityBadge, button, field, input, select, badge } from "../components.js";
+import { pageHead, stateView, money, accessBadge, button, field, input, select, badge } from "../components.js";
 import { openModal } from "../modal.js";
 import { sliceFor } from "../../core/store.js";
 import { newIdempotencyKey } from "../../core/api.js";
@@ -19,14 +19,14 @@ export function createView(ctx) {
     const accounts = sliceFor(state, "accounts");
     const s = stateView(accounts, { empty: "No accounts yet. Add a bank account, card, cash wallet or loan.", isEmpty: (d) => !d.accounts.length });
     if (s) { mount(box, s); return; }
-    mount(box, el("div", { class: "table-wrap" }, [el("table", { class: "table" }, [
-      el("thead", {}, [el("tr", {}, ["Account", "Type", "Visibility", "Balance", ""].map((h) => el("th", { scope: "col", class: h === "Balance" ? "num" : "", text: h })))]),
+    mount(box, el("div", { class: "table-wrap" }, [el("table", { class: "table table--cards", "aria-label": "Accounts" }, [
+      el("thead", {}, [el("tr", {}, ["Account", "Type", "Who can see it", "Balance", "Actions"].map((h) => el("th", { scope: "col", class: h === "Balance" ? "num" : "", text: h })))]),
       el("tbody", {}, accounts.data.accounts.filter((a) => !a.deletedAt).map((a) => el("tr", {}, [
-        el("td", {}, [el("strong", { text: a.name }), a.institution ? el("div", { class: "muted small", text: `${a.institution}${a.maskedNumber ? ` ·· ${a.maskedNumber}` : ""}` }) : null]),
-        el("td", { text: `${ACCOUNT_TYPE_LABELS[a.type] || a.type} · ${a.currency}` }),
-        el("td", {}, [visibilityBadge(a.visibility), a.ownedBySelf ? el("span", { class: "muted small", text: " yours" }) : null]),
-        el("td", { class: "num" }, [a.balance !== undefined ? money(a.balance, a.currency, prefs) : el("span", { class: "muted small", text: "Not shared with you" })]),
-        el("td", {}, [button("Who can see this", () => openWhoCanSee(ctx, a), { small: true })]),
+        el("th", { scope: "row", "data-label": "Account" }, [el("strong", { text: a.name }), a.institution ? el("div", { class: "muted small", text: `${a.institution}${a.maskedNumber ? ` ·· ${a.maskedNumber}` : ""}` }) : null]),
+        el("td", { "data-label": "Type", text: `${ACCOUNT_TYPE_LABELS[a.type] || a.type} · ${a.currency}` }),
+        el("td", { "data-label": "Who can see it" }, [accessBadge(a)]),
+        el("td", { "data-label": "Balance", class: "num" }, [a.balance !== undefined ? money(a.balance, a.currency, prefs) : el("span", { class: "muted small", text: "Not shared with you" })]),
+        el("td", { "data-label": "" }, [button("Who can see this", () => openWhoCanSee(ctx, a), { small: true, attrs: { "aria-label": `Who can see ${a.name}` } })]),
       ]))),
     ])]));
   }
@@ -60,7 +60,7 @@ function openAddAccount(ctx) {
     title: "Add account",
     body: [el("div", { class: "form-grid" }, [
       field("Name", name), field("Type", type), field("Currency", currency),
-      field("Visibility", visibility, { wide: true, help: "New accounts are private by default. Workspace owners cannot see private accounts." }),
+      field("Who can see it", visibility, { wide: true, help: "New accounts are private by default. Workspace owners cannot see private accounts. Only owners and managers can create shared accounts." }),
       field("Opening balance", opening, { help: "Loans and other debts: enter the amount owed as a negative number, e.g. -20000.00." }),
       field("Opening date", openingDate), field("Institution", institution), field("Account number", last, { help: "Never store a full account or card number." }),
     ])],

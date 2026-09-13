@@ -4,7 +4,8 @@
    browser's own [hidden] style and show controls that are meant to be absent. */
 [hidden] { display: none !important; }
 
-html { color-scheme: light dark; -webkit-text-size-adjust: 100%; }
+/* Focused controls are never hidden under the sticky header (WCAG 2.4.11, A11Y-005). */
+html { color-scheme: light dark; -webkit-text-size-adjust: 100%; scroll-padding-top: 6rem; }
 :root[data-color-scheme="light"] { color-scheme: light; }
 :root[data-color-scheme="dark"] { color-scheme: dark; }
 

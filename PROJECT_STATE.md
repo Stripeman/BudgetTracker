@@ -172,6 +172,24 @@ Resource providers `Microsoft.OperationalInsights` and `Microsoft.Insights` were
 
 The medium and low findings are numeric alignment, quick-entry field order and a sticky Save, stale suggestion hints, terminology, format preferences ignored, settings source labels, workspace-page states, onboarding for non-members, and menu ARIA roles. They will be remediated together with the accessibility review (pending) before the next UI checkpoint.
 
+## Clean preview redeploy and review remediation (2026-09-13)
+
+- **Clean redeploy:** preview was redeployed from `a3d8c16` with a clean tree; `/` returned 200 with CSP and anonymous `/api/me` returned 401. CI passed for `f9550f2`, `386543c` and `a3d8c16`. `deploy.ps1` now records `BT_COMMIT` after each successful deploy, and `/api/site-settings` exposes `app` (version, environment, commit) publicly for verification.
+- **Accessibility review of 386543c:** 19 findings (A11Y-001 to A11Y-019), 15 of them confirmed in headless Edge. The five Serious ones:
+  - a stale day/night switch
+  - selects committing on every arrow key
+  - the skip link navigating away
+  - contrast
+  - focus hidden under the header
+
+  All 19 are addressed (see BT-004-03). Note for Terry: A11Y-001 (the day/night control not redrawing when the device scheme changes while "Use device setting" is on) may also affect TaskTracker's original `daynight.js`. It has not been checked there, and TaskTracker was not touched.
+- **UX review:** all 13 findings are addressed.
+- **Evidence:**
+  - `npm test` passes: 8/8 repository, 78/78 API and 20/20 app tests. `npm run validate` is ok.
+  - Headless-Edge runs as Bob and Carol showed no exceptions or console errors, and the screenshots confirm the owner-aware badges, the breakdown (−203.90 + 4,472.67 + 8,500.00 = 12,768.77), dark-mode button contrast, narrow card rows, the reordered quick entry and the viewer message.
+  - The screenshot run also caught a frontend crash when the API lacked the new `breakdown` field. It was caused by a stale dev-server process, and the dashboard now tolerates the missing field.
+- **Local dev server:** restarted by stopping only its own verified PID. Ports 4280, 7071 and 10000 were untouched.
+
 ## Checks run this checkpoint
 
 - `node --test test/*.test.cjs`: 7 passed, 0 failed (Node v22.23.1).

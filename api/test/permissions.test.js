@@ -49,7 +49,7 @@ describe('BT-001 private accounts stay private from the workspace owner', () => 
     assert.deepEqual(names(accounts.accounts), ['Alice Savings', 'Joint']);
     // Totals: Joint 1000.00 - 82.40 = 917.60, plus Alice Savings 5000.00 = 5917.60. Bob's card
     // (-250.00) must not be included.
-    assert.deepEqual(accounts.totals, [{ currency: 'EUR', minor: 591760, amount: '5917.60' }]);
+    assert.deepEqual(accounts.totals, [{ currency: 'EUR', minor: 591760, amount: '5917.60', breakdown: { own: '5000.00', shared: '917.60', granted: '0.00' } }]);
     const txns = (await h.call('transactions', 'GET', { as: 'alice', query: { ...f.q } })).body;
     assert.deepEqual(txns.transactions.map((t) => t.payeeName), ['Fictional Grocer']);
     assert.equal((await h.call('transactions', 'GET', { as: 'alice', query: { ...f.q, accountId: f.bobCard.id } })).body.total, 0);
