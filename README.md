@@ -44,3 +44,11 @@ Update this README and PROJECT_STATE.md when behavior, setup, validation, or dep
 Suggested GitHub About description:
 
 > Privacy-first budgeting service with accounts, debt tracking, forecasting, trip planning, shared expenses, and multiple currencies.
+
+## Local foundation checkpoint
+
+Seven Codex role definitions and five supporting procedures are available; see [.codex/agents/README.md](.codex/agents/README.md) and [validation evidence](docs/AGENT_VALIDATION.md). All seven roles were discovered; the security role executed a read-only smoke task. Claude-native agents are not configured.
+
+Run `node --test test/*.test.cjs` (verified with Node v22.23.1). Four tests pass for the local authorization/encrypted-snapshot preview prototype. It has no trusted identity adapter, durable storage, executable restore, scheduler or running application. Never connect it to real financial data. Independent security/financial review is pending.
+
+[Foundation design](docs/FOUNDATION_DESIGN.md), [recovery procedure](docs/RECOVERY_RUNBOOK.md), [TaskTracker inventory](docs/TASKTRACKER_REUSE.md), and [Word comparison](docs/BRIEF_RECONCILIATION.md) document decisions and gaps. GitHub secret scanning and push protection were observed enabled; main branch protection was absent. The new pinned scanning/test workflow has not run remotely. See PROJECT_STATE.md for the Claude handoff.

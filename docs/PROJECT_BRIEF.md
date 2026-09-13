@@ -2,6 +2,8 @@
 
 Prepared for Terry • 13 September 2026 • Version 1
 
+Source reconciliation: the complete local Word reference was compared on 2026-09-13; all original requirement text matches. See [comparison evidence](BRIEF_RECONCILIATION.md). Subsequent agent operating instructions are maintained in AGENTS.md and the agents README without reducing this scope.
+
 Create a feature rich, privacy focused budgeting application for individuals, couples, households, and travel groups. Reuse the established TaskTracker technologies and proven components while building a separate financial application. This brief is the implementation instruction set for either Claude or Codex; it does not authorize a Production deployment.
 
 ### Service scope

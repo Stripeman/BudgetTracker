@@ -42,3 +42,16 @@ __azurite_db_*.json
 .idea/
 .DS_Store
 Thumbs.db
+
+# Local reference and agent/session output (canonical requirements live in docs)
+/Budget_Tracker_Project_Instructions.docx
+/.agent-output/
+/.local/
+.claude/settings.local.json
+**/history.jsonl
+**/sessions/
+*.sarif
+*.zip
+*.bak
+*.tfstate*
+__pycache__/

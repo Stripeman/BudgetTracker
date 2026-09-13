@@ -17,3 +17,9 @@ Deny access by default and enforce permissions server-side on every route, searc
 ## Current assurance
 
 These are requirements, not completed application controls. No application, scheduled backup, restore engine, secret-scanning workflow, or deployment protection has been implemented yet. Record verified controls and outstanding gaps in PROJECT_STATE.md.
+
+## Checkpoint assurance — 2026-09-13
+
+The earlier assurance paragraph describes the initial baseline. Local additions now include a pinned Gitleaks/test workflow and a synthetic in-memory authorization/encrypted-snapshot preview prototype with four passing tests. No API identity verification, durable backup, executed restore, scheduler or deployment is operational. Preview strips archived grants and is explicitly non-executable; current-owner and revocation reconciliation is still required before restore execution can exist. Independent security/financial code review remains pending.
+
+Read-only GitHub API inspection observed secret scanning and push protection enabled, Dependabot security updates disabled, and no main branch protection (404 Branch not protected). Workflow execution, environment isolation and deployment identity controls remain unverified. Documentation and local tests do not enforce those remote controls.

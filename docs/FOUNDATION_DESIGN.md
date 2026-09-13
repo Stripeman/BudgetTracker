@@ -1,0 +1,30 @@
+# Foundation design — BT-001-01 / BT-002-01
+
+Status: local prototype design; no application authentication, database or Azure resource is operational.
+
+## ADR-001: reuse and consistency
+
+Retain the verified browser ES-module and Node/CommonJS API approach from TaskTracker. Do not copy its administrator elevation, invalid-JSON fallback or archive grant restoration. Defer the durable datastore choice until transactional linked writes, idempotency, corruption refusal and consistent snapshots are demonstrated. No silent SQL substitution. Prototype recovery uses an already consistent snapshot supplied by the caller; it cannot establish consistency across live blobs.
+
+## Permission model
+
+Separate verified Google subject, contact, participant, workspace membership, financial resource ownership and capability grants. Every resource has a workspace and owner. A verified server principal is an adapter output, never a browser-provided object. Resource access requires ownership or an active explicit capability grant in the same workspace. Site-admin and workspace-owner labels are not inputs to financial authorization. Anonymous/invalid identity, unknown capabilities, cross-workspace access, missing/expired/revoked grants fail closed. The prototype checks explicit capabilities; trusted ingress, Google verification and route coverage remain pending.
+
+Financial capabilities: view balances/transactions, create/edit/delete, comment, download receipts, export, invite, change permissions and publish. Publication still requires separate site enablement plus a resource publication action; a capability alone is insufficient. Recovery operator privileges are independent of ordinary financial access.
+
+## Threat boundaries
+
+| Threat | Required control and evidence |
+|---|---|
+| Account takeover/forged client roles | Verified issuer/audience/subject, session expiry/revocation and negative direct-API tests |
+| Malicious member/cross-workspace IDs | Central capabilities on direct and derived surfaces, including totals and selectors |
+| Compromised device | Explicit cache policy, sign-out clearing, minimal notifications; downloaded copies cannot be recalled |
+| Operator access | Separate operational and financial permissions; no operator-blind encryption promise |
+| Stolen backup | Authenticated encryption, separately protected keys and recovery access |
+| Destructive changes/ransomware | Independent immutable recovery copies, pre-change backup and measured restore drills |
+
+## Recovery protocol
+
+Versioned snapshots contain records, ownership, permissions, attachment bytes and hashes, schema version and nonsecret configuration metadata. Encrypt with authenticated encryption and a fresh nonce; key storage/rotation is external to archives. Never log keys or payloads. Decrypt and validate in isolation before any write. Validate workspace, schema, attachment completeness and financial invariants. Restored grant data is historical evidence only: strip grants and require explicit reauthorization against current identity/revocation state. Do not restore archived administrator roles. This conservative prototype disables all restored grants.
+
+Create-new, merge and replace need separate future execution semantics. No destructive restore is implemented until preview, pre-restore backup, conflict handling, confirmation and atomic commit/restart are proven. Workspace recovery and disaster recovery require distinct operator permissions. Schedules, retention, RPO/RTO and production key custody are pending decisions, not achieved guarantees.
