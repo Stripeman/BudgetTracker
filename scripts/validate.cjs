@@ -102,6 +102,27 @@ for (const file of appFiles) {
   }
 }
 
+// 9. No raw control or invisible characters in source, data, style or documentation files: they
+//    make Git treat a file as binary (no reviewable diff) and hide what a regular expression or
+//    string really contains. Write them as escapes instead. The pattern is built from char codes
+//    so this file itself stays plain text.
+const RAW_CHARS = new RegExp(`[${[[0, 8], [11, 12], [14, 31], [127, 127]].map(([a, b]) => (a === b ? String.fromCharCode(a) : `${String.fromCharCode(a)}-${String.fromCharCode(b)}`)).join('')}${String.fromCharCode(0xfeff, 0xa0, 0x2028, 0x2029, 0x200b)}]`);
+const TEXT_FILE = /\.(js|cjs|mjs|json|css|html|md|ps1|toml|ya?ml|txt)$/;
+const walkText = (dir, out = []) => {
+  if (!fs.existsSync(dir)) return out;
+  for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+    if (e.name === 'node_modules' || e.name === '.local' || e.name === '.git') continue;
+    const p = path.join(dir, e.name);
+    if (e.isDirectory()) walkText(p, out); else if (TEXT_FILE.test(e.name)) out.push(p);
+  }
+  return out;
+};
+const textFiles = [...['api', 'app', 'scripts', 'test', 'docs', 'infra', '.github'].flatMap((d) => walkText(path.join(ROOT, d))),
+  ...fs.readdirSync(ROOT, { withFileTypes: true }).filter((e) => e.isFile() && TEXT_FILE.test(e.name)).map((e) => path.join(ROOT, e.name))];
+for (const file of textFiles) {
+  if (RAW_CHARS.test(fs.readFileSync(file, 'utf8'))) fail(`${path.relative(ROOT, file).replace(/\\/g, '/')} contains raw control or invisible characters; write them as escapes`);
+}
+
 const ignore = read('.gitignore');
 for (const pattern of ['.env', 'local.settings.json', '*.pem', '/backups/', '/exports/', '/receipts/', '/.local/', '*.sqlite']) {
   if (!ignore.split(/\r?\n/).includes(pattern)) fail(`.gitignore no longer contains ${pattern}`);

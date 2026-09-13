@@ -88,7 +88,7 @@ function checkDimensions(attrs) {
 function parseIconSvg(input) {
   if (typeof input !== 'string') fail('Upload an SVG file.');
   if (Buffer.byteLength(input, 'utf8') > MAX_BYTES) fail('The icon file is larger than 8 KB.');
-  let text = input.replace(/^﻿/, '').trim();
+  let text = input.replace(/^\uFEFF/, '').trim();
   // Only an optional XML declaration may precede the root.
   text = text.replace(/^<\?xml[^?]*\?>\s*/i, '');
   if (/<!|<\?/.test(text)) fail('The icon may not contain DOCTYPE, entities, CDATA, comments or processing instructions.');

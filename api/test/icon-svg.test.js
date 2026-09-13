@@ -62,9 +62,9 @@ describe('BT-011-05 custom icon validation', () => {
     refused(wrap('<g><path d="M0 0"/></g onclick="x">'), /Closing tags/);
     refused(wrap('<path d="eeeee"/>'), /path/);
     refused(wrap('<path d="L1 1"/>'), /path/);
-    refused(wrap('<path d="M00"/>'), /path/);
-    refused(wrap('<path d="M0 0"/>'), /path/);
-    refused(wrap('<polyline points="0,0 1,1"/>'), /points/);
+    refused(wrap('<path d="M0\u000B0"/>'), /path/);
+    refused(wrap('<path d="M0\u00A00"/>'), /path/);
+    refused(wrap('<polyline points="0,0\u20281,1"/>'), /points/);
     assert.ok(parseIconSvg(wrap('<path d=" m0 0\n l1 1\tz"/>')));
   });
 
