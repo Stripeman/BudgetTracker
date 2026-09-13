@@ -6,10 +6,10 @@
 // Money direction follows Terry's rule: an arrow shows only money coming in (up) or going out (down)
 // for the person looking, never both ways. Everything is also said in words.
 //
-// Selects are kept simple (select() and commitOnConfirm) so they can move to TaskTracker's command
-// picker later without changing behaviour.
+// The dropdowns are TaskTracker's command picker (BT-004-05) over the same selects, so commitOnConfirm
+// and every value the dialogs set from code behave as before.
 import { el, mount, announce } from "../dom.js";
-import { stateView, button, field, input, select, badge, amountText, commitOnConfirm, uid } from "../components.js";
+import { stateView, button, field, input, pickerSelect, categoryBadges, iconBadges, badge, amountText, commitOnConfirm, uid } from "../components.js";
 import { openModal } from "../modal.js";
 import { sliceFor } from "../../core/store.js";
 import { newIdempotencyKey } from "../../core/api.js";
@@ -262,7 +262,7 @@ export function openGroupExpense(ctx, { expense = null } = {}) {
   const amountHelp = el("p", { class: "field__help", "aria-live": "polite" });
   const date = input({ type: "date", value: editing ? expense.date : todayIso() });
   const categories = ((sliceFor(state, "categories").data || {}).categories || []).filter((c) => (!c.archived && c.type !== "income") || (editing && c.id === expense.categoryId));
-  const category = select([{ value: "", label: "No category" }].concat(categories.map((c) => ({ value: c.id, label: c.archived ? `${c.name} (archived)` : c.name }))), editing ? expense.categoryId || "" : "");
+  const category = pickerSelect([{ value: "", label: "No category" }].concat(categories.map((c) => ({ value: c.id, label: c.archived ? `${c.name} (archived)` : c.name }))), editing ? expense.categoryId || "" : "", {}, { badgeOf: categoryBadges(state) });
   const notes = el("textarea", { class: "field__input", maxlength: "2000", text: editing ? expense.notes : "" });
   const reason = input({ maxlength: "200", autocomplete: "off", placeholder: "Why is this being corrected?" });
 
@@ -278,7 +278,7 @@ export function openGroupExpense(ctx, { expense = null } = {}) {
 
   // Shared by.
   const values = new Map(editing ? expense.split.lines.map((l) => [l.ref, l.value === null || l.value === undefined ? "" : String(l.value)]) : []);
-  const method = select(Object.entries(METHOD_LABELS).map(([value, text]) => ({ value, label: text })), editing ? expense.split.method : "equal");
+  const method = pickerSelect(Object.entries(METHOD_LABELS).map(([value, text]) => ({ value, label: text })), editing ? expense.split.method : "equal", {}, { search: false });
   const splitRows = people.map((p) => {
     const box = el("input", { type: "checkbox", id: uid("share"), class: "split-row__box" });
     box.checked = editing ? values.has(p.ref) : !!p.active;
@@ -293,7 +293,7 @@ export function openGroupExpense(ctx, { expense = null } = {}) {
   // Optionally also on the person's own account (never when correcting; that has its own action).
   const mine = editing ? [] : ledgerAccounts(state, currency);
   const ledgerBox = el("input", { type: "checkbox", id: `${key}-ledger` });
-  const ledgerAccount = select(mine.map((a) => ({ value: a.id, label: `${a.name} (${a.currency})` })), (mine[0] || {}).id);
+  const ledgerAccount = pickerSelect(mine.map((a) => ({ value: a.id, label: `${a.name} (${a.currency})` })), (mine[0] || {}).id, {}, { badgeOf: iconBadges(mine) });
   const ledgerField = el("fieldset", { class: "plain-fieldset field--wide" }, [
     el("legend", { class: "field__label", text: "Your own account (optional)" }),
     el("div", { class: "field--inline" }, [ledgerBox, el("label", { for: ledgerBox.id, text: "Also record what I paid on my account" })]),
@@ -426,14 +426,15 @@ export function openRecordPayment(ctx, { from = null, to = null, amount: preset 
   const people = data.participants.filter((p) => p.active);
   const options = people.map((p) => ({ value: p.ref, label: `${p.name}${p.self ? " (you)" : ""}${p.type === "contact" ? " · contact" : ""}` }));
   const key = newIdempotencyKey();
-  const fromSel = select(options, from || me);
-  const toSel = select(options, to || (people.find((p) => p.ref !== (from || me)) || {}).ref);
+  // People are searched, as in TaskTracker's people pickers.
+  const fromSel = pickerSelect(options, from || me);
+  const toSel = pickerSelect(options, to || (people.find((p) => p.ref !== (from || me)) || {}).ref);
   const amount = input({ inputmode: "decimal", autocomplete: "off", required: true, placeholder: "0.00", value: preset });
   const date = input({ type: "date", value: todayIso() });
   const methodText = input({ maxlength: "60", autocomplete: "off", placeholder: "Cash, bank transfer…" });
   const mine = ledgerAccounts(state, data.currency);
   const ledgerBox = el("input", { type: "checkbox", id: `${key}-ledger` });
-  const ledgerAccount = select(mine.map((a) => ({ value: a.id, label: `${a.name} (${a.currency})` })), (mine[0] || {}).id);
+  const ledgerAccount = pickerSelect(mine.map((a) => ({ value: a.id, label: `${a.name} (${a.currency})` })), (mine[0] || {}).id, {}, { badgeOf: iconBadges(mine) });
   const ledgerField = el("div", { class: "field--wide stack" }, [
     el("div", { class: "field--inline" }, [ledgerBox, el("label", { for: ledgerBox.id, text: "Also record it on my account as a repayment" })]),
     field("Account", ledgerAccount, { help: "A repayment clears money you lent. It is not counted as income or spending. Only you see which account." }),
@@ -488,7 +489,7 @@ function openConfirm(ctx, s, nameOf) {
   const receiving = s.to === me;
   const mine = receiving ? ledgerAccounts(state, s.currency) : [];
   const ledgerBox = el("input", { type: "checkbox", id: uid("ledger") });
-  const ledgerAccount = select(mine.map((a) => ({ value: a.id, label: `${a.name} (${a.currency})` })), (mine[0] || {}).id);
+  const ledgerAccount = pickerSelect(mine.map((a) => ({ value: a.id, label: `${a.name} (${a.currency})` })), (mine[0] || {}).id, {}, { badgeOf: iconBadges(mine) });
   ledgerAccount.disabled = true;
   ledgerBox.addEventListener("change", () => { ledgerAccount.disabled = !ledgerBox.checked; });
   const confirm = button("Confirm", () => void go(), { variant: "primary" });
@@ -564,7 +565,7 @@ function openVoid(ctx, type, rec) {
 function openLedgerChoice(ctx, type, rec) {
   const state = ctx.store.getState();
   const mine = ledgerAccounts(state, rec.currency);
-  const account = select(mine.map((a) => ({ value: a.id, label: `${a.name} (${a.currency})` })), (mine[0] || {}).id);
+  const account = pickerSelect(mine.map((a) => ({ value: a.id, label: `${a.name} (${a.currency})` })), (mine[0] || {}).id, {}, { badgeOf: iconBadges(mine) });
   const modal = openModal({
     title: "Record on my account",
     body: [
