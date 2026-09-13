@@ -69,11 +69,13 @@ Backup master keys live only in the app's settings, so losing the app or mis-edi
 
 Limits (security and financial release review, 2026-09-13):
 - A merge or replace that would change nothing is refused (`nothing_to_restore`) and writes nothing — no recovery point, history or audit entry.
-- Members below manager may run at most 3 restores a day per workspace (`restore_limit`, 429); owners and managers are not limited. Each restore writes a full recovery point.
+- Members below manager may run at most 3 restores a day per workspace (`restore_limit`, 429); owners and managers are not limited. Each restore writes a full recovery point, and each attempt by such a member is reserved in the backup index before its recovery point is written, so at most 6 recovery points a day can come from one member even with parallel or failed attempts.
 - Recovery points are written even when the site administrator has switched off on-demand backups: they are the restore's own safety net.
 - A restore may not take the workspace past its size limit (`workspace_full`), and records a member's restores set aside count toward that member's storage allowance. Both are checked before anything is written.
 - Replace keeps categories, merchants and contacts that are not in the backup (other records may refer to them), and leaves unchanged any record the backup holds outside your scope — for example a private account shared after the backup.
-- Restore history shows backup and recovery-point ids only to owners, managers and the person who ran that restore. A restore by anyone but an owner is recorded in the activity log for that person only.
+- Restore history shows backup and recovery-point ids only to owners, managers and the person who ran that restore. A restore by anyone but an owner is recorded in the activity log and in restore history for that person only.
+- A restore that would leave records inconsistent — for example a merge that adds a reversal beside an original that no longer names it — is blocked and names the rule it would break.
+- Replace leaves an account the backup holds outside your scope exactly as it is now, with all of its entries and bills.
 - A new workspace from a backup counts toward the person's limit of 20 active workspaces they created.
 
 ## Service-level recovery drill (recovery operator only)

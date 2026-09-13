@@ -144,20 +144,25 @@ async function patch(ctx, req) {
       const current = budgeting.budgetTermsAt(b, today);
       const currentStart = budgeting.periodFor(current, today).start;
       const effectiveFrom = fields.date(body.effectiveFrom, 'Effective from') || currentStart;
-      // A date before the current period rewrites periods that have finished (BT-001-05, audit
-      // B13), so it needs an explicit confirmation and the version is marked backdated (FIN-R14).
-      const backdated = effectiveFrom < currentStart;
-      if (backdated && fields.bool(body.confirmBackdate, 'Confirm backdate') !== true) {
-        throw conflict(`This change would apply from before the current period (which started ${currentStart}) and change periods that have finished. Confirm that this is intended.`, 'backdate_unconfirmed');
-      }
-      if (!backdated) fields.bool(body.confirmBackdate, 'Confirm backdate');
       const v = {
-        effectiveFrom, backdated,
+        effectiveFrom, backdated: false,
         period: body.period !== undefined ? fields.oneOf(body.period, PERIODS, 'Period') : current.period,
         startDate: body.startDate !== undefined ? fields.date(body.startDate, 'Start date', { required: true }) : current.startDate,
         lines: body.lines !== undefined ? validLines(body.lines, b.currency, doc) : current.lines,
         createdAt: ctx.nowIso(), createdBy: member.subject, reason: fields.text(body.reason, { field: 'Reason', max: 200 }),
       };
+      // A date before the current period rewrites periods that have finished (BT-001-05, audit B13;
+      // FIN-R14). So does a new period type or start day whose first period begins before the change
+      // takes effect: days already counted in a finished period would count again (FIN-T6). Either
+      // needs an explicit confirmation, and the version is marked backdated.
+      const firstNewStart = budgeting.periodFor(v, effectiveFrom).start;
+      v.backdated = effectiveFrom < currentStart || firstNewStart < effectiveFrom;
+      if (v.backdated && fields.bool(body.confirmBackdate, 'Confirm backdate') !== true) {
+        throw conflict(effectiveFrom < currentStart
+          ? `This change would apply from before the current period (which started ${currentStart}) and change periods that have finished. Confirm that this is intended.`
+          : `With this period and start day, the period containing ${effectiveFrom} begins on ${firstNewStart}, before the change takes effect, so some days would count in two periods. Start the change on ${firstNewStart} or confirm that this is intended.`, 'backdate_unconfirmed');
+      }
+      if (!v.backdated) fields.bool(body.confirmBackdate, 'Confirm backdate');
       const base = b.versions && b.versions.length ? b.versions : [{ effectiveFrom: b.startDate, period: b.period, startDate: b.startDate, lines: b.lines }];
       b.versions = [...base, v];
       // The plan in force TODAY is mirrored at the top level for older readers — not simply the

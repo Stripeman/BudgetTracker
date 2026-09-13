@@ -19,6 +19,7 @@ const fields = require('../_shared/fields');
 const people = require('../_shared/people');
 const audit = require('../_shared/audit');
 const merchants = require('../_shared/merchants');
+const bills = require('../_shared/bills');
 
 const CREATE_KEYS = ['accountId', 'kind', 'amount', 'date', 'postedDate', 'payeeId', 'categoryId', 'splits', 'tags', 'notes', 'status', 'responsibleRef', 'transfer', 'original', 'links'];
 const PATCH_KEYS = ['transactionId', 'revision', 'reason', 'kind', 'amount', 'date', 'postedDate', 'payeeId', 'categoryId', 'splits', 'tags', 'notes', 'status', 'responsibleRef', 'original', 'toAmount'];
@@ -416,11 +417,15 @@ function setDeleted(deleted) {
         }
       }
       // A bill payment recorded again after this entry was deleted must not be doubled (SEC-B6).
+      // Recordings are counted with the recording rule (bills.recordingCounts): one cancelled by a live
+      // reversal does not count, on either side (financial retest FIN-T7).
       if (!deleted) {
+        const byId = new Map((doc.transactions || []).map((y) => [y.id, y]));
         for (const x of legs) {
           const l = x.links || {};
           if (!l.recurringId || !l.occurrence) continue;
-          const clash = (doc.transactions || []).some((y) => !y.deletedAt && !legs.includes(y) && y.links && y.links.recurringId === l.recurringId && y.links.occurrence === l.occurrence);
+          if (x.reversedBy && legs.some((y) => y.id === x.reversedBy)) continue;
+          const clash = (doc.transactions || []).some((y) => !legs.includes(y) && y.links && y.links.recurringId === l.recurringId && y.links.occurrence === l.occurrence && bills.recordingCounts(y, byId));
           if (clash) throw conflict('This bill payment was recorded again after this entry was deleted, so this one cannot be restored.', 'already_recorded');
         }
       }
@@ -454,6 +459,8 @@ async function reverse(ctx, req) {
     const { t, account } = findTxn(doc, ctx.principal, id, now);
     if (!can(doc, ctx.principal, account, 'create', now) || !canChangeRecord(doc, ctx.principal, account, t, 'edit', now)) throw forbidden('You cannot reverse this entry.');
     if (t.deletedAt) throw conflict('Deleted entries cannot be reversed.', 'deleted');
+    // A reversal is a new entry, and closed accounts take no new entries (financial retest FIN-T8).
+    if (account.status === 'closed') throw conflict(`${account.name} is closed. Reopen it on the Accounts page to correct its entries.`, 'account_closed');
     if (t.transferId) throw badRequest('Reverse a transfer by recording a transfer back.', 'unsupported');
     if (t.links && t.links.reverses) throw conflict('A reversal cannot itself be reversed. Record a new entry instead.', 'is_reversal');
     if (t.reversedBy) throw conflict('This entry has already been reversed.', 'already_reversed');
@@ -463,7 +470,9 @@ async function reverse(ctx, req) {
       id: newId('txn'), accountId: t.accountId, kind: t.kind, amountMinor: -t.amountMinor, currency: t.currency,
       payeeId: t.payeeId || null, categoryId: t.categoryId || null, splits: (t.splits || []).map((s) => ({ ...s, amountMinor: -s.amountMinor })),
       responsibleRef: t.responsibleRef || null, original: null, transferId: null, counterpartAccountId: null,
-      date: fields.date(body.date, 'Date') || nowIso.slice(0, 10), postedDate: null, status: 'pending', tags: [...(t.tags || [])],
+      // Dated like the entry it reverses unless told otherwise, so the pair nets out in the same budget
+      // period (financial retest FIN-T4).
+      date: fields.date(body.date, 'Date') || t.date, postedDate: null, status: 'pending', tags: [...(t.tags || [])],
       notes: `Reversal: ${reason}`, links: { reverses: t.id }, createdBy: member.subject, createdAt: nowIso, revision: 1, deletedAt: null,
     };
     history(rev, member.subject, nowIso, ['create', 'reversal']);

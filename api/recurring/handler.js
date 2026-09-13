@@ -119,7 +119,10 @@ function view(doc, r, principal, user, today, now, recorded) {
   });
   // A bill whose account is closed or removed takes no payments, so it has nothing due; it is shown
   // with the reason instead of silently vanishing (FIN-R9).
-  const inactiveReason = bills.accountIssue(doc, r);
+  // Whether a destination the viewer cannot see was closed or removed is not theirs to know (SEC-T3).
+  const issue = bills.accountIssue(doc, r);
+  const hiddenDest = issue && issue.startsWith('destination_') && !(dest && can(doc, principal, dest, 'view-balances', now));
+  const inactiveReason = hiddenDest ? 'destination_unavailable' : issue;
   const upcoming = inactiveReason ? [] : bills.dueBetween(r, today, schedule.addDays(today, 400), recorded).slice(0, 6);
   // The full overdue list is counted; only the displayed list is bounded (FIN-R12).
   const overdue = inactiveReason ? [] : bills.overdue(r, today, recorded);
@@ -207,7 +210,7 @@ async function draft(ctx, req) {
     body: {
       saved: false,
       draft: {
-        recurringId: r.id, name: r.name, occurrence, date: occurrence, status, overdue: status === 'due' && occurrence < today,
+        recurringId: r.id, name: r.name, occurrence, date: occurrence < today ? today : occurrence, status, overdue: status === 'due' && occurrence < today,
         kind: r.kind, accountId: r.accountId, toAccountId: r.toAccountId || null, currency: r.currency,
         amount: money.toDecimal(t.amountMinor, r.currency), amountType: t.amountType, amountIsEstimate: t.amountType === 'variable',
         categoryId: t.categoryId, payeeId: t.payeeId || null, payeeName: payee ? payee.name : '', responsible: people.labelFor(t.responsibleRef, { doc, user }),
@@ -291,7 +294,9 @@ async function record(ctx, req) {
     }
     const magnitude = body.amount === undefined ? terms.amountMinor : positive(body.amount, r.currency);
     const base = {
-      date: fields.date(body.date, 'Date') || occurrence, postedDate: null,
+      // An overdue occurrence is paid today unless told otherwise, so it moves from owed to spent in
+      // the same budget period and what is available does not jump (financial retest FIN-T3).
+      date: fields.date(body.date, 'Date') || (occurrence < nowIso.slice(0, 10) ? nowIso.slice(0, 10) : occurrence), postedDate: null,
       status: fields.oneOf(body.status, ['pending', 'cleared'], 'Status', 'pending'),
       notes: fields.text(body.notes, { field: 'Notes', max: 5000, multiline: true }),
       createdBy: member.subject, createdAt: nowIso, revision: 1, deletedAt: null, original: null,

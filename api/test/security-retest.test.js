@@ -1,0 +1,129 @@
+'use strict';
+// Security retest of ff5d9c5 before the first Production release (SEC-T1 to SEC-T7). Fictional data.
+const { test, describe } = require('node:test');
+const assert = require('node:assert/strict');
+const { harness, household } = require('./helpers');
+const ledger = require('../_shared/ledger');
+const richtext = require('../_shared/richtext');
+const invisible = require('../_shared/invisible');
+
+const DAY = 24 * 60 * 60 * 1000;
+const ok = (res, status = 200) => { assert.equal(res.status, status, JSON.stringify(res.body)); return res.body; };
+const code = (res, status, expected) => { assert.equal(res.status, status, JSON.stringify(res.body)); assert.equal(res.body.error.code, expected); };
+const stored = async (h, f) => (await h.storage.getJson(`workspaces/${f.ws.id}/workspace.json`)).value;
+const archiveCount = async (h) => (await h.backupStorage.list('')).filter((n) => n.endsWith('.btbk')).length;
+
+describe('SEC-T1 restore attempts are counted before a recovery point is written', () => {
+  test('parallel restores by a member write at most 6 recovery points a day, and one restore wins', async () => {
+    const h = harness();
+    const f = await household(h);
+    const id = ok(await h.call('backups', 'POST', { as: 'alice', query: f.q, body: {} }), 201).archive.archiveId;
+    ok(await h.call('transactions', 'POST', { as: 'bob', query: f.q, body: { accountId: f.bobCard.id, kind: 'expense', amount: '1.00' } }), 201);
+    const pv = ok(await h.call('restore', 'POST', { as: 'bob', query: { action: 'preview' }, body: { workspaceId: f.ws.id, archiveId: id, mode: 'replace' } }));
+    const body = { workspaceId: f.ws.id, archiveId: id, mode: 'replace', expectedEtag: pv.expectedEtag, confirm: 'REPLACE' };
+    const results = await Promise.all(Array.from({ length: 12 }, () => h.call('restore', 'POST', { as: 'bob', query: { action: 'execute' }, body })));
+    const statuses = results.map((r) => r.status);
+    assert.equal(statuses.filter((s) => s === 200).length, 1, statuses.join(','));
+    assert.ok(statuses.every((s) => [200, 409, 429].includes(s)), statuses.join(','));
+    // Before the fix all 12 attempts wrote an archive. One archive is Alice's backup.
+    assert.ok((await archiveCount(h)) - 1 <= 6, `recovery points: ${(await archiveCount(h)) - 1}`);
+  });
+});
+
+describe('SEC-T2 any write that grows a member\'s records respects their allowance', () => {
+  test('delete and restore cycles stop at the allowance instead of growing the workspace without bound', async () => {
+    const h = harness({ env: { BT_MEMBER_QUOTA_BYTES: '4000' } });
+    const f = await household(h);
+    const current = async () => ok(await h.call('transactions', 'GET', { as: 'bob', query: { ...f.q, accountId: f.bobCard.id, includeDeleted: '1' } })).transactions.find((t) => t.id === f.secret.id);
+    let refused = null;
+    for (let i = 0; i < 60 && !refused; i += 1) {
+      const t = await current();
+      ok(await h.call('transactions', 'DELETE', { as: 'bob', query: f.q, body: { transactionId: t.id, revision: t.revision, reason: 'Fictional cycle' } }));
+      const res = await h.call('transactions', 'POST', { as: 'bob', query: { ...f.q, action: 'restore' }, body: { transactionId: t.id } });
+      if (res.status !== 200) refused = res;
+    }
+    assert.ok(refused, 'the cycle is stopped');
+    code(refused, 409, 'member_quota_exceeded');
+    const doc = await stored(h, f);
+    const bob = doc.members.find((m) => m.subject === 'google:g-bob');
+    // Before the fix 40 cycles took Bob to about 39,000 bytes against a 2,131-byte allowance.
+    assert.ok(ledger.memberBytes(doc, bob) < 4000 + 1500, `Bob's records: ${ledger.memberBytes(doc, bob)} bytes`);
+  });
+
+  test('owners are not limited by member allowances', async () => {
+    const h = harness({ env: { BT_MEMBER_QUOTA_BYTES: '3000' } });
+    const f = await household(h);
+    const current = async () => ok(await h.call('transactions', 'GET', { as: 'alice', query: { ...f.q, accountId: f.joint.id, includeDeleted: '1' } })).transactions.find((t) => t.id === f.grocery.id);
+    for (let i = 0; i < 20; i += 1) {
+      const t = await current();
+      ok(await h.call('transactions', 'DELETE', { as: 'alice', query: f.q, body: { transactionId: t.id, revision: t.revision, reason: 'Fictional cycle' } }));
+      ok(await h.call('transactions', 'POST', { as: 'alice', query: { ...f.q, action: 'restore' }, body: { transactionId: t.id } }));
+    }
+    const doc = await stored(h, f);
+    const alice = doc.members.find((m) => m.subject === 'google:g-alice');
+    assert.ok(ledger.memberBytes(doc, alice) > 3000, 'the owner went past the member allowance without being refused');
+  });
+});
+
+describe('SEC-T3 a bill into an account the viewer cannot see', () => {
+  test('does not reveal whether that account was closed or removed', async () => {
+    const h = harness();
+    const f = await household(h);
+    const b = ok(await h.call('recurring', 'POST', { as: 'bob', query: f.q, body: { name: 'Card top-up', kind: 'transfer', accountId: f.joint.id, toAccountId: f.bobCard.id, amount: '20.00', schedule: { freq: 'monthly', startDate: '2026-09-20' } } }), 201).recurring;
+    ok(await h.call('accounts', 'POST', { as: 'bob', query: { ...f.q, action: 'close' }, body: { accountId: f.bobCard.id, revision: f.bobCard.revision, reason: 'Closed' } }));
+    const reason = async (as) => ok(await h.call('recurring', 'GET', { as, query: f.q })).recurring.find((r) => r.id === b.id).inactiveReason;
+    assert.equal(await reason('bob'), 'destination_closed', 'the account\'s owner sees why');
+    assert.equal(await reason('alice'), 'destination_unavailable');
+    assert.equal(await reason('carol'), 'destination_unavailable');
+  });
+});
+
+describe('SEC-T4 workspace creation is bounded', () => {
+  test('unarchiving counts toward the active limit, and creations are limited per day', async () => {
+    const h = harness({ env: { BT_MAX_WORKSPACES: '2', BT_MAX_WORKSPACE_CREATIONS_PER_DAY: '3' } });
+    const create = (name) => h.call('workspaces', 'POST', { as: 'eve', body: { name } });
+    const archive = (id) => h.call('workspaces', 'DELETE', { as: 'eve', query: { id }, body: {} });
+    const one = ok(await create('Fictional One'), 201).workspace;
+    const two = ok(await create('Fictional Two'), 201).workspace;
+    ok(await archive(one.id));
+    ok(await create('Fictional Three'), 201);
+    // Before the fix this made a third active workspace against a limit of two.
+    code(await h.call('workspaces', 'POST', { as: 'eve', query: { id: one.id, action: 'restore' }, body: {} }), 409, 'workspace_limit');
+    ok(await archive(two.id));
+    code(await create('Fictional Four'), 409, 'workspace_rate');
+    h.clock.advance(DAY + 1000);
+    ok(await create('Fictional Four'), 201);
+  });
+});
+
+describe('SEC-T6/T7 rich text characters and links', () => {
+  const env = (text) => ({ format: 'tiptap', v: 1, doc: { type: 'doc', content: [{ type: 'paragraph', content: [{ type: 'text', text }] }] } });
+
+  test('direction marks, tag characters, soft hyphens and fillers are refused; joiners and emoji selectors are allowed', () => {
+    // Arabic letter mark, a tag character, soft hyphen, combining grapheme joiner, Hangul filler,
+    // inhibit symmetric swapping, interlinear annotation anchor, left-to-right embedding and isolate.
+    for (const cp of [0x061c, 0xe0001, 0xad, 0x34f, 0x3164, 0x206a, 0xfff9, 0x202a, 0x2066]) {
+      assert.throws(() => richtext.validate(env(`a${String.fromCodePoint(cp)}b`)), (e) => e.code === 'invalid_rich_text', cp.toString(16));
+    }
+    const family = String.fromCodePoint(0x1f468, 0x200d, 0x1f469, 0x200d, 0x1f467);
+    const heart = String.fromCodePoint(0x2764, 0xfe0f);
+    const persian = String.fromCodePoint(0x645, 0x6cc, 0x200c, 0x62e, 0x648, 0x627, 0x647, 0x645);
+    const text = `${family} ${heart} ${persian}`;
+    assert.equal(richtext.validate(env(text)).doc.content[0].content[0].text, text);
+  });
+
+  test('web links need two slashes and no backslashes', () => {
+    const bs = String.fromCharCode(92);
+    for (const href of [`https:${bs}${bs}evil.example`, 'https:evil.example', `https://example.com${bs}@evil.example`, 'http:/evil.example']) {
+      assert.equal(richtext.safeLinkHref(href), null, href);
+    }
+    assert.equal(richtext.safeLinkHref('https://example.com/a'), 'https://example.com/a');
+    assert.equal(richtext.safeLinkHref('mailto:someone@example.com'), 'mailto:someone@example.com');
+  });
+
+  test('rich text and the repository check share one list', () => {
+    assert.equal(invisible.firstForbidden(`x${String.fromCodePoint(0x202e)}`), 0x202e);
+    assert.equal(invisible.firstForbidden(`x${String.fromCodePoint(0xe0041)}`), 0xe0041);
+    assert.equal(invisible.firstForbidden('plain text, tabs\tand\nlines'), null);
+  });
+});

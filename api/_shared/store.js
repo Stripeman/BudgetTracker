@@ -16,6 +16,7 @@ const { notFound, conflict } = require('./http');
 const { requireId, isIdempotencyKey, sha256Hex } = require('./ids');
 const { activeMember } = require('./authz');
 const { userKey } = require('./identity');
+const ledger = require('./ledger');
 
 const paths = Object.freeze({
   workspace: (wsId) => `workspaces/${requireId(wsId, 'workspaceId')}/workspace.json`,
@@ -71,8 +72,16 @@ async function mutateWorkspace(ctx, wsId, fn, { idempotencyKey, idempotencyScope
       result = { ...prior.result, replayed: true };
       return undefined;
     }
+    // Any ordinary write that grows a non-owner member's records must fit their allowance, whatever
+    // the handler (security retest SEC-T2: delete and restore cycles grew history without bound).
+    // Writes that remove access or data (headroom) are exempt; the restore that would follow is not.
+    const quotaBefore = member.role !== 'owner' && !allowHeadroom ? ledger.memberBytes(doc, member) : null;
     result = fn(doc, member);
     if (result === undefined) return undefined;
+    if (quotaBefore !== null) {
+      const after = ledger.memberBytes(doc, member);
+      if (after > quotaBefore && after > ledger.quotaLimit(ctx.env)) throw ledger.quotaExceeded();
+    }
     for (const [k, v] of Object.entries(doc.idempotency)) {
       if (!v || typeof v.at !== 'string' || nowMs - Date.parse(v.at) > IDEMPOTENCY_TTL_MS) delete doc.idempotency[k];
     }
@@ -148,4 +157,18 @@ async function assertCanCreateWorkspace(ctx) {
   if (created >= limit) throw conflict(`You can have up to ${limit} active workspaces that you created. Archive one you no longer use to create another.`, 'workspace_limit');
 }
 
-module.exports = { paths, loadWorkspace, mutateWorkspace, ensureUser, mutateUser, newUserDoc, requestHash, assertFits, assertCanCreateWorkspace, MAX_WORKSPACE_BYTES, MAX_WORKSPACES_PER_PERSON };
+// New workspaces per person per day, counted atomically inside the mutateUser that reserves the new
+// id (security retest SEC-T4): archiving frees an active place, so the active limit alone does not
+// bound creation. `BT_MAX_WORKSPACE_CREATIONS_PER_DAY` may only lower it (tests).
+const MAX_CREATIONS_PER_DAY = 10;
+const DAY_MS = 24 * 60 * 60 * 1000;
+function recordCreation(ctx, user, id) {
+  const configured = Number(ctx.env && ctx.env.BT_MAX_WORKSPACE_CREATIONS_PER_DAY);
+  const limit = Number.isSafeInteger(configured) && configured > 0 && configured < MAX_CREATIONS_PER_DAY ? configured : MAX_CREATIONS_PER_DAY;
+  const nowMs = ctx.now();
+  const recent = (user.workspaceCreations || []).filter((c) => nowMs - Date.parse(c.at) < DAY_MS).length;
+  if (recent >= limit) throw conflict(`You can create up to ${limit} workspaces a day. Try again tomorrow.`, 'workspace_rate');
+  user.workspaceCreations = [...(user.workspaceCreations || []), { id, at: new Date(nowMs).toISOString() }];
+}
+
+module.exports = { paths, loadWorkspace, mutateWorkspace, ensureUser, mutateUser, newUserDoc, requestHash, assertFits, assertCanCreateWorkspace, recordCreation, MAX_WORKSPACE_BYTES, MAX_WORKSPACES_PER_PERSON };

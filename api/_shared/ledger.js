@@ -237,10 +237,23 @@ function visiblePayees(doc, principal, visibleTxns) {
 // serialized size of their private accounts, the entries on them and the entries they created on
 // shared accounts. Owners are exempt (it is their workspace); the document cap still applies.
 const PRIVATE_QUOTA_BYTES = 2 * 1024 * 1024;
+const quotaLimit = (env) => {
+  const configured = Number(env && env.BT_MEMBER_QUOTA_BYTES);
+  return Number.isSafeInteger(configured) && configured > 0 && configured < PRIVATE_QUOTA_BYTES ? configured : PRIVATE_QUOTA_BYTES;
+};
+// Nothing is ever deleted (BT-001-05), so the message does not suggest removing records.
+function quotaExceeded() {
+  const e = badRequest('You have reached your storage allowance in this workspace. Ask the workspace owner about raising it.', 'member_quota_exceeded');
+  e.status = 409;
+  return e;
+}
 function assertMemberQuota(doc, member, env) {
   if (member.role === 'owner') return;
-  const configured = Number(env && env.BT_MEMBER_QUOTA_BYTES);
-  const limit = Number.isSafeInteger(configured) && configured > 0 && configured < PRIVATE_QUOTA_BYTES ? configured : PRIVATE_QUOTA_BYTES;
+  if (memberBytes(doc, member) > quotaLimit(env)) throw quotaExceeded();
+}
+// The quota's one measure: bytes a member's records take in the workspace document. Store writes
+// use it too, so any write that grows a member past it is refused (security retest SEC-T2).
+function memberBytes(doc, member) {
   const own = new Set((doc.accounts || []).filter((a) => a.visibility === 'private' && a.ownerSubject === member.subject).map((a) => a.id));
   let bytes = 0;
   for (const a of doc.accounts || []) if (own.has(a.id)) bytes += Buffer.byteLength(JSON.stringify(a));
@@ -254,16 +267,11 @@ function assertMemberQuota(doc, member, env) {
   // Records a member's own restores set aside stay in the document for good (BT-001-05), so they
   // count too; otherwise refill-and-replace cycles could grow the document without bound (SEC-R1).
   for (const s of doc.superseded || []) if (s.by === member.subject) bytes += Buffer.byteLength(JSON.stringify(s));
-  if (bytes > limit) {
-    // Nothing is ever deleted (BT-001-05), so the message does not suggest removing records.
-    const e = badRequest('You have reached your storage allowance in this workspace. Ask the workspace owner about raising it.', 'member_quota_exceeded');
-    e.status = 409;
-    throw e;
-  }
+  return bytes;
 }
 
 module.exports = {
-  assertMemberQuota,
+  assertMemberQuota, memberBytes, quotaLimit, quotaExceeded,
   ACCOUNT_TYPES, LIABILITY_TYPES, TX_KINDS, OUTFLOW, INFLOW, TX_STATUSES, NEVER_POSITIVE_OPENING, validateTerms, maskedNumber,
   balanceOf, accountView, accessOf, signedAmount, validateSplits, transactionView, visiblePayees, classify, openingBalance, assertLedgerInRange,
 };

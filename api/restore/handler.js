@@ -89,6 +89,7 @@ async function execute(ctx, req) {
       const k = key ? `restore|${key}` : null;
       if (k && user.idempotency[k]) return user.idempotency[k].id;
       const id = newId('ws');
+      store.recordCreation(ctx, user, id);
       if (k) user.idempotency[k] = { id, at: nowIso };
       return id;
     });
@@ -125,6 +126,9 @@ async function execute(ctx, req) {
   const probe = finish(null);
   store.assertFits(ctx, probe);
   ledger.assertMemberQuota(probe, member, ctx.env);
+  // Counted atomically in the backup index BEFORE the archive is written, and counted even if the
+  // restore then fails, so parallel attempts cannot each write a recovery point (security retest SEC-T1).
+  if (!roleAtLeast(member.role, 'manager')) await backups.reserveRecoveryPoint(ctx, wsId, member.subject);
   // 1. Recovery point of the current state. If this fails, nothing else happens.
   const { entry, sourceEtag } = await backups.createBackup(ctx, wsId, { reason: 'pre-restore', actor: ctx.principal.subject });
   if (sourceEtag !== etag) throw conflict('The workspace changed while preparing the restore. Nothing was changed.', 'stale_preview');

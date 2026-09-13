@@ -44,6 +44,7 @@ const INACTIVE_TEXT = {
   account_closed: (b) => `${b.accountName || "Its account"} is closed, so this bill takes no payments and is left out of totals and forecasts. Reopen the account or end the bill.`,
   destination_closed: (b) => `${b.toAccountName || "The account it pays into"} is closed, so this transfer takes no payments and is left out of totals and forecasts. Reopen that account or end the bill.`,
   destination_missing: () => "The account it pays into was removed, so this transfer takes no payments and is left out of totals and forecasts. End the bill.",
+  destination_unavailable: () => "The account it pays into is unavailable, so this transfer takes no payments and is left out of totals and forecasts. End the bill or ask that account's owner.",
 };
 export function inactiveText(b) {
   if (!b.inactiveReason) return null;

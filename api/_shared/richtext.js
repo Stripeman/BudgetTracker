@@ -15,23 +15,17 @@
 // containing only known keys. The client renders documents by building DOM nodes from the same
 // closed set, so nothing stored here can become markup.
 const { badRequest } = require('./http');
+const invisible = require('./invisible');
 
 const FORMAT = 'tiptap';
 const VERSION = 1;
 const LIMITS = Object.freeze({ bytes: 64 * 1024, depth: 12, nodes: 2000, href: 2048 });
 const LINK_REL = 'noopener noreferrer nofollow';
-// Characters refused in text and links: C0 and C1 controls, DEL, zero-width and direction marks,
-// line and paragraph separators, bidirectional embeddings, overrides and isolates, invisible
-// operators and the byte-order mark. They hide or reorder what a reader sees (security review
-// SEC-R8). Listed as code points so this source stays plain text.
-const FORBIDDEN_RANGES = Object.freeze([[0x00, 0x1f], [0x7f, 0x9f], [0x200b, 0x200f], [0x2028, 0x202e], [0x2060, 0x2064], [0x2066, 0x2069], [0xfeff, 0xfeff]]);
-function hasForbiddenChar(s) {
-  for (const ch of s) {
-    const c = ch.codePointAt(0);
-    if (FORBIDDEN_RANGES.some(([a, b]) => c >= a && c <= b)) return true;
-  }
-  return false;
-}
+// Characters refused in text and links: C0 and C1 controls and DEL, plus the shared list of
+// characters that hide or reorder what a reader sees (api/_shared/invisible.js; security review
+// SEC-R8 and retest SEC-T6).
+const CONTROLS = Object.freeze([[0x00, 0x1f], [0x7f, 0x9f]]);
+const hasForbiddenChar = (s) => invisible.firstForbidden(s, CONTROLS) !== null;
 
 const BLOCK = Object.freeze(['paragraph', 'heading', 'bulletList', 'orderedList', 'taskList', 'blockquote', 'horizontalRule']);
 const INLINE = Object.freeze(['text', 'hardBreak']);
@@ -62,6 +56,10 @@ function safeLinkHref(raw) {
   let url;
   try { url = new URL(cleaned); } catch { return null; }
   if (url.username || url.password) return null;
+  // Web links need "//" and no backslashes: browsers read "https:evil.example" and backslash forms
+  // leniently, as hosts the text does not show (security retest SEC-T7). Look-alike (IDN) hosts are
+  // accepted here; the renderer must show the real, punycode host.
+  if (url.protocol !== 'mailto:' && (!/^https?:\/\/[^/]/i.test(cleaned) || cleaned.includes(String.fromCharCode(92)))) return null;
   return ['http:', 'https:', 'mailto:'].includes(url.protocol) ? cleaned : null;
 }
 

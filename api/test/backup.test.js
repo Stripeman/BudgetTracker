@@ -199,7 +199,8 @@ describe('BT-002 replace', () => {
     const hist = async (as) => h.call('backups', 'GET', { as, query: { ...f.q, action: 'history' } });
     const asAlice = (await hist('alice')).body;
     assert.deepEqual(asAlice.setAside.map((s) => s.recordId), [extra.id], 'Bob\'s private entry is never shown to the owner');
-    assert.deepEqual(asAlice.restores.map((r) => [r.by, r.mode, r.setAside]), [['Alice Fictional', 'replace', 1], ['Bob Fictional', 'replace', null]]);
+    // Bob's restore of his own private records is shown to him alone (security retest SEC-T5).
+    assert.deepEqual(asAlice.restores.map((r) => [r.by, r.mode, r.setAside]), [['Alice Fictional', 'replace', 1]]);
     assert.deepEqual([asAlice.setAside[0].collection, asAlice.setAside[0].reason, asAlice.setAside[0].summary], ['transactions', 'not-in-backup', { date: extra.date, amount: '-7.00', currency: 'EUR' }]);
     assert.equal(asAlice.setAside[0].record, undefined, 'summaries only, never the stored record');
     const asBob = (await hist('bob')).body;
@@ -474,6 +475,7 @@ describe('Release review fixes: restores (SEC-R1 to R5, FIN-R2, FIN-R5, FIN-R17)
     const doc = await stored(h, f);
     const original = doc.transactions.find((t) => t.id === f.grocery.id);
     doc.transactions.push({ ...structuredClone(original), id: 'txn_fictionalrev1', amountMinor: -original.amountMinor, links: { reverses: original.id }, splits: [] });
+    original.reversedBy = 'txn_fictionalrev1';
     assert.doesNotThrow(() => backup.checkInvariants(doc));
     original.deletedAt = '2026-09-13T10:00:00.000Z';
     assert.throws(() => backup.checkInvariants(doc), (e) => e.detail === 'reversal deletion state');

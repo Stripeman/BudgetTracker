@@ -66,6 +66,7 @@ async function create(ctx, req) {
     if (!user.idempotency || typeof user.idempotency !== 'object') user.idempotency = {};
     if (key && user.idempotency[`ws|${key}`]) return user.idempotency[`ws|${key}`].id;
     const id = newId('ws');
+    store.recordCreation(ctx, user, id);
     if (key) user.idempotency[`ws|${key}`] = { id, at: ctx.nowIso() };
     return id;
   });
@@ -128,6 +129,9 @@ async function post(ctx, req) {
   if (query(req, 'action') === 'restore') {
     const id = requireId(query(req, 'id'), 'id');
     const body = fields.onlyKeys(readBody(req), ['reason']);
+    // Unarchiving counts toward the creator's active-workspace limit like creating one (SEC-T4).
+    const { doc: current } = await store.loadWorkspace(ctx, id);
+    if (current.status === 'archived' && current.createdBy === ctx.principal.subject) await store.assertCanCreateWorkspace(ctx);
     const { result } = await store.mutateWorkspace(ctx, id, (doc, member) => {
       if (member.role !== 'owner') throw forbidden('Only an owner can restore a workspace.');
       if (doc.status !== 'archived') return { workspace: model.summary(doc, member) };

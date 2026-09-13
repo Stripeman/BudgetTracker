@@ -99,13 +99,15 @@ function netSpending(doc, accountIds, categoryId, from, to) {
 
 // Bill occurrences still owed in the period [from, to]: future ones, plus past ones that are
 // overdue — from this period and from earlier periods back to the bill's tracking start (FIN-R13).
-function committedSpending(doc, accountIds, categoryId, from, to, today, recorded) {
+// `dueBetween` is memoized per status computation, so each bill's occurrences are worked out once,
+// not once per budget line (security retest SEC-T8).
+function committedSpending(doc, accountIds, categoryId, from, to, today, recorded, dueBetween = (b, a, z) => bills.dueBetween(b, a, z, recorded)) {
   let total = 0;
   for (const b of doc.recurring || []) {
     if (b.deletedAt || !accountIds.has(b.accountId) || ledger.classify(b.kind) !== 'spending' || bills.accountIssue(doc, b)) continue;
     const start = bills.trackStart(b);
-    const earlier = bills.dueBetween(b, start, schedule.addDays(from, -1), recorded);
-    const inPeriod = bills.dueBetween(b, from, to, recorded).filter((date) => !(date < today && date < start));
+    const earlier = dueBetween(b, start, schedule.addDays(from, -1));
+    const inPeriod = dueBetween(b, from, to).filter((date) => !(date < today && date < start));
     for (const date of [...earlier, ...inPeriod]) {
       const terms = bills.termsAt(b, date);
       if (terms.categoryId === categoryId) total = money.sum([total, terms.amountMinor]);
@@ -134,12 +136,18 @@ function computeStatus(doc, budget, today, now) {
   const accounts = scopeAccounts(doc, budget, now);
   const ids = new Set(accounts.map((a) => a.id));
   const recorded = bills.recordedSet(doc);
+  const dueCache = new Map();
+  const dueOnce = (b, from, to) => {
+    const key = `${b.id}|${from}|${to}`;
+    if (!dueCache.has(key)) dueCache.set(key, bills.dueBetween(b, from, to, recorded));
+    return dueCache.get(key);
+  };
   const c = budget.currency;
   const categories = new Map((doc.categories || []).map((x) => [x.id, x.name]));
   const totals = { planned: 0, actual: 0, committed: 0, carry: 0, available: 0 };
   const lines = terms.lines.map((line) => {
     const actual = netSpending(doc, ids, line.categoryId, period.start, period.end);
-    const committed = committedSpending(doc, ids, line.categoryId, period.start, period.end, today, recorded);
+    const committed = committedSpending(doc, ids, line.categoryId, period.start, period.end, today, recorded, dueOnce);
     // What was left of LAST period's own plan for this category (see carriesOver).
     const prevLine = prevTerms.lines.find((l) => l.categoryId === line.categoryId);
     const carry = line.rollover && prevLine && carries ? money.sum([prevLine.amountMinor, -netSpending(doc, ids, line.categoryId, prev.start, prev.end)]) : 0;

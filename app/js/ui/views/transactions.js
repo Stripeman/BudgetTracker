@@ -215,7 +215,8 @@ function openReverse(ctx, t) {
   const key = newIdempotencyKey();
   const reason = input({ maxlength: "200", autocomplete: "off" });
   const date = input({ type: "date" });
-  date.value = todayIso();
+  // The entry's own date by default, so the pair cancels out in the same budget period (FIN-T4).
+  date.value = t.date || todayIso();
   const opposite = t.amount.startsWith("-") ? t.amount.slice(1) : `-${t.amount}`;
   const confirm = el("button", { type: "button", class: "btn btn--primary", text: "Reverse entry" });
   const modal = openModal({

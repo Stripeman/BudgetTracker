@@ -125,14 +125,17 @@ for (const file of appFiles) {
 //    string really contains. Write them as escapes instead. The pattern is built from char codes
 //    so this file itself stays plain text.
 const RAW_CHARS = new RegExp(`[${[[0, 8], [11, 12], [14, 31], [127, 127]].map(([a, b]) => (a === b ? String.fromCharCode(a) : `${String.fromCharCode(a)}-${String.fromCharCode(b)}`)).join('')}${String.fromCharCode(0xfeff, 0xa0, 0x2028, 0x2029, 0x200b)}]`);
-const TEXT_FILE = /\.(js|cjs|mjs|json|css|html|md|ps1|toml|ya?ml|txt)$/;
+const TEXT_FILE = /\.(js|cjs|mjs|json|css|html|md|ps1|py|toml|ya?ml|txt)$/;
+// Direction controls, zero-width characters, tag characters and the rest of the shared list are
+// refused too (security retest SEC-T6), the same list rich text uses.
+const invisible = require('../api/_shared/invisible.js');
 // Agent instructions and Git hooks are included (security review SEC-R9): hidden characters there
 // are a prompt-injection surface. Hooks have no extension, so every file under .githooks counts.
 // Agent worktrees are separate checkouts and are skipped.
 const walkText = (dir, out = [], everyFile = false) => {
   if (!fs.existsSync(dir)) return out;
   for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
-    if (e.name === 'node_modules' || e.name === '.local' || e.name === '.git' || e.name === 'worktrees') continue;
+    if (e.name === 'node_modules' || e.name === '.local' || e.name === '.git' || (e.name === 'worktrees' && dir === path.join(ROOT, '.claude'))) continue;
     const p = path.join(dir, e.name);
     if (e.isDirectory()) walkText(p, out, everyFile); else if (everyFile || TEXT_FILE.test(e.name)) out.push(p);
   }
@@ -140,9 +143,10 @@ const walkText = (dir, out = [], everyFile = false) => {
 };
 const textFiles = [...['api', 'app', 'scripts', 'test', 'docs', 'infra', '.github', '.agents', '.claude', '.codex'].flatMap((d) => walkText(path.join(ROOT, d))),
   ...walkText(path.join(ROOT, '.githooks'), [], true),
-  ...fs.readdirSync(ROOT, { withFileTypes: true }).filter((e) => e.isFile() && TEXT_FILE.test(e.name)).map((e) => path.join(ROOT, e.name))];
+  ...fs.readdirSync(ROOT, { withFileTypes: true }).filter((e) => e.isFile() && (TEXT_FILE.test(e.name) || /^\.(gitignore|gitattributes|editorconfig|npmrc|nvmrc)$/.test(e.name))).map((e) => path.join(ROOT, e.name))];
 for (const file of textFiles) {
-  if (RAW_CHARS.test(fs.readFileSync(file, 'utf8'))) fail(`${path.relative(ROOT, file).replace(/\\/g, '/')} contains raw control or invisible characters; write them as escapes`);
+  const text = fs.readFileSync(file, 'utf8');
+  if (RAW_CHARS.test(text) || invisible.firstForbidden(text) !== null) fail(`${path.relative(ROOT, file).replace(/\\/g, '/')} contains raw control or invisible characters; write them as escapes`);
 }
 
 // 10. app/js has no build step except REGISTERED vendored bundles (BT-011-02; adapted from

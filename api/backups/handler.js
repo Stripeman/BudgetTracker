@@ -6,7 +6,7 @@
 //   POST   { reason? }  create an on-demand encrypted backup (owners and managers)
 // Archives are never downloadable: they contain every member's private records, which no single
 // member may read. Restores go through /api/restore, limited to the caller's scope.
-const { readBody, query, forbidden, notFound } = require('../_shared/http');
+const { readBody, query, forbidden, notFound, HttpError } = require('../_shared/http');
 const { newId, requireId } = require('../_shared/ids');
 const { update } = require('../_shared/storage');
 const { readDocument } = require('../_shared/schema');
@@ -36,8 +36,24 @@ async function createBackup(ctx, wsId, { reason, actor }) {
   const target = ctx.backupStorage();
   await target.putBytes(archivePath(wsId, archiveId), built.bytes, { ifNoneMatch: '*' });
   const entry = { archiveId, createdAt, reason, createdBy: actor, bytes: built.bytes.length, keyId: keyring.active, schemaVersion: doc.schemaVersion, sourceRevision: doc.revision, counts: built.manifest.counts };
-  await update(target, indexPath(wsId), (idx) => ({ archives: [...((idx && idx.archives) || []), entry] }));
+  await update(target, indexPath(wsId), (idx) => ({ ...(idx || {}), archives: [...((idx && idx.archives) || []), entry] }));
   return { entry, sourceEtag: etag };
+}
+
+// A member below manager may cause at most this many recovery points a day in one workspace. Each
+// attempt is reserved in the backup index (one ETag-guarded update, so parallel requests are
+// counted one by one) before its archive is written, and a failed restore still counts (security
+// retest SEC-T1). Twice the completed-restore limit, so a few stale attempts do not lock anyone out.
+const MEMBER_RECOVERY_POINTS_PER_DAY = 6;
+const DAY_MS = 24 * 60 * 60 * 1000;
+async function reserveRecoveryPoint(ctx, wsId, subject) {
+  const nowMs = ctx.now();
+  await update(ctx.backupStorage(), indexPath(wsId), (idx) => {
+    const value = idx || { archives: [] };
+    const recent = (value.reservations || []).filter((r) => r.by === subject && nowMs - Date.parse(r.at) < DAY_MS).length;
+    if (recent >= MEMBER_RECOVERY_POINTS_PER_DAY) throw new HttpError(429, 'restore_limit', 'You have tried to restore too many times today in this workspace. Try again tomorrow or ask an owner.');
+    return { ...value, reservations: [...(value.reservations || []), { by: subject, at: new Date(nowMs).toISOString() }] };
+  });
 }
 
 async function list(ctx, req) {
@@ -95,7 +111,9 @@ async function history(ctx, req) {
   const archiveOf = (by, id) => (seesArchives || by === subject ? id || null : null);
   return {
     body: {
-      restores: (doc.restores || []).map((r) => ({
+      // A restore by someone other than an owner touched only their own records: like its audit
+      // entry, it is shown to them alone (security retest SEC-T5).
+      restores: (doc.restores || []).filter((r) => !r.private || r.by === subject).map((r) => ({
         archiveId: archiveOf(r.by, r.archiveId), mode: r.mode, at: r.at, by: nameOf(r.by), recoveryPoint: archiveOf(r.by, r.recoveryPoint),
         setAside: r.by === subject ? r.setAside : null,
       })),
@@ -129,4 +147,4 @@ async function create(ctx, req) {
   return { status: 201, body: { archive: { archiveId: entry.archiveId, createdAt: entry.createdAt, reason: entry.reason } } };
 }
 
-module.exports = { GET: get, POST: create, createBackup, archivePath, indexPath };
+module.exports = { GET: get, POST: create, createBackup, reserveRecoveryPoint, archivePath, indexPath };

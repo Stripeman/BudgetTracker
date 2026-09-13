@@ -69,6 +69,14 @@ function checkInvariants(doc) {
     if (!target || target.accountId !== t.accountId || target.kind !== t.kind || target.amountMinor !== -t.amountMinor) throw invalidData('reversal');
     // A live reversal of a deleted entry (or the reverse) would count only one half (financial review FIN-R2).
     if (Boolean(target.deletedAt) !== Boolean(t.deletedAt)) throw invalidData('reversal deletion state');
+    // The original names its reversal, so an entry is reversed at most once and a reversal cannot
+    // be separated from what it reverses — for example by a merge restore (financial retest FIN-T1).
+    if (target.reversedBy !== t.id) throw invalidData('reversal link');
+  }
+  for (const t of doc.transactions || []) {
+    if (!t.reversedBy) continue;
+    const reversal = txById.get(t.reversedBy);
+    if (!reversal || !reversal.links || reversal.links.reverses !== t.id) throw invalidData('reversal link');
   }
   // A bill occurrence is recorded at most once among live entries (both legs of a transfer count once)
   // (SEC-B6). A recording cancelled by a live reversal no longer counts, so the occurrence can be
@@ -121,11 +129,13 @@ function checkInvariants(doc) {
   return pairs.size;
 }
 
+// Each account's amounts are summed exactly in one go and range-checked once, on the total, like
+// ledger.balanceOf: a running total may pass the range on the way to a valid balance (financial
+// review FIN-R15; retest FIN-T2 found the step-by-step check refused valid workspaces).
 function balances(doc) {
-  const out = new Map((doc.accounts || []).map((a) => [a.id, a.openingBalanceMinor]));
-  // Exact sums: money.sum refuses a total beyond the safe-integer range (financial review FIN-R15).
-  for (const t of doc.transactions || []) if (!t.deletedAt && out.has(t.accountId)) out.set(t.accountId, money.sum([out.get(t.accountId), t.amountMinor]));
-  return out;
+  const amounts = new Map((doc.accounts || []).map((a) => [a.id, [a.openingBalanceMinor]]));
+  for (const t of doc.transactions || []) if (!t.deletedAt && amounts.has(t.accountId)) amounts.get(t.accountId).push(t.amountMinor);
+  return new Map([...amounts].map(([id, list]) => [id, money.sum(list)]));
 }
 
 function manifestOf(doc, attachments) {
@@ -286,13 +296,18 @@ function plan({ current, archived, mode, principal, member, nowIso, newWorkspace
       // A record the caller may restore NOW but that the backup holds OUTSIDE the caller's scope (for
       // example a member's private account shared after the backup) is not the caller's to roll
       // back: it stays exactly as it is, and is never labelled "not in backup" (financial review FIN-R5).
+      // Everything on such an account stays as it is too — entries and bills added or changed since
+      // the backup — so its balance is never one it never had (financial retest FIN-T5).
       const setAside = [];
       let keptScopeChanged = 0;
+      const archivedAccountsInScope = new Set(arc.accounts.map((a) => a.id));
+      const keptAccounts = new Set(cur.accounts.filter((a) => (archived.accounts || []).some((x) => x.id === a.id) && !archivedAccountsInScope.has(a.id)).map((a) => a.id));
       for (const c of COLLECTIONS) {
         const archivedById = new Map(arc[c].map((r) => [r.id, r]));
         const archivedOutside = new Set((archived[c] || []).filter((r) => !archivedById.has(r.id)).map((r) => r.id));
-        keptScopeChanged += cur[c].filter((r) => archivedOutside.has(r.id)).length;
-        const drop = new Set(cur[c].filter((r) => !archivedOutside.has(r.id) && (!KEEP_ON_REPLACE.has(c) || archivedById.has(r.id))).map((r) => r.id));
+        const kept = (r) => archivedOutside.has(r.id) || ((c === 'transactions' || c === 'recurring') && keptAccounts.has(r.accountId));
+        keptScopeChanged += cur[c].filter(kept).length;
+        const drop = new Set(cur[c].filter((r) => !kept(r) && (!KEEP_ON_REPLACE.has(c) || archivedById.has(r.id))).map((r) => r.id));
         for (const r of cur[c]) {
           if (!drop.has(r.id)) continue;
           const incoming = archivedById.get(r.id);
@@ -328,9 +343,12 @@ function plan({ current, archived, mode, principal, member, nowIso, newWorkspace
   let currentFails = null;
   if (current) { try { checkInvariants(current); } catch (e) { currentFails = e.detail || 'document'; } }
   let nextFails = false;
-  try { checkInvariants(next); } catch {
+  try { checkInvariants(next); } catch (e) {
     nextFails = true;
-    blockers.push(currentFails ? `The current workspace data already fails an integrity check (${currentFails}), so it cannot be restored over. Correct that record first, or ask a recovery operator.` : crossScope);
+    const detail = e.detail || 'document';
+    if (currentFails) blockers.push(`The current workspace data already fails an integrity check (${currentFails}), so it cannot be restored over. Correct that record first, or ask a recovery operator.`);
+    else if (/^transfer/.test(detail)) blockers.push(crossScope);
+    else blockers.push(`This restore would leave records inconsistent (${detail}), so it cannot run as chosen. Try another restore mode, or ask a recovery operator.`);
   }
   // A transfer whose legs straddle the caller's scope must not change on the in-scope side while
   // the out-of-scope side stays as it is now — the invariant check cannot see this for
@@ -381,7 +399,7 @@ function finalize(next, { actor, nowIso, archiveId, mode, recoveryPoint = null, 
   next.updatedAt = nowIso;
   if (mode === 'create-new') next.restoredFrom = { archiveId, at: nowIso };
   // Every restore into this workspace leaves a record of itself; never truncated (BT-001-05).
-  else next.restores = [...(next.restores || []), { id: newId('rst'), archiveId, mode, at: nowIso, by: actor, recoveryPoint, setAside }];
+  else next.restores = [...(next.restores || []), { id: newId('rst'), archiveId, mode, at: nowIso, by: actor, recoveryPoint, setAside, ...(auditScope ? { private: true } : {}) }];
   audit.record(next, { actor, action: mode === 'create-new' ? 'workspace.restore-create' : `workspace.restore-${mode}`, targetType: 'backup', targetId: archiveId, scope: auditScope, at: nowIso });
   return stampDocument('workspace', next);
 }

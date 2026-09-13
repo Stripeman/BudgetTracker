@@ -35,4 +35,7 @@ jobs:
       # optional dependency, and nothing else here needs an install script.
       - run: npm ci --ignore-scripts --no-audit --no-fund
       - run: npm run vendor:tiptap
-      - run: git diff --exit-code -- app/js/vendor
+      # Porcelain status also catches new, untracked files the generator might write (SEC-T9).
+      - run: |
+          git status --porcelain -- app/js/vendor
+          test -z "$(git status --porcelain -- app/js/vendor)"
