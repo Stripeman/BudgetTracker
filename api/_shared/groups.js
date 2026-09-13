@@ -8,7 +8,9 @@
 // where "received" and "paid out" count CONFIRMED settlements only. A POSITIVE net means the group
 // owes that person (they get money back); a NEGATIVE net means they owe the group. The nets of one
 // currency always add up to exactly zero. Reported payments are "pending" and disputed ones are
-// shown apart; neither is in the net.
+// shown apart; neither is in the net. Suggestions count a reported payment as made, but only up to
+// what its payer owes and its receiver is owed, so a pending claim never turns a creditor into a
+// debtor; the direct view counts reported payments in full between those two people.
 //
 // Money is integer minor units (money.js). Shares come from money.allocate — deterministic largest
 // remainder, ties to the first listed person — and the rounding adjustment (the minor units added to
@@ -217,14 +219,28 @@ function blankRow(ref) {
   return { ref, paidMinor: 0, shareMinor: 0, settledOutMinor: 0, settledInMinor: 0, pendingOutMinor: 0, pendingInMinor: 0, disputedOutMinor: 0, disputedInMinor: 0, netMinor: 0, basisMinor: 0, expenses: [] };
 }
 
-// Minimum cash flow, greedy: the largest debtor pays the largest creditor, repeatedly. Ties go to the
-// person listed first. Every net is cleared exactly; at most n − 1 payments. Computed on `basisMinor`
-// (the net once reported payments are also counted), so nobody is asked to pay twice.
+// Fewest payments: first every creditor whose balance exactly matches a debtor's is paid by that debtor
+// in one payment (financial review finding 7: greedy alone turned +4 −9 +9 +6 −4 +6 −12 into six
+// payments instead of four); then the largest remaining debtor pays the largest remaining creditor,
+// repeatedly. Creditors are taken largest first, ties to the person listed first, and each is matched
+// to the first debtor of the same amount in that order, so the result is deterministic. Every net is
+// cleared exactly; each payment clears at least one person, so at most n − 1 payments. Computed on
+// `basisMinor` (the net once reported payments are counted as made, up to what is owed), so nobody is
+// asked to pay twice.
 function suggest(rows, rank) {
   const cmp = (a, b) => b.left - a.left || rank(a.ref) - rank(b.ref) || (a.ref < b.ref ? -1 : a.ref > b.ref ? 1 : 0);
-  const creditors = rows.filter((r) => r.basisMinor > 0).map((r) => ({ ref: r.ref, left: r.basisMinor }));
-  const debtors = rows.filter((r) => r.basisMinor < 0).map((r) => ({ ref: r.ref, left: -r.basisMinor }));
+  let creditors = rows.filter((r) => r.basisMinor > 0).map((r) => ({ ref: r.ref, left: r.basisMinor })).sort(cmp);
+  let debtors = rows.filter((r) => r.basisMinor < 0).map((r) => ({ ref: r.ref, left: -r.basisMinor })).sort(cmp);
   const out = [];
+  for (const c of creditors) {
+    const d = debtors.find((x) => x.left > 0 && x.left === c.left);
+    if (!d) continue;
+    out.push({ from: d.ref, to: c.ref, amountMinor: c.left });
+    c.left = 0;
+    d.left = 0;
+  }
+  creditors = creditors.filter((c) => c.left > 0);
+  debtors = debtors.filter((d) => d.left > 0);
   while (creditors.length && debtors.length) {
     creditors.sort(cmp);
     debtors.sort(cmp);
@@ -324,10 +340,21 @@ function balances(doc, order, { ensureCurrency = null } = {}) {
     const t = tables.get(currency);
     for (const ref of order) if (!t.has(ref)) t.set(ref, blankRow(ref));
     const rows = [...t.values()].sort((a, b) => rank(a.ref) - rank(b.ref) || (a.ref < b.ref ? -1 : a.ref > b.ref ? 1 : 0));
-    for (const r of rows) {
-      r.netMinor = money.sum([r.paidMinor, -r.shareMinor, -r.settledInMinor, r.settledOutMinor]);
-      r.basisMinor = money.sum([r.netMinor, -r.pendingInMinor, r.pendingOutMinor]);
+    for (const r of rows) r.netMinor = money.sum([r.paidMinor, -r.shareMinor, -r.settledInMinor, r.settledOutMinor]);
+    // The suggestion basis counts a reported (not yet confirmed) payment as made, but only up to what
+    // its payer still owes and its receiver is still owed (financial review finding 5): a claim of
+    // 80.00 against a debt of 50.00 must not make the creditor owe 30.00. Taken in a fixed order (date,
+    // then when reported, then id), so the basis is deterministic and still adds up to zero.
+    const left = new Map(rows.map((r) => [r.ref, r.netMinor]));
+    const pending = (doc.groupSettlements || []).filter((s) => !s.voidedAt && s.status === 'reported' && s.currency === currency)
+      .sort((p, q) => String(p.date).localeCompare(String(q.date)) || String(p.createdAt).localeCompare(String(q.createdAt)) || String(p.id).localeCompare(String(q.id)));
+    for (const s of pending) {
+      const x = Math.min(s.amountMinor, Math.max(0, -left.get(s.from)), Math.max(0, left.get(s.to)));
+      if (x <= 0) continue;
+      left.set(s.from, money.sum([left.get(s.from), x]));
+      left.set(s.to, money.sum([left.get(s.to), -x]));
     }
+    for (const r of rows) r.basisMinor = left.get(r.ref);
     out.push({ currency, rows, suggestions: suggest(rows, rank), direct: direct(doc, currency, rank) });
   }
   return out;

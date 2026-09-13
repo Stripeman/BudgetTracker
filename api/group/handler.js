@@ -305,7 +305,7 @@ async function list(ctx, req) {
       expenses: [...(doc.groupExpenses || [])].sort(newestFirst).map((e) => expenseView(ctx, doc, member, e)),
       settlements: [...(doc.groupSettlements || [])].sort(newestFirst).map((s) => settlementView(ctx, doc, member, s)),
       balances,
-      basis: 'Balances count confirmed payments only. Suggested and direct payments also count reported payments as made, so nobody is asked to pay twice; disputed payments are not counted.',
+      basis: 'Balances count confirmed payments only. Suggested and direct payments also count reported payments as made, so nobody is asked to pay twice; suggestions count a reported payment only up to what is owed. Disputed payments are not counted.',
     },
   };
 }

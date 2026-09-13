@@ -109,3 +109,96 @@ describe('finding 6: the backup integrity check applies the split rules the API 
     assert.match(res.body.error.message, /group expense split/);
   });
 });
+
+// A pure-model document: each expense is paid by one person for one other person, so its net effect is
+// exactly +amount for the payer and −amount for the beneficiary.
+const lent = (id, from, to, amountMinor) => ({ id, currency: 'EUR', amountMinor, date: '2026-09-01', description: id, voidedAt: null,
+  payers: [{ ref: to, amountMinor }], shares: [{ ref: from, amountMinor }] });
+const pay = (id, from, to, amountMinor, status, date = '2026-09-02') => ({ id, from, to, amountMinor, currency: 'EUR', status, date, createdAt: `${date}T00:00:00.000Z`, voidedAt: null });
+
+describe('finding 7: fewest payments matches exact opposite amounts first', () => {
+  test('balances +4 −9 +9 +6 −4 +6 −12 settle in 4 payments, not 6', () => {
+    const P = Array.from({ length: 7 }, (_, i) => `member:p${i}`);
+    // p1 owes p2 9, p4 owes p0 4, p6 owes p3 6 and p5 6 → nets p0 +4, p1 −9, p2 +9, p3 +6, p4 −4, p5 +6, p6 −12.
+    const doc = { members: [], contacts: [], groupSettlements: [], groupExpenses: [
+      lent('a', P[1], P[2], 900), lent('b', P[4], P[0], 400), lent('c', P[6], P[3], 600), lent('d', P[6], P[5], 600)] };
+    const [b] = groups.balances(doc, P);
+    assert.deepEqual(P.map((r) => b.rows.find((x) => x.ref === r).netMinor), [400, -900, 900, 600, -400, 600, -1200]);
+    // Exact pairs first, creditors largest first then in listed order: 9 ↔ 9, then 4 ↔ 4; the rest by the
+    // greedy rule, ties in listed order: p6 pays p3 6, then p5 6.
+    assert.deepEqual(b.suggestions, [
+      { from: P[1], to: P[2], amountMinor: 900 },
+      { from: P[4], to: P[0], amountMinor: 400 },
+      { from: P[6], to: P[3], amountMinor: 600 },
+      { from: P[6], to: P[5], amountMinor: 600 },
+    ]);
+  });
+});
+
+describe('finding 5: a reported payment counts in suggestions only up to what is owed', () => {
+  const A = 'member:a';
+  const B = 'member:b';
+  const C = 'member:c';
+  const base = () => ({ members: [], contacts: [], groupExpenses: [
+    // a paid 100.00 shared equally by a and b: a +50, b −50.
+    { id: 'E', currency: 'EUR', amountMinor: 10000, date: '2026-09-01', description: 'E', voidedAt: null, payers: [{ ref: A, amountMinor: 10000 }], shares: [{ ref: A, amountMinor: 5000 }, { ref: B, amountMinor: 5000 }] },
+  ], groupSettlements: [] });
+  test('b owes 50.00 but reports paying 80.00: no suggestion asks a to pay b', () => {
+    const doc = base();
+    doc.groupSettlements = [pay('S', B, A, 8000, 'reported')];
+    const [b] = groups.balances(doc, [A, B]);
+    // Nets stay +50 / −50 (reported payments are pending); pending shown in full.
+    assert.deepEqual(b.rows.map((r) => [r.ref, r.netMinor, r.pendingInMinor, r.pendingOutMinor]), [[A, 5000, 8000, 0], [B, -5000, 0, 8000]]);
+    assert.deepEqual(b.suggestions, []);
+  });
+  test('a smaller reported payment is counted in full; the rest is suggested', () => {
+    const doc = base();
+    doc.groupSettlements = [pay('S', B, A, 3000, 'reported')];
+    assert.deepEqual(groups.balances(doc, [A, B])[0].suggestions, [{ from: B, to: A, amountMinor: 2000 }]);
+  });
+  test('an overclaim never moves a debt onto someone else, and a claim to someone who is owed nothing is not counted', () => {
+    const doc = base();
+    // c also owes a 30.00: a +80, b −50, c −30.
+    doc.groupExpenses.push(lent('F', C, A, 3000));
+    doc.groupSettlements = [pay('S', B, A, 8000, 'reported')];
+    // b's 80.00 claim counts 50.00 (what b owes); c still owes a 30.00.
+    assert.deepEqual(groups.balances(doc, [A, B, C])[0].suggestions, [{ from: C, to: A, amountMinor: 3000 }]);
+    // b reports paying c, who is owed nothing: not counted, so b still pays a 50.00 and c pays a 30.00.
+    doc.groupSettlements = [pay('S', B, C, 5000, 'reported')];
+    assert.deepEqual(groups.balances(doc, [A, B, C])[0].suggestions, [{ from: B, to: A, amountMinor: 5000 }, { from: C, to: A, amountMinor: 3000 }]);
+  });
+  test('generated groups with reported and disputed payments: the basis adds up to zero, never crosses zero, and suggestions clear it in at most n − 1 payments', () => {
+    let seed = 23;
+    const rnd = (n) => { seed = (seed * 1103515245 + 12345) % 2147483648; return seed % n; };
+    for (let run = 0; run < 400; run += 1) {
+      const P = Array.from({ length: 2 + rnd(7) }, (_, i) => `member:p${i}`);
+      const pick = () => P[rnd(P.length)];
+      const expenses = Array.from({ length: 1 + rnd(6) }, (_, i) => {
+        const [from, to] = [pick(), pick()];
+        return lent(`x${i}`, from, to === from ? P[(P.indexOf(from) + 1) % P.length] : to, 1 + rnd(20000));
+      });
+      const settlements = Array.from({ length: rnd(5) }, (_, i) => {
+        const from = pick();
+        const to = P[(P.indexOf(from) + 1 + rnd(P.length - 1)) % P.length];
+        return pay(`s${i}`, from, to, 1 + rnd(20000), ['reported', 'confirmed', 'disputed'][rnd(3)], `2026-09-0${1 + rnd(9)}`);
+      });
+      const doc = { members: [], contacts: [], groupExpenses: expenses, groupSettlements: settlements };
+      const [b] = groups.balances(doc, P);
+      assert.equal(b.rows.reduce((s, r) => s + r.basisMinor, 0), 0, `run ${run} basis sums to zero`);
+      for (const r of b.rows) {
+        assert.ok(Math.sign(r.basisMinor) === 0 || Math.sign(r.basisMinor) === Math.sign(r.netMinor), `run ${run} ${r.ref} basis ${r.basisMinor} crossed net ${r.netMinor}`);
+        assert.ok(Math.abs(r.basisMinor) <= Math.abs(r.netMinor), `run ${run} ${r.ref} basis grew`);
+      }
+      const left = new Map(b.rows.map((r) => [r.ref, r.basisMinor]));
+      for (const s of b.suggestions) {
+        assert.ok(s.amountMinor > 0);
+        assert.ok(left.get(s.from) < 0 && left.get(s.to) > 0, `run ${run} pays only debtor to creditor`);
+        left.set(s.from, left.get(s.from) + s.amountMinor);
+        left.set(s.to, left.get(s.to) - s.amountMinor);
+      }
+      assert.ok([...left.values()].every((v) => v === 0), `run ${run} clears everyone`);
+      assert.ok(b.suggestions.length <= Math.max(0, b.rows.length - 1), `run ${run} at most n − 1`);
+      assert.deepEqual(groups.balances(doc, P)[0].suggestions, b.suggestions, 'deterministic');
+    }
+  });
+});
