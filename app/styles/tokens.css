@@ -135,5 +135,8 @@
 :root[data-mode="light"][data-theme="amber"] { --accent: #8c6b05; --accent-hover: #775b04; --accent-contrast: #ffffff; }
 :root[data-mode="light"][data-theme="indigo"] { --accent: #5f62e7; --accent-hover: #5153c4; --accent-contrast: #ffffff; }
 :root[data-mode="light"][data-theme="teal"] { --accent-text: #0c7066; }
+/* Links on the sunken notice surface need 4.5:1 too (A11Y2-002). */
+:root[data-mode="light"][data-theme="solar"] { --accent-text: #92400e; }
+:root[data-mode="light"][data-theme="amber"] { --accent-text: #775b04; }
 :root[data-mode="light"][data-theme="rose"] { --accent-text: #b72f47; }
 :root[data-mode="light"][data-theme="indigo"] { --accent-text: #5153c4; }

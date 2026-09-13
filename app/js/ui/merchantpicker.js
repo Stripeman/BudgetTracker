@@ -64,7 +64,8 @@ export function createMerchantPicker({ merchants, current = null, onChange = () 
       }));
     }
     if (rows.length) list.replaceChildren(...rows);
-    else list.replaceChildren(el("li", { class: "combo__empty", role: "presentation", text: "No matching merchants." }));
+    // Announced as a disabled option, so a screen reader hears the empty result (A11Y2-008).
+    else list.replaceChildren(el("li", { class: "combo__empty", role: "option", "aria-disabled": "true", "aria-selected": "false", id: `${id}-opt-none`, text: "No matching merchants." }));
     const activeRow = active >= 0 ? rows[active] : null;
     if (activeRow) {
       input.setAttribute("aria-activedescendant", activeRow.id);

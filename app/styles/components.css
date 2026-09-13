@@ -47,7 +47,8 @@ textarea.field__input { min-height: 5rem; resize: vertical; }
 .table th, .table td { padding: var(--space-2) var(--space-3); text-align: left; border-bottom: 1px solid var(--border); font-size: var(--text-sm); vertical-align: top; }
 .table th { background: var(--surface-sunken); font-weight: var(--weight-medium); color: var(--text-muted); position: sticky; top: 0; }
 .table tbody tr:hover { background: var(--surface-sunken); }
-.table tr:last-child td { border-bottom: 0; }
+.table tr:last-child td, .table tr:last-child th { border-bottom: 0; }
+fieldset.budget-line { margin: 0; padding: var(--space-3); border: 1px solid var(--border); border-radius: var(--radius); }
 .num, .table .num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
 
 /* Narrow screens: tables become labelled card rows so the amount is always visible (UX-004).
@@ -154,7 +155,8 @@ textarea.field__input { min-height: 5rem; resize: vertical; }
   width: 100%;
   padding: var(--space-2);
   background: none;
-  border: 1px solid var(--border);
+  /* Adaptation: the control edge token gives the 3:1 boundary other inputs have (A11Y2-011). */
+  border: 1px solid var(--control-edge);
   border-radius: var(--radius-sm);
   color: var(--text);
   cursor: pointer;

@@ -30,7 +30,14 @@ export function createView(ctx) {
   ]);
   let last = null;
   show.addEventListener("change", () => { if (last) render(last); });
-  search.addEventListener("input", () => { if (last) render(last); });
+  // The number of results is announced after typing pauses (A11Y2-007).
+  let timer = null;
+  search.addEventListener("input", () => {
+    if (!last) return;
+    const n = render(last);
+    clearTimeout(timer);
+    if (n >= 0) timer = setTimeout(() => announce(n === 0 ? "No merchants match." : `${n} merchant${n === 1 ? "" : "s"} shown.`), 400);
+  });
   void ctx.store.actions.refreshPayees();
 
   function render(state) {
@@ -38,12 +45,12 @@ export function createView(ctx) {
     const dateFormat = prefs && prefs.effective && prefs.effective.dateFormat;
     const payees = sliceFor(state, "payees");
     const s = stateView(payees, { empty: "No merchants yet. Add one here or while entering an expense.", isEmpty: (d) => !d.payees.length });
-    if (s) { mount(box, s); return; }
+    if (s) { mount(box, s); return -1; }
     const want = show.value;
     const q = normalize(search.value);
     // A merchant without a status (recorded before merchants had one) is active.
     const list = payees.data.payees.filter((p) => (want === "all" || (p.status || "active") === want) && (!q || [p.name, ...(p.aliases || [])].some((x) => normalize(x).includes(q))));
-    if (!list.length) { mount(box, el("div", { class: "state", text: want === "closed" ? "No closed merchants." : "No merchants match." })); return; }
+    if (!list.length) { mount(box, el("div", { class: "state", text: want === "closed" ? "No closed merchants." : "No merchants match." })); return 0; }
     const plain = { effective: { ...((prefs && prefs.effective) || {}), balanceMasking: false } };
     mount(box, el("div", { class: "table-wrap" }, [el("table", { class: "table table--cards", "aria-label": "Merchants" }, [
       el("thead", {}, [el("tr", {}, ["Merchant", "Spent", "Refunds", "Net", "Entries", "Last entry", "Actions"].map((h) => el("th", { scope: "col", class: ["Spent", "Refunds", "Net", "Entries"].includes(h) ? "num" : "", text: h })))]),
@@ -75,11 +82,14 @@ export function createView(ctx) {
         ]));
       })),
     ])]));
+    return list.length;
   }
 
   function update(state) {
     last = state;
-    mount(add, button("Add merchant", () => openMerchantEditor(ctx), { variant: "primary" }));
+    // A viewer cannot add entries, so a merchant of theirs could never be used (UX2-009).
+    const role = ((state.workspaces || []).find((w) => w.id === state.selectedWorkspaceId) || {}).role;
+    mount(add, role && role !== "viewer" ? button("Add merchant", () => openMerchantEditor(ctx), { variant: "primary" }) : null);
     render(state);
   }
   return { element, update };
@@ -96,7 +106,15 @@ function describeValue(v, lookups) {
 
 function historyList(merchant, lookups) {
   const items = (merchant.history || []).slice().reverse().map((h) => {
-    const what = h.changes.map((c) => (c.field === "create" ? "created" : `${FIELD_LABELS[c.field] || c.field}: ${describeValue(c.from, lookups)} → ${describeValue(c.to, lookups)}`)).join("; ");
+    const what = h.changes.map((c) => {
+      if (c.field === "create") return "created";
+      // Contact details name the parts that changed, not just "updated" (UX2-011).
+      if (c.field === "contact") {
+        const parts = ["website", "address", "phone", "email"].filter((k) => ((c.from || {})[k] || "") !== ((c.to || {})[k] || ""));
+        return `Contact details: ${parts.join(", ") || "updated"} changed`;
+      }
+      return `${FIELD_LABELS[c.field] || c.field}: ${describeValue(c.from, lookups)} → ${describeValue(c.to, lookups)}`;
+    }).join("; ");
     return el("li", {}, [el("div", { class: "muted small", text: `${stamp(h.at)} · ${h.by}` }), el("div", { text: what }), h.reason ? el("div", { class: "muted small", text: `Reason: ${h.reason}` }) : null]);
   });
   return el("details", { class: "more" }, [el("summary", { text: `Change history (${items.length})` }), el("ul", { class: "history-list" }, items)]);
@@ -163,10 +181,12 @@ export function openMerchantEditor(ctx, merchant = null) {
     return out;
   }
 
-  const save = el("button", { type: "submit", class: "btn btn--primary", text: editing ? "Save changes" : "Add merchant" });
+  // The footer button belongs to the form, so Enter in a field submits it (UX2-006).
+  const formId = `merchant-form-${Date.now()}`;
+  const save = el("button", { type: "submit", class: "btn btn--primary", text: editing ? "Save changes" : "Add merchant", form: formId });
   const anyway = button("Save as a separate merchant", () => void submit(true), { attrs: { hidden: true } });
   const cancel = button("Cancel", () => modal.close());
-  const form = el("form", { class: "form-grid", novalidate: true }, [
+  const form = el("form", { class: "form-grid", novalidate: true, id: formId }, [
     field("Name", name), field("Sharing", visibility, { help: editing && !visibilityEditable ? "A shared merchant stays shared." : undefined }), field("Type", type),
     field("Other names", aliases, { help: "Names you might search for, like an abbreviation." }),
     el("details", { class: "more" }, [el("summary", { text: "Contact and account details" }), el("div", { class: "form-grid" }, [

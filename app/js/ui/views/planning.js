@@ -32,9 +32,11 @@ function meter(used, total) {
 
 export function createView(ctx) {
   const budgetsBox = el("div", { class: "stack" });
-  const warningsBox = el("div");
+  // One persistent status region, updated only when the warnings change (A11Y2-009).
+  const warningsBox = el("div", { role: "status", "aria-live": "polite" });
   const forecastBox = el("div");
   const whatIfBox = el("div");
+  let warningsSig = "";
   const budgetActions = el("div", { class: "page-head__actions" });
   const horizon = select(HORIZONS, "90");
   const buffer = input({ inputmode: "decimal", placeholder: "Optional, e.g. 500.00" });
@@ -74,12 +76,20 @@ export function createView(ctx) {
 
     const fc = sliceFor(state, "forecast");
     const fs = stateView(fc, { empty: "No accounts to project.", isEmpty: (d) => !d.forecast.accounts.length });
-    if (fs) { mount(warningsBox); mount(forecastBox, fs); } else {
+    if (fs) { warningsSig = ""; mount(warningsBox); mount(forecastBox, fs); } else {
       const f = fc.data.forecast;
-      mount(warningsBox, f.warnings.length
-        ? el("div", { class: "notice notice--warning", role: "status" }, [el("strong", { text: "Cash-flow warnings" }), el("ul", { class: "stack" }, f.warnings.map((w) => el("li", { text: warningText(w, fmt, eff.dateFormat) })))])
-        : el("p", { class: "muted", text: `No balance is projected to fall below zero${buffer.value.trim() ? " or your buffer" : ""} in the next ${horizon.options ? horizon.options[horizon.selectedIndex].text : `${f.horizonDays} days`}.` }));
-      mount(forecastBox, forecastTable(f, plain, eff.dateFormat, "Cash-flow forecast"), el("details", { class: "more" }, [el("summary", { text: "How this is worked out" }), el("ul", {}, f.assumptions.map((a) => el("li", { text: a })))]));
+      const sig = JSON.stringify([f.warnings, buffer.value.trim(), horizon.value]);
+      if (sig !== warningsSig) {
+        warningsSig = sig;
+        mount(warningsBox, f.warnings.length
+          ? el("div", { class: "notice notice--warning" }, [el("h3", { class: "card__title", text: "Cash-flow warnings" }), el("ul", { class: "stack" }, f.warnings.map((w) => el("li", { text: warningText(w, fmt, eff.dateFormat) })))])
+          : el("p", { class: "muted", text: `No balance is projected to fall below zero${buffer.value.trim() ? " or your buffer" : ""} in the next ${horizon.options ? horizon.options[horizon.selectedIndex].text : `${f.horizonDays} days`}.` }));
+      }
+      mount(forecastBox,
+        // One pair of terms, defined where they are used (UX2-003).
+        el("p", { class: "muted small", text: "Cautious leaves out estimated income; hopeful leaves out estimated expenses such as variable bills." }),
+        forecastTable(f, plain, eff.dateFormat, "Cash-flow forecast"),
+        el("details", { class: "more" }, [el("summary", { text: "How this is worked out" }), el("ul", {}, f.assumptions.map((a) => el("li", { text: a })))]));
       whatIf.setBaseline(f);
     }
     const bills = sliceFor(state, "bills").data;
@@ -106,7 +116,8 @@ function forecastTable(f, prefs, dateFormat, label, compare = null) {
         ]);
       }
       const base = compare && compare.accounts.find((x) => x.accountId === a.accountId);
-      const lowest = [money(a.expected.lowest.amount, a.currency, prefs), el("div", { class: "muted small", text: formatDate(a.expected.lowest.date, dateFormat) })];
+      // One block, so the amount and its date stay together in narrow card rows (UX2-013).
+      const lowest = [el("div", {}, [money(a.expected.lowest.amount, a.currency, prefs), el("div", { class: "muted small", text: formatDate(a.expected.lowest.date, dateFormat) })])];
       return el("tr", {}, [
         el("th", { scope: "row", "data-label": "Account" }, [el("span", { text: a.name }), a.itemsShared ? null : el("div", { class: "muted small", text: "Balance only — entries not shared with you" })]),
         el("td", { "data-label": "Today", class: "num" }, [money(a.start, a.currency, prefs)]),
@@ -174,27 +185,41 @@ function openBudgetEditor(ctx, budget = null) {
   const reason = input({ maxlength: "200", placeholder: "Optional" });
   const linesBox = el("div", { class: "stack" });
   const rows = [];
-  function addRow(line = {}) {
+  // Each line is a numbered group ("Line 2") so its controls are distinguishable; focus moves to a
+  // new line on add and to a neighbour on remove (A11Y2-003, A11Y2-010).
+  function renumber() {
+    rows.forEach((r, i) => { r.legend.textContent = `Line ${i + 1}`; r.remove.setAttribute("aria-label", `Remove line ${i + 1}`); });
+  }
+  function addRow(line = {}, { focus = false } = {}) {
     const cat = select(categories.map((c) => ({ value: c.id, label: c.name })), line.categoryId || (categories[0] || {}).id);
     const amount = input({ inputmode: "decimal", placeholder: "0.00" });
     amount.value = line.amount || "";
     const rollover = el("input", { type: "checkbox" });
     rollover.checked = !!line.rollover;
-    const row = { cat, amount, rollover };
-    const remove = button("Remove", () => { rows.splice(rows.indexOf(row), 1); node.remove ? node.remove() : linesBox.removeChild(node); }, { small: true, attrs: { "aria-label": "Remove this category line" } });
-    const node = el("div", { class: "form-grid" }, [field("Category", cat), field("Planned amount", amount), el("label", { class: "field--inline field__label" }, [rollover, "Carry unspent over one period"]), el("div", { class: "field" }, [remove])]);
+    const row = { cat, amount, rollover, legend: el("legend", { class: "field__label" }) };
+    row.remove = button("Remove", () => {
+      const at = rows.indexOf(row);
+      rows.splice(at, 1);
+      if (row.node.remove) row.node.remove(); else linesBox.removeChild(row.node);
+      renumber();
+      const next = rows[at] || rows[at - 1];
+      (next ? next.remove : addLine).focus();
+    }, { small: true });
+    row.node = el("fieldset", { class: "form-grid budget-line" }, [row.legend, field("Category", cat), field("Planned amount", amount), el("label", { class: "field--inline field__label" }, [rollover, "Carry unspent over one period"]), el("div", { class: "field" }, [row.remove])]);
     rows.push(row);
-    linesBox.appendChild(node);
+    linesBox.appendChild(row.node);
+    renumber();
+    if (focus) cat.focus();
   }
-  (editing ? budget.lines : [{}]).forEach(addRow);
+  (editing ? budget.lines : [{}]).forEach((l) => addRow(l));
+  const addLine = button("Add a category", () => addRow({}, { focus: true }), { small: true });
   const save = el("button", { type: "button", class: "btn btn--primary", text: editing ? "Save budget" : "Add budget" });
   const cancel = button("Cancel", () => modal.close());
   const modal = openModal({
     title: editing ? `Edit ${budget.name}` : "Add budget",
     body: [
       el("div", { class: "form-grid" }, [field("Name", name), field("Who it is for", scope, { help: "A shared budget counts shared accounts only, so members' private spending never appears in it." }), field("Currency", currency), field("Period", period), field("Starts on", start)]),
-      el("h3", { text: "Categories" }), linesBox,
-      button("Add a category", () => addRow(), { small: true }),
+      el("h3", { text: "Categories" }), linesBox, addLine,
       editing ? el("div", { class: "form-grid" }, [
         field("Plan changes apply from", effectiveFrom, { help: "Earlier periods keep the plan they had." }),
         field("Reason for the change", reason),
@@ -204,8 +229,18 @@ function openBudgetEditor(ctx, budget = null) {
   });
   save.addEventListener("click", async () => {
     modal.setError("");
-    if (!name.value.trim()) { modal.setError("Give the budget a name."); name.focus(); return; }
-    if (!rows.length || rows.some((r) => !r.amount.value.trim())) { modal.setError("Every category line needs a planned amount."); return; }
+    // The invalid field is marked, linked to the message and focused; lines are named (A11Y2-003).
+    for (const c of [name, ...rows.map((r) => r.amount)]) c.removeAttribute("aria-invalid");
+    const invalid = (control, message) => { control.setAttribute("aria-invalid", "true"); control.setAttribute("aria-errormessage", modal.errorId); modal.setError(message); control.focus(); };
+    if (!name.value.trim()) { invalid(name, "Give the budget a name."); return; }
+    if (!rows.length) { modal.setError("Add at least one category."); addLine.focus(); return; }
+    const missing = rows.findIndex((r) => !r.amount.value.trim());
+    if (missing >= 0) {
+      const r = rows[missing];
+      const catName = r.cat.options && r.cat.selectedIndex >= 0 ? r.cat.options[r.cat.selectedIndex].text : "this category";
+      invalid(r.amount, `Line ${missing + 1} (${catName}) needs a planned amount.`);
+      return;
+    }
     const lines = rows.map((r) => ({ categoryId: r.cat.value, amount: r.amount.value.trim(), rollover: r.rollover.checked }));
     let body;
     if (editing) {
@@ -251,35 +286,53 @@ function createWhatIf(ctx, params) {
   const billField = field("Bill", bill);
   const dateField = field("Date", date);
   const amountField = field("Amount", amount, { help: "Negative for money out, positive for money in." });
+  const amountHelp = amountField.querySelector(".field__help");
+  const df = () => ((ctx.store.getState().preferences || {}).effective || {}).dateFormat;
   const sync = () => {
     accountField.hidden = kind.value !== "one-off";
     dateField.hidden = kind.value !== "one-off";
     billField.hidden = kind.value === "one-off";
     amountField.hidden = kind.value === "exclude-recurring";
+    // A bill's new amount is per payment and has no sign (UX2-002).
+    if (amountHelp) amountHelp.textContent = kind.value === "change-recurring" ? "The new amount of each payment, without a sign." : "Negative for money out, positive for money in.";
   };
   kind.addEventListener("change", sync);
   sync();
-  const error = el("p", { class: "error-text", role: "alert", hidden: true });
+  const error = el("p", { class: "error-text", role: "alert", hidden: true, id: "whatif-error" });
   const addBtn = button("Add change", () => {
     error.hidden = true;
-    if (kind.value !== "exclude-recurring" && !amount.value.trim()) { error.textContent = "Enter an amount."; error.hidden = false; return; }
+    amount.removeAttribute("aria-invalid");
+    if (kind.value !== "exclude-recurring" && !amount.value.trim()) {
+      // The amount field is marked, linked to the message and focused (A11Y2-004).
+      error.textContent = "Enter an amount.";
+      error.hidden = false;
+      amount.setAttribute("aria-invalid", "true");
+      amount.setAttribute("aria-errormessage", error.id);
+      amount.focus();
+      return;
+    }
     if (kind.value === "one-off") {
       const a = accounts.find((x) => x.id === account.value);
-      changes.push({ body: { type: "one-off", accountId: account.value, date: date.value, amount: amount.value.trim() }, label: `${amount.value.trim()} ${a ? a.currency : ""} on ${date.value} in ${a ? a.name : "an account"}` });
+      changes.push({ body: { type: "one-off", accountId: account.value, date: date.value, amount: amount.value.trim() }, label: `${amount.value.trim()} ${a ? a.currency : ""} on ${formatDate(date.value, df())} in ${a ? a.name : "an account"}` });
     } else {
       const b = bills.find((x) => x.id === bill.value);
       if (!b) { error.textContent = "Choose a bill."; error.hidden = false; return; }
+      const perPayment = amount.value.trim().replace(/^[-+]/, "");
       changes.push(kind.value === "change-recurring"
-        ? { body: { type: "change-recurring", recurringId: b.id, amount: amount.value.trim() }, label: `${b.name} becomes ${amount.value.trim()} ${b.currency}` }
+        ? { body: { type: "change-recurring", recurringId: b.id, amount: perPayment }, label: `${b.name}: ${perPayment} ${b.currency} per payment` }
         : { body: { type: "exclude-recurring", recurringId: b.id }, label: `Leave out ${b.name}` });
     }
     amount.value = "";
     renderList();
   }, { small: true });
   const runBtn = button("Run what-if", () => void runScenario(), { variant: "primary" });
+  // Says why the button is unavailable (UX2-017).
+  const runHelp = el("p", { class: "field__help", id: "whatif-run-help", text: "Add at least one change first." });
+  runBtn.setAttribute("aria-describedby", runHelp.id);
   function renderList() {
     mount(list, ...changes.map((c, i) => el("li", { class: "row" }, [el("span", { text: c.label }), button("Remove", () => { changes.splice(i, 1); renderList(); }, { small: true, attrs: { "aria-label": `Remove change: ${c.label}` } })])));
     runBtn.disabled = !changes.length;
+    runHelp.hidden = !!changes.length;
   }
   renderList();
   async function runScenario() {
@@ -304,7 +357,7 @@ function createWhatIf(ctx, params) {
   const element = el("div", { class: "card" }, [
     el("p", { class: "muted small", text: "Try changes without saving them: a one-off expense or income, a different bill amount, or leaving a bill out." }),
     el("div", { class: "form-grid" }, [field("Change", kind), accountField, billField, dateField, amountField, el("div", { class: "field" }, [addBtn])]),
-    error, list, el("div", { class: "row" }, [runBtn]), result,
+    error, list, el("div", { class: "row" }, [runBtn, runHelp]), result,
   ]);
   return {
     element,

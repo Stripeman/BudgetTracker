@@ -328,7 +328,7 @@ export function openQuickEntry(ctx, { transaction } = {}) {
   const createName = input({ maxlength: "80", autocomplete: "off" });
   const createType = select(Object.entries(MERCHANT_TYPE_LABELS).map(([value, label]) => ({ value, label })), "other");
   const createNote = el("p", { class: "field__help" });
-  const createError = el("p", { class: "error-text", role: "alert", hidden: true });
+  const createError = el("p", { class: "error-text", role: "alert", hidden: true, id: `${key}-create-error` });
   const createActions = el("div", { class: "inline-create__actions" });
   const createBox = el("fieldset", { class: "inline-create", hidden: true }, [
     el("legend", { text: "New merchant" }), field("Merchant name", createName), field("Type", createType), createNote, createError, createActions,
@@ -362,7 +362,10 @@ export function openQuickEntry(ctx, { transaction } = {}) {
   async function submitCreate(allowDuplicate) {
     createError.hidden = true;
     const name = createName.value.trim();
-    if (!name) { createError.textContent = "Enter the merchant's name."; createError.hidden = false; createName.focus(); return; }
+    // The name field is marked and linked to its message (A11Y2-012).
+    const markName = () => { createName.setAttribute("aria-invalid", "true"); createName.setAttribute("aria-errormessage", createError.id); };
+    createName.removeAttribute("aria-invalid");
+    if (!name) { createError.textContent = "Enter the merchant's name."; createError.hidden = false; markName(); createName.focus(); return; }
     try {
       const body = { name, type: createType.value, accountId: currentAccountId() };
       if (allowDuplicate) body.allowDuplicate = true;
@@ -376,6 +379,7 @@ export function openQuickEntry(ctx, { transaction } = {}) {
     } catch (err) {
       createError.textContent = messageFor(err);
       createError.hidden = false;
+      markName();
       if (err && err.code === "duplicate_merchant" && err.details) {
         const existing = err.details;
         mount(createActions, button("Cancel", hideCreate), button(`Use ${existing.name}`, () => useExisting(existing), { variant: "primary" }),
@@ -442,9 +446,10 @@ export function openQuickEntry(ctx, { transaction } = {}) {
   amountLabel.setAttribute("for", amount.id);
   setAmountLabel();
 
-  const save = el("button", { type: "submit", class: "btn btn--primary", text: editing ? "Save changes" : "Save expense" });
+  // The footer button belongs to the form, so Enter in a field submits it (UX2-006).
+  const save = el("button", { type: "submit", class: "btn btn--primary", text: editing ? "Save changes" : "Save expense", form: `${key}-form` });
   const cancel = button("Cancel", () => modal.close());
-  const form = el("form", { class: "form-grid", novalidate: true }, [
+  const form = el("form", { class: "form-grid", novalidate: true, id: `${key}-form` }, [
     el("div", { class: "field" }, [el("label", { class: "field__label", for: picker.input.id, text: "Merchant" }), picker.element, merchantLink]),
     createBox,
     amountField,

@@ -240,7 +240,7 @@ function forecast(doc, principal, { today, horizonDays, bufferMinor = null, buff
     assumptions: [
       'Starts from balances recorded up to today; later-dated entries are treated as confirmed.',
       'Includes bills that are due and not yet recorded, skipped or paused. Overdue bills are counted today.',
-      'Variable bills use their estimate. Conservative leaves out estimated income; optimistic leaves out estimated expenses.',
+      'Variable bills use their estimate. "Cautious" leaves out estimated income; "hopeful" leaves out estimated expenses.',
       'What-if changes are applied only to this forecast and are never saved.',
       'Accounts whose entries are not shared with you show their balance without upcoming items.',
     ],

@@ -74,10 +74,15 @@ export function createShell({ mountPoint, store, router, theme, api }) {
     // TaskTracker's colour-aware palette picker (BT-011-03), the same control as in My settings.
     const palette = createThemePicker({
       value: theme.getTheme(), id: "menu-palette", labelledBy: "menu-palette-label",
-      onPick: (value) => {
+      // A failed save puts the previous palette back and says why (A11Y2-006).
+      onPick: async (value) => {
+        const prev = theme.getTheme();
         theme.setTheme(value);
-        void store.actions.savePreferences({ themePalette: value });
-        announce(`Palette ${(theme.themes.find((t) => t.id === value) || {}).label || value}`);
+        const out = await store.actions.savePreferences({ themePalette: value });
+        if (out.ok) { announce(`Palette ${(theme.themes.find((t) => t.id === value) || {}).label || value}`); return; }
+        theme.setTheme(prev);
+        palette.select(prev);
+        announce(`The palette could not be saved. ${messageFor(out.error)}`);
       },
     });
     panel.append(

@@ -145,18 +145,26 @@ export function createView(ctx) {
     const active = document.activeElement;
     const focused = active && coloursBox.contains(active) && active.closest ? active.closest("[data-category]") : null;
     const focusId = focused ? focused.dataset.category : null;
-    const patchColour = (c, color) => store.actions.write((ws) => api.request("categories", { method: "PATCH", query: { workspaceId: ws }, body: { categoryId: c.id, color } }), ["categories"])
-      .then((out) => announce(out.ok ? `${c.name}: colour ${color ? "saved" : "reset to default"}.` : messageFor(out.error)));
     const rows = cats.map((c) => {
       const labelId = `ws-colour-${c.id}`;
-      const picker = createThemePicker({
+      // A failed save puts the previous colour back and says so beside the picker (A11Y2-006).
+      const error = el("p", { class: "error-text small", role: "alert", hidden: true });
+      let picker = null;
+      const patchColour = async (color) => {
+        const out = await store.actions.write((ws) => api.request("categories", { method: "PATCH", query: { workspaceId: ws }, body: { categoryId: c.id, color } }), ["categories"]);
+        if (out.ok) { announce(`${c.name}: colour ${color ? "saved" : "reset to default"}.`); return; }
+        if (picker) picker.select(c.color);
+        error.textContent = messageFor(out.error);
+        error.hidden = false;
+      };
+      picker = createThemePicker({
         value: c.color, entries: colourEntries(data.palette, c.color), labelledBy: labelId,
-        listLabel: `Colours for ${c.name}`, namePrefix: `${c.name} colour`, onPick: (hex) => { void patchColour(c, hex); },
+        listLabel: `Colours for ${c.name}`, namePrefix: `${c.name} colour`, onPick: (hex) => { void patchColour(hex); },
       });
       return el("div", { class: "field", dataset: { category: c.id } }, [
-        el("p", { class: "field__label", id: labelId, text: c.name }), picker.element,
+        el("p", { class: "field__label", id: labelId, text: c.name }), picker.element, error,
         el("div", { class: "row" }, [badge(c.colorSource === "workspace" ? "Workspace colour" : "Default", "source"),
-          c.colorSource === "workspace" ? button("Reset to default", () => { void patchColour(c, null); }, { small: true, variant: "ghost", attrs: { "aria-label": `Reset ${c.name} to its default colour` } }) : null]),
+          c.colorSource === "workspace" ? button("Reset to default", () => { void patchColour(null); }, { small: true, variant: "ghost", attrs: { "aria-label": `Reset to default: ${c.name} colour` } }) : null]),
       ]);
     });
     mount(coloursBox, el("p", { class: "field__help", text: "Everyone in the workspace sees these colours unless they pick their own in My settings. Colours are checked so they stay visible on light and dark backgrounds." }), ...rows);

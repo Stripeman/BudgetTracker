@@ -11,10 +11,12 @@ const FOCUSABLE = "button, [href], input, select, textarea, summary, [tabindex]"
 
 export function openModal({ title, body, actions = [], onClose = () => {} }) {
   const opener = document.activeElement;
+  const openerKey = opener && opener.getAttribute ? (opener.getAttribute("aria-label") || opener.textContent || "") : "";
   const titleId = uid("modal-title");
   const errorId = uid("modal-error");
   const error = el("div", { class: "modal__error", id: errorId, role: "alert", hidden: true });
-  const closeBtn = el("button", { type: "button", class: "modal__close", "aria-label": "Close", text: "×" });
+  // "Close dialog", not "Close": a dialog's own action may be called "Close" (UX2-010).
+  const closeBtn = el("button", { type: "button", class: "modal__close", "aria-label": "Close dialog", text: "×" });
   const dialog = el("div", { class: "modal", role: "dialog", "aria-modal": "true", "aria-labelledby": titleId }, [
     el("div", { class: "modal__head" }, [el("h2", { id: titleId, text: title }), closeBtn]),
     el("div", { class: "modal__body" }, [].concat(body)),
@@ -37,8 +39,24 @@ export function openModal({ title, body, actions = [], onClose = () => {} }) {
     if (app) app.inert = wasInert;
     if (skip) skip.inert = skipWasInert;
     document.removeEventListener("keydown", onKey, true);
-    if (opener && typeof opener.focus === "function") opener.focus();
+    restoreFocus();
     onClose();
+  }
+
+  // Focus returns to the control that opened the dialog. A successful action usually re-renders the
+  // view and replaces that control; then the control with the same name in the new view gets focus,
+  // or failing that the main region — never the page body (A11Y2-001).
+  function attached(node) {
+    for (let n = node; n; n = n.parentNode) if (n === document.body) return true;
+    return false;
+  }
+  function restoreFocus() {
+    let target = opener && attached(opener) ? opener : null;
+    if (!target && openerKey) {
+      target = Array.from(document.querySelectorAll("button, a")).find((n) => (n.getAttribute("aria-label") || n.textContent || "") === openerKey && attached(n)) || null;
+    }
+    if (!target) target = document.getElementById("main");
+    if (target && typeof target.focus === "function") target.focus();
   }
 
   // Excludes controls inside a hidden ancestor, not only hidden controls themselves.

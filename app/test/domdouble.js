@@ -160,6 +160,8 @@ export function installDom() {
   doc.body = new Node(doc, "body");
   doc.documentElement.appendChild(doc.body);
   doc.getElementById = (id) => doc.documentElement.querySelector(`#${id}`);
+  doc.addEventListener = () => {};
+  doc.removeEventListener = () => {};
   doc.querySelector = (s) => doc.documentElement.querySelector(s);
   doc.querySelectorAll = (s) => doc.documentElement.querySelectorAll(s);
   const previous = { document: globalThis.document, raf: globalThis.requestAnimationFrame };

@@ -22,7 +22,16 @@ export function createView(ctx) {
   // THE SAME palette picker as the account menu (BT-011-03), grouped with the day/night control
   // under Appearance as in TaskTracker. Built once and kept in sync, so a save never replaces the
   // control under the person's focus.
-  const palettePicker = createThemePicker({ value: theme.getTheme(), labelledBy: "set-palette-label", onPick: (v) => { theme.setTheme(v); void save({ themePalette: v }); } });
+  // A failed save puts the previous palette back instead of keeping an unsaved one (A11Y2-006).
+  const palettePicker = createThemePicker({
+    value: theme.getTheme(), labelledBy: "set-palette-label",
+    onPick: async (v) => {
+      const prev = theme.getTheme();
+      theme.setTheme(v);
+      const out = await save({ themePalette: v });
+      if (!out.ok) { theme.setTheme(prev); palettePicker.select(prev); announce(`The palette could not be saved. ${messageFor(out.error)}`); }
+    },
+  });
   const paletteSource = el("div", { class: "row" });
   const paletteField = el("div", { class: "field" }, [el("p", { class: "field__label", id: "set-palette-label", text: "Colour palette" }), palettePicker.element, paletteSource]);
   const prefBox = el("div", { class: "form-grid" });
@@ -48,6 +57,7 @@ export function createView(ctx) {
     const out = await store.actions.savePreferences(patch);
     status.textContent = out.ok ? "Saved." : out.error ? messageFor(out.error) : "Could not save.";
     if (out.ok) announce("Preference saved.");
+    return out;
   }
 
   function prefControl(label, key, control, prefs, toValue = (v) => v || null) {
@@ -94,19 +104,24 @@ export function createView(ctx) {
     const focusId = focused ? focused.dataset.category : null;
     const rows = cats.map((c) => {
       const labelId = `set-colour-${c.id}`;
+      // A failed save puts the previous colour back and says so beside the picker (A11Y2-006).
+      const error = el("p", { class: "error-text small", role: "alert", hidden: true });
       const picker = createThemePicker({
         value: personal[c.id] || c.color, entries: colourEntries(data.palette, c.color, personal[c.id]),
         labelledBy: labelId, listLabel: `Colours for ${c.name}`, namePrefix: `${c.name} colour`,
-        onPick: (hex) => { void save({ categoryColors: { ...personal, [c.id]: hex } }); },
+        onPick: async (hex) => {
+          const out = await save({ categoryColors: { ...personal, [c.id]: hex } });
+          if (!out.ok) { picker.select(personal[c.id] || c.color); error.textContent = messageFor(out.error); error.hidden = false; }
+        },
       });
       picker.setDisabled(locked);
       const reset = personal[c.id] && !locked ? button("Use workspace colour", () => {
         const next = { ...personal };
         delete next[c.id];
         void save({ categoryColors: Object.keys(next).length ? next : null });
-      }, { small: true, variant: "ghost", attrs: { "aria-label": `Use the workspace colour for ${c.name}` } }) : null;
+      }, { small: true, variant: "ghost", attrs: { "aria-label": `Use workspace colour for ${c.name}` } }) : null;
       return el("div", { class: "field", dataset: { category: c.id } }, [
-        el("p", { class: "field__label", id: labelId, text: c.name }), picker.element,
+        el("p", { class: "field__label", id: labelId, text: c.name }), picker.element, error,
         el("div", { class: "row" }, [badge(personal[c.id] ? "Your colour" : "Workspace colour", "source"), reset]),
       ]);
     });
@@ -129,7 +144,7 @@ export function createView(ctx) {
     palettePicker.setDisabled(paletteLocked);
     if (prefs.effective.themePalette && palettePicker.getValue() !== prefs.effective.themePalette) palettePicker.select(prefs.effective.themePalette);
     mount(paletteSource, sourceBadge(prefs.sources.themePalette), prefs.sources.themePalette === "personal"
-      ? button("Use inherited", () => save({ themePalette: null }), { small: true, variant: "ghost", attrs: { "aria-label": "Use the inherited colour palette" } }) : null);
+      ? button("Use inherited", () => save({ themePalette: null }), { small: true, variant: "ghost", attrs: { "aria-label": "Use inherited colour palette" } }) : null);
     const signature = JSON.stringify(prefs);
     if (signature === rendered) return;
     rendered = signature;

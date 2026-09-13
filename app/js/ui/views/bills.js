@@ -26,15 +26,36 @@ const DIRECTIONS = [{ value: "expense", label: "Money out" }, { value: "income",
 const defaultDirection = (billType) => (billType === "income" ? "income" : billType === "savings" ? "transfer" : "expense");
 const stamp = (iso) => String(iso || "").replace("T", " ").slice(0, 16);
 
-export function scheduleLabel(s) {
+export function scheduleLabel(s, dateFormat) {
   const day = Number(String(s.startDate).slice(8, 10));
   if (s.freq === "weekly") return s.interval === 1 ? "Weekly" : `Every ${s.interval} weeks`;
-  if (s.freq === "yearly") return s.interval === 1 ? `Yearly on ${s.startDate.slice(5)}` : `Every ${s.interval} years`;
+  if (s.freq === "yearly") return `${s.interval === 1 ? "Yearly" : `Every ${s.interval} years`} (from ${formatDate(s.startDate, dateFormat)})`;
   const every = s.interval === 1 ? "Monthly" : `Every ${s.interval} months`;
   return `${every} on day ${day}`;
 }
 
 function signedAmount(b) { return b.kind === "income" ? b.amount : `-${b.amount}`; }
+
+// Plain-language history lines instead of internal field names (UX2-004).
+function describeBillChange(text, dateFormat) {
+  const [head, ...rest] = String(text).split(" ");
+  const d = (s) => (/^\d{4}-\d{2}-\d{2}$/.test(s || "") ? formatDate(s, dateFormat) : s || "");
+  switch (head) {
+    case "create": return "Added";
+    case "delete": return "Removed";
+    case "name": return "Name changed";
+    case "billType": return "Type changed";
+    case "notes": return "Notes changed";
+    case "reminderDays": return "Due-soon window changed";
+    case "endDate": return "End date changed";
+    case "terms": return `Amount, merchant, category or responsible person changed from ${d(rest[1])}`;
+    case "skip": return `Skipped the payment due ${d(rest[0])}`;
+    case "unskip": return `Undid the skip of ${d(rest[0])}`;
+    case "pause": return rest.length > 2 ? `Paused from ${d(rest[0])} to ${d(rest[2])}` : `Paused from ${d(rest[0])}`;
+    case "resume": return `Resumed from ${d(rest[0])}`;
+    default: return text;
+  }
+}
 
 function amountCell(b, prefs) {
   return el("span", {}, [
@@ -59,13 +80,14 @@ export function createView(ctx) {
   const cards = el("div", { class: "grid grid--cards" });
   const attention = el("div");
   const listBox = el("div");
+  const roleNote = el("p", { class: "muted small" });
   const actions = el("div", { class: "page-head__actions" });
   const element = el("section", {}, [
     el("div", { class: "page-head" }, [el("h1", { text: "Bills" }), actions]),
     el("p", { class: "muted", text: "Bills and income that repeat. Each payment is reviewed before it becomes an entry, and changing a bill never rewrites payments already recorded." }),
     cards,
     el("h2", { class: "section-title", text: "Needs attention" }), attention,
-    el("h2", { class: "section-title", text: "All bills" }), listBox,
+    el("h2", { class: "section-title", text: "All bills" }), roleNote, listBox,
   ]);
   void ctx.store.actions.refreshBills();
 
@@ -80,10 +102,13 @@ export function createView(ctx) {
     const s = stateView(slice, { empty: "No bills yet. Add rent, utilities, subscriptions, insurance, loan payments or income that repeats.", isEmpty: (d) => !d.recurring.length });
     if (s) { mount(cards); mount(attention); mount(listBox, s); return; }
     const { recurring, summary } = slice.data;
+    // Members may record shared bills but only their author or a manager may change them (UX2-015).
+    roleNote.textContent = recurring.some((b) => b.canRecord && !b.canEdit) ? "Only the person who added a bill, or an owner or manager, can change, skip, pause or end it." : "";
     mount(cards,
       card("Overdue", String(summary.overdue), summary.overdue ? "Past due and not yet recorded or skipped." : "Nothing is overdue."),
-      card("Due soon", String(summary.dueSoon), "Within each bill's reminder window."),
-      ...summary.next30Days.map((x) => card(`Next 30 days (${x.currency})`, `Out ${fmt(x.outgoing, x.currency)}`, `In ${fmt(x.incoming, x.currency)}`)),
+      card("Due soon", String(summary.dueSoon), "Within each bill's due-soon window."),
+      // Money in and out carry equal weight (UX2-016).
+      ...summary.next30Days.map((x) => card(`Next 30 days (${x.currency})`, `Out ${fmt(x.outgoing, x.currency)} · In ${fmt(x.incoming, x.currency)}`, "Bills and income due in the next 30 days.")),
     );
 
     const items = [];
@@ -92,15 +117,17 @@ export function createView(ctx) {
       for (const d of b.reminders) items.push({ b, date: d, overdue: false });
     }
     items.sort((x, y) => (x.date === y.date ? 0 : x.date < y.date ? -1 : 1));
-    mount(attention, items.length ? table(["Due", "Bill", "Account", "Amount", "Actions"], items.map(({ b, date, overdue }) => el("tr", {}, [
+    // No empty Actions column for someone who can act on none of these (UX2-013).
+    const anyAction = items.some(({ b }) => b.canRecord || b.canEdit);
+    mount(attention, items.length ? table(["Due", "Bill", "Account", "Amount", ...(anyAction ? ["Actions"] : [])], items.map(({ b, date, overdue }) => el("tr", {}, [
       el("th", { scope: "row", "data-label": "Due" }, [el("span", { text: formatDate(date, eff.dateFormat) }), " ", overdue ? badge("Overdue", "overdue") : badge("Due soon")]),
       el("td", { "data-label": "Bill", text: b.name }),
       el("td", { "data-label": "Account", text: b.accountName }),
       el("td", { "data-label": "Amount", class: "num" }, [amountCell(b, plain)]),
-      el("td", { "data-label": "" }, [el("div", { class: "row-actions" }, [
+      anyAction ? el("td", { "data-label": "" }, [el("div", { class: "row-actions" }, [
         b.canRecord ? button("Review and record", () => void openRecord(ctx, b, date), { small: true, variant: "primary", attrs: { "aria-label": `Review and record ${b.name}, due ${date}` } }) : null,
         b.canEdit ? button("Skip", () => openSkip(ctx, b, date), { small: true, attrs: { "aria-label": `Skip ${b.name}, due ${date}` } }) : null,
-      ])]),
+      ])]) : null,
     ])), "Bills that need attention") : el("div", { class: "state", text: "Nothing needs attention." }));
 
     mount(listBox, table(["Bill", "Account", "Amount", "Schedule", "Next due", "Actions"], recurring.map((b) => el("tr", {}, [
@@ -111,14 +138,16 @@ export function createView(ctx) {
       ].flat()),
       el("td", { "data-label": "Account", text: b.kind === "transfer" ? `${b.accountName} → ${b.toAccountName || ""}` : b.accountName }),
       el("td", { "data-label": "Amount", class: "num" }, [amountCell(b, plain)]),
-      el("td", { "data-label": "Schedule", text: scheduleLabel(b.schedule) }),
+      el("td", { "data-label": "Schedule", text: scheduleLabel(b.schedule, eff.dateFormat) }),
       el("td", { "data-label": "Next due", text: b.ended ? "Ended" : b.nextDue ? formatDate(b.nextDue, eff.dateFormat) : "—" }),
       el("td", { "data-label": "" }, [el("div", { class: "row-actions" }, [
-        b.canRecord && b.nextDue ? button("Record next", () => void openRecord(ctx, b, b.nextDue), { small: true, attrs: { "aria-label": `Review and record the next ${b.name} payment` } }) : null,
+        b.canRecord && b.nextDue ? button("Record next", () => void openRecord(ctx, b, b.nextDue), { small: true, attrs: { "aria-label": `Record next: ${b.name}` } }) : null,
         b.canEdit ? button("Edit", () => openBillEditor(ctx, b), { small: true, attrs: { "aria-label": `Edit ${b.name}` } }) : null,
         b.canEdit ? (b.pausedNow
           ? button("Resume", () => openResume(ctx, b), { small: true, attrs: { "aria-label": `Resume ${b.name}` } })
           : button("Pause", () => openPause(ctx, b), { small: true, attrs: { "aria-label": `Pause ${b.name}` } })) : null,
+        // Ending is explicit and explains that history stays (UX2-007).
+        b.canEdit && !b.ended ? button("End", () => openEnd(ctx, b), { small: true, attrs: { "aria-label": `End ${b.name}` } }) : null,
         button("History", () => openHistory(ctx, b), { small: true, attrs: { "aria-label": `History of ${b.name}` } }),
       ])]),
     ])), "All bills"));
@@ -151,17 +180,23 @@ async function openRecord(ctx, bill, occurrence) {
   const picker = createMerchantPicker({ merchants: choosableMerchants(merchants, account), current: draft.payeeId ? { id: draft.payeeId, name: draft.payeeName } : null });
   const notes = el("textarea", { class: "field__input", maxlength: "5000" });
   const status = select([{ value: "pending", label: "Pending" }, { value: "cleared", label: "Cleared" }], "pending");
-  const where = isTransfer ? `from ${bill.accountName} to ${bill.toAccountName || "another account"}` : `from ${bill.accountName}`;
-  const record = el("button", { type: "button", class: "btn btn--primary", text: "Record payment" });
+  // Income and transfers are described as what they are, not as payments (UX2-001).
+  const income = bill.kind === "income";
+  const words = income
+    ? { amount: "Amount received", date: "Date received", who: "Payer", action: "Record income" }
+    : isTransfer ? { amount: "Amount moved", date: "Date moved", who: "Merchant", action: "Record transfer" }
+      : { amount: "Amount paid", date: "Date paid", who: "Merchant", action: "Record payment" };
+  const where = isTransfer ? `from ${bill.accountName} to ${bill.toAccountName || "another account"}` : income ? `into ${bill.accountName}` : `from ${bill.accountName}`;
+  const record = el("button", { type: "button", class: "btn btn--primary", text: words.action });
   const cancel = button("Cancel", () => modal.close());
   const modal = openModal({
     title: `Record ${bill.name}`,
     body: [
       el("p", { text: `${draft.overdue ? "Overdue: " : ""}due ${formatDate(occurrence, eff.dateFormat)}, ${where}.` }),
       el("div", { class: "form-grid" }, [
-        field(`Amount paid (${draft.currency})`, amount, { help: draft.amountIsEstimate ? `This bill varies; the estimate is ${draft.amount}. Enter the actual amount.` : "Change it if this payment was different." }),
-        field("Date paid", date),
-        isTransfer ? null : el("div", { class: "field" }, [el("label", { class: "field__label", for: picker.input.id, text: "Merchant" }), picker.element]),
+        field(`${words.amount} (${draft.currency})`, amount, { help: draft.amountIsEstimate ? `This varies; the estimate is ${draft.amount}. Enter the actual amount.` : "Change it if this one was different." }),
+        field(words.date, date),
+        isTransfer ? null : el("div", { class: "field" }, [el("label", { class: "field__label", for: picker.input.id, text: words.who }), picker.element]),
         isTransfer ? null : field("Category", category),
         field("Status", status),
         field("Notes", notes, { wide: true }),
@@ -176,7 +211,7 @@ async function openRecord(ctx, bill, occurrence) {
     if (!value) {
       amount.setAttribute("aria-invalid", "true");
       amount.setAttribute("aria-errormessage", modal.errorId);
-      modal.setError("Enter the amount paid.");
+      modal.setError(`Enter the ${words.amount.toLowerCase()}.`);
       amount.focus();
       return;
     }
@@ -197,7 +232,7 @@ async function openRecord(ctx, bill, occurrence) {
 }
 
 // ---- skip, pause, resume ------------------------------------------------------------------------
-function simpleAction(ctx, { title, intro, fields: controls, confirmLabel, action, body }) {
+function simpleAction(ctx, { title, intro, fields: controls, confirmLabel, action, body, done }) {
   const confirm = el("button", { type: "button", class: "btn btn--primary", text: confirmLabel });
   const cancel = button("Cancel", () => modal.close());
   const modal = openModal({ title, body: [el("p", { text: intro }), el("div", { class: "form-grid" }, controls)], actions: [cancel, confirm] });
@@ -207,16 +242,19 @@ function simpleAction(ctx, { title, intro, fields: controls, confirmLabel, actio
     const out = await ctx.store.actions.write((ws) => ctx.api.billAction(ws, action, body()), ["bills"]);
     modal.setBusy(false);
     if (!out.ok) { modal.setError(out.error); return; }
-    announce(`${title.replace(/\?$/, "")} — done.`);
+    announce(done || "Done.");
     modal.close();
   });
 }
 
+const dateFormatOf = (ctx) => ((ctx.store.getState().preferences || {}).effective || {}).dateFormat;
+
 function openSkip(ctx, bill, occurrence) {
   const reason = input({ maxlength: "200", placeholder: "Optional" });
+  const when = formatDate(occurrence, dateFormatOf(ctx));
   simpleAction(ctx, {
-    title: `Skip ${bill.name}?`, intro: `The payment due ${occurrence} will not be expected, forecast or reminded about. You can undo this from the bill's history.`,
-    fields: [field("Reason", reason)], confirmLabel: "Skip this payment", action: "skip",
+    title: `Skip ${bill.name}?`, intro: `The payment due ${when} will not be expected, forecast or shown as due. You can undo this from the bill's history.`,
+    fields: [field("Reason", reason)], confirmLabel: "Skip this payment", action: "skip", done: `${bill.name}: payment due ${when} skipped.`,
     body: () => ({ recurringId: bill.id, occurrence, ...(reason.value.trim() ? { reason: reason.value.trim() } : {}) }),
   });
 }
@@ -227,7 +265,7 @@ function openPause(ctx, bill) {
   const until = input({ type: "date" });
   simpleAction(ctx, {
     title: `Pause ${bill.name}?`, intro: "Payments inside the pause are not expected, forecast or reminded about. Leave the end empty to pause until you resume.",
-    fields: [field("Pause from", from), field("Until (optional)", until)], confirmLabel: "Pause", action: "pause",
+    fields: [field("Pause from", from), field("Until (optional)", until)], confirmLabel: "Pause", action: "pause", done: `${bill.name} paused.`,
     body: () => ({ recurringId: bill.id, from: from.value, ...(until.value ? { until: until.value } : {}) }),
   });
 }
@@ -237,7 +275,7 @@ function openResume(ctx, bill) {
   date.value = todayIso();
   simpleAction(ctx, {
     title: `Resume ${bill.name}?`, intro: "Payments from this date are expected again. The pause stays in the bill's history.",
-    fields: [field("Resume from", date)], confirmLabel: "Resume", action: "resume",
+    fields: [field("Resume from", date)], confirmLabel: "Resume", action: "resume", done: `${bill.name} resumed.`,
     body: () => ({ recurringId: bill.id, date: date.value }),
   });
 }
@@ -267,9 +305,34 @@ function openHistory(ctx, bill) {
       el("h3", { text: "Pauses" }),
       bill.pauses.length ? el("ul", { class: "history-list" }, bill.pauses.map((p) => el("li", { text: `${formatDate(p.from, eff.dateFormat)} to ${p.until ? formatDate(p.until, eff.dateFormat) : "until resumed"}` }))) : el("p", { class: "muted", text: "None." }),
       el("h3", { text: "Changes" }),
-      el("ul", { class: "history-list" }, bill.history.slice().reverse().map((h) => el("li", {}, [el("div", { class: "muted small", text: `${stamp(h.at)} · ${h.by}` }), el("div", { text: h.fields.join(", ") })]))),
+      el("ul", { class: "history-list" }, bill.history.slice().reverse().map((h) => el("li", {}, [el("div", { class: "muted small", text: `${stamp(h.at)} · ${h.by}` }), el("div", { text: h.fields.map((x) => describeBillChange(x, eff.dateFormat)).join("; ") })]))),
     ],
     actions: [close],
+  });
+}
+
+// ---- end a bill (UX2-007) ---------------------------------------------------------------------
+function openEnd(ctx, bill) {
+  const df = dateFormatOf(ctx);
+  const endDate = input({ type: "date" });
+  endDate.value = todayIso();
+  const confirm = el("button", { type: "button", class: "btn btn--primary", text: "End bill" });
+  const modal = openModal({
+    title: `End ${bill.name}?`,
+    body: [
+      el("p", { text: "No payments after this date are expected, forecast or shown as due. The bill, its earlier terms and every payment already recorded stay in the history." }),
+      el("div", { class: "form-grid" }, [field("Last date", endDate)]),
+    ],
+    actions: [button("Cancel", () => modal.close()), confirm],
+  });
+  confirm.addEventListener("click", async () => {
+    modal.setError("");
+    modal.setBusy(true);
+    const out = await ctx.store.actions.write((ws) => ctx.api.updateBill(ws, { recurringId: bill.id, revision: bill.revision, endDate: endDate.value }), ["bills"]);
+    modal.setBusy(false);
+    if (!out.ok) { modal.setError(out.error); return; }
+    announce(`${bill.name} ends on ${formatDate(endDate.value, df)}.`);
+    modal.close();
   });
 }
 
@@ -285,6 +348,7 @@ export function openBillEditor(ctx, bill = null) {
   const categories = ((sliceFor(state, "categories").data || {}).categories || []).filter((c) => !c.archived || (editing && c.id === bill.categoryId));
   let merchants = ((sliceFor(state, "payees").data || {}).payees || []);
   const b = bill || {};
+  const df = ((state.preferences || {}).effective || {}).dateFormat;
 
   const name = input({ maxlength: "80", autocomplete: "off" });
   name.value = b.name || "";
@@ -315,14 +379,19 @@ export function openBillEditor(ctx, bill = null) {
 
   // The responsible person comes from the people selector (members and contacts).
   void ctx.api.people(state.selectedWorkspaceId, "responsible").then((res) => {
-    const options = [{ value: "", label: "Nobody in particular" }].concat((res.options || []).map((o) => ({ value: o.ref, label: `${o.label} (${o.typeLabel})` })));
+    // "(workspace member)" rather than "(Member)", which reads like the role (UX2-014).
+    const kindOf = (o) => (o.type === "member" ? "workspace member" : String(o.typeLabel || "").toLowerCase());
+    const options = [{ value: "", label: "Nobody in particular" }].concat((res.options || []).map((o) => ({ value: o.ref, label: `${o.label} (${kindOf(o)})` })));
     responsible.replaceChildren(...options.map((o) => el("option", { value: o.value, text: o.label })));
     responsible.value = (b.responsible && b.responsible.ref) || "";
   }).catch(() => {});
 
   const transferOnly = el("div", { class: "form-grid", hidden: direction.value !== "transfer" }, [field("To account", toAccount)]);
   const notTransfer = el("div", { class: "form-grid", hidden: direction.value === "transfer" }, [
-    el("div", { class: "field" }, [el("label", { class: "field__label", for: picker.input.id, text: "Merchant" }), picker.element]),
+    el("div", { class: "field" }, [
+      el("label", { class: "field__label", for: picker.input.id, text: "Merchant" }), picker.element,
+      el("p", { class: "field__help", text: "New merchant? Add it on the Merchants tab first." }),
+    ]),
     field("Category", category), field("Responsible person", responsible),
   ]);
   const syncDirection = () => { transferOnly.hidden = direction.value !== "transfer"; notTransfer.hidden = direction.value === "transfer"; };
@@ -337,19 +406,22 @@ export function openBillEditor(ctx, bill = null) {
   });
 
   const scheduleFields = editing
-    ? [el("p", { class: "field--wide muted", text: `${scheduleLabel(b.schedule)}, from ${b.schedule.startDate}. To change how often it repeats, end this bill and add a new one.` }), field("End date (optional)", endDate)]
+    ? [el("p", { class: "field--wide muted", text: `${scheduleLabel(b.schedule, df)}, from ${formatDate(b.schedule.startDate, df)}. To change how often it repeats, end this bill and add a new one.` }), field("End date (optional)", endDate)]
     : [field("Repeats", preset), customBox, field("First payment", startDate), field("End date (optional)", endDate)];
-  const form = el("form", { class: "form-grid", novalidate: true }, [
-    field("Name", name), field("Type", billType), field("Direction", direction),
-    field("Account", account), transferOnly,
+  const locked = editing ? "Can't be changed. End this bill and add a new one." : undefined;
+  const form = el("form", { class: "form-grid", novalidate: true, id: `bill-form-${key}` }, [
+    field("Name", name), field("Type", billType), field("Direction", direction, { help: locked }),
+    field("Account", account, { help: locked }), transferOnly,
     field("Amount", amount), field("Amount is", amountType),
     ...scheduleFields,
     notTransfer,
-    field("Remind me (days before)", reminder),
+    // It decides when a bill shows as due soon; there are no notifications yet (UX2-005).
+    field("Show as due soon (days before)", reminder, { help: "How many days ahead it appears under Due soon." }),
     field("Notes", notes, { wide: true }),
     editing ? field("Changes to amount, merchant, category or responsible person take effect from", effectiveFrom, { help: "Payments already recorded are never changed.", wide: true }) : null,
   ]);
-  const save = el("button", { type: "submit", class: "btn btn--primary", text: editing ? "Save changes" : "Add bill" });
+  // The footer button belongs to the form, so Enter in a field submits it (UX2-006).
+  const save = el("button", { type: "submit", class: "btn btn--primary", text: editing ? "Save changes" : "Add bill", form: `bill-form-${key}` });
   const cancel = button("Cancel", () => modal.close());
   const modal = openModal({ title: editing ? `Edit ${b.name}` : "Add bill", body: [form], actions: [cancel, save] });
   save.addEventListener("click", (e) => { e.preventDefault(); void submit(); });
