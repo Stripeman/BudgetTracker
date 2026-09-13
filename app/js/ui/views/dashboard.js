@@ -5,7 +5,7 @@ import { el, mount } from "../dom.js";
 import { pageHead, stateView, money, accessBadge, button, transferLabel } from "../components.js";
 import { sliceFor } from "../../core/store.js";
 import { ACCOUNT_TYPE_LABELS, formatDate } from "../../core/format.js";
-import { openQuickEntry, canAddEntries, amountWithDirection } from "./transactions.js";
+import { openQuickEntry, canAddEntries, addEntriesBlocked, amountWithDirection } from "./transactions.js";
 import { warningText } from "./planning.js";
 import { formatAmount } from "../../core/format.js";
 import { icon, withIcon } from "../icons.js";
@@ -48,7 +48,7 @@ export function createView(ctx) {
     const txns = sliceFor(state, "transactions");
     mount(actions, canAddEntries(state)
       ? button("Add expense", () => openQuickEntry(ctx), { variant: "primary" })
-      : el("p", { class: "muted small", text: "You can view this workspace but not add entries." }));
+      : addEntriesBlocked(state));
     const accState = stateView(accounts, { empty: "No accounts yet. Add one from Accounts.", isEmpty: (d) => !d.accounts.length });
     if (accState) { mount(totals); mount(accountsBox, accState); } else {
       mount(totals, ...accounts.data.totals.map((t) => {

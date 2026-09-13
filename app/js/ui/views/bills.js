@@ -8,7 +8,7 @@ import { el, mount, announce } from "../dom.js";
 import { stateView, money, button, field, input, select, badge } from "../components.js";
 import { openModal } from "../modal.js";
 import { createMerchantPicker } from "../merchantpicker.js";
-import { choosableMerchants, canAddEntries } from "./transactions.js";
+import { choosableMerchants, canAddEntries, addEntriesBlocked } from "./transactions.js";
 import { sliceFor } from "../../core/store.js";
 import { newIdempotencyKey } from "../../core/api.js";
 import { formatDate, formatAmount, todayIso, BILL_TYPE_LABELS } from "../../core/format.js";
@@ -131,7 +131,7 @@ export function createView(ctx) {
   function update(state) {
     mount(actions, canAddEntries(state)
       ? button("Add bill", () => openBillEditor(ctx), { variant: "primary" })
-      : el("p", { class: "muted small", text: "You can view bills but not add them." }));
+      : addEntriesBlocked(state, "bills"));
     const eff = (state.preferences && state.preferences.effective) || {};
     const plain = { effective: { ...eff, balanceMasking: false } };
     const fmt = (v, c) => formatAmount(v, c, { numberFormat: eff.numberFormat });

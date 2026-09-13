@@ -52,6 +52,21 @@ export function canAddEntries(state) {
   return !!(data && data.accounts.some((a) => !a.deletedAt && a.status !== "closed" && a.capabilities.includes("create")));
 }
 
+// Why entries cannot be added here, said plainly and with the way forward (Terry's preview check,
+// 2026-09-14: a new workspace with no accounts told its owner "You can view this workspace but not
+// add entries"). Only a viewer is told they can only view.
+export function addEntriesBlocked(state, what = "entries") {
+  const ws = (state.workspaces || []).find((w) => w.id === state.selectedWorkspaceId);
+  const data = sliceFor(state, "accounts").data;
+  if (!ws || !data) return null;
+  if (ws.role === "viewer") return el("p", { class: "muted small", text: `You can view this workspace but not add ${what}.` });
+  const open = data.accounts.filter((a) => !a.deletedAt && a.status !== "closed");
+  const text = open.length
+    ? `None of the open accounts here lets you add ${what}. Add your own account first.`
+    : `Add an account first: ${what} are recorded against an account.`;
+  return el("p", { class: "muted small" }, [`${text} `, el("a", { href: "#/accounts", text: "Go to Accounts" })]);
+}
+
 export function createView(ctx) {
   const filters = { ...ctx.params };
   const filterGrid = el("div", { class: "filters" });
@@ -115,7 +130,7 @@ export function createView(ctx) {
     renderFilters(state);
     mount(actions, canAddEntries(state)
       ? button("Add expense", () => openQuickEntry(ctx), { variant: "primary" })
-      : el("p", { class: "muted small", text: "You can view this workspace but not add entries." }));
+      : addEntriesBlocked(state));
     const prefs = state.preferences;
     const effective = (prefs && prefs.effective) || {};
     const txns = sliceFor(state, "transactions");
