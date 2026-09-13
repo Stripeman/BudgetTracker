@@ -23,6 +23,7 @@ const ledger = require('./ledger');
 const { readDocument, stampDocument, CURRENT } = require('./schema');
 const archive = require('./archive');
 const audit = require('./audit');
+const bills = require('./bills');
 
 const invalidData = (detail) => Object.assign(new HttpError(422, 'backup_invalid', `The workspace data failed an integrity check (${detail}). Nothing has been changed.`), { detail });
 const sha256 = (b) => createHash('sha256').update(b).digest('hex');
@@ -69,10 +70,12 @@ function checkInvariants(doc) {
     // A live reversal of a deleted entry (or the reverse) would count only one half (financial review FIN-R2).
     if (Boolean(target.deletedAt) !== Boolean(t.deletedAt)) throw invalidData('reversal deletion state');
   }
-  // A bill occurrence is recorded at most once among live entries (both legs of a transfer count once) (SEC-B6).
+  // A bill occurrence is recorded at most once among live entries (both legs of a transfer count once)
+  // (SEC-B6). A recording cancelled by a live reversal no longer counts, so the occurrence can be
+  // recorded again correctly — the same rule the bills module uses (bills.recordingCounts, FIN-R4).
   const occurrence = new Map();
   for (const t of doc.transactions || []) {
-    if (t.deletedAt || !t.links || !t.links.recurringId || !t.links.occurrence) continue;
+    if (!bills.recordingCounts(t, txById)) continue;
     const key = `${t.links.recurringId}|${t.links.occurrence}`;
     const group = t.transferId || t.id;
     if (occurrence.has(key) && occurrence.get(key) !== group) throw invalidData('bill occurrence recorded twice');

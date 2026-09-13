@@ -100,16 +100,6 @@ function locate(doc, principal, id, now) {
   return { r, a };
 }
 
-// A reversed recording reopens its occurrence (FIN-R4): it is owed again and can be skipped. A new
-// recording beside the reversed one is refused for now, because the backup invariant still counts
-// every live entry for an occurrence (backup.checkInvariants must first skip entries cancelled by a
-// live reversal). Removing this check is the only change needed once it does.
-function refuseReversedRecording(doc, r, occurrence) {
-  if (bills.liveRecordings(doc, r.id, occurrence).length) {
-    throw conflict('The payment recorded for this date was reversed. Recording it again is not available yet; skip this date or ask the workspace owner for help.', 'recording_reversed');
-  }
-}
-
 function requireOccurrence(r, value) {
   const occurrence = fields.date(value, 'Occurrence', { required: true });
   if (!schedule.occurrences(r.schedule, occurrence, occurrence).length) throw badRequest('That date is not an occurrence of this bill.', 'invalid_occurrence');
@@ -211,7 +201,6 @@ async function draft(ctx, req) {
   const occurrence = requireOccurrence(r, query(req, 'occurrence'));
   const status = bills.occurrenceStatus(r, occurrence, bills.recordedSet(doc));
   if (status === 'recorded') throw conflict('This occurrence is already recorded.', 'already_recorded');
-  refuseReversedRecording(doc, r, occurrence);
   const t = bills.termsAt(r, occurrence);
   const payee = t.payeeId && (doc.payees || []).find((p) => p.id === t.payeeId);
   return {
@@ -294,7 +283,6 @@ async function record(ctx, req) {
     if (status === 'recorded') throw conflict('This occurrence is already recorded.', 'already_recorded');
     if (status === 'skipped') throw conflict('This occurrence was skipped. Undo the skip before recording it.', 'skipped');
     if (status === 'paused') throw conflict('This occurrence falls in a pause. Resume the bill before recording it.', 'paused');
-    refuseReversedRecording(doc, r, occurrence);
     const terms = bills.termsAt(r, occurrence);
     if (body.amount === undefined && terms.amountType === 'variable') throw badRequest('This bill varies. Enter the actual amount before recording it.', 'amount_required');
     // Never copy a reference to a category that no longer exists into a new entry (SEC-B1).

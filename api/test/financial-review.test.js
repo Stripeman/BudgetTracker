@@ -132,14 +132,30 @@ describe('FIN-R4 a reversed bill recording reopens the occurrence', () => {
     assert.equal((await forecastOf(h, f.q, 'Joint')).expected.end, '857.60');
     const view = (await h.call('recurring', 'GET', { as: 'alice', query: f.q })).body.recurring.find((r) => r.id === power.id);
     assert.equal(view.nextDue, '2026-09-15');
-    // Recording it again needs the backup invariant to accept a reversed recording beside a new
-    // one (other owner's backup.js); until then it is refused with a specific code.
-    code(await billAct(h, f.q, 'record', { recurringId: power.id, occurrence: '2026-09-15', amount: '60.00' }), 409, 'recording_reversed');
     // Before the fix skipping gave 409 already_recorded.
     ok(await billAct(h, f.q, 'skip', { recurringId: power.id, occurrence: '2026-09-15', reason: 'Paid in cash' }));
     const skipped = await budgetLine(h, f.q);
     assert.deepEqual([skipped.committed, skipped.available], ['0.00', '100.00']);
     await backupOk(h, f.q);
+  });
+
+  test('the occurrence can be recorded again correctly beside the reversed recording, once, and backups succeed', async () => {
+    const h = harness();
+    const f = await household(h);
+    const c = await cats(h, f.q);
+    const power = ok(await bill(h, f.q, { name: 'Power', billType: 'utilities', accountId: f.joint.id, amount: '60.00', schedule: { freq: 'monthly', startDate: '2026-09-15' }, categoryId: c.Utilities }), 201).recurring;
+    ok(await h.call('budgets', 'POST', { as: 'alice', query: f.q, body: { name: 'Utilities', scope: 'shared', currency: 'EUR', startDate: '2026-09-01', lines: [{ categoryId: c.Utilities, amount: '100.00' }] } }), 201);
+    const wrong = ok(await billAct(h, f.q, 'record', { recurringId: power.id, occurrence: '2026-09-15', amount: '600.00' }), 201).transactions[0];
+    await reverse(h, f.q, wrong.id, { reason: 'Typed 600 instead of 60', date: '2026-09-15' });
+    ok(await billAct(h, f.q, 'record', { recurringId: power.id, occurrence: '2026-09-15', amount: '60.00' }), 201);
+    // Spent 600.00 − 600.00 + 60.00 = 60.00; nothing owed; available 100.00 − 60.00 = 40.00.
+    const line = await budgetLine(h, f.q);
+    assert.deepEqual([line.actual, line.committed, line.available], ['60.00', '0.00', '40.00']);
+    // Joint 917.60 − 600.00 + 600.00 − 60.00 = 857.60.
+    assert.equal(await balance(h, f.q, 'Joint'), '857.60');
+    await backupOk(h, f.q);
+    // The correct recording counts, so a third one is refused.
+    code(await billAct(h, f.q, 'record', { recurringId: power.id, occurrence: '2026-09-15', amount: '60.00' }), 409, 'already_recorded');
   });
 
   test('an unreversed recording still counts once', async () => {
