@@ -20,7 +20,18 @@ const FORMAT = 'tiptap';
 const VERSION = 1;
 const LIMITS = Object.freeze({ bytes: 64 * 1024, depth: 12, nodes: 2000, href: 2048 });
 const LINK_REL = 'noopener noreferrer nofollow';
-const CONTROL = /[\u0000-\u001F\u007F]/;
+// Characters refused in text and links: C0 and C1 controls, DEL, zero-width and direction marks,
+// line and paragraph separators, bidirectional embeddings, overrides and isolates, invisible
+// operators and the byte-order mark. They hide or reorder what a reader sees (security review
+// SEC-R8). Listed as code points so this source stays plain text.
+const FORBIDDEN_RANGES = Object.freeze([[0x00, 0x1f], [0x7f, 0x9f], [0x200b, 0x200f], [0x2028, 0x202e], [0x2060, 0x2064], [0x2066, 0x2069], [0xfeff, 0xfeff]]);
+function hasForbiddenChar(s) {
+  for (const ch of s) {
+    const c = ch.codePointAt(0);
+    if (FORBIDDEN_RANGES.some(([a, b]) => c >= a && c <= b)) return true;
+  }
+  return false;
+}
 
 const BLOCK = Object.freeze(['paragraph', 'heading', 'bulletList', 'orderedList', 'taskList', 'blockquote', 'horizontalRule']);
 const INLINE = Object.freeze(['text', 'hardBreak']);
@@ -41,14 +52,16 @@ const NODES = Object.freeze({
   hardBreak: { leaf: true },
 });
 
-// The one link rule, shared with the client renderer: only web and mail links, without control
-// characters or surrounding space.
+// The one link rule, shared with the client renderer: only web and mail links, without surrounding
+// space, without control or invisible characters (refused, not stripped) and without a user name or
+// password, which disguises the real host ("https://bank.example@other.example/", SEC-R8).
 function safeLinkHref(raw) {
   if (typeof raw !== 'string') return null;
-  const cleaned = raw.replace(/[\u0000-\u001F\u007F]/g, '').trim();
-  if (!cleaned || cleaned.length > LIMITS.href) return null;
+  const cleaned = raw.trim();
+  if (!cleaned || cleaned.length > LIMITS.href || hasForbiddenChar(cleaned)) return null;
   let url;
   try { url = new URL(cleaned); } catch { return null; }
+  if (url.username || url.password) return null;
   return ['http:', 'https:', 'mailto:'].includes(url.protocol) ? cleaned : null;
 }
 
@@ -113,7 +126,7 @@ function build(node, allowed, depth, state, field) {
   if (type === 'text') {
     onlyKeys(node, ['type', 'text', 'marks'], field, 'text');
     if (typeof node.text !== 'string' || !node.text) throw invalid(field, 'text must not be empty');
-    if (CONTROL.test(node.text)) throw invalid(field, 'text contains control characters');
+    if (hasForbiddenChar(node.text)) throw invalid(field, 'text contains control characters or invisible formatting characters');
     const marks = marksOf(node.marks, field);
     return marks && marks.length ? { type, text: node.text, marks } : { type, text: node.text };
   }

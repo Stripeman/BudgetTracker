@@ -69,6 +69,22 @@ test('BT-003-03 copyright lines in a vendored bundle banner are the only vendore
   assert.deepEqual(emails(vendored, ['/*', ` * contact ${address}`, ' */'].join('\n')), [2], 'only copyright lines, not any line of the banner');
 });
 
+test('BT-003-03 SEC-R6 the banner exemption covers only addresses, only registered bundles and only a bounded generated banner', () => {
+  // Assembled at runtime so this file never contains a scannable address or card number.
+  const address = 'author' + '@' + 'package-author.dev';
+  const card = '4111 1111 ' + '1111 1111';
+  const banner = (extra = []) => ['/*', ' * GENERATED FILE - DO NOT EDIT BY HAND.', ...extra,
+    ` *     Copyright (C) 2015 by Some Author <${address}>`, ` *     Copyright (C) 2016 card ${card}`, ' */', 'var a=1;'].join('\n');
+  const found = (file, text) => rules(scanContent(file, text));
+  const bundle = 'app/js/vendor/tiptap/tiptap-bundle.js';
+  assert.deepEqual(found(bundle, banner()), ['payment-card-number'], 'card numbers are still found on copyright lines');
+  for (const file of ['docs/app/js/vendor/tiptap/x.js', 'app/js/vendor/other/x.js', 'app/js/vendor/tiptap/nested/x.js']) {
+    assert.ok(found(file, banner()).includes('personal-email'), `${file} is not a registered bundle`);
+  }
+  assert.ok(found(bundle, banner(Array.from({ length: 400 }, () => ' * filler'))).includes('personal-email'), 'a banner that does not close nearby is not a banner');
+  assert.ok(found(bundle, banner().replace('GENERATED FILE', 'NOTICE')).includes('personal-email'), 'only the generator\'s banner');
+});
+
 test('BT-003-03 allows fictional addresses, local emulator strings and non-card numbers', () => {
   const text = [
     'owner@example.com and reviewer@example.org',

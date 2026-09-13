@@ -249,6 +249,9 @@ function assertMemberQuota(doc, member, env) {
   for (const p of doc.payees || []) if (p.ownerSubject === member.subject || p.createdBy === member.subject) bytes += Buffer.byteLength(JSON.stringify(p));
   for (const r of doc.recurring || []) if (own.has(r.accountId) || r.createdBy === member.subject) bytes += Buffer.byteLength(JSON.stringify(r));
   for (const b of doc.budgets || []) if (b.ownerSubject === member.subject) bytes += Buffer.byteLength(JSON.stringify(b));
+  // Records a member's own restores set aside stay in the document for good (BT-001-05), so they
+  // count too; otherwise refill-and-replace cycles could grow the document without bound (SEC-R1).
+  for (const s of doc.superseded || []) if (s.by === member.subject) bytes += Buffer.byteLength(JSON.stringify(s));
   if (bytes > limit) {
     // Nothing is ever deleted (BT-001-05), so the message does not suggest removing records.
     const e = badRequest('You have reached your storage allowance in this workspace. Ask the workspace owner about raising it.', 'member_quota_exceeded');

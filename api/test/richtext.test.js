@@ -99,6 +99,23 @@ describe('BT-011-02 rich text: refused documents', () => {
     assert.equal(richtext.safeLinkHref('ftp://example.com'), null);
   });
 
+  test('SEC-R8 invisible and direction-changing characters are refused in text and links; links carry no user name', () => {
+    const link = (href) => env([p(t('x', [{ type: 'link', attrs: { href } }]))]);
+    // Built from code points so this file stays plain text: right-to-left override, zero-width
+    // space, byte-order mark, C1 next-line, line separator, left-to-right isolate, right-to-left mark.
+    for (const code of [0x202e, 0x200b, 0xfeff, 0x85, 0x2028, 0x2066, 0x200f]) {
+      const ch = String.fromCodePoint(code);
+      refused(env([p(t(`pay${ch}ment`))]), /control characters/);
+      refused(link(`https://example.com/${ch}`), /href/);
+      assert.equal(richtext.safeLinkHref(`https://exa${ch}mple.com`), null, `U+${code.toString(16)} is refused, not stripped`);
+    }
+    refused(link('https://bank.example@evil.example/'), /href/);
+    refused(link('https://user:pass@example.com/'), /href/);
+    // Ordinary accented letters and currency signs are fine.
+    const text = `Caf${String.fromCodePoint(0xe9)} 50 ${String.fromCodePoint(0x20ac)}`;
+    assert.equal(ok(env([p(t(text))])).doc.content[0].content[0].text, text);
+  });
+
   test('limits: depth, parts, size and the field\'s own character limit', () => {
     let deep = p(t('x'));
     for (let i = 0; i < 12; i += 1) deep = { type: 'blockquote', content: [deep] };

@@ -123,4 +123,29 @@ async function mutateUser(ctx, fn) {
 
 const requestHash = (body) => sha256Hex(JSON.stringify(body));
 
-module.exports = { paths, loadWorkspace, mutateWorkspace, ensureUser, mutateUser, newUserDoc, requestHash, MAX_WORKSPACE_BYTES };
+// The document cap for writes that bypass mutateWorkspace (restore execution). A restore cannot
+// be the way around the cap (security review SEC-R1).
+function assertFits(ctx, doc) {
+  if (Buffer.byteLength(JSON.stringify(doc)) > maxBytes(ctx.env)) {
+    throw conflict('This workspace has reached its storage limit, so this restore cannot be written. Nothing was changed.', 'workspace_full');
+  }
+}
+
+// How many active workspaces one person may create (security review SEC-R5): sign-up is open to any
+// Google account, so creation is bounded. Archived workspaces do not count. `BT_MAX_WORKSPACES`
+// may only lower the limit (tests).
+const MAX_WORKSPACES_PER_PERSON = 20;
+async function assertCanCreateWorkspace(ctx) {
+  const configured = Number(ctx.env && ctx.env.BT_MAX_WORKSPACES);
+  const limit = Number.isSafeInteger(configured) && configured > 0 && configured < MAX_WORKSPACES_PER_PERSON ? configured : MAX_WORKSPACES_PER_PERSON;
+  const user = await ensureUser(ctx);
+  let created = 0;
+  for (const id of user.workspaceIds || []) {
+    const { value } = await ctx.storage.getJson(paths.workspace(id));
+    const doc = readDocument('workspace', value);
+    if (doc && doc.createdBy === ctx.principal.subject && doc.status !== 'archived') created += 1;
+  }
+  if (created >= limit) throw conflict(`You can have up to ${limit} active workspaces that you created. Archive one you no longer use to create another.`, 'workspace_limit');
+}
+
+module.exports = { paths, loadWorkspace, mutateWorkspace, ensureUser, mutateUser, newUserDoc, requestHash, assertFits, assertCanCreateWorkspace, MAX_WORKSPACE_BYTES, MAX_WORKSPACES_PER_PERSON };

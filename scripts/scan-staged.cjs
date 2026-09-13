@@ -103,19 +103,33 @@ const isLockfileDeprecation = (file, line) => /(^|[\\/])package-lock\.json$/.tes
 // only files under app/js/vendor/, only lines inside the file's opening generated comment block,
 // and only lines that are a copyright line (" * ... Copyright ..."). An address anywhere else in
 // the bundle, or in any other file, is still refused.
-const isVendoredFile = (file) => /(^|[\\/])app[\\/]js[\\/]vendor[\\/][^\\/]+[\\/][^\\/]+\.js$/.test(file);
+// Narrowed after security review SEC-R6: only a REGISTERED bundle directory at the repository's
+// app/js/vendor (keep in step with VENDORED_BUNDLES in scripts/validate.cjs rule 10), only a banner
+// that starts the file with the generator's "GENERATED FILE" line and closes within
+// BANNER_MAX_LINES, and only the address check is skipped — card, IBAN and secret rules still run.
+const VENDORED_DIRS = ['tiptap'];
+const BANNER_MAX_LINES = 300;
+const isVendoredFile = (file) => {
+  const m = /^app\/js\/vendor\/([^/]+)\/[^/]+\.js$/.exec(file.replace(/\\/g, '/'));
+  return !!m && VENDORED_DIRS.includes(m[1]);
+};
 const isCopyrightLine = (line) => /^\s*\*\s+Copyright\b/i.test(line);
+
+function bannerEndOf(file, lines) {
+  if (!isVendoredFile(file) || !/^\/\*/.test(lines[0] || '') || !/^\s*\*\s+GENERATED FILE\b/.test(lines[1] || '')) return -1;
+  const end = lines.findIndex((l) => l.includes('*/'));
+  return end > 0 && end <= BANNER_MAX_LINES ? end : -1;
+}
 
 function scanContent(file, text) {
   const findings = [];
   const lines = text.split(/\r?\n/);
-  const bannerEnd = isVendoredFile(file) && /^\/\*/.test(lines[0] || '') ? lines.findIndex((l) => l.includes('*/')) : -1;
+  const bannerEnd = bannerEndOf(file, lines);
   lines.forEach((line, index) => {
     const at = index + 1;
     for (const [pattern, rule] of CONTENT_RULES) if (pattern.test(line)) findings.push({ file, line: at, rule });
-    if (isLockfileDeprecation(file, line)) return;
-    if (index < bannerEnd && isCopyrightLine(line)) return;
-    for (const match of line.matchAll(EMAIL)) {
+    const addressExempt = isLockfileDeprecation(file, line) || (index < bannerEnd && isCopyrightLine(line));
+    if (!addressExempt) for (const match of line.matchAll(EMAIL)) {
       if (!EMAIL_ALLOWED.some(allowed => allowed.test(match[0]))) findings.push({ file, line: at, rule: 'personal-email' });
     }
     for (const match of line.matchAll(/\b[3-6]\d{3}(?:[ -]?\d{4}){2}[ -]?\d{1,4}\b/g)) {

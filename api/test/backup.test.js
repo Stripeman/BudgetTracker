@@ -12,6 +12,8 @@ const { harness, household, TEST_KEYS } = require('./helpers');
 const { createMemoryStorage } = require('../_shared/storage');
 const archive = require('../_shared/archive');
 const { runDrill } = require('../../scripts/recovery/drill.cjs');
+const backup = require('../_shared/backup');
+const ledger = require('../_shared/ledger');
 
 const DAY = 24 * 60 * 60 * 1000;
 
@@ -173,11 +175,13 @@ describe('BT-002 replace', () => {
       ['transactions', 'replaced-by-backup', f.grocery.id, 'edited after the backup', id, 'google:g-alice'],
     ].sort());
     assert.deepEqual(doc.restores.map((r) => [r.archiveId, r.mode, r.recoveryPoint, r.setAside]), [[id, 'replace', res.body.recoveryPoint, 2]]);
-    // A second replace keeps what the first one set aside.
+    // A second replace keeps what the first one set aside. (It needs a real change: a replace that
+    // would change nothing is refused, security review SEC-R2.)
+    const extra2 = (await h.call('transactions', 'POST', { as: 'alice', query: f.q, body: { accountId: f.joint.id, kind: 'expense', amount: '1.00' } })).body.transactions[0];
     const pv2 = (await preview(h, f, 'alice', id, 'replace')).body;
     assert.equal((await execute(h, f, 'alice', { archiveId: id, mode: 'replace', expectedEtag: pv2.expectedEtag, confirm: 'REPLACE' })).status, 200);
     const { value: doc2 } = await h.storage.getJson(`workspaces/${f.ws.id}/workspace.json`);
-    assert.equal(doc2.superseded.length, 2);
+    assert.deepEqual(doc2.superseded.map((s) => s.record.id).sort(), [extra.id, f.grocery.id, extra2.id].sort());
     assert.equal(doc2.restores.length, 2);
   });
 
@@ -236,6 +240,8 @@ describe('BT-002 replace', () => {
     const h = harness();
     const f = await household(h);
     const id = await backupNow(h, f);
+    // Something for the replace to do (a replace that would change nothing is refused, SEC-R2).
+    await h.call('transactions', 'POST', { as: 'alice', query: f.q, body: { accountId: f.joint.id, kind: 'expense', amount: '2.00' } });
     const pv = (await preview(h, f, 'alice', id, 'replace')).body;
     // Bob saves an entry at the exact moment the pre-restore archive is being stored.
     const originalPut = h.backupStorage.putBytes;
@@ -308,6 +314,169 @@ describe('BT-002 merge and create-new', () => {
     const stored = (await h.storage.getJson(`workspaces/${nq.workspaceId}/workspace.json`)).value;
     assert.deepEqual(stored.grants, []);
     assert.ok(!JSON.stringify(stored).includes('Fictional Grocer'), 'no other records copied');
+  });
+});
+
+describe('Release review fixes: restores (SEC-R1 to R5, FIN-R2, FIN-R5, FIN-R17)', () => {
+  const archiveCount = async (h) => (await h.backupStorage.list('')).filter((n) => n.endsWith('.btbk')).length;
+  const stored = async (h, f) => (await h.storage.getJson(`workspaces/${f.ws.id}/workspace.json`)).value;
+  const replace = async (h, f, as, id) => {
+    const pv = (await preview(h, f, as, id, 'replace')).body;
+    return execute(h, f, as, { archiveId: id, mode: 'replace', expectedEtag: pv.expectedEtag, confirm: 'REPLACE' });
+  };
+  const spend = (h, f, as, accountId, amount) => h.call('transactions', 'POST', { as, query: f.q, body: { accountId, kind: 'expense', amount } });
+
+  test('SEC-R2 a restore that changes nothing is refused and writes no archive, history or audit entry', async () => {
+    const h = harness();
+    const f = await household(h);
+    const id = await backupNow(h, f);
+    for (const mode of ['merge', 'replace']) {
+      const pv = (await preview(h, f, 'alice', id, mode)).body;
+      const res = await execute(h, f, 'alice', { archiveId: id, mode, expectedEtag: pv.expectedEtag, confirm: 'REPLACE' });
+      assert.equal(res.status, 409, mode);
+      assert.equal(res.body.error.code, 'nothing_to_restore');
+    }
+    assert.equal(await archiveCount(h), 1, 'no recovery point was written');
+    const doc = await stored(h, f);
+    assert.equal((doc.restores || []).length, 0);
+    assert.ok(!doc.audit.some((e) => e.action.startsWith('workspace.restore')));
+  });
+
+  test('SEC-R2 members may restore their own records at most 3 times a day; owners are not limited', async () => {
+    const h = harness();
+    const f = await household(h);
+    const id = await backupNow(h, f);
+    for (let i = 0; i < 3; i += 1) {
+      assert.equal((await spend(h, f, 'bob', f.bobCard.id, '1.00')).status, 201);
+      assert.equal((await replace(h, f, 'bob', id)).status, 200, `restore ${i + 1}`);
+    }
+    await spend(h, f, 'bob', f.bobCard.id, '1.00');
+    const limited = await replace(h, f, 'bob', id);
+    assert.equal(limited.status, 429);
+    assert.equal(limited.body.error.code, 'restore_limit');
+    await spend(h, f, 'alice', f.joint.id, '1.00');
+    assert.equal((await replace(h, f, 'alice', id)).status, 200, 'the owner is not limited');
+    h.clock.advance(DAY + 1000);
+    assert.equal((await replace(h, f, 'bob', id)).status, 200, 'a day later Bob may restore again');
+  });
+
+  test('SEC-R1 records a member\'s own restores set aside count toward their storage allowance', () => {
+    const doc = { accounts: [], transactions: [], payees: [], recurring: [], budgets: [],
+      superseded: [{ id: 'sup_fictional1', collection: 'transactions', by: 'google:g-bob', record: { notes: 'x'.repeat(2000) } }] };
+    const bob = { subject: 'google:g-bob', role: 'member' };
+    const env = { BT_MEMBER_QUOTA_BYTES: '1000' };
+    assert.throws(() => ledger.assertMemberQuota(doc, bob, env), (e) => e.code === 'member_quota_exceeded');
+    doc.superseded[0].by = 'google:g-alice';
+    assert.doesNotThrow(() => ledger.assertMemberQuota(doc, bob, env), 'someone else\'s restore does not count against Bob');
+  });
+
+  test('SEC-R1 a restore cannot take the workspace past its size limit, and is refused before anything is written', async () => {
+    const h = harness();
+    const f = await household(h);
+    const id = await backupNow(h, f);
+    await spend(h, f, 'alice', f.joint.id, '7.00');
+    h.env.BT_WORKSPACE_MAX_BYTES = String(Buffer.byteLength(JSON.stringify(await stored(h, f))) + 40);
+    const before = snapshotFiles(h.storage);
+    const res = await replace(h, f, 'alice', id);
+    assert.equal(res.status, 409);
+    assert.equal(res.body.error.code, 'workspace_full');
+    assert.equal(snapshotFiles(h.storage), before, 'workspace untouched');
+    assert.equal(await archiveCount(h), 1, 'refused before the recovery point');
+  });
+
+  test('SEC-R3 restore history gives archive ids only to managers and to whoever ran that restore; a member\'s restore is audited privately', async () => {
+    const h = harness();
+    const f = await household(h);
+    const id = await backupNow(h, f);
+    const extra = (await spend(h, f, 'alice', f.joint.id, '7.00')).body.transactions[0];
+    const bobExtra = (await spend(h, f, 'bob', f.bobCard.id, '9.00')).body.transactions[0];
+    assert.equal((await replace(h, f, 'alice', id)).status, 200);
+    assert.equal((await replace(h, f, 'bob', id)).status, 200);
+    const hist = async (as) => (await h.call('backups', 'GET', { as, query: { ...f.q, action: 'history' } })).body;
+    const asBob = await hist('bob');
+    const [aliceRun, bobRun] = asBob.restores;
+    assert.deepEqual([aliceRun.archiveId, aliceRun.recoveryPoint], [null, null], 'no archive ids from someone else\'s restore');
+    assert.equal(bobRun.archiveId, id);
+    assert.equal(typeof bobRun.recoveryPoint, 'string');
+    assert.equal(asBob.setAside.find((s) => s.recordId === extra.id).archiveId, null);
+    assert.equal(asBob.setAside.find((s) => s.recordId === bobExtra.id).archiveId, id);
+    const asAlice = await hist('alice');
+    assert.ok(asAlice.restores.every((r) => r.archiveId === id && typeof r.recoveryPoint === 'string'), 'owners may list backups, so they see the ids');
+    const restoreEntries = async (as) => (await h.call('audit', 'GET', { as, query: f.q })).body.entries.filter((e) => e.action === 'workspace.restore-replace').length;
+    assert.equal(await restoreEntries('alice'), 1, 'Bob\'s restore of his private records is not shown to the owner');
+    assert.equal(await restoreEntries('bob'), 2);
+  });
+
+  test('SEC-R4 an owner\'s replace keeps workspace contacts created after the backup', async () => {
+    const h = harness();
+    const f = await household(h);
+    const id = await backupNow(h, f);
+    const c = await h.call('contacts', 'POST', { as: 'alice', body: { scope: 'workspace', workspaceId: f.ws.id, name: 'Fictional Plumber' } });
+    assert.equal(c.status, 201, JSON.stringify(c.body));
+    await spend(h, f, 'alice', f.joint.id, '7.00');
+    assert.equal((await replace(h, f, 'alice', id)).status, 200);
+    const doc = await stored(h, f);
+    assert.ok(doc.contacts.some((x) => x.name === 'Fictional Plumber'), 'still a live contact');
+    assert.ok(!doc.superseded.some((s) => s.collection === 'contacts'));
+  });
+
+  test('SEC-R5 one person may have a bounded number of active workspaces they created', async () => {
+    const h = harness({ env: { BT_MAX_WORKSPACES: '2' } });
+    const create = (name, key) => h.call('workspaces', 'POST', { as: 'eve', body: { name }, headers: key ? { 'idempotency-key': key } : {} });
+    const first = await create('Fictional One', 'fictional-key-0001');
+    assert.equal(first.status, 201);
+    assert.equal((await create('Fictional Two')).status, 201);
+    const third = await create('Fictional Three');
+    assert.equal(third.status, 409);
+    assert.equal(third.body.error.code, 'workspace_limit');
+    const replay = await create('Fictional One', 'fictional-key-0001');
+    assert.equal(replay.status, 201, 'a retried request still replays at the limit');
+    assert.equal(replay.body.workspace.id, first.body.workspace.id);
+    assert.equal((await h.call('workspaces', 'DELETE', { as: 'eve', query: { id: first.body.workspace.id }, body: {} })).status, 200);
+    assert.equal((await create('Fictional Three')).status, 201, 'archived workspaces do not count');
+  });
+
+  test('FIN-R5 a record shared after the backup is neither rolled back nor set aside by the owner\'s replace', async () => {
+    const h = harness();
+    const f = await household(h);
+    const wallet = (await h.call('accounts', 'POST', { as: 'bob', query: f.q, body: { name: 'Bob Wallet', type: 'checking', currency: 'EUR', openingBalance: '300.00' } })).body.account;
+    await spend(h, f, 'bob', wallet.id, '50.00');
+    const id = await backupNow(h, f);
+    const shared = await h.call('accounts', 'PATCH', { as: 'bob', query: f.q, body: { accountId: wallet.id, revision: 1, visibility: 'shared', confirmShare: true } });
+    assert.equal(shared.status, 200, JSON.stringify(shared.body));
+    await spend(h, f, 'alice', f.joint.id, '7.00');
+    const pv = (await preview(h, f, 'alice', id, 'replace')).body;
+    assert.equal(pv.excluded.keptScopeChanged, 2, 'the wallet and its entry stay as they are');
+    assert.equal(pv.changes.remove, 1, 'only Alice\'s new entry leaves the lists');
+    assert.equal((await execute(h, f, 'alice', { archiveId: id, mode: 'replace', expectedEtag: pv.expectedEtag, confirm: 'REPLACE' })).status, 200);
+    const accounts = (await h.call('accounts', 'GET', { as: 'alice', query: f.q })).body.accounts;
+    assert.equal(accounts.find((a) => a.id === wallet.id).balance, '250.00');
+    assert.deepEqual((await stored(h, f)).superseded.map((s) => s.collection), ['transactions']);
+  });
+
+  test('FIN-R17 a blocked restore names the integrity rule the current data already breaks, never a record', async () => {
+    const h = harness();
+    const f = await household(h);
+    const id = await backupNow(h, f);
+    const name = `workspaces/${f.ws.id}/workspace.json`;
+    const { value } = await h.storage.getJson(name);
+    value.transactions.find((t) => t.accountId === f.bobCard.id).amountMinor = 0.5;
+    await h.storage.putJson(name, value);
+    const pv = (await preview(h, f, 'alice', id, 'replace')).body;
+    assert.equal(pv.canExecute, false);
+    assert.match(pv.blockers[0], /already fails an integrity check \(transaction amounts\)/);
+    for (const hidden of ['Bob', 'Secret Jeweller', f.secret.id]) assert.equal(pv.blockers[0].includes(hidden), false, hidden);
+  });
+
+  test('FIN-R2 backups refuse a reversal whose original is deleted, or the other way round', async () => {
+    const h = harness();
+    const f = await household(h);
+    const doc = await stored(h, f);
+    const original = doc.transactions.find((t) => t.id === f.grocery.id);
+    doc.transactions.push({ ...structuredClone(original), id: 'txn_fictionalrev1', amountMinor: -original.amountMinor, links: { reverses: original.id }, splits: [] });
+    assert.doesNotThrow(() => backup.checkInvariants(doc));
+    original.deletedAt = '2026-09-13T10:00:00.000Z';
+    assert.throws(() => backup.checkInvariants(doc), (e) => e.detail === 'reversal deletion state');
   });
 });
 

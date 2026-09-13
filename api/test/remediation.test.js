@@ -237,7 +237,13 @@ describe('security review remediation', () => {
   test('S6 site invitation and on-demand backup policies are enforced; recovery points still happen', async () => {
     const h = harness();
     const f = await household(h);
+    // Something for the merge to bring back: an entry that an earlier replace set aside (a restore
+    // that would change nothing is refused, security review SEC-R2).
+    const before = ok(await h.call('backups', 'POST', { as: 'alice', query: f.q, body: {} }), 201).archive.archiveId;
+    ok(await h.call('transactions', 'POST', { as: 'alice', query: f.q, body: { accountId: f.joint.id, kind: 'expense', amount: '5.00' } }), 201);
     const archiveId = ok(await h.call('backups', 'POST', { as: 'alice', query: f.q, body: {} }), 201).archive.archiveId;
+    const pv0 = ok(await h.call('restore', 'POST', { as: 'alice', query: { action: 'preview' }, body: { workspaceId: f.ws.id, archiveId: before, mode: 'replace' } }));
+    ok(await h.call('restore', 'POST', { as: 'alice', query: { action: 'execute' }, body: { workspaceId: f.ws.id, archiveId: before, mode: 'replace', expectedEtag: pv0.expectedEtag, confirm: 'REPLACE' } }));
     ok(await h.call('site-settings', 'PUT', { as: 'dave', body: { invitationPolicy: 'owners-only', backupPolicy: { onDemand: false } } }));
     ok(await h.call('members', 'PATCH', { as: 'alice', query: f.q, body: { memberId: f.memberId('Bob'), role: 'manager' } }));
     assert.equal((await h.call('invitations', 'POST', { as: 'bob', query: f.q, body: { email: 'new@example.com', role: 'viewer' } })).status, 403);

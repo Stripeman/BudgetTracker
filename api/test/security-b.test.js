@@ -25,6 +25,8 @@ describe('SEC-B1 restores and bills never leave dangling references', () => {
     const archiveId = ok(await h.call('backups', 'POST', { as: 'alice', query: f.q, body: {} }), 201).archive.archiveId;
     const vet = ok(await h.call('categories', 'POST', { as: 'alice', query: f.q, body: { name: 'Vet bills' } }), 201).category;
     const b = ok(await bill(h, f.q, 'bob', { name: 'Vet plan', accountId: f.bobCard.id, amount: '20.00', schedule: monthly('2026-09-20'), categoryId: vet.id }), 201).recurring;
+    // Something in Alice's scope for the replace to do (a no-change restore is refused, SEC-R2).
+    ok(await h.call('transactions', 'POST', { as: 'alice', query: f.q, body: { accountId: f.joint.id, kind: 'expense', amount: '5.00' } }), 201);
     ok(await replaceRestore(h, f, archiveId));
     assert.ok(ok(await h.call('categories', 'GET', { as: 'alice', query: f.q })).categories.some((c) => c.id === vet.id), 'the category is kept');
     ok(await act(h, f.q, 'bob', 'record', { recurringId: b.id, occurrence: '2026-09-20' }), 201);

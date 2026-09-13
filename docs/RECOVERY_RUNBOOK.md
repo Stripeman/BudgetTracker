@@ -65,7 +65,16 @@ Backup master keys live only in the app's settings, so losing the app or mis-edi
 1. Choose the archive. Run **preview** with the intended mode. Review the counts, totals for your accounts, exclusions and blockers. The preview changes nothing.
 2. `merge` adds missing records and skips conflicts. `create-new` makes a new workspace with you as sole owner. `replace` rolls your scope back to the archive.
 3. For replace, confirm with `REPLACE`. A recovery point is written first. If the document write fails or the workspace changed, nothing changes, and you can preview and execute again.
-4. If the preview shows a blocker (for example, a transfer linked to another member's private account), escalate to a recovery operator.
+4. If the preview shows a blocker (for example, a transfer linked to another member's private account, or current data that already fails an integrity rule, which the blocker names), escalate to a recovery operator.
+
+Limits (security and financial release review, 2026-09-13):
+- A merge or replace that would change nothing is refused (`nothing_to_restore`) and writes nothing — no recovery point, history or audit entry.
+- Members below manager may run at most 3 restores a day per workspace (`restore_limit`, 429); owners and managers are not limited. Each restore writes a full recovery point.
+- Recovery points are written even when the site administrator has switched off on-demand backups: they are the restore's own safety net.
+- A restore may not take the workspace past its size limit (`workspace_full`), and records a member's restores set aside count toward that member's storage allowance. Both are checked before anything is written.
+- Replace keeps categories, merchants and contacts that are not in the backup (other records may refer to them), and leaves unchanged any record the backup holds outside your scope — for example a private account shared after the backup.
+- Restore history shows backup and recovery-point ids only to owners, managers and the person who ran that restore. A restore by anyone but an owner is recorded in the activity log for that person only.
+- A new workspace from a backup counts toward the person's limit of 20 active workspaces they created.
 
 ## Service-level recovery drill (recovery operator only)
 

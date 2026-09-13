@@ -89,14 +89,18 @@ async function history(ctx, req) {
     if (s.collection === 'transactions') return { date: r.date, amount: money.toDecimal(r.amountMinor, r.currency), currency: r.currency };
     return { name: r.name || '' };
   };
+  // Archive ids only for people who may list backups, or for the person who ran that restore: a
+  // member cannot list backups, so history must not become their list (security review SEC-R3).
+  const seesArchives = roleAtLeast(member.role, 'manager');
+  const archiveOf = (by, id) => (seesArchives || by === subject ? id || null : null);
   return {
     body: {
       restores: (doc.restores || []).map((r) => ({
-        archiveId: r.archiveId, mode: r.mode, at: r.at, by: nameOf(r.by), recoveryPoint: r.recoveryPoint || null,
+        archiveId: archiveOf(r.by, r.archiveId), mode: r.mode, at: r.at, by: nameOf(r.by), recoveryPoint: archiveOf(r.by, r.recoveryPoint),
         setAside: r.by === subject ? r.setAside : null,
       })),
       setAside: (doc.superseded || []).filter(visible).map((s) => ({
-        id: s.id, collection: s.collection, reason: s.reason, archiveId: s.archiveId, at: s.at, by: nameOf(s.by), recordId: (s.record || {}).id, summary: summary(s),
+        id: s.id, collection: s.collection, reason: s.reason, archiveId: archiveOf(s.by, s.archiveId), at: s.at, by: nameOf(s.by), recordId: (s.record || {}).id, summary: summary(s),
       })),
     },
   };

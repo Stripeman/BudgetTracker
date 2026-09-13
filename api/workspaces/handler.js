@@ -57,6 +57,9 @@ async function create(ctx, req) {
   const key = header(req, 'idempotency-key');
   if (key !== null && !isIdempotencyKey(key)) throw badRequest('The Idempotency-Key header is not valid.', 'invalid_idempotency_key');
 
+  // A retried request replays its first result even at the limit; a new one is bounded (SEC-R5).
+  const existing = await store.ensureUser(ctx);
+  if (!(key && existing.idempotency && existing.idempotency[`ws|${key}`])) await store.assertCanCreateWorkspace(ctx);
   // Reserve the id in the creator's own document first, so a retried request with the same key
   // converges on one workspace instead of creating two.
   const wsId = await store.mutateUser(ctx, (user) => {

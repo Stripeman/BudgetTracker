@@ -30,3 +30,9 @@ jobs:
       - run: npm ci --prefix api --no-audit --no-fund
       - run: npm test
       - run: npm run validate
+      # The vendored editor bundle must be byte-for-byte what its committed generator builds from the
+      # exact pins (security review SEC-R7). Scripts are skipped: esbuild ships its binary as an
+      # optional dependency, and nothing else here needs an install script.
+      - run: npm ci --ignore-scripts --no-audit --no-fund
+      - run: npm run vendor:tiptap
+      - run: git diff --exit-code -- app/js/vendor
