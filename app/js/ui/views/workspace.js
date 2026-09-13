@@ -3,7 +3,7 @@
 // confirmation, last successful backup shown), and recent activity in plain language. Every
 // control is presentation; the server enforces.
 import { el, mount, announce } from "../dom.js";
-import { pageHead, stateView, field, input, select, button, badge, commitOnConfirm, categoryLabel } from "../components.js";
+import { pageHead, stateView, field, input, pickerSelect, controlElement, button, badge, commitOnConfirm, categoryLabel } from "../components.js";
 import { createThemePicker } from "../themepicker.js";
 import { colourEntries } from "../../core/categories.js";
 import { openModal, confirmModal } from "../modal.js";
@@ -88,7 +88,8 @@ export function createView(ctx) {
       return;
     }
     const email = input({ type: "email", placeholder: "person@example.com", autocomplete: "off" });
-    const roleSel = select(ROLES.filter((r) => role === "owner" || r.value !== "owner"), "member");
+    // The dropdowns on this page are TaskTracker's command picker (BT-004-05).
+    const roleSel = pickerSelect(ROLES.filter((r) => role === "owner" || r.value !== "owner"), "member", {}, { search: false });
     const result = el("div", { "aria-live": "polite" });
     const pending = el("div");
     const send = button("Create invitation", async () => {
@@ -331,6 +332,8 @@ export function createView(ctx) {
 
   let loaded = false;
   let lastMembers = null;
+  // Each member's role and allowance pickers, by member, so focus can follow a re-render.
+  let memberControls = {};
   function update(state) {
     renderColours(state);
     renderTypes(state);
@@ -339,12 +342,19 @@ export function createView(ctx) {
     if (s) { mount(membersBox, s); return; }
     const role = me().role;
     const owners = members.data.members.filter((m) => m.role === "owner").length;
+    // A change re-renders the list; the member control that had focus gets it back on its new picker
+    // instead of focus leaving the page with the old one (A11Y2-001's rule; BT-004-05).
+    const active = document.activeElement;
+    const focusKey = Object.keys(memberControls).find((k) => controlElement(memberControls[k]).contains(active)) || null;
+    memberControls = {};
     mount(membersBox, el("ul", { class: "stack" }, members.data.members.map((m) => {
       const soleOwner = m.role === "owner" && owners <= 1;
       let roleControl;
       if (role === "owner" && !soleOwner) {
         // Commits only on an explicit choice (A11Y-002), and making someone an owner asks first.
-        roleControl = select(ROLES, m.role, { "aria-label": `Role for ${m.name}` });
+        // Named by its aria-label ("Role for Bob"), since it sits in the row without a field label.
+        roleControl = pickerSelect(ROLES, m.role, { "aria-label": `Role for ${m.name}` }, { search: false });
+        memberControls[`${m.id}:role`] = roleControl;
         const change = async (value) => {
           const out = await store.actions.write((ws) => api.request("members", { method: "PATCH", query: { workspaceId: ws }, body: { memberId: m.id, role: value } }), ["members"]);
           if (!out.ok) { committer.reset(m.role); announce(messageFor(out.error)); } else announce(`${m.name} is now ${ROLE_LABEL[value]}.`);
@@ -369,7 +379,8 @@ export function createView(ctx) {
       if (role === "owner" && m.role !== "owner" && m.allowanceBytes) {
         const steps = ALLOWANCE_MB.map((v) => ({ value: String(v), label: `${v} MB` }));
         const current = m.allowanceBytes % MB === 0 && ALLOWANCE_MB.includes(m.allowanceBytes / MB) ? String(m.allowanceBytes / MB) : "";
-        allowanceControl = select(current ? steps : [{ value: "", label: sizeLabel(m.allowanceBytes) }, ...steps], current, { "aria-label": `Storage allowance for ${m.name}` });
+        allowanceControl = pickerSelect(current ? steps : [{ value: "", label: sizeLabel(m.allowanceBytes) }, ...steps], current, { "aria-label": `Storage allowance for ${m.name}` }, { search: false });
+        memberControls[`${m.id}:allowance`] = allowanceControl;
         const allowanceCommit = commitOnConfirm(allowanceControl, async (value) => {
           if (!value) return;
           const out = await store.actions.write((ws) => api.request("members", { method: "PATCH", query: { workspaceId: ws }, body: { memberId: m.id, allowanceMb: Number(value) } }), ["members"]);
@@ -390,9 +401,11 @@ export function createView(ctx) {
       return el("li", { class: "row" }, [
         el("strong", { text: m.name }), m.self ? badge("you") : null, m.email ? el("span", { class: "muted small", text: m.email }) : null,
         // A visible label: two unlabelled dropdowns side by side read as one choice (preview check, 2026-09-14).
-        el("span", { class: "app__spacer" }), usage, allowanceControl ? el("label", { class: "row small" }, [el("span", { class: "muted", text: "Storage" }), allowanceControl]) : null, roleControl, remove,
+        el("span", { class: "app__spacer" }), usage, allowanceControl ? el("label", { class: "row small" }, [el("span", { class: "muted", text: "Storage" }), controlElement(allowanceControl)]) : null, controlElement(roleControl), remove,
       ]);
     })));
+    // An enhanced select's focus() lands on its trigger.
+    if (focusKey && memberControls[focusKey]) memberControls[focusKey].focus();
     if (!loaded) { loaded = true; void loadInvites(); void loadBackups(); void loadAudit(); void loadHistory(); }
     // A removal, role change or rejoin changes the members list; the former members reload with it.
     if (members.data !== lastMembers) { lastMembers = members.data; void loadFormer(); }
@@ -401,11 +414,11 @@ export function createView(ctx) {
 }
 
 function openRestore(ctx, wsId, archive) {
-  const mode = select([
+  const mode = pickerSelect([
     { value: "merge", label: "Merge — add missing records, keep current ones" },
     { value: "create-new", label: "Create a new workspace from this backup" },
     { value: "replace", label: "Replace — roll my records back to this backup" },
-  ], "merge");
+  ], "merge", {}, { search: false });
   const summary = el("div", { "aria-live": "polite" });
   // Restore stays unavailable until a preview has shown what would change; say so instead of
   // leaving a disabled button unexplained (Terry's preview check, 2026-09-13).

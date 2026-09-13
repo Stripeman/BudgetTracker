@@ -6,11 +6,12 @@
 import { test, describe, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import { installDom, DomEvent } from "./domdouble.js";
-import { nativeDropdowns, pickerLabels, pickerNamed, chooseOption, chooseByKeyboard, triggerFor } from "./pickerassert.js";
+import { nativeDropdowns, pickerLabels, pickerNamed, pickerSpokenAs, chooseOption, chooseByKeyboard, offeredOptions, triggerFor } from "./pickerassert.js";
 import { openNewWorkspace, createOnboarding } from "../js/ui/views/landing.js";
 import { createView as createAccounts } from "../js/ui/views/accounts.js";
 import { createView as createMerchants, openMerchantEditor } from "../js/ui/views/payees.js";
 import { createView as createSettings } from "../js/ui/views/settings.js";
+import { createView as createWorkspace } from "../js/ui/views/workspace.js";
 
 let dom;
 beforeEach(() => { dom = installDom(); });
@@ -291,5 +292,116 @@ describe("BT-004-05 My settings: display preferences", () => {
     view.update(state);
     assert.equal(triggerFor(pickerNamed(view.element, "Number format")).disabled, true);
     assert.equal(triggerFor(pickerNamed(view.element, "Date format")).disabled, false);
+  });
+});
+
+function workspaceCtx() {
+  const MB = 1024 * 1024;
+  const calls = { invites: [], patches: [], previews: [] };
+  const ready = (data) => ({ workspaceId: "ws_1", status: "ready", error: null, data });
+  const state = {
+    selectedWorkspaceId: "ws_1",
+    workspaces: [{ id: "ws_1", name: "Fictional household", role: "owner" }],
+    preferences: null,
+    members: ready({ members: [
+      { id: "m_alice", name: "Alice Fictional", role: "owner", self: true, email: "alice@example.com", allowanceBytes: 12 * MB, usedBytes: 1024 },
+      { id: "m_bob", name: "Bob Fictional", role: "member", email: "bob@example.com", allowanceBytes: 4 * MB },
+    ] }),
+    categories: ready({ categories: [], palette: [] }),
+    icons: ready({ typeIcons: {}, canEditTypeIcons: false, catalog: null }),
+  };
+  const api = {
+    invite: async (ws, body) => { calls.invites.push(body); return { token: "fictional-token", accessPreview: { summary: "Fictional access summary." } }; },
+    invitations: async () => ({ invitations: [] }),
+    backups: async () => ({ archives: [{ archiveId: "arc_1", createdAt: "2026-09-13T10:00:00Z", reason: "manual", createdBySelf: true }], policy: "Fictional backup policy." }),
+    audit: async () => ({ entries: [] }),
+    request: async (name, opts = {}) => {
+      if (name === "members" && opts.method === "PATCH") { calls.patches.push(opts.body); return {}; }
+      if (name === "members") return { former: [] };
+      if (name === "workspaces") return { workspace: { history: [], lifecycle: [] } };
+      return {};
+    },
+    previewRestore: async (body) => {
+      calls.previews.push(body);
+      return { canExecute: true, expectedEtag: "etag-1", scope: { accounts: 1, transactions: 2 }, changes: { add: 0, update: 0, remove: 0 },
+        excluded: { setAside: 0, conflictsSkipped: 0, deletedRestored: 0, otherMembersPrivateRecords: false }, nothingToRestore: false,
+        totalsAfter: [], permissions: "Fictional permissions note.", warnings: [], blockers: [] };
+    },
+  };
+  const store = { getState: () => state, actions: { write: async (fn) => { await fn("ws_1"); return { ok: true }; } } };
+  return { ctx: { api, store }, state, calls };
+}
+
+async function openWorkspacePage() {
+  const { ctx, state, calls } = workspaceCtx();
+  const view = createWorkspace(ctx);
+  dom.body.appendChild(view.element);
+  view.update(state);
+  for (let i = 0; i < 4; i += 1) await tick();
+  return { view, state, calls };
+}
+
+describe("BT-004-05 workspace: invitations, members and restore", () => {
+  test("invite: the role is a short picker, and the invitation carries the role chosen", async () => {
+    const { view, calls } = await openWorkspacePage();
+    const role = pickerNamed(view.element, "Role");
+    assert.equal(spoken(role), "Role: Member. Choose.");
+    assert.deepEqual(offeredOptions(role), ["Viewer", "Member", "Manager", "Owner"]);
+    chooseOption(role, "Manager");
+    view.element.querySelector('input[type="email"]').value = "dana@example.com";
+    buttonNamed(view.element, "Create invitation").click();
+    await tick();
+    assert.deepEqual(calls.invites, [{ email: "dana@example.com", role: "manager" }]);
+  });
+
+  test("a member's role and storage allowance are pickers in the row, named for the member; each choice saves once and making an owner asks first", async () => {
+    const { view, calls } = await openWorkspacePage();
+    assert.deepEqual(nativeDropdowns(view.element), []);
+    const role = pickerSpokenAs(view.element, "Role for Bob Fictional");
+    const allowance = pickerSpokenAs(view.element, "Storage allowance for Bob Fictional");
+    assert.equal(spoken(role), "Role for Bob Fictional: Member. Choose.");
+    assert.equal(spoken(allowance), "Storage allowance for Bob Fictional: 4 MB. Choose.");
+    chooseOption(allowance, "8 MB");
+    await tick();
+    assert.deepEqual(calls.patches, [{ memberId: "m_bob", allowanceMb: 8 }]);
+    chooseOption(role, "Viewer");
+    await tick();
+    assert.deepEqual(calls.patches, [{ memberId: "m_bob", allowanceMb: 8 }, { memberId: "m_bob", role: "viewer" }]);
+    chooseOption(role, "Owner");
+    await tick();
+    assert.equal(calls.patches.length, 2, "a promotion to owner waits for confirmation");
+    assert.match(dom.body.querySelector(".modal").textContent, /Make Bob Fictional an owner\?/);
+    assert.equal(spoken(role), "Role for Bob Fictional: Member. Choose.", "the current role is shown until it is confirmed");
+  });
+
+  test("after a change re-renders the members, focus is on the same member's same control", async () => {
+    const { view, state } = await openWorkspacePage();
+    // The allowance, not the role: the row has two pickers, and focus must return to the one used.
+    const allowance = pickerSpokenAs(view.element, "Storage allowance for Bob Fictional");
+    chooseByKeyboard(allowance, { keys: ["End"] });
+    await tick();
+    assert.ok(document.activeElement === triggerFor(allowance), "the picker gave focus back to its trigger");
+    state.members = { ...state.members, data: { members: state.members.data.members.map((m) => (m.id === "m_bob" ? { ...m, allowanceBytes: 12 * 1024 * 1024 } : m)) } };
+    view.update(state);
+    const rebuilt = pickerSpokenAs(view.element, "Storage allowance for Bob Fictional");
+    assert.ok(rebuilt !== allowance, "rebuilt");
+    assert.equal(spoken(rebuilt), "Storage allowance for Bob Fictional: 12 MB. Choose.");
+    assert.ok(document.activeElement === triggerFor(rebuilt), "focus followed the member's allowance to its new picker");
+    assert.ok(document.activeElement !== triggerFor(pickerSpokenAs(view.element, "Role for Bob Fictional")), "not to the role beside it");
+  });
+
+  test("restore: what should happen is a short picker, and the preview asks for the mode chosen", async () => {
+    const { view, calls } = await openWorkspacePage();
+    view.element.querySelectorAll("button").find((b) => b.getAttribute("aria-label") === "Restore from 2026-09-13 10:00").click();
+    const dialog = dom.body.querySelector(".modal");
+    assert.deepEqual(nativeDropdowns(dialog), []);
+    const mode = pickerNamed(dialog, "What should happen");
+    assert.equal(spoken(mode), "What should happen: Merge — add missing records, keep current ones. Choose.");
+    const deletedRow = dialog.querySelector('input[type="checkbox"]').parentNode;
+    chooseOption(mode, "Replace — roll my records back to this backup");
+    assert.equal(deletedRow.hidden, true, "the merge-only option leaves with Merge");
+    buttonNamed(dialog, "Preview").click();
+    await tick();
+    assert.deepEqual(calls.previews.map((b) => b.mode), ["replace"]);
   });
 });

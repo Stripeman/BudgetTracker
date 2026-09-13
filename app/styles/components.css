@@ -394,6 +394,9 @@ fieldset.budget-line { margin: 0; padding: var(--space-3); border: 1px solid var
    least as wide as its trigger (--pop-min-width) and option names wrap rather than being cut off; a
    disabled trigger inside a form field looks like a disabled input beside it. */
 .cmdpick { position: relative; display: block; min-width: 0; }
+/* Placed inline in a list row (a member's role or storage allowance) rather than in a field: wide
+   enough for its value, never squeezed to nothing by the row. */
+.row .cmdpick { flex: 0 1 auto; min-width: 8.5rem; }
 .cmdpick__native {
   position: absolute;
   width: 1px; height: 1px; min-height: 0;

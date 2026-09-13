@@ -38,6 +38,14 @@ export function pickerNamed(root, text) {
   return hit;
 }
 
+// The select whose picker's spoken name starts with `prefix` — for a picker placed in a list row
+// without a field label (named by its own aria-label, "Role for Bob Fictional").
+export function pickerSpokenAs(root, prefix) {
+  const hit = root.querySelectorAll("select").find((s) => pickerOf(s) && String(pickerOf(s).trigger.getAttribute("aria-label")).startsWith(prefix));
+  if (!hit) throw new Error(`no picker spoken as ${JSON.stringify(prefix)}; have ${JSON.stringify(pickerLabels(root))}`);
+  return hit;
+}
+
 const panel = (doc) => doc.body.querySelector(".cmdpick__panel");
 
 // Opens the picker, presses the row whose visible name is `optionLabel` (as a pointer would) and
