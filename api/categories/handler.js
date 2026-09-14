@@ -10,8 +10,11 @@
 // Every change keeps its before and after values, author and time.
 const { readBody, query, badRequest, forbidden, notFound } = require('../_shared/http');
 const { newId, requireId } = require('../_shared/ids');
-const { roleAtLeast } = require('../_shared/authz');
 const store = require('../_shared/store');
+const workspaceSettings = require('../_shared/workspace-settings');
+// The category list is a shared list: managers and owners maintain it, or members too when the
+// workspace setting "Who manages shared lists" says so (Terry, 2026-09-14). Never viewers.
+const mayManage = (doc, member) => workspaceSettings.managesSharedLists(doc, member);
 const fields = require('../_shared/fields');
 const audit = require('../_shared/audit');
 const colors = require('../_shared/colors');
@@ -53,7 +56,7 @@ async function create(ctx, req) {
   const body = fields.onlyKeys(readBody(req), ['name', 'type', 'parentId', 'color', 'icon']);
   const catalog = await catalogFor(ctx, body);
   const { result } = await store.mutateWorkspace(ctx, wsId, (doc, member) => {
-    if (!roleAtLeast(member.role, 'manager')) throw forbidden('Only owners and managers can change categories.');
+    if (!mayManage(doc, member)) throw forbidden('Only owners and managers can change categories in this workspace.');
     const nowIso = ctx.nowIso();
     const id = newId('cat');
     const name = fields.text(body.name, { field: 'Name', max: 60, required: true });
@@ -77,7 +80,7 @@ async function patch(ctx, req) {
   const id = requireId(body.categoryId, 'categoryId');
   const catalog = await catalogFor(ctx, body);
   const { result } = await store.mutateWorkspace(ctx, wsId, (doc, member) => {
-    if (!roleAtLeast(member.role, 'manager')) throw forbidden('Only owners and managers can change categories.');
+    if (!mayManage(doc, member)) throw forbidden('Only owners and managers can change categories in this workspace.');
     const c = (doc.categories || []).find((x) => x.id === id);
     if (!c) throw notFound('Unknown category.');
     // A category created before icons existed gets its default pinned now, so a rename keeps it.

@@ -438,7 +438,9 @@ export function openBillEditor(ctx, bill = null) {
   // People are searched; the list is filled below, and the picker follows the new options.
   const responsible = pickerSelect([{ value: "", label: "Nobody in particular" }], "");
   const reminder = input({ type: "number", min: "0", max: "60" });
-  reminder.value = String(b.reminderDays === undefined ? 3 : b.reminderDays);
+  // A new bill starts with the workspace's due-soon default (workspace settings; 3 unless changed).
+  const wsDefault = (((state.workspaces || []).find((w) => w.id === state.selectedWorkspaceId) || {}).settingValues || {}).billReminderDays;
+  reminder.value = String(b.reminderDays === undefined ? (Number.isInteger(wsDefault) ? wsDefault : 3) : b.reminderDays);
   const notes = el("textarea", { class: "field__input", maxlength: "2000", text: b.notes || "" });
   const effectiveFrom = input({ type: "date" });
   effectiveFrom.value = b.nextDue || todayIso();

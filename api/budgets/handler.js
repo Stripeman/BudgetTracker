@@ -16,6 +16,7 @@ const audit = require('../_shared/audit');
 const budgeting = require('../_shared/budgeting');
 const ledger = require('../_shared/ledger');
 const icons = require('../_shared/icons');
+const workspaceSettings = require('../_shared/workspace-settings');
 
 const PERIODS = ['monthly', 'weekly', 'biweekly'];
 // The icon catalogue is read only when an icon is being chosen (BT-011-05).
@@ -33,8 +34,10 @@ function recordHistory(b, by, at, changes, reason = '') {
   if (!changes.length) return;
   b.history = [...(b.history || []), { at, by, changes, reason }];
 }
-function mayEdit(budget, member) {
-  return budget.scope === 'shared' ? roleAtLeast(member.role, 'manager') : budget.ownerSubject === member.subject;
+// A shared budget: whoever manages the workspace's shared lists (workspace setting, Terry 2026-09-14);
+// a private budget: its owner only.
+function mayEdit(doc, budget, member) {
+  return budget.scope === 'shared' ? workspaceSettings.managesSharedLists(doc, member) : budget.ownerSubject === member.subject;
 }
 
 function validLines(lines, currency, doc) {
@@ -61,7 +64,7 @@ function view(doc, budget, member, today, now) {
   return {
     id: budget.id, name: budget.name, scope: budget.scope, currency: budget.currency, period: terms.period, startDate: terms.startDate,
     ...icons.effective('budget', budget, doc),
-    revision: budget.revision, ownedBySelf: budget.ownerSubject === member.subject, canEdit: mayEdit(budget, member),
+    revision: budget.revision, ownedBySelf: budget.ownerSubject === member.subject, canEdit: mayEdit(doc, budget, member),
     archived: !!budget.deletedAt, archivedAt: budget.deletedAt || null, archiveReason: budget.archiveReason || '',
     history: (budget.history || []).map((h) => ({ at: h.at, by: names.get(h.by) || 'Former member', changes: h.changes, reason: h.reason || '' })),
     lines: terms.lines.map(lineView),
@@ -85,14 +88,18 @@ async function create(ctx, req) {
   const catalog = await catalogFor(ctx, body);
   const { result } = await store.mutateWorkspace(ctx, wsId, (doc, member) => {
     const scope = fields.oneOf(body.scope, ['shared', 'private'], 'Scope', 'private');
-    if (scope === 'shared' && !roleAtLeast(member.role, 'manager')) throw forbidden('Only owners and managers can create shared budgets.');
+    if (scope === 'shared' && !workspaceSettings.managesSharedLists(doc, member)) throw forbidden(member.role === 'viewer' ? 'Viewers cannot create shared budgets.' : 'Only owners and managers can create shared budgets in this workspace.');
     const currency = body.currency || (doc.settings && doc.settings.reportingCurrency) || 'EUR';
     money.precisionOf(currency);
     const nowIso = ctx.nowIso();
+    // The workspace's budget period and week start are the defaults for a new budget (workspace
+    // settings, Terry 2026-09-14): monthly from the first of the month unless the workspace says
+    // otherwise; weekly and two-weekly from the latest week-start day. What is sent always wins.
+    const period = fields.oneOf(body.period, PERIODS, 'Period', workspaceSettings.get(doc, 'budgetPeriod'));
     const budget = {
       id: newId('bud'), name: fields.text(body.name, { field: 'Name', max: 80, required: true }), scope, currency,
-      period: fields.oneOf(body.period, PERIODS, 'Period', 'monthly'),
-      startDate: fields.date(body.startDate, 'Start date') || `${nowIso.slice(0, 7)}-01`,
+      period,
+      startDate: fields.date(body.startDate, 'Start date') || workspaceSettings.defaultBudgetStart(doc, period, nowIso.slice(0, 10)),
       lines: validLines(body.lines, currency, doc), ownerSubject: member.subject, createdBy: member.subject, createdAt: nowIso, revision: 1, deletedAt: null,
       icon: body.icon === undefined ? null : icons.validateChoice(catalog, body.icon),
     };
@@ -108,7 +115,7 @@ async function create(ctx, req) {
 function locate(doc, member, id, { archived = false } = {}) {
   const b = (doc.budgets || []).find((x) => x.id === id);
   if (!b || !visibleTo(b, member, { archived })) throw notFound('Unknown budget.');
-  if (!mayEdit(b, member)) throw forbidden('You cannot change this budget.');
+  if (!mayEdit(doc, b, member)) throw forbidden('You cannot change this budget.');
   return b;
 }
 
@@ -159,6 +166,13 @@ async function patch(ctx, req) {
       const firstNewStart = budgeting.periodFor(v, effectiveFrom).start;
       const newPeriods = v.period !== current.period || v.startDate !== current.startDate;
       v.backdated = effectiveFrom < currentStart || (newPeriods && firstNewStart < effectiveFrom);
+      // A workspace may rule such changes out altogether ("Budget changes may apply to past periods:
+      // Never"); confirming does not override it.
+      if (v.backdated && workspaceSettings.get(doc, 'budgetBackdating') === 'never') {
+        throw conflict(effectiveFrom < currentStart
+          ? `This workspace does not let budget changes apply to periods that have finished. Start the change on ${currentStart} or later.`
+          : `This workspace does not let budget changes apply to periods that have finished. With this period and start day, the period containing ${effectiveFrom} begins on ${firstNewStart}; start the change on a date where a new period begins, in the current period or later.`, 'backdate_off');
+      }
       if (v.backdated && fields.bool(body.confirmBackdate, 'Confirm backdate') !== true) {
         throw conflict(effectiveFrom < currentStart
           ? `This change would apply from before the current period (which started ${currentStart}) and change periods that have finished. Confirm that this is intended.`

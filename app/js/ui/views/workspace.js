@@ -3,7 +3,7 @@
 // confirmation, last successful backup shown), and recent activity in plain language. Every
 // control is presentation; the server enforces.
 import { el, mount, announce } from "../dom.js";
-import { pageHead, stateView, field, input, pickerSelect, controlElement, button, badge, commitOnConfirm, categoryLabel } from "../components.js";
+import { pageHead, stateView, field, input, pickerSelect, controlElement, button, badge, commitOnConfirm, categoryLabel, uid } from "../components.js";
 import { createThemePicker } from "../themepicker.js";
 import { colourEntries } from "../../core/categories.js";
 import { openModal, confirmModal } from "../modal.js";
@@ -13,6 +13,7 @@ import { messageFor } from "../../core/errors.js";
 import { ACCOUNT_TYPE_LABELS, BILL_TYPE_LABELS, MERCHANT_TYPE_LABELS } from "../../core/format.js";
 import { createIconPicker } from "../iconpicker.js";
 import { builtInIconFor, withIcon } from "../icons.js";
+import { managesSharedLists } from "../../core/workspacesettings.js";
 
 // Icons for the workspace's types (BT-011-05): accounts, bills and merchants of a type show this icon
 // unless one was chosen on the record itself.
@@ -54,6 +55,16 @@ const WS_FIELDS = { name: "Name", "settings.reportingCurrency": "Reporting curre
 const MEMBER_EVENTS = { removed: "removed", left: "left the workspace" };
 const stamp = (iso) => iso.replace("T", " ").slice(0, 16);
 
+// A workspace setting's value in words (Terry, 2026-09-14): On/Off, the chosen option's label, a number,
+// or the chosen kinds. An unknown value is shown as it is.
+export function settingText(s, v) {
+  if (s.type === "boolean") return v === true ? "On" : v === false ? "Off" : String(v);
+  if (s.type === "integer") return String(v);
+  const labelOf = (x) => { const o = (s.options || []).find((y) => y.value === x); return o ? o.label : String(x); };
+  if (s.type === "set") return Array.isArray(v) && v.length ? v.map(labelOf).join(", ") : "None";
+  return labelOf(v);
+}
+
 export function createView(ctx) {
   const { api, store } = ctx;
   const wsId = store.getState().selectedWorkspaceId;
@@ -63,6 +74,7 @@ export function createView(ctx) {
   const auditBox = el("div");
   const formerBox = el("div");
   const historyBox = el("div");
+  const settingsBox = el("div", { class: "stack" });
   const coloursBox = el("div", { class: "stack" });
   const typesBox = el("div", { class: "stack" });
   const element = el("section", {}, [
@@ -70,6 +82,7 @@ export function createView(ctx) {
     el("div", { class: "grid grid--two" }, [
       el("section", { class: "card", "aria-labelledby": "ws-members" }, [el("h2", { class: "card__title", id: "ws-members", text: "Members" }), membersBox]),
       el("section", { class: "card", "aria-labelledby": "ws-invite" }, [el("h2", { class: "card__title", id: "ws-invite", text: "Invite someone" }), inviteBox]),
+      el("section", { class: "card card--full", "aria-labelledby": "ws-settings" }, [el("h2", { class: "card__title", id: "ws-settings", text: "Workspace settings" }), settingsBox]),
       el("section", { class: "card", "aria-labelledby": "ws-backups" }, [el("h2", { class: "card__title", id: "ws-backups", text: "Backups and restore" }), backupsBox]),
       el("section", { class: "card", "aria-labelledby": "ws-activity" }, [el("h2", { class: "card__title", id: "ws-activity", text: "Recent activity" }), auditBox]),
       el("section", { class: "card", "aria-labelledby": "ws-former" }, [el("h2", { class: "card__title", id: "ws-former", text: "Former members" }), formerBox]),
@@ -198,20 +211,105 @@ export function createView(ctx) {
     } catch (err) { mount(formerBox, el("p", { class: "error-text", role: "alert", text: messageFor(err) })); }
   }
 
-  // Changes to the workspace's name and settings, and its archive/restore log (audit B16).
-  async function loadHistory() {
-    const role = me().role;
-    if (role !== "owner" && role !== "manager") { mount(historyBox, el("p", { class: "muted", text: "Owners and managers can see the workspace's change history." })); return; }
+  // The workspace itself, read once: its settings (everyone) and its change history (owners and
+  // managers). `saved` re-renders after a save with focus back on Save and the result beside it.
+  async function loadInfo({ saved = false } = {}) {
     try {
       const { workspace } = await api.request("workspaces", { query: { id: wsId } });
-      const show = (v) => (v === null || v === undefined || v === "" ? "—" : String(v));
-      const items = [
-        ...(workspace.history || []).map((h) => ({ at: h.at, text: `${h.by}: ${h.changes.map((c) => `${WS_FIELDS[c.field] || c.field} ${show(c.from)} → ${show(c.to)}`).join("; ")}${h.reason ? ` — ${h.reason}` : ""}` })),
-        ...(workspace.lifecycle || []).map((h) => ({ at: h.at, text: `${h.by}: ${h.state === "archived" ? "archived the workspace" : "restored the workspace"}${h.reason ? ` — ${h.reason}` : ""}` })),
-      ].sort((a, b) => (a.at < b.at ? 1 : -1));
-      mount(historyBox, items.length ? el("ul", { class: "history-list small" }, items.map((i) => el("li", { text: `${stamp(i.at)} · ${i.text}` })))
-        : el("p", { class: "muted small", text: "No changes to the workspace's name or settings yet." }));
-    } catch (err) { mount(historyBox, el("p", { class: "error-text", role: "alert", text: messageFor(err) })); }
+      renderSettings(workspace, { saved });
+      renderHistory(workspace);
+    } catch (err) {
+      mount(settingsBox, el("p", { class: "error-text", role: "alert", text: messageFor(err) }));
+      mount(historyBox, el("p", { class: "error-text", role: "alert", text: messageFor(err) }));
+    }
+  }
+
+  // Changes to the workspace's name and settings, and its archive/restore log (audit B16). Settings are
+  // named and valued as in the settings card.
+  function renderHistory(workspace) {
+    const role = me().role;
+    if (role !== "owner" && role !== "manager") { mount(historyBox, el("p", { class: "muted", text: "Owners and managers can see the workspace's change history." })); return; }
+    const list = workspace.settingsList || [];
+    const settingOf = (fieldName) => (fieldName.startsWith("settings.") ? list.find((s) => s.key === fieldName.slice(9)) : null);
+    const show = (v) => (v === null || v === undefined || v === "" ? "—" : String(v));
+    const change = (c) => {
+      const s = settingOf(c.field);
+      return s ? `${s.label} ${settingText(s, c.from)} → ${settingText(s, c.to)}` : `${WS_FIELDS[c.field] || c.field} ${show(c.from)} → ${show(c.to)}`;
+    };
+    const items = [
+      ...(workspace.history || []).map((h) => ({ at: h.at, text: `${h.by}: ${h.changes.map(change).join("; ")}${h.reason ? ` — ${h.reason}` : ""}` })),
+      ...(workspace.lifecycle || []).map((h) => ({ at: h.at, text: `${h.by}: ${h.state === "archived" ? "archived the workspace" : "restored the workspace"}${h.reason ? ` — ${h.reason}` : ""}` })),
+    ].sort((a, b) => (a.at < b.at ? 1 : -1));
+    mount(historyBox, items.length ? el("ul", { class: "history-list small" }, items.map((i) => el("li", { text: `${stamp(i.at)} · ${i.text}` })))
+      : el("p", { class: "muted small", text: "No changes to the workspace's name or settings yet." }));
+  }
+
+  // Workspace settings (Terry, 2026-09-14: "the user should be able to decide"): every setting from the
+  // server's one list, grouped, each with its plain explanation. Dropdowns are the command picker
+  // (BT-004-05); a list of kinds is a set of checkboxes. The server decides who may change what; a
+  // setting this person may not change is shown as text with who can. Save sends only what changed.
+  function settingControl(s) {
+    const who = s.changedBy === "owner" ? "Only owners change this." : "Owners and managers change this.";
+    // Shared expenses switched off for the whole site stay off here, whatever the workspace says.
+    const siteNote = s.offForSite ? " The site administrator has turned this off for the whole site, so it stays off here for now." : "";
+    if (!s.canChange) {
+      return { s, read: () => s.value, node: el("div", { class: "field field--wide" }, [
+        el("p", { class: "field__label", text: s.label }),
+        el("p", { text: settingText(s, s.value) }),
+        el("p", { class: "field__help", text: `${s.explanation}${siteNote} ${who}` }),
+      ]) };
+    }
+    if (s.type === "set") {
+      const boxes = (s.options || []).map((o) => { const box = el("input", { type: "checkbox", id: uid("wset") }); box.checked = Array.isArray(s.value) && s.value.includes(o.value); return [o, box]; });
+      return { s, read: () => boxes.filter(([, b]) => b.checked).map(([o]) => o.value), node: el("fieldset", { class: "plain-fieldset field--wide" }, [
+        el("legend", { class: "field__label", text: s.label }),
+        ...boxes.map(([o, b]) => el("div", { class: "field--inline" }, [b, el("label", { for: b.id, text: o.label })])),
+        el("p", { class: "field__help", text: s.explanation }),
+      ]) };
+    }
+    const options = s.type === "boolean" ? [{ value: "true", label: "On" }, { value: "false", label: "Off" }]
+      : s.type === "integer" ? Array.from({ length: s.max - s.min + 1 }, (_, i) => ({ value: String(s.min + i), label: String(s.min + i) }))
+        : (s.options || []).map((o) => ({ value: String(o.value), label: o.label }));
+    const pick = pickerSelect(options, String(s.value));
+    const read = () => (s.type === "boolean" ? pick.value === "true"
+      : s.type === "integer" ? Number(pick.value)
+        : ((s.options || []).find((o) => String(o.value) === pick.value) || { value: s.value }).value);
+    return { s, read, node: field(s.label, pick, { help: `${s.explanation}${siteNote}`, wide: true }) };
+  }
+
+  function renderSettings(workspace, { saved = false } = {}) {
+    const list = workspace.settingsList || [];
+    if (!list.length) { mount(settingsBox, el("p", { class: "muted", text: "There are no workspace settings to show." })); return; }
+    const controls = list.map(settingControl);
+    const groups = [];
+    for (const c of controls) {
+      let g = groups.find((x) => x.name === c.s.group);
+      if (!g) { g = { name: c.s.group, items: [] }; groups.push(g); }
+      g.items.push(c.node);
+    }
+    const changeable = controls.some((c) => c.s.canChange);
+    const reason = input({ maxlength: "200", placeholder: "Optional", autocomplete: "off" });
+    const status = el("p", { class: "field__help", role: "status", text: saved ? "Saved. Everyone in the workspace now works this way." : "" });
+    const save = button("Save workspace settings", async () => {
+      const changes = Object.fromEntries(controls.filter((c) => c.s.canChange && JSON.stringify(c.read()) !== JSON.stringify(c.s.value)).map((c) => [c.s.key, c.read()]));
+      if (!Object.keys(changes).length) { status.textContent = "Nothing changed."; announce("Nothing changed."); return; }
+      const body = { settings: changes, ...(reason.value.trim() ? { reason: reason.value.trim() } : {}) };
+      const out = await store.actions.write((ws) => api.request("workspaces", { method: "PATCH", query: { id: ws }, body }), []);
+      if (!out.ok) { status.textContent = messageFor(out.error); announce(messageFor(out.error)); return; }
+      announce("Workspace settings saved.");
+      // The app's copy of each workspace's setting values (the nav, defaults in forms) follows the change.
+      if (store.actions.refreshWorkspaces) await store.actions.refreshWorkspaces();
+      await loadInfo({ saved: true });
+    }, { variant: "primary" });
+    mount(settingsBox,
+      el("p", { class: "field__help", text: changeable
+        ? "These decide how everyone in this workspace works. Each one starts with how BudgetTracker has always worked. Privacy and safety rules are not settings: private accounts stay private, nothing is ever deleted and every change is kept."
+        : "These decide how everyone in this workspace works. You can see how it is set up; owners and managers change it." }),
+      ...groups.flatMap((g) => [el("h3", { class: "section-title", text: g.name }), el("div", { class: "form-grid" }, g.items)]),
+      changeable ? el("div", { class: "form-grid" }, [field("Reason for the change (optional)", reason, { help: "Kept with the change under Workspace changes.", wide: true })]) : null,
+      changeable ? el("div", { class: "row" }, [save]) : null,
+      changeable ? status : null);
+    if (saved) save.focus();
   }
 
   // Workspace category colours (BT-011-04): owners and managers choose them; everyone sees them.
@@ -220,7 +318,8 @@ export function createView(ctx) {
   function renderColours(state) {
     const data = sliceFor(state, "categories").data;
     if (!data || !sliceFor(state, "members").data) return;
-    const canEdit = ["owner", "manager"].includes(me().role);
+    // Categories are a shared list (workspace setting "Who manages shared lists"); the server decides.
+    const canEdit = ["owner", "manager"].includes(me().role) || (me().role === "member" && managesSharedLists(state));
     const cats = data.categories.filter((c) => !c.archived);
     const iconsData = sliceFor(state, "icons").data;
     const sig = JSON.stringify([cats.map((c) => [c.id, c.name, c.color, c.colorSource, c.icon, c.iconSource]), canEdit, iconsData ? iconsData.catalog : null]);
@@ -406,7 +505,7 @@ export function createView(ctx) {
     })));
     // An enhanced select's focus() lands on its trigger.
     if (focusKey && memberControls[focusKey]) memberControls[focusKey].focus();
-    if (!loaded) { loaded = true; void loadInvites(); void loadBackups(); void loadAudit(); void loadHistory(); }
+    if (!loaded) { loaded = true; void loadInvites(); void loadBackups(); void loadAudit(); void loadInfo(); }
     // A removal, role change or rejoin changes the members list; the former members reload with it.
     if (members.data !== lastMembers) { lastMembers = members.data; void loadFormer(); }
   }

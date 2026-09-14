@@ -24,17 +24,33 @@ const store = require('../_shared/store');
 const fields = require('../_shared/fields');
 const backups = require('../backups/handler');
 const model = require('../_shared/workspace-model');
+const workspaceSettings = require('../_shared/workspace-settings');
 
 // Every merge or replace writes a full recovery-point archive first, and members below manager
 // cannot create backups themselves, so their restores are limited per day (security review SEC-R2).
 // Recovery points are written whatever the site's on-demand backup policy says: they are the
-// safety net of the restore itself, not an on-demand backup.
-const MEMBER_RESTORES_PER_DAY = 3;
+// safety net of the restore itself, not an on-demand backup. The number is the workspace setting
+// "Merge or replace restores a member may make each day" (owners only, Terry 2026-09-14): 3 unless
+// lowered, never above that ceiling (workspace-settings MEMBER_RESTORES_MAX).
 const DAY_MS = 24 * 60 * 60 * 1000;
 function assertRestoreAllowance(doc, member, nowMs) {
   if (roleAtLeast(member.role, 'manager')) return;
+  const limit = Math.min(workspaceSettings.get(doc, 'memberRestoresPerDay'), workspaceSettings.MEMBER_RESTORES_MAX);
   const recent = (doc.restores || []).filter((r) => r.by === member.subject && nowMs - Date.parse(r.at) < DAY_MS).length;
-  if (recent >= MEMBER_RESTORES_PER_DAY) throw new HttpError(429, 'restore_limit', `You can restore at most ${MEMBER_RESTORES_PER_DAY} times a day in this workspace. Try again tomorrow or ask an owner.`);
+  if (recent >= limit) throw new HttpError(429, 'restore_limit', `You can restore at most ${limit} ${limit === 1 ? 'time' : 'times'} a day in this workspace. Try again tomorrow or ask an owner.`);
+}
+
+// What a member below manager may ask for (workspace settings, owners only): merge and replace only
+// while the daily number is above 0, and only the kinds of restore the owners allow. Checked in the
+// preview too, so nothing is offered that would be refused. Never widens a member's scope, which stays
+// their own private accounts (backup.plan).
+const MODE_WORDS = { 'create-new': 'creating a new workspace from a backup', merge: 'merge', replace: 'replace' };
+function assertMemberChoice(doc, member, mode, restoreDeleted) {
+  if (roleAtLeast(member.role, 'manager')) return;
+  const v = workspaceSettings.values(doc);
+  if (mode !== 'create-new' && v.memberRestoresPerDay === 0) throw new HttpError(403, 'member_restores_off', 'The owners of this workspace have turned off merge and replace restores for members. Ask an owner if you need one.');
+  if (!v.memberRestoreModes.includes(mode)) throw new HttpError(403, 'restore_mode_off', `The owners of this workspace do not let members use this kind of restore (${MODE_WORDS[mode]}). Ask an owner if you need one.`);
+  if (restoreDeleted && !v.memberRestoreModes.includes('restore-deleted')) throw new HttpError(403, 'restore_mode_off', 'The owners of this workspace do not let members bring back deleted entries in a restore. Merge without it, or ask an owner.');
 }
 const changesAnything = (summary) => summary.changes.add + summary.changes.update + summary.changes.remove > 0 || (summary.excluded.setAside || 0) > 0;
 
@@ -55,6 +71,7 @@ async function preview(ctx, req) {
   const body = fields.onlyKeys(readBody(req), ['workspaceId', 'archiveId', 'mode', 'restoreDeleted']);
   const { mode, doc, etag, member, opened, archiveId } = await load(ctx, body);
   const restoreDeleted = mode === 'merge' && fields.bool(body.restoreDeleted, 'Bring back deleted entries') === true;
+  assertMemberChoice(doc, member, mode, restoreDeleted);
   const { summary } = backup.plan({ current: doc, archived: opened.doc, mode, principal: ctx.principal, member, nowIso: ctx.nowIso(), newWorkspaceId: 'ws_preview', archiveId, restoreDeleted });
   // The preview says when a merge or replace would change nothing, so Restore is not offered for a
   // request execution would refuse (nothing_to_restore; Terry's preview check, 2026-09-13).
@@ -82,6 +99,7 @@ async function execute(ctx, req) {
   const { wsId, archiveId, mode, doc, etag, member, opened } = await load(ctx, body);
   const nowIso = ctx.nowIso();
   const restoreDeleted = mode === 'merge' && fields.bool(body.restoreDeleted, 'Bring back deleted entries') === true;
+  assertMemberChoice(doc, member, mode, restoreDeleted);
 
   if (mode === 'create-new') {
     const key = header(req, 'idempotency-key');

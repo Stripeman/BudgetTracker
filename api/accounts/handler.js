@@ -23,6 +23,7 @@ const icons = require('../_shared/icons');
 
 // The icon catalogue is read only when an icon is being chosen (BT-011-05).
 const catalogFor = async (ctx, body) => (body.icon !== undefined ? (await icons.readCatalog(ctx.storage)).catalog : null);
+const workspaceSettings = require('../_shared/workspace-settings');
 
 // `status` is changed only by the close and reopen actions, which need a reason.
 const EDITABLE = ['revision', 'reason', 'name', 'institution', 'maskedNumber', 'terms', 'notes', 'openingBalance', 'openingDate', 'visibility', 'confirmShare', 'icon'];
@@ -32,9 +33,11 @@ const changesSince = (before, a) => TRACKED
   .filter((f) => JSON.stringify(before[f]) !== JSON.stringify(a[f] === undefined ? null : a[f]))
   .map((f) => ({ field: f, from: before[f], to: a[f] === undefined ? null : structuredClone(a[f]) }));
 
-function mayManage(account, member) {
+// A private account: its owner only. A shared account: whoever manages the workspace's shared lists —
+// managers and owners, or members too when the workspace setting says so (Terry, 2026-09-14).
+function mayManage(doc, account, member) {
   if (account.visibility === 'private') return account.ownerSubject === member.subject;
-  return roleAtLeast(member.role, 'manager');
+  return workspaceSettings.managesSharedLists(doc, member);
 }
 
 function locate(doc, principal, accountId, now) {
@@ -49,7 +52,7 @@ async function list(ctx, req) {
   const { doc, member } = await store.loadWorkspace(ctx, wsId);
   const now = ctx.now();
   const visible = (doc.accounts || []).filter((a) => capabilitiesFor(doc, ctx.principal, a, now).size > 0)
-    .filter((a) => !a.deletedAt || (includeDeleted && mayManage(a, member)));
+    .filter((a) => !a.deletedAt || (includeDeleted && mayManage(doc, a, member)));
   const accounts = visible.map((a) => ledger.accountView(doc, ctx.principal, a, now));
   // Net position per currency over accounts whose balances this person may see. Accounts they
   // cannot see contribute nothing — totals never reveal hidden balances. The breakdown separates
@@ -94,7 +97,7 @@ async function create(ctx, req) {
     status: 'open', deletedAt: null, revision: 1, history: [],
   };
   const { result } = await store.mutateWorkspace(ctx, wsId, (doc, member) => {
-    if (visibility === 'shared' && !roleAtLeast(member.role, 'manager')) throw forbidden('Only owners and managers can create shared accounts.');
+    if (visibility === 'shared' && !workspaceSettings.managesSharedLists(doc, member)) throw forbidden(member.role === 'viewer' ? 'Viewers cannot create shared accounts.' : 'Only owners and managers can create shared accounts in this workspace.');
     const nowIso = ctx.nowIso();
     const record = { ...account, ownerSubject: visibility === 'private' ? member.subject : null, createdBy: member.subject, createdAt: nowIso };
     doc.accounts = [...(doc.accounts || []), record];
@@ -114,7 +117,7 @@ async function patch(ctx, req) {
   const { result } = await store.mutateWorkspace(ctx, wsId, (doc, member) => {
     const now = ctx.now();
     const account = locate(doc, ctx.principal, accountId, now);
-    if (!mayManage(account, member)) throw forbidden('Only the account owner (or a manager for shared accounts) can change this account.');
+    if (!mayManage(doc, account, member)) throw forbidden('Only the account owner (or a manager for shared accounts) can change this account.');
     // Record-level concurrency: a stale edit never silently overwrites someone else's (finding 8).
     if (!Number.isSafeInteger(body.revision)) throw badRequest('revision is required so a stale edit cannot overwrite a newer one.', 'missing_revision');
     if (body.revision !== (account.revision || 1)) throw conflict('This account changed since you loaded it. Reload to see the latest version.', 'stale_revision');
@@ -189,7 +192,7 @@ function setDeleted(deleted) {
     const accountId = requireId(body.accountId, 'accountId');
     const { result } = await store.mutateWorkspace(ctx, wsId, (doc, member) => {
       const account = locate(doc, ctx.principal, accountId, ctx.now());
-      if (!mayManage(account, member)) throw forbidden('Only the account owner (or a manager for shared accounts) can do that.');
+      if (!mayManage(doc, account, member)) throw forbidden('Only the account owner (or a manager for shared accounts) can do that.');
       if (Boolean(account.deletedAt) === deleted) return { account: ledger.accountView(doc, ctx.principal, account, ctx.now()) };
       // Removing an account hides it from lists; it is never erased, and the reason is kept.
       const reason = fields.text(body.reason, { field: 'Reason', max: 200 });
@@ -217,7 +220,7 @@ function lifecycle(action) {
       const now = ctx.now();
       const nowIso = ctx.nowIso();
       const account = locate(doc, ctx.principal, accountId, now);
-      if (!mayManage(account, member)) throw forbidden('Only the account owner (or a manager for shared accounts) can close or reopen it.');
+      if (!mayManage(doc, account, member)) throw forbidden('Only the account owner (or a manager for shared accounts) can close or reopen it.');
       if (!Number.isSafeInteger(body.revision)) throw badRequest('revision is required so a stale change cannot overwrite a newer one.', 'missing_revision');
       if (body.revision !== (account.revision || 1)) throw conflict('This account changed since you loaded it. Reload to see the latest version.', 'stale_revision');
       const reason = fields.text(body.reason, { field: 'Reason', max: 200 });
