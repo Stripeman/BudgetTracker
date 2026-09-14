@@ -4,7 +4,8 @@
 import { test, describe, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import { installDom } from "./domdouble.js";
-import { createView as createGroupView, openGroupExpense, openRecordPayment } from "../js/ui/views/group.js";
+import { openGroupExpense, openRecordPayment } from "../js/ui/views/group.js";
+import { createView as createDashboard } from "../js/ui/views/dashboard.js";
 
 let dom;
 beforeEach(() => { dom = installDom(); });
@@ -136,5 +137,56 @@ describe("FA-1: a first link that would backdate confirmed cash asks before it h
     await tick(); await tick();
     assert.equal(attempt, 2);
     assert.equal(dom.body.querySelectorAll(".modal").length, 0);
+  });
+});
+
+// FA-3 (financial recheck of 41494d1): if a shared expense is corrected while the viewer's own linked
+// account cannot be written to (for example it is closed), their part is left needing review and,
+// until now, nothing said so beyond the Shared expenses page itself. The Dashboard now shows it too.
+function dashboardCtx({ myLedgers = [] } = {}) {
+  const participants = [
+    { ref: "member:a", name: "Alice", type: "member", self: true, active: true },
+    { ref: "member:b", name: "Bob", type: "member", self: false, active: true },
+  ];
+  const state = {
+    selectedWorkspaceId: "ws_1",
+    workspaces: [{ id: "ws_1", name: "Fictional Flat", kind: "group", role: "member" }],
+    preferences: null,
+    group: { workspaceId: "ws_1", status: "ready", error: null, data: {
+      currency: "EUR", kind: "group", permissions: { canAdd: true, canManage: false, selfRef: "member:a", role: "member" },
+      participants, expenses: [], settlements: [], balances: STRANDED, myLedgers, basis: "Balances count confirmed payments only.",
+    } },
+    accounts: { workspaceId: "ws_1", status: "ready", error: null, data: { accounts: [], totals: [] } },
+    transactions: { workspaceId: "ws_1", status: "ready", error: null, data: { transactions: [], summary: [], total: 0 } },
+    payees: { workspaceId: "ws_1", status: "ready", error: null, data: { payees: [] } },
+  };
+  const store = { getState: () => state, actions: { refreshTransactions: async () => {}, refreshBills: async () => {}, refreshForecast: async () => {}, refreshGroup: async () => {} } };
+  return { ctx: { store, api: {}, state }, state };
+}
+
+describe("FA-3: the Dashboard says when Shared expenses needs the viewer's attention", () => {
+  test("with a linked currency needing review, the Dashboard adds it to Needs attention, linking to Shared expenses", () => {
+    const { ctx, state } = dashboardCtx({ myLedgers: [{ currency: "EUR", accountId: "acc_w", accountName: "Bob Wallet", accountUnavailable: false, needsAccount: false, since: "2026-01-01T00:00:00.000Z", reviewCount: 1 }] });
+    const d = createDashboard(ctx);
+    d.update(state);
+    const section = d.element.querySelectorAll("section").find((s) => s.getAttribute("aria-labelledby") === "dash-alerts");
+    assert.ok(section, "the Needs attention section is shown");
+    assert.match(section.textContent, /Shared expenses needs your attention/);
+    const link = section.querySelectorAll("a").find((a) => a.getAttribute("href") === "#/group");
+    assert.ok(link, "links to Shared expenses");
+  });
+
+  test("with every linked currency up to date, nothing is said", () => {
+    const { ctx, state } = dashboardCtx({ myLedgers: [{ currency: "EUR", accountId: "acc_w", accountName: "Bob Wallet", accountUnavailable: false, needsAccount: false, since: "2026-01-01T00:00:00.000Z", reviewCount: 0 }] });
+    const d = createDashboard(ctx);
+    d.update(state);
+    assert.doesNotMatch(d.element.textContent, /Shared expenses needs your attention/);
+  });
+
+  test("with no group ledger link at all, nothing is said (there is nothing of the viewer's to review)", () => {
+    const { ctx, state } = dashboardCtx({ myLedgers: [] });
+    const d = createDashboard(ctx);
+    d.update(state);
+    assert.doesNotMatch(d.element.textContent, /Shared expenses needs your attention/);
   });
 });
