@@ -440,7 +440,7 @@ describe('S4 residual: a create-new restore carries nobody else\'s identity on a
     ok(await h.call('payees', 'PATCH', { user: FRANK, query: q, body: { payeeId: bakery.id, revision: bakery.revision, icon: 'cart' } }));
     ok(await h.call('recurring', 'POST', { user: FRANK, query: q, body: { name: 'Fictional rent', billType: 'housing', accountId: joint.id, amount: '800.00', schedule: { freq: 'monthly', startDate: '2026-10-01' }, responsibleRef: f.refs.bob } }), 201);
     const cat = ok(await h.call('categories', 'GET', { as: 'alice', query: q })).categories.find((c) => c.type !== 'income' && !c.archived);
-    ok(await h.call('budgets', 'POST', { user: FRANK, query: q, body: { name: 'Fictional food', scope: 'shared', currency: 'EUR', startDate: '2026-01-01', lines: [{ categoryId: cat.id, amount: '300.00' }] } }), 201);
+    ok(await h.call('budgets', 'POST', { user: FRANK, query: q, body: { name: 'Fictional food', scope: 'shared', currency: 'EUR', startDate: '2026-01-01', confirmBackdate: true, lines: [{ categoryId: cat.id, amount: '300.00' }] } }), 201);
     // Frank edits the shared contact and renames a category; Frank corrects a shared expense Alice paid
     // for Alice and Dana, and changes a group setting.
     ok(await h.call('contacts', 'PATCH', { user: FRANK, body: { scope: 'workspace', workspaceId: f.ws.id, contactId: f.dana.id, email: 'dana@example.com', reason: 'New email' } }));

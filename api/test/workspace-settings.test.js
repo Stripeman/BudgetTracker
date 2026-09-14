@@ -436,7 +436,7 @@ describe('(i) Budget period, week start and changes to past periods', () => {
   test('"Only after confirming" (default) keeps today\'s rule; "Never" refuses any change that reaches finished periods, confirmed or not', async () => {
     const { h, f, id } = await setup();
     const cat = await categoryId(h, f.q);
-    const b = await newBudget(h, f.q, { startDate: '2026-08-01' });
+    const b = await newBudget(h, f.q, { startDate: '2026-08-01', confirmBackdate: true });
     const change = (budget, extra) => h.call('budgets', 'PATCH', { as: 'alice', query: f.q, body: { budgetId: budget.id, revision: budget.revision, lines: [{ categoryId: cat, amount: '450.00' }], ...extra } });
     // Default: before the current period needs a confirmation, and with it the change is accepted.
     assert.equal((await change(b, { effectiveFrom: '2026-08-15' })).body.error.code, 'backdate_unconfirmed');
@@ -454,6 +454,47 @@ describe('(i) Budget period, week start and changes to past periods', () => {
     const current = ok(await change(confirmed, { effectiveFrom: '2026-09-01' })).budget;
     assert.equal(current.versions[current.versions.length - 1].backdated, false);
     assert.equal(current.lines[0].amount, '450.00');
+  });
+});
+
+// ---- FIN-1 (financial recheck of 53cf181): a NEW budget that starts before its current period ------
+// Today is Monday 2026-09-14. A monthly budget from 2026-07-16 is in its period 2026-08-16 – 2026-09-15, so
+// it would cover the finished periods before 2026-08-16; a weekly one from 2026-09-07 is in 2026-09-14 –
+// 2026-09-20 (one finished week); a two-weekly one from 2026-09-07 is still in its first period.
+describe('FIN-1: creating a budget that starts before its current period', () => {
+  async function onMonday() {
+    const h = harness({ start: '2026-09-14T10:00:00Z' });
+    const f = await household(h);
+    const cat = await categoryId(h, f.q);
+    const create = (body) => h.call('budgets', 'POST', { as: 'alice', query: f.q, body: { name: 'Fictional food', scope: 'shared', lines: [{ categoryId: cat, amount: '400.00' }], ...body } });
+    return { h, f, create };
+  }
+  const count = async (h, f) => ok(await h.call('budgets', 'GET', { as: 'alice', query: f.q })).budgets.length;
+
+  test('"Allowed after a confirmation" (default): it needs the explicit confirmation; a start at the current period\'s start or later needs none', async () => {
+    const { h, f, create } = await onMonday();
+    const unconfirmed = await create({ period: 'monthly', startDate: '2026-07-16' });
+    assert.deepEqual([unconfirmed.status, unconfirmed.body.error.code], [409, 'backdate_unconfirmed']);
+    assert.match(unconfirmed.body.error.message, /2026-08-16/);
+    assert.equal((await create({ period: 'weekly', startDate: '2026-09-07' })).body.error.code, 'backdate_unconfirmed');
+    assert.equal(await count(h, f), 0, 'nothing written');
+    assert.equal(ok(await create({ period: 'monthly', startDate: '2026-07-16', confirmBackdate: true }), 201).budget.startDate, '2026-07-16');
+    for (const body of [{ period: 'monthly', startDate: '2026-09-01' }, { period: 'weekly', startDate: '2026-09-14' }, { period: 'biweekly', startDate: '2026-09-07' }, { period: 'monthly', startDate: '2026-10-01' }, {}]) {
+      ok(await create(body), 201);
+    }
+    assert.equal(await count(h, f), 6);
+  });
+
+  test('"Not allowed": refused even when confirmed (409 backdate_off, plain words); the current period\'s start or later is still allowed', async () => {
+    const { h, f, create } = await onMonday();
+    ok(await patchSettings(h, 'alice', f.ws.id, { budgetBackdating: 'never' }));
+    const refused = await create({ period: 'monthly', startDate: '2026-07-16', confirmBackdate: true });
+    assert.deepEqual([refused.status, refused.body.error.code, refused.body.error.message],
+      [409, 'backdate_off', 'This workspace does not let a new budget cover periods that have finished. Start it on 2026-08-16 or later.']);
+    assert.equal((await create({ period: 'weekly', startDate: '2026-09-07', confirmBackdate: true })).body.error.code, 'backdate_off');
+    assert.equal(await count(h, f), 0, 'nothing written');
+    for (const body of [{ period: 'monthly', startDate: '2026-09-01' }, { period: 'weekly', startDate: '2026-09-14' }, { period: 'biweekly', startDate: '2026-09-07' }]) ok(await create(body), 201);
+    assert.equal(await count(h, f), 3);
   });
 });
 

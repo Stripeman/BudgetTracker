@@ -84,7 +84,7 @@ async function list(ctx, req) {
 
 async function create(ctx, req) {
   const wsId = requireId(query(req, 'workspaceId'), 'workspaceId');
-  const body = fields.onlyKeys(readBody(req), ['name', 'scope', 'currency', 'period', 'startDate', 'lines', 'icon']);
+  const body = fields.onlyKeys(readBody(req), ['name', 'scope', 'currency', 'period', 'startDate', 'lines', 'icon', 'confirmBackdate']);
   const catalog = await catalogFor(ctx, body);
   const { result } = await store.mutateWorkspace(ctx, wsId, (doc, member) => {
     const scope = fields.oneOf(body.scope, ['shared', 'private'], 'Scope', 'private');
@@ -103,6 +103,14 @@ async function create(ctx, req) {
       lines: validLines(body.lines, currency, doc), ownerSubject: member.subject, createdBy: member.subject, createdAt: nowIso, revision: 1, deletedAt: null,
       icon: body.icon === undefined ? null : icons.validateChoice(catalog, body.icon),
     };
+    // A NEW budget that starts before its current period would count periods that have finished
+    // (financial recheck of 53cf181, FIN-1): "Not allowed" refuses it; "Allowed after a confirmation" needs
+    // the same explicit confirmation as a backdated change. Its current period's start or later is fine.
+    const currentStart = budgeting.periodFor({ period: budget.period, startDate: budget.startDate }, nowIso.slice(0, 10)).start;
+    if (budget.startDate < currentStart) {
+      if (workspaceSettings.get(doc, 'budgetBackdating') === 'never') throw conflict(`This workspace does not let a new budget cover periods that have finished. Start it on ${currentStart} or later.`, 'backdate_off');
+      if (fields.bool(body.confirmBackdate, 'Confirm backdate') !== true) throw conflict(`This budget would start before its current period (which started ${currentStart}) and count periods that have finished. Confirm that this is intended, or start it on ${currentStart}.`, 'backdate_unconfirmed');
+    } else fields.bool(body.confirmBackdate, 'Confirm backdate');
     budget.versions = [{ effectiveFrom: budget.startDate, period: budget.period, startDate: budget.startDate, lines: budget.lines, createdAt: nowIso, createdBy: member.subject, reason: '' }];
     doc.budgets = [...(doc.budgets || []), budget];
     ledger.assertMemberQuota(doc, member, ctx.env);

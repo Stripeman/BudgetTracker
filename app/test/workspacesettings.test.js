@@ -419,6 +419,49 @@ describe("Settings card (shared by the workspace and group settings; UX review o
     assert.equal(groupLoads, 1, "the real page loads Shared expenses once it is on");
   });
 
+  test("FIN-1: Add budget offers the confirmation once the server asks for it, then sends it; under “Not allowed” it is never offered", async () => {
+    const run = async (budgetBackdating, answers) => {
+      const ready = (data) => ({ workspaceId: "ws_1", status: "ready", error: null, data });
+      const state = {
+        selectedWorkspaceId: "ws_1", preferences: null,
+        workspaces: [{ id: "ws_1", name: "Fictional household", role: "owner", kind: "household", settingValues: { budgetPeriod: "monthly", weekStart: 1, budgetBackdating } }],
+        accounts: ready({ accounts: [] }), categories: ready({ categories: [{ id: "cat_food", name: "Groceries", color: "#16a34a", icon: null }] }),
+        budgets: ready({ budgets: [] }), forecast: ready({ forecast: { accounts: [], warnings: [], assumptions: [], horizonDays: 90 } }), bills: ready({ recurring: [] }),
+      };
+      const sent = [];
+      const api = { createBudget: async (ws, body) => { sent.push(body); const a = answers.shift(); if (a) throw Object.assign(new Error(a.message), { kind: "conflict", status: 409, code: a.code }); return {}; } };
+      const store = { getState: () => state, actions: { refreshForecast: async () => {}, refreshBudgets: async () => {}, refreshBills: async () => {},
+        write: async (fn) => { try { await fn("ws_1"); return { ok: true }; } catch (error) { return { ok: false, error }; } } } };
+      const view = createPlanning({ store, api });
+      dom.body.appendChild(view.element);
+      view.update(state);
+      buttonNamed(view.element, "Add budget").click();
+      const modals = dom.body.querySelectorAll(".modal");
+      const root = modals[modals.length - 1];
+      root.querySelector('input[maxlength="80"]').value = "Fictional food";
+      root.querySelector('input[inputmode="decimal"]').value = "400.00";
+      root.querySelector('input[type="date"]').value = "2026-07-16";
+      const confirmRow = root.querySelectorAll("label").find((l) => l.textContent === "Also count the periods that have finished");
+      const hiddenBefore = confirmRow.hidden;
+      buttonNamed(root, "Add budget").click();
+      await tick(); await tick();
+      return { root, sent, confirmRow, hiddenBefore };
+    };
+    const asked = await run("confirm", [{ code: "backdate_unconfirmed", message: "This budget would start before its current period (which started 2026-08-16) and count periods that have finished. Confirm that this is intended, or start it on 2026-08-16." }]);
+    assert.deepEqual([asked.hiddenBefore, asked.confirmRow.hidden], [true, false], "offered once the server asks");
+    assert.match(asked.root.textContent, /which started 2026-08-16/);
+    assert.equal(asked.sent[0].confirmBackdate, undefined);
+    asked.confirmRow.querySelector("input").checked = true;
+    buttonNamed(asked.root, "Add budget").click();
+    await tick(); await tick();
+    assert.equal(asked.sent[1].confirmBackdate, true, "sent with the confirmation");
+    dom.teardown(); dom = installDom();
+    const never = await run("never", [{ code: "backdate_off", message: "This workspace does not let a new budget cover periods that have finished. Start it on 2026-08-16 or later." }]);
+    assert.equal(never.confirmRow.hidden, true, "never offered under “Not allowed”");
+    assert.match(never.root.textContent, /This workspace does not let a new budget start in a period that has finished\./);
+    assert.match(never.root.textContent, /Start it on 2026-08-16 or later\./);
+  });
+
   test("settingText writes each kind of value in words", () => {
     const [period, , days, shared, perDay, modes] = LIST(true);
     assert.equal(settingText(period, "biweekly"), "Every two weeks");

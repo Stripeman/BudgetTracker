@@ -372,7 +372,7 @@ describe('finding 2: shares of other people\'s expenses and repayments are recor
     const cat = ok(await h.call('categories', 'GET', { as: 'bob', query: f.q })).categories.find((c) => c.type !== 'income' && !c.archived);
     const bCash = await account(h, f, 'bob', { name: 'Bob Cash', type: 'cash', currency: 'EUR', openingBalance: '500.00' });
     ok(await act(h, f, 'bob', 'ledger', { currency: 'EUR', accountId: bCash.id }));
-    ok(await h.call('budgets', 'POST', { as: 'bob', query: f.q, body: { name: 'Bob eating out', scope: 'private', currency: 'EUR', startDate: '2026-01-01', lines: [{ categoryId: cat.id, amount: '200.00' }] } }), 201);
+    ok(await h.call('budgets', 'POST', { as: 'bob', query: f.q, body: { name: 'Bob eating out', scope: 'private', currency: 'EUR', startDate: '2026-01-01', confirmBackdate: true, lines: [{ categoryId: cat.id, amount: '200.00' }] } }), 201);
     await addExpense(h, f, 'alice', { description: 'Fictional dinner', amount: '300.00', categoryId: cat.id, payers: [{ ref: f.refs.alice }], split: equal(f.refs.alice, f.refs.bob, f.refs.frank, f.refs.dana) });
     ok(await act(h, f, 'bob', 'ledger', { currency: 'EUR' }));
     // Bob paid nothing, but 75.00 of the dinner is his spending in that category; his cash is unchanged.
