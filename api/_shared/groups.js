@@ -369,25 +369,46 @@ function openCurrencies(doc) {
 }
 
 // ---- personal ledger ---------------------------------------------------------------------------
-// The entries a person's own account should hold for one record (the brief's EUR 300 dinner rule):
-//   expense    what they paid is charged to their account: their own share as spending (`expense`),
-//              the rest as money lent to the others (`advance`), which is neither spending nor income.
-//              Someone who paid less than their share has only what they paid as spending now.
-//   settlement a CONFIRMED repayment to them is a `reimbursement` that clears the advance.
+// The entries a person's own account should hold for one record (the brief's EUR 300 dinner rule,
+// completed by Terry's model of 2026-09-14, financial review finding 2). For each group and currency,
+// on that account:
+//   cash      = −(what they paid for expenses) + (repayments received) − (repayments made)
+//   spending  = the sum of their shares of every active expense, whoever paid
+//   owed      = advances − reimbursements − payables + repayments = their group balance
+// so, per record:
+//   expense    their share is spending (`expense`, in the expense's category). What they paid beyond
+//              their share was lent (`advance`, money out); a share beyond what they paid is owed to
+//              the others (`payable`, positive, no money moves). Together: −(what they paid).
+//   settlement a CONFIRMED repayment to them is a `reimbursement` (money in); one they made is a
+//              `repayment` (money out). Reported and disputed payments are not in the balance, so
+//              they want nothing yet.
 // Amounts are signed from the account holder's point of view (ledger.js). A void record wants none.
 function desiredEntries(rec, type, ref) {
   if (rec.voidedAt) return [];
   if (type === 'expense') {
     const paid = sumByRef(rec.payers).get(ref) || 0;
-    if (!paid) return [];
-    const own = Math.min(paid, sumByRef(rec.shares).get(ref) || 0);
+    const share = sumByRef(rec.shares).get(ref) || 0;
     const out = [];
-    if (own > 0) out.push({ kind: 'expense', amountMinor: -own, categoryId: rec.categoryId || null, date: rec.date });
-    if (paid - own > 0) out.push({ kind: 'advance', amountMinor: -(paid - own), categoryId: null, date: rec.date });
+    if (share > 0) out.push({ kind: 'expense', amountMinor: -share, categoryId: rec.categoryId || null, date: rec.date });
+    if (paid > share) out.push({ kind: 'advance', amountMinor: -(paid - share), categoryId: null, date: rec.date });
+    if (share > paid) out.push({ kind: 'payable', amountMinor: share - paid, categoryId: null, date: rec.date });
     return out;
   }
-  if (rec.status !== 'confirmed' || rec.to !== ref) return [];
-  return [{ kind: 'reimbursement', amountMinor: rec.amountMinor, categoryId: null, date: rec.date }];
+  if (rec.status !== 'confirmed') return [];
+  if (rec.to === ref) return [{ kind: 'reimbursement', amountMinor: rec.amountMinor, categoryId: null, date: rec.date }];
+  if (rec.from === ref) return [{ kind: 'repayment', amountMinor: -rec.amountMinor, categoryId: null, date: rec.date }];
+  return [];
+}
+
+const LINK_KEYS = Object.freeze({ expense: 'groupExpenseId', settlement: 'groupSettlementId' });
+
+// Whether `subject` records `rec` on an account outside `accountIds` (restore planning): through their
+// link for its currency, a per-record link of increment 1, or live entries of theirs.
+function recordedOutside(doc, rec, type, subject, accountIds) {
+  const key = LINK_KEYS[type];
+  const links = [...(doc.groupLedgers || []).filter((l) => l.subject === subject && l.currency === rec.currency && !l.endedAt), ...(rec.ledgerLinks || []).filter((l) => l.subject === subject && !l.endedAt)];
+  if (links.some((l) => !accountIds.has(l.accountId))) return true;
+  return (doc.transactions || []).some((t) => t.createdBy === subject && t.links && t.links[key] === rec.id && !t.deletedAt && !t.reversedBy && !t.links.reverses && !accountIds.has(t.accountId));
 }
 
 // ---- integrity (used by backups and restores) -----------------------------------------------------
@@ -441,5 +462,5 @@ function memberIds(doc) {
 module.exports = {
   METHODS, SETTLEMENT_STATES, MAX_LINES, MAX_GROUP_MINOR, HUNDRED_PERCENT,
   percentUnits, percentText, positiveAmount, computeShares, normalizeSplit, normalizePayers, participantChecker,
-  participants, recordRefs, sumByRef, balances, openCurrencies, desiredEntries, invariantProblem, memberIds,
+  participants, recordRefs, sumByRef, balances, openCurrencies, desiredEntries, recordedOutside, invariantProblem, memberIds,
 };

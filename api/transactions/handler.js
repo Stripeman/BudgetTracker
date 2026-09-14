@@ -156,7 +156,7 @@ async function list(ctx, req) {
     if (t.deletedAt || bucket === 'transfer') continue;
     let amount = t.amountMinor;
     if (f.categoryId && (t.splits || []).length) amount = money.sum(t.splits.filter((s) => s.categoryId === f.categoryId).map((s) => s.amountMinor));
-    const s = summary[t.currency] || (summary[t.currency] = { gross: 0, refunds: 0, income: 0, adjustments: 0, advances: 0, reimbursements: 0, count: 0 });
+    const s = summary[t.currency] || (summary[t.currency] = { gross: 0, refunds: 0, income: 0, adjustments: 0, advances: 0, reimbursements: 0, payables: 0, repayments: 0, count: 0 });
     s.count += 1;
     if (bucket === 'spending') s.gross = money.sum([s.gross, -amount]);
     else if (bucket === 'refund') s.refunds = money.sum([s.refunds, amount]);
@@ -164,6 +164,9 @@ async function list(ctx, req) {
     else if (bucket === 'adjustment') s.adjustments = money.sum([s.adjustments, amount]);
     else if (bucket === 'advance') s.advances = money.sum([s.advances, -amount]);
     else if (bucket === 'reimbursement') s.reimbursements = money.sum([s.reimbursements, amount]);
+    // Money owed to others for their shared expenses, and repayments made to them (BT-009).
+    else if (bucket === 'payable') s.payables = money.sum([s.payables, amount]);
+    else if (bucket === 'repayment') s.repayments = money.sum([s.repayments, -amount]);
   }
   const limit = Math.min(Math.max(parseInt(query(req, 'limit') || '200', 10) || 200, 1), 1000);
   const offset = Math.max(parseInt(query(req, 'offset') || '0', 10) || 0, 0);
@@ -184,6 +187,10 @@ async function list(ctx, req) {
         net: money.toDecimal(money.sum([s.gross, -s.refunds]), currency), income: money.toDecimal(s.income, currency),
         adjustments: money.toDecimal(s.adjustments, currency), advances: money.toDecimal(s.advances, currency),
         reimbursements: money.toDecimal(s.reimbursements, currency),
+        payables: money.toDecimal(s.payables, currency), repayments: money.toDecimal(s.repayments, currency),
+        // What is owed to the account holder (negative: what they owe): lent − repaid to them − owed
+        // to others + repaid by them. For an account that records shared expenses it is the balance.
+        receivable: money.toDecimal(money.sum([s.advances, -s.reimbursements, -s.payables, s.repayments]), currency),
       })),
     },
   };

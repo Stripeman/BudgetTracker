@@ -146,6 +146,8 @@ export function createView(ctx) {
         "Spent ", el("strong", { text: fmt(x.gross, x.currency) }), " · refunds ", el("strong", { text: fmt(x.refunds, x.currency) }),
         " · net ", el("strong", { text: fmt(x.net, x.currency) }),
         /^0(\.0+)?$/.test(x.income) ? null : el("span", { text: ` · income ${fmt(x.income, x.currency)}` }),
+        // What is owed to the account holder, or what they owe, from lending and shared expenses (BT-009).
+        !x.receivable || /^-?0(\.0+)?$/.test(x.receivable) ? null : el("span", { text: x.receivable.startsWith("-") ? ` · you owe ${fmt(x.receivable.slice(1), x.currency)}` : ` · owed to you ${fmt(x.receivable, x.currency)}` }),
         ` (${x.count} ${x.count === 1 ? "entry" : "entries"})`,
       ])));
     } else mount(summary);

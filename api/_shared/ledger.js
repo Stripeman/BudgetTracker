@@ -18,9 +18,15 @@ const LIABILITY_TYPES = new Set(['credit-card', 'loan', 'mortgage', 'merchant-cr
 const CREDIT_TYPES = new Set(['credit-card', 'merchant-credit']);
 const LOAN_TYPES = new Set(['loan', 'mortgage']);
 
-const TX_KINDS = Object.freeze(['expense', 'income', 'transfer', 'refund', 'fee', 'reimbursement', 'advance', 'adjustment', 'interest']);
-const OUTFLOW = new Set(['expense', 'fee', 'advance', 'interest']);
-const INFLOW = new Set(['income', 'refund', 'reimbursement']);
+// `payable` and `repayment` (BT-009, financial review finding 2): a share of an expense someone else
+// paid is spending with no money leaving yet — an `expense` for the share plus a `payable` (positive,
+// money owed) that offsets it — and paying that back is a `repayment` (negative). With `advance` (lent)
+// and `reimbursement` (repaid to you) they make up what is owed: advances − reimbursements − payables +
+// repayments. None of the four is spending or income.
+const TX_KINDS = Object.freeze(['expense', 'income', 'transfer', 'refund', 'fee', 'reimbursement', 'advance', 'adjustment', 'interest', 'payable', 'repayment']);
+// The sign each kind takes (OUTFLOW negative, INFLOW positive); a payable is positive but moves no money.
+const OUTFLOW = new Set(['expense', 'fee', 'advance', 'interest', 'repayment']);
+const INFLOW = new Set(['income', 'refund', 'reimbursement', 'payable']);
 const TX_STATUSES = Object.freeze(['pending', 'cleared', 'reconciled']);
 // Liabilities whose opening balance is money OWED and therefore never positive. Cards may open
 // with a credit (overpayment), so they are not in this set.
@@ -37,6 +43,9 @@ function classify(kind) {
   if (kind === 'adjustment') return 'adjustment';
   if (kind === 'advance') return 'advance';
   if (kind === 'reimbursement') return 'reimbursement';
+  // Owed to others for their shared expenses, and repayments made to them (BT-009): never spending.
+  if (kind === 'payable') return 'payable';
+  if (kind === 'repayment') return 'repayment';
   return 'other';
 }
 

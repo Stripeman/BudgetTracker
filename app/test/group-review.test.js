@@ -4,7 +4,7 @@
 import { test, describe, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import { installDom } from "./domdouble.js";
-import { createView as createGroupView } from "../js/ui/views/group.js";
+import { createView as createGroupView, openGroupExpense } from "../js/ui/views/group.js";
 import { createView as createDashboard } from "../js/ui/views/dashboard.js";
 
 let dom;
@@ -36,11 +36,14 @@ function ctxWith(balances, { accounts = [], expenses = [], settlements = [], myL
     payees: { workspaceId: "ws_1", status: "ready", error: null, data: { payees: [] } },
   };
   const calls = [];
-  const api = { groupAction: async (ws, action, body, key) => { calls.push({ action, body, key }); return {}; } };
+  const api = {
+    groupAction: async (ws, action, body, key) => { calls.push({ action, body, key }); return {}; },
+    createGroupExpense: async (ws, body, key) => { calls.push({ action: "create", body, key }); return { expense: {} }; },
+  };
   const store = {
     getState: () => state,
     actions: {
-      write: async (fn) => ({ ok: true, result: await fn("ws_1") }),
+      write: async (fn, refresh) => { const result = await fn("ws_1"); calls.refresh = refresh; return { ok: true, result }; },
       refreshGroup: async () => {}, refreshTransactions: async () => {}, refreshBills: async () => {}, refreshForecast: async () => {},
     },
   };
@@ -97,5 +100,45 @@ describe("finding 3: every currency with an open balance is shown and can be set
     const text = d.element.textContent;
     assert.match(text, /You get back EUR 45\.00/);
     assert.doesNotMatch(text, /You are settled up/);
+  });
+});
+
+describe("S2 and finding 2: the own-account choice", () => {
+  const OWN = { id: "acc_own", name: "Alice Cash", currency: "USD", status: "open", visibility: "private", ownedBySelf: true, capabilities: ["create", "view-transactions"] };
+  const JOINT = { id: "acc_joint", name: "Joint", currency: "USD", status: "open", visibility: "shared", ownedBySelf: false, capabilities: ["create", "view-transactions"] };
+  const GRANTED = { id: "acc_granted", name: "Bob Card", currency: "USD", status: "open", visibility: "private", ownedBySelf: false, capabilities: ["create", "view-transactions"] };
+  const ownFieldset = (dialog) => dialog.querySelectorAll("fieldset").find((f) => f.querySelector("legend") && f.querySelector("legend").textContent === "Your own account (optional)");
+  const choiceLabel = (dialog) => dialog.querySelectorAll("label").find((l) => l.textContent === "Also record my part on my own account");
+
+  test("only the viewer's own private accounts are offered, never a shared or granted one", () => {
+    const { ctx } = ctxWith(STRANDED, { accounts: [JOINT, OWN, GRANTED] });
+    const dialog = openGroupExpense(ctx).element;
+    const fs = ownFieldset(dialog);
+    assert.equal(fs.hidden, false, "Alice pays and shares by default");
+    assert.deepEqual(fs.querySelector("select").querySelectorAll("option").map((o) => o.textContent), ["Alice Cash (USD)"]);
+  });
+
+  test("without an own private account the dialog says how to add one, and offers no account", () => {
+    const { ctx } = ctxWith(STRANDED, { accounts: [JOINT, GRANTED] });
+    const dialog = openGroupExpense(ctx).element;
+    const fs = ownFieldset(dialog);
+    assert.equal(fs.hidden, false);
+    assert.match(fs.textContent, /Add a private account of your own on the Accounts page to record this there\./);
+    assert.equal(choiceLabel(dialog).parentNode.parentNode.hidden, true, "no checkbox or account list");
+  });
+
+  test("once the viewer's part is recorded on an account, the dialog says where and offers no second choice", async () => {
+    const { ctx, calls } = ctxWith(STRANDED, { accounts: [OWN], myLedgers: [{ currency: "USD", accountId: OWN.id, accountName: "Alice Cash", accountUnavailable: false, reviewCount: 0 }] });
+    const dialog = openGroupExpense(ctx).element;
+    const fs = ownFieldset(dialog);
+    assert.match(fs.textContent, /Your part is recorded on Alice Cash, with your other shared expenses in USD\./);
+    assert.equal(choiceLabel(dialog).parentNode.parentNode.hidden, true);
+    dialog.querySelector('input[placeholder="For example: Dinner at the harbour"]').value = "Fictional lunch";
+    dialog.querySelector('input[placeholder="0.00 or 12.50+3.20"]').value = "30.00";
+    buttonNamed(dialog, "Save expense").click();
+    await tick();
+    assert.equal(calls[0].body.ledger, undefined, "the server follows the existing link");
+    // The viewer's own account changes too, so it is re-read.
+    assert.deepEqual(calls.refresh, ["group", "accounts", "transactions"]);
   });
 });

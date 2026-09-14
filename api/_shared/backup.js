@@ -412,14 +412,27 @@ function plan({ current, archived, mode, principal, member, nowIso, newWorkspace
       if (inside.some((l) => nowById.get(l.id) !== JSON.stringify(l))) { blockers.push(crossScope); break; }
     }
   }
-  // A shared expense or payment that a member also recorded on an account outside the caller's scope
-  // must not be changed or set aside: their entries would stand alone (BT-009). Merge never changes an
-  // existing record, so only replace can do this.
+  // A shared expense or payment that another member records on an account outside the caller's scope
+  // must not change in a way that changes what their entries should be: their entries would no longer
+  // match and only they can change them (BT-009). Merge never changes an existing record, so only
+  // replace can do this. Checked for every record replace adds, changes or sets aside.
   if (mode === 'replace' && !blockers.length) {
-    const nextById = new Map([...(next.groupExpenses || []), ...(next.groupSettlements || [])].map((r) => [r.id, JSON.stringify(r)]));
-    for (const r of [...(current.groupExpenses || []), ...(current.groupSettlements || [])]) {
-      const outside = (r.ledgerLinks || []).some((l) => !l.endedAt && !scopeNow.accountIds.has(l.accountId));
-      if (outside && nextById.get(r.id) !== JSON.stringify(r)) { blockers.push(GROUP_LEDGER_BLOCKER); break; }
+    const byId = (d) => new Map([...(d.groupExpenses || []).map((r) => [r.id, ['expense', r]]), ...(d.groupSettlements || []).map((r) => [r.id, ['settlement', r]])]);
+    const nowRecs = byId(current);
+    const nextRecs = byId(next);
+    const others = (current.members || []).filter((m) => m.subject !== principal.subject);
+    outer: for (const id of new Set([...nowRecs.keys(), ...nextRecs.keys()])) {
+      const a = nowRecs.get(id);
+      const b = nextRecs.get(id);
+      if (a && b && JSON.stringify(a[1]) === JSON.stringify(b[1])) continue;
+      const [type, rec] = a || b;
+      for (const m of others) {
+        if (!groups.recordedOutside(current, rec, type, m.subject, scopeNow.accountIds)) continue;
+        const ref = `member:${m.id}`;
+        const before = a ? groups.desiredEntries(a[1], type, ref) : [];
+        const after = b ? groups.desiredEntries(b[1], type, ref) : [];
+        if (JSON.stringify(before) !== JSON.stringify(after)) { blockers.push(GROUP_LEDGER_BLOCKER); break outer; }
+      }
     }
   }
   // Only attachments referenced by records the caller restores are written (security review
