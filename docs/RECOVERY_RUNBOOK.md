@@ -111,6 +111,14 @@ The operator role is separate from site administration and from workspace roles.
    The report contains no names, amounts or emails. Do not claim RPO or RTO achievement from unit tests; only Staging drills with measured timings count.
 5. Destroy the isolated copy and clear the keys from the shell after the drill.
 
+## Recovery log
+
+Newest first. One entry per drill or real recovery, with the fields listed in step 4 above. No names, amounts, emails or workspace ids (this repository is public); the operator keeps the workspace id in local notes.
+
+| Date (UTC) | Environment | Archive id and time | Schema / key | Candidate commit | Operator and authorization | Durations | Recovery-point age | Checks | Gaps |
+|---|---|---|---|---|---|---|---|---|---|
+| 2026-09-14 | Production (first release) | `bak_mu18lp87d8a425d630bf`, 2026-09-14T12:46:35Z (on-demand backup taken by the site owner of his own workspace) | 1 / `prd1` (the escrowed key) | `31b17b1` | Implementation agent, authorized by Terry; archive read through operator storage access (account-key auth — his login has no blob-data role), keys loaded into the drill process only, isolated copy and downloaded archive deleted afterwards | restore 5.0 ms, verify 1.4 ms, total 6.4 ms | 0.1 h | header.workspace-matches, decrypt-and-validate, attachments-complete, balances-match-manifest, counts-match-manifest: all ok — **passed** (counts: 2 accounts, 2 entries, 1 merchant, 17 categories, 1 member, 0 attachments) | First Production drill, on a very small workspace. Timings are not an RPO/RTO measurement. No scheduled backups yet (accepted for the first release). The escrow file is still on the PC until Terry moves it offline. |
+
 ## Evidence
 
 - `api/test/backup.test.js`: 13 acceptance tests, including an edit that lands while the recovery point is being written. That edit is never overwritten: the final conditional write fails with `stale_preview`.

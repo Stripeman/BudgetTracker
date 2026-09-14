@@ -64,7 +64,8 @@ const SETTINGS = Object.freeze({
     options: Object.freeze([
       Object.freeze({ value: 'receiver-or-manager', label: 'The receiver, or a manager or owner' }),
       Object.freeze({ value: 'receiver', label: 'The receiver only' }),
-      Object.freeze({ value: 'confirmers', label: 'Anyone who can confirm payments' }),
+      // Said plainly (financial recheck N-4): anyone who can confirm payments may be the person who paid.
+      Object.freeze({ value: 'confirmers', label: 'Anyone who can confirm payments', explanation: 'This includes the person who paid.' }),
     ]),
     explanation: 'Withdrawing keeps the payment and its reason in the history, and for a contact a manager or owner acts as the receiver.',
   }),
@@ -81,7 +82,8 @@ const SETTINGS = Object.freeze({
     options: Object.freeze([
       Object.freeze({ value: 'receiver', label: 'The person who received it (a manager or owner for a contact)' }),
       Object.freeze({ value: 'receiver-or-manager', label: 'The person who received it, or a manager or owner' }),
-      Object.freeze({ value: 'confirmers', label: 'Anyone who can confirm payments' }),
+      // The only option under which the person who paid may settle a dispute (security recheck R3-1; N-4).
+      Object.freeze({ value: 'confirmers', label: 'Anyone who can confirm payments', explanation: 'This includes the person who paid.' }),
     ]),
     explanation: 'A disputed payment counts in the balances only once someone allowed here confirms it, and that confirmation is always shown as made over the dispute.',
   }),
