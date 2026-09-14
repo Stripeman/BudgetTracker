@@ -78,6 +78,9 @@ function checkInvariants(doc) {
   uniqueIds(doc.groupSettlements || [], 'group settlement');
   const groupProblem = groups.invariantProblem(doc);
   if (groupProblem) throw invalidData(groupProblem);
+  // The group settings object (Terry, 2026-09-14): its shape, and valid values for known keys.
+  const settingsProblem = require('./group-settings').problem(doc);
+  if (settingsProblem) throw invalidData(settingsProblem);
   // A reversal matches the entry it reverses: same account and kind, exactly the opposite amount.
   const txById = new Map((doc.transactions || []).map((t) => [t.id, t]));
   for (const t of doc.transactions || []) {
@@ -94,6 +97,17 @@ function checkInvariants(doc) {
     if (!t.reversedBy) continue;
     const reversal = txById.get(t.reversedBy);
     if (!reversal || !reversal.links || reversal.links.reverses !== t.id) throw invalidData('reversal link');
+  }
+  // A hand-entered amount owed (group setting "Owed-to-others and repayment entries") is a pair: the
+  // share as spending and the matching payable, on one account in one currency on one date, opposite
+  // amounts, deleted or kept together — never a lone payable (BT-009 recheck, Terry's decision C).
+  const owedPairs = new Map();
+  for (const t of doc.transactions || []) if (t.owedPairId) owedPairs.set(t.owedPairId, [...(owedPairs.get(t.owedPairId) || []), t]);
+  for (const legs of owedPairs.values()) {
+    const [a, b] = legs;
+    if (legs.length !== 2 || legs.map((x) => x.kind).sort().join(',') !== 'expense,payable' || a.accountId !== b.accountId || a.currency !== b.currency
+        || a.date !== b.date || !money.isMinor(a.amountMinor) || !money.isMinor(b.amountMinor) || a.amountMinor + b.amountMinor !== 0
+        || Boolean(a.deletedAt) !== Boolean(b.deletedAt)) throw invalidData('owed pair');
   }
   // A bill occurrence is recorded at most once among live entries (both legs of a transfer count once)
   // (SEC-B6). A recording cancelled by a live reversal no longer counts, so the occurrence can be
@@ -344,19 +358,37 @@ function plan({ current, archived, mode, principal, member, nowIso, newWorkspace
     // The restorer keeps the member id they had, so shared expenses that name them still do (BT-009).
     const archivedSelf = (archived.members || []).find((m) => m.subject === principal.subject);
     const memberId = archivedSelf ? archivedSelf.id : newId('mem');
+    // Nobody else's identity comes along on ANY carried record (security recheck, S4 residual): every
+    // other member's subject becomes the former-member value and every reference to another member
+    // becomes one former member — on entries of shared accounts, merchants, bills, budgets, contacts,
+    // categories, settings, shared expenses and all their histories. The new workspace therefore
+    // grants nothing, and charges nothing to anyone's allowance, on the strength of an old id, even if
+    // that person joins it later. The restorer's own identity is kept.
+    const otherSubjects = new Set((archived.members || []).map((m) => m.subject).filter((s) => typeof s === 'string' && s !== principal.subject));
+    const forgetOthers = (v) => {
+      if (Array.isArray(v)) return v.map(forgetOthers);
+      if (v && typeof v === 'object') return Object.fromEntries(Object.entries(v).map(([k, x]) => [k, forgetOthers(x)]));
+      if (typeof v !== 'string') return v;
+      if (otherSubjects.has(v)) return FORMER_SUBJECT;
+      return v.startsWith('member:') && otherMemberIds.has(v.slice(7)) ? FORMER_REF : v;
+    };
     next = {
       id: newWorkspaceId, name: `${archived.name} (restored ${nowIso.slice(0, 10)})`.slice(0, 80), kind: archived.kind, status: 'active',
-      createdAt: nowIso, createdBy: principal.subject, updatedAt: nowIso, revision: 1, settings: { ...archived.settings },
+      createdAt: nowIso, createdBy: principal.subject, updatedAt: nowIso, revision: 1, settings: forgetOthers({ ...archived.settings }),
       members: [{ id: memberId, subject: principal.subject, email: principal.email, name: principal.name || '', role: 'owner', status: 'active', joinedAt: nowIso }],
-      invitations: [], grants: [], contacts: scopeArc.shared ? arc.contacts : [], accounts: arc.accounts.map((a) => (a.visibility === 'private' ? { ...a, ownerSubject: principal.subject } : a)),
+      invitations: [], grants: [], contacts: forgetOthers(scopeArc.shared ? arc.contacts : []),
+      accounts: forgetOthers(arc.accounts.map((a) => (a.visibility === 'private' ? { ...a, ownerSubject: principal.subject } : a))),
       // Payee ownership is never transferred to the restorer (security review finding 9).
-      payees,
-      categories: archived.categories || [], transactions: txns, audit: [], idempotency: {}, restoredFrom: null,
-      recurring: carriedBills,
-      budgets: arc.budgets,
-      groupExpenses: arc.groupExpenses.map(scrub),
-      groupSettlements: arc.groupSettlements.map(scrub),
+      payees: forgetOthers(payees),
+      categories: forgetOthers(archived.categories || []), transactions: forgetOthers(txns), audit: [], idempotency: {}, restoredFrom: null,
+      recurring: forgetOthers(carriedBills),
+      budgets: forgetOthers(arc.budgets),
+      groupExpenses: forgetOthers(arc.groupExpenses.map(scrub)),
+      groupSettlements: forgetOthers(arc.groupSettlements.map(scrub)),
       groupLedgers: (archived.groupLedgers || []).filter((l) => l.subject === principal.subject && keepAccounts.has(l.accountId)).map((l) => ({ ...l })),
+      // The group's settings come along with the group; who changed them is mapped like everything else.
+      // Per-person overrides of anyone else are left behind; they are keyed by member id (S4).
+      ...(archived.groupSettings ? { groupSettings: forgetOthers(require('./group-settings').forNewWorkspace(archived.groupSettings, memberId)) } : {}),
     };
     if ([...groups.memberIds(next)].some((id) => id !== memberId)) blockers.push(GROUP_MEMBERS_BLOCKER);
   } else {

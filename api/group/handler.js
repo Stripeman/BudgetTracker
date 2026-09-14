@@ -53,6 +53,7 @@ const fields = require('../_shared/fields');
 const audit = require('../_shared/audit');
 const ledger = require('../_shared/ledger');
 const groups = require('../_shared/groups');
+const groupSettings = require('../_shared/group-settings');
 const entries = require('../_shared/entries');
 const model = require('../_shared/workspace-model');
 
@@ -198,9 +199,19 @@ const NOTES = Object.freeze({
 function syncRecord(ctx, doc, member, rec, type, { reason, strict }) {
   const now = ctx.now();
   const nowIso = ctx.nowIso();
+  // Nothing is ever written to an account that is not the person's own private account (security
+  // recheck R1). A link whose account stopped being theirs (for example shared) needs another account.
+  const link = groupLink(doc, member.subject, rec.currency);
+  if (link && !ownPrivateAccount(doc, link.accountId, member.subject)) {
+    if (strict) throw conflict('The account your shared expenses are recorded on is no longer your own private account. Choose another private account of yours in Shared expenses.', 'account_not_own');
+    return 'not_own';
+  }
+  const live = liveEntries(doc, rec, type, member.subject);
+  // Entries already on an account that is no longer theirs are real cash history: kept exactly as
+  // recorded — never reversed, and never recorded again on another account.
+  if (live.some((t) => !ownPrivateAccount(doc, t.accountId, member.subject))) return 'same';
   const targetId = targetOf(doc, rec, member.subject);
   const desired = targetId ? groups.desiredEntries(rec, type, selfRef(member)) : [];
-  const live = liveEntries(doc, rec, type, member.subject);
   const onTarget = live.filter((t) => t.accountId === targetId);
   const elsewhere = live.filter((t) => t.accountId !== targetId);
   const matches = sameEntries(onTarget, desired);
@@ -316,6 +327,15 @@ function myLedger(ctx, doc, member, rec, type, entriesFor = entryIndex(doc, memb
   if (!live.length && !desired.length) return null;
   const now = ctx.now();
   const sees = (id) => { const a = (doc.accounts || []).find((x) => x.id === id); return a && !a.deletedAt && capabilitiesFor(doc, ctx.principal, a, now).size > 0 ? a : null; };
+  // Kept as recorded on an account that is no longer their own private account (R1): nothing to update.
+  const foreign = live.find((t) => !ownPrivateAccount(doc, t.accountId, member.subject));
+  if (foreign) {
+    const where = sees(foreign.accountId);
+    return {
+      accountId: where ? where.id : null, accountName: where ? where.name : null, accountUnavailable: !where, needsReview: false, kept: true,
+      entries: live.filter((t) => sees(t.accountId)).map((t) => ({ id: t.id, kind: t.kind, amount: money.toDecimal(t.amountMinor, t.currency) })),
+    };
+  }
   const account = targetId ? sees(targetId) : null;
   return {
     accountId: account ? account.id : null, accountName: account ? account.name : null, accountUnavailable: !!targetId && !account,
@@ -338,7 +358,10 @@ function myLedgers(ctx, doc, member, entriesFor) {
         if (m && m.needsReview) reviewCount += 1;
       }
     }
-    return { currency: l.currency, accountId: visible ? a.id : null, accountName: visible ? a.name : null, accountUnavailable: !visible, since: l.linkedAt, reviewCount };
+    // A link whose account stopped being its owner's private account writes nothing until they choose
+    // another one (R1); it counts as unavailable so the choice is offered again.
+    const own = !!ownPrivateAccount(doc, l.accountId, member.subject);
+    return { currency: l.currency, accountId: visible ? a.id : null, accountName: visible ? a.name : null, accountUnavailable: !visible || !own, needsAccount: !own, since: l.linkedAt, reviewCount };
   });
 }
 
@@ -378,10 +401,17 @@ function settlementView(ctx, doc, member, s) {
     disputeReason: s.disputeReason || '', confirmedBy: s.confirmedBy ? nameOf(doc, s.confirmedBy) : null, confirmedAt: s.confirmedAt || null,
     // Confirmed by the manager or owner who reported it (S5); a confirmation withdrawn by a void (S6).
     confirmedByReporter: !!s.confirmedByReporter, withdrawn: !!s.withdrawn,
+    // Who confirmed, relative to the payment: its receiver, the person who paid it, or someone else.
+    confirmation: s.status === 'confirmed' && s.confirmedBy ? {
+      by: nameOf(doc, s.confirmedBy),
+      relation: (() => { const m = model.memberBySubject(doc, s.confirmedBy); const ref = m ? `member:${m.id}` : null; return ref === s.to ? 'receiver' : ref === s.from ? 'payer' : 'other'; })(),
+    } : null,
     createdBy: nameOf(doc, s.createdBy), createdBySelf: s.createdBy === member.subject, createdAt: s.createdAt, revision: s.revision,
-    // The payer never confirms (S5); a viewer may confirm or dispute a payment made to them (S7); once
-    // confirmed, only the receiving member or a manager or owner may withdraw it (S6).
-    canConfirm: live && s.status !== 'confirmed' && s.from !== me && (s.to === me || (toContact && open && isManager(member))),
+    // Confirming follows the group setting "Anyone in the group can confirm payments": any member who can
+    // add to the group, or a viewer for a payment made to them (S7); when it is off, the payer never
+    // confirms (S5). Once confirmed, only the receiving member or a manager or owner may withdraw it (S6).
+    // Per person (Terry, 2026-09-14): an owner's or manager's override for this member, otherwise the group setting.
+    canConfirm: live && s.status !== 'confirmed' && (s.to === me || (groupSettings.confirmsAny(doc, member) ? writer(member) : s.from !== me && toContact && open && isManager(member))),
     canDispute: live && s.status === 'reported' && s.to === me,
     canVoid: open && (s.status === 'confirmed' ? (s.to === me || isManager(member)) : (s.createdBy === member.subject || isManager(member))),
   };
@@ -426,6 +456,8 @@ async function list(ctx, req) {
   return {
     body: {
       currency: reportingCurrency(doc), kind: doc.kind,
+      // The group's settings from the one list, with who changed what (Terry, 2026-09-14).
+      groupSettings: groupSettings.view(doc, (s) => nameOf(doc, s), member, isManager(member)),
       permissions: { role: member.role, canAdd: writer(member), canManage: isManager(member), selfRef: selfRef(member) },
       participants: parts,
       expenses: [...(doc.groupExpenses || [])].sort(newestFirst).map((e) => expenseView(ctx, doc, member, e)),
@@ -559,10 +591,17 @@ function settlementChange(kind) {
       if (s.to !== me) requireWriter(member);
       const nowIso = ctx.nowIso();
       if (kind === 'confirm') {
-        // Never the person who paid (security review S5).
-        if (s.from === me) throw forbidden('You paid this, so someone else must confirm that it arrived.');
-        const allowed = s.to === me || (s.to.startsWith('contact:') && isManager(member));
-        if (!allowed) throw forbidden(s.to.startsWith('contact:') ? 'Only a manager or owner can confirm a payment to a contact.' : 'Only the person who received this payment can confirm it.');
+        // "Can confirm payments" (Terry, 2026-09-14): the owner's or manager's override for this person
+        // if set, otherwise the group setting "Anyone in the group can confirm payments" (on by
+        // default). When it applies, the person confirms any reported payment, their own included; a
+        // viewer never gets more than one made to them. Otherwise: never the person who paid (security
+        // review S5); the receiving member, or a manager or owner for a contact.
+        const anyone = groupSettings.confirmsAny(doc, member);
+        if (!anyone) {
+          if (s.from === me) throw forbidden('You paid this, so someone else must confirm that it arrived.');
+          const allowed = s.to === me || (s.to.startsWith('contact:') && isManager(member));
+          if (!allowed) throw forbidden(s.to.startsWith('contact:') ? 'Only a manager or owner can confirm a payment to a contact.' : 'Only the person who received this payment can confirm it.');
+        }
         // Starting to record on an account is not something a viewer can do (S7).
         if (ledgerAccountId) requireWriter(member);
         if (s.voidedAt) throw conflict('This payment is void.', 'already_void');
@@ -570,7 +609,8 @@ function settlementChange(kind) {
         checkRevision(s, body.revision);
         // A manager or owner confirming a contact payment they reported themselves is allowed — a group
         // with one owner must be able to record them — but kept and shown distinctly (S5).
-        const byReporter = s.to !== me && s.createdBy === member.subject;
+        // Marked only under the strict rules; when anyone may confirm, the confirmation says who it was.
+        const byReporter = !anyone && s.to !== me && s.createdBy === member.subject;
         s.status = 'confirmed';
         s.confirmedBy = member.subject;
         s.confirmedAt = nowIso;
@@ -711,7 +751,26 @@ async function recordHistory(ctx, req) {
   };
 }
 
-const ACTIONS = Object.freeze({ void: voidRecord, settle: createSettlement, confirm: settlementChange('confirm'), dispute: settlementChange('dispute'), ledger: ledgerAction });
+// ---- group settings -----------------------------------------------------------------------------
+// POST ?action=settings { changes: { <key>: <value> }, reason? }: owners and managers change the
+// group's settings from the one list in api/_shared/group-settings.js; every real change is kept in
+// the history (who, when, from, to, why) and audited, in the same write.
+async function settingsAction(ctx, req) {
+  const wsId = requireId(query(req, 'workspaceId'), 'workspaceId');
+  const body = fields.onlyKeys(readBody(req), ['changes', 'reason']);
+  const changes = groupSettings.parseChanges(body.changes);
+  const reason = fields.text(body.reason, { field: 'Reason', max: 200 });
+  const { result } = await store.mutateWorkspace(ctx, wsId, (doc, member) => {
+    if (!isManager(member)) throw forbidden('Only owners and managers can change the group\'s settings.');
+    const at = ctx.nowIso();
+    const changed = groupSettings.apply(doc, changes, { by: member.subject, at, reason });
+    if (changed.length) audit.record(doc, { actor: member.subject, action: 'group.settings.update', targetType: 'workspace', targetId: doc.id, at, fields: changed });
+    return { groupSettings: groupSettings.view(doc, (s) => nameOf(doc, s), member, true) };
+  });
+  return { body: result };
+}
+
+const ACTIONS = Object.freeze({ void: voidRecord, settle: createSettlement, confirm: settlementChange('confirm'), dispute: settlementChange('dispute'), ledger: ledgerAction, settings: settingsAction });
 
 async function post(ctx, req) {
   const action = query(req, 'action');

@@ -5,7 +5,7 @@ import { el, mount } from "../dom.js";
 import { pageHead, stateView, money, accessBadge, button, transferLabel } from "../components.js";
 import { sliceFor } from "../../core/store.js";
 import { ACCOUNT_TYPE_LABELS, formatDate } from "../../core/format.js";
-import { openQuickEntry, canAddEntries, addEntriesBlocked, amountWithDirection } from "./transactions.js";
+import { openQuickEntry, canAddEntries, addEntriesBlocked, entryAmount } from "./transactions.js";
 import { warningText } from "./planning.js";
 import { formatAmount } from "../../core/format.js";
 import { icon, withIcon } from "../icons.js";
@@ -115,7 +115,7 @@ export function createView(ctx) {
       el("span", { class: "muted small", text: formatDate(t.date, dateFormat) }),
       merchantOf(t),
       el("span", { class: "app__spacer" }),
-      amountWithDirection(t, prefs),
+      entryAmount(t, prefs),
     ]))));
   }
   return { element, update };

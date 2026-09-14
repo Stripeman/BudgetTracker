@@ -456,30 +456,22 @@ describe('finding 1: each person\'s entries are theirs alone', () => {
     return { h, f, joint, e };
   }
 
-  test('a sync touches only the caller\'s own entries and never flip-flops', async () => {
+  // Security recheck R1 (Terry, 2026-09-14): nothing is ever written to an account that is not the
+  // person's own private account. Entries left on a shared account are real cash history, so they stay
+  // exactly as recorded: never reversed and never recorded again elsewhere.
+  test('each person sees only their own entry; entries left on a shared account are kept as recorded and a sync writes nothing', async () => {
     const { h, f, joint, e } = await legacyJoint();
     assert.equal(await balanceOf(h, f, 'alice', joint.id), '800.00');
-    // Links to a shared account are no longer honoured (S2): each person's own entry needs review, and
-    // only their own entry is listed as theirs.
-    let mine = (await view(h, f, 'alice')).expenses[0].myLedger;
-    assert.equal(mine.needsReview, true);
-    assert.equal(mine.entries.length, 1);
-    ok(await act(h, f, 'alice', 'ledger', { expenseId: e.id }));
-    // Only Alice's 100.00 is reversed: 800 + 100 = 900. Frank's entry is untouched.
-    assert.equal(await balanceOf(h, f, 'alice', joint.id), '900.00');
-    const live = (await entriesOf(h, f, 'alice', joint.id)).filter((t) => t.links.groupExpenseId === e.id && !t.reversedBy && !t.links.reverses);
-    assert.equal(live.length, 1);
     const count = (await entriesOf(h, f, 'alice', joint.id)).length;
-    ok(await act(h, f, 'alice', 'ledger', { expenseId: e.id }));
-    assert.equal((await entriesOf(h, f, 'alice', joint.id)).length, count, 'no flip-flop');
-    assert.equal((await view(h, f, 'alice')).expenses[0].myLedger, undefined, 'nothing of Alice\'s is left');
-    mine = (await view(h, f, FRANK)).expenses[0].myLedger;
-    assert.equal(mine.needsReview, true);
-    ok(await act(h, f, FRANK, 'ledger', { expenseId: e.id }));
-    assert.equal(await balanceOf(h, f, 'alice', joint.id), '1000.00');
-    ok(await act(h, f, 'alice', 'ledger', { expenseId: e.id }));
-    // Frank's update added one entry (the reversal of his own); Alice's repeat added none: 3 + 1 = 4.
-    assert.equal((await entriesOf(h, f, 'alice', joint.id)).length, count + 1, 'only Frank\'s reversal was added');
+    for (const w of ['alice', FRANK]) {
+      const mine = (await view(h, f, w)).expenses[0].myLedger;
+      assert.deepEqual([mine.entries.length, mine.needsReview, mine.kept], [1, false, true], JSON.stringify(w));
+      ok(await act(h, f, w, 'ledger', { expenseId: e.id }));
+      ok(await act(h, f, w, 'ledger', { currency: 'EUR' }));
+    }
+    // Nothing written by either: 1000.00 − 100.00 − 100.00 = 800.00, the same two entries (no flip-flop).
+    assert.equal(await balanceOf(h, f, 'alice', joint.id), '800.00');
+    assert.equal((await entriesOf(h, f, 'alice', joint.id)).length, count);
   });
 
   test('a per-record link from increment 1 to the person\'s own private account keeps working until they link the group', async () => {
@@ -695,6 +687,9 @@ describe('S5: nobody confirms their own payment; a manager confirming a payment 
   test('the payer never confirms; a manager or owner confirming a contact payment they reported is marked', async () => {
     const h = harness();
     const f = await fixture(h);
+    // The S5 rules apply when "Anyone in the group can confirm payments" is off (Terry, 2026-09-14;
+    // it is on by default, tested in group-recheck.test.js).
+    ok(await act(h, f, 'alice', 'settings', { changes: { anyoneConfirms: false } }));
     // Frank (manager) reports that Bob paid Dana (a contact) and confirms it himself: allowed, marked.
     const s1 = await settle(h, f, FRANK, { from: f.refs.bob, to: f.refs.dana, amount: '50.00' });
     const c1 = ok(await act(h, f, FRANK, 'confirm', { settlementId: s1.id, revision: s1.revision })).settlement;

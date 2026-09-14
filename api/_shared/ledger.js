@@ -228,6 +228,8 @@ function transactionView(doc, t, principal, now, lookups) {
     categoryId: t.categoryId || null, splits: (t.splits || []).map((s) => ({ ...s, amount: money.toDecimal(s.amountMinor, t.currency) })),
     tags: t.tags || [], notes: t.notes || '', responsibleRef: t.responsibleRef || null,
     transferId: t.transferId || null, counterpartAccountId: t.counterpartAccountId || null,
+    // A hand-entered amount owed and its matching share, recorded and corrected together (BT-009).
+    owedPairId: t.owedPairId || null,
     links: t.links || {}, createdAt: t.createdAt, updatedAt: t.updatedAt || null, revision: t.revision || 1,
     amendmentCount: (t.amendments || []).length, reversedBy: t.reversedBy || null,
     createdBySelf: t.createdBy === principal.subject, deletedAt: t.deletedAt || null,

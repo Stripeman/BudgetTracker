@@ -23,9 +23,24 @@ import { messageFor } from "../../core/errors.js";
 import { evaluateAmount, isPlainAmount } from "../../core/calc.js";
 import { formatDate, formatAmount, todayIso, KIND_LABELS, MERCHANT_TYPE_LABELS } from "../../core/format.js";
 import { icon, withIcon, defaultIconFor } from "../icons.js";
-import { amountWithDirection, transferLabel } from "../components.js";
+import { amountWithDirection, transferLabel, amountText } from "../components.js";
+import { directionOf } from "../icons.js";
 
 export { amountWithDirection };
+
+// The amount shown for an entry: with its money arrow (in or out), or — for an amount owed to others for
+// a shared expense, where no money moved — no arrow and the words "No money moved" (Terry's rule: arrows
+// only for money actually in or out; BT-009 recheck N3).
+export function entryAmount(t, prefs) {
+  if (directionOf(t) !== "no-money-moved") return amountWithDirection(t, prefs);
+  // The |==| mark, the amount in neutral colour (neither in nor out) and the words: the mark is
+  // decorative, the words say it (BT-011-05: an icon never stands alone).
+  return el("span", { class: "amount-dir" }, [
+    el("span", { class: "dir" }, [icon("no-money-moved")]),
+    amountText(t.amount, t.currency, prefs),
+    el("span", { class: "muted small", text: " No money moved" }),
+  ]);
+}
 
 const PRECISION = { JPY: 0, KRW: 0, ISK: 0, CLP: 0, VND: 0, BHD: 3, KWD: 3, JOD: 3, OMR: 3, TND: 3 };
 const precisionOf = (c) => (c in PRECISION ? PRECISION[c] : 2);
@@ -33,7 +48,11 @@ const STATUS_LABELS = { pending: "Pending", cleared: "Cleared", reconciled: "Rec
 
 // A reversal and the entry it reverses keep their financial details for good (FIN-R1): only notes,
 // tags and status can change, so the edit form locks the rest and says why. The server enforces it.
+// An entry recorded from Shared expenses follows the shared expense: the server keeps its financial
+// details locked here (BT-009 recheck N2), and the form says where to change it.
+export const sharedLinked = (t) => !!(t.links && (t.links.groupExpenseId || t.links.groupSettlementId));
 export function reversalLock(t) {
+  if (sharedLinked(t)) return "This entry was recorded from Shared expenses, so its amount, date, type, category and merchant follow the shared expense. Change it in Shared expenses; notes, tags and status can be changed here.";
   if (t.reversedBy) return "This entry has been reversed, so its amount, date, type, category and merchant can no longer change. To correct it, add a new entry.";
   if (t.links && t.links.reverses) return "This is a reversal, so its amount, date, type, category and merchant always match the entry it reverses. To correct it, add a new entry.";
   return null;
@@ -169,7 +188,7 @@ export function createView(ctx) {
       el("td", { "data-label": "Category" }, [t.splits.length ? "Split"
         : categories.get(t.categoryId) ? categoryLabel(categories.get(t.categoryId).name, categories.get(t.categoryId).shownColor, categories.get(t.categoryId).shownIcon)
           : (t.kind === "transfer" ? "—" : withIcon("tag", "Uncategorized"))]),
-      el("td", { "data-label": "Amount", class: "num" }, [amountWithDirection(t, prefs)]),
+      el("td", { "data-label": "Amount", class: "num" }, [entryAmount(t, prefs)]),
       el("td", { "data-label": "Status" }, [
         badge(STATUS_LABELS[t.status] || t.status),
         t.reversedBy ? [" ", badge("Reversed", "closed")] : null,
@@ -180,9 +199,10 @@ export function createView(ctx) {
         t.canEdit ? button("Edit", () => openQuickEntry(ctx, { transaction: t }), { small: true, attrs: { "aria-label": `Edit ${t.payeeName || "entry"} on ${t.date}` } }) : null,
         // Corrections never overwrite history (BT-001-05): a reversal cancels an entry, even a
         // reconciled one, and every change is listed under History.
-        t.canEdit && !t.transferId && !t.reversedBy && !(t.links && t.links.reverses) ? button("Reverse", () => openReverse(ctx, t), { small: true, attrs: { "aria-label": `Reverse ${t.payeeName || "entry"} on ${t.date}` } }) : null,
+        // Entries recorded from Shared expenses are reversed or removed only from there (N2).
+        t.canEdit && !t.transferId && !t.reversedBy && !(t.links && t.links.reverses) && !sharedLinked(t) ? button("Reverse", () => openReverse(ctx, t), { small: true, attrs: { "aria-label": `Reverse ${t.payeeName || "entry"} on ${t.date}` } }) : null,
         t.amendmentCount ? button("History", () => void openHistory(ctx, t), { small: true, attrs: { "aria-label": `History of ${t.payeeName || "entry"} on ${t.date}` } }) : null,
-        t.canDelete && t.status !== "reconciled" ? button("Delete", () => openDelete(ctx, t), { small: true, variant: "danger", attrs: { "aria-label": `Delete ${t.payeeName || "entry"} on ${t.date}` } }) : null,
+        t.canDelete && t.status !== "reconciled" && !sharedLinked(t) ? button("Delete", () => openDelete(ctx, t), { small: true, variant: "danger", attrs: { "aria-label": `Delete ${t.payeeName || "entry"} on ${t.date}` } }) : null,
       ])]),
     ]));
     mount(tableBox, el("div", { class: "table-wrap" }, [el("table", { class: "table table--cards" }, [
@@ -334,7 +354,14 @@ export function openQuickEntry(ctx, { transaction } = {}) {
   const account = pickerSelect(accounts.map((a) => ({ value: a.id, label: `${a.name} (${a.currency})` })), editing ? transaction.accountId : (accounts[0] || {}).id, { disabled: editing }, { badgeOf: accountMarks, placeholder: "Choose an account…" });
   const category = pickerSelect([{ value: "", label: "Uncategorized" }].concat(categories.map((c) => ({ value: c.id, label: c.archived ? `${c.name} (archived)` : c.name }))), editing ? transaction.categoryId || "" : "", { disabled: isTransfer }, { badgeOf: categoryBadges(state) });
   const date = input({ type: "date", value: editing ? transaction.date : todayIso() });
-  const kind = pickerSelect(Object.entries(KIND_LABELS).map(([value, label]) => ({ value, label })), editing ? transaction.kind : "expense", { disabled: isTransfer }, { search: false });
+  // An explicit list of the kinds a person may choose, never every label: kinds only Shared expenses
+  // make (owed to others, repayment made) are not offered (financial recheck N1). An entry that already
+  // has another kind keeps showing it.
+  // The server says which kinds may be entered here: it adds owed-to-others and repayment only when the
+  // group allows entering them by hand (Terry's decision C). Without that list, the manual kinds.
+  const manualKinds = ((sliceFor(state, "transactions").data || {}).entryKinds) || ["expense", "income", "transfer", "refund", "fee", "reimbursement", "advance", "adjustment", "interest"];
+  const kindValues = editing && !manualKinds.includes(transaction.kind) ? [...manualKinds, transaction.kind] : manualKinds;
+  const kind = pickerSelect(kindValues.map((value) => ({ value, label: KIND_LABELS[value] || value })), editing ? transaction.kind : "expense", { disabled: isTransfer }, { search: false });
   // "Choose an account…", not the label-built "Choose to account…" (UX review U6).
   const toAccount = pickerSelect(accounts.map((a) => ({ value: a.id, label: `${a.name} (${a.currency})` })), "", {}, { badgeOf: accountMarks, placeholder: "Choose an account…" });
   const toAmount = input({ inputmode: "decimal", placeholder: "Amount received" });
