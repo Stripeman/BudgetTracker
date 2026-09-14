@@ -357,7 +357,9 @@ export function openQuickEntry(ctx, { transaction } = {}) {
   // An explicit list of the kinds a person may choose, never every label: kinds only Shared expenses
   // make (owed to others, repayment made) are not offered (financial recheck N1). An entry that already
   // has another kind keeps showing it.
-  const manualKinds = ["expense", "income", "transfer", "refund", "fee", "reimbursement", "advance", "adjustment", "interest"];
+  // The server says which kinds may be entered here: it adds owed-to-others and repayment only when the
+  // group allows entering them by hand (Terry's decision C). Without that list, the manual kinds.
+  const manualKinds = ((sliceFor(state, "transactions").data || {}).entryKinds) || ["expense", "income", "transfer", "refund", "fee", "reimbursement", "advance", "adjustment", "interest"];
   const kindValues = editing && !manualKinds.includes(transaction.kind) ? [...manualKinds, transaction.kind] : manualKinds;
   const kind = pickerSelect(kindValues.map((value) => ({ value, label: KIND_LABELS[value] || value })), editing ? transaction.kind : "expense", { disabled: isTransfer }, { search: false });
   const toAccount = pickerSelect(accounts.map((a) => ({ value: a.id, label: `${a.name} (${a.currency})` })), "", {}, { badgeOf: accountMarks });

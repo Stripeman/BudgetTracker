@@ -58,6 +58,13 @@ describe("N1: quick entry never offers kinds only Shared expenses make", () => {
     const dialog = openDialog(ctx);
     assert.deepEqual(offeredOptions(entryType(dialog)), ["Expense", "Income", "Transfer", "Refund", "Fee", "Reimbursement received", "Advance (lent)", "Adjustment", "Interest"]);
   });
+
+  test("when the group allows entering them by hand (Terry's decision C), the server's list adds Owed to others and Repayment made", () => {
+    const { ctx, state } = txCtx();
+    state.transactions.data = { ...state.transactions.data, entryKinds: ["expense", "income", "transfer", "refund", "fee", "reimbursement", "advance", "adjustment", "interest", "payable", "repayment"] };
+    const dialog = openDialog(ctx);
+    assert.deepEqual(offeredOptions(entryType(dialog)), ["Expense", "Income", "Transfer", "Refund", "Fee", "Reimbursement received", "Advance (lent)", "Adjustment", "Interest", "Owed to others", "Repayment made"]);
+  });
 });
 
 describe("N2: entries recorded from Shared expenses are locked on the Transactions page", () => {

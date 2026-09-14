@@ -302,3 +302,88 @@ describe('B: "Anyone in the group can confirm payments"', () => {
   });
 });
 
+describe('C: "Owed-to-others and repayment entries"', () => {
+  const MANUAL = ['expense', 'income', 'transfer', 'refund', 'fee', 'reimbursement', 'advance', 'adjustment', 'interest'];
+  const kindsOffered = async (h, f) => ok(await h.call('transactions', 'GET', { as: 'alice', query: f.q })).entryKinds;
+  async function aliceCash({ manual = true } = {}) {
+    const h = harness();
+    const f = await fixture(h);
+    const cash = await account(h, f, 'alice', { name: 'Alice Cash', type: 'cash', currency: 'EUR', openingBalance: '400.00' });
+    const cat = ok(await h.call('categories', 'GET', { as: 'alice', query: f.q })).categories.find((c) => c.type !== 'income' && !c.archived);
+    if (manual) ok(await setSettings(h, f, 'alice', { ownedEntries: 'manual' }));
+    return { h, f, cash, cat };
+  }
+  const numbers = async (x) => {
+    const s = await summaryOf(x.h, x.f, 'alice', x.cash.id);
+    return [await balanceOf(x.h, x.f, 'alice', x.cash.id), s.gross, s.payables, s.repayments, s.receivable];
+  };
+  // Alice owes Bob 60.00 for a dinner he paid outside the app.
+  const owe = (x, amount = '60.00') => txPost(x.h, x.f, 'alice', { accountId: x.cash.id, kind: 'payable', amount, categoryId: x.cat.id, notes: 'Dinner Bob paid' });
+
+  test('by default they are refused by hand and not offered; once allowed, an owed amount is recorded with its matching spending', async () => {
+    const x = await aliceCash({ manual: false });
+    assert.deepEqual(await kindsOffered(x.h, x.f), MANUAL);
+    const refused = await owe(x);
+    assert.equal(refused.status, 400);
+    assert.equal(refused.body.error.code, 'server_only_kind');
+    ok(await setSettings(x.h, x.f, 'alice', { ownedEntries: 'manual' }));
+    assert.deepEqual(await kindsOffered(x.h, x.f), [...MANUAL, 'payable', 'repayment']);
+    const pair = ok(await owe(x), 201).transactions;
+    assert.deepEqual(pair.map((t) => [t.kind, t.amount, t.categoryId]), [['expense', '-60.00', x.cat.id], ['payable', '60.00', null]]);
+    assert.ok(pair[0].owedPairId && pair[0].owedPairId === pair[1].owedPairId, 'one pair');
+    // No money moved: 400.00; spending 60.00; owed 60.00; outstanding −60.00.
+    assert.deepEqual(await numbers(x), ['400.00', '60.00', '60.00', '0.00', '-60.00']);
+    // She pays Bob back: money out 60.00 and nothing owed any more.
+    ok(await txPost(x.h, x.f, 'alice', { accountId: x.cash.id, kind: 'repayment', amount: '60.00' }), 201);
+    assert.deepEqual(await numbers(x), ['340.00', '60.00', '60.00', '60.00', '0.00']);
+    // Hand entries carry no group link, so recording the group on this account touches none of them.
+    const count = (await entriesOf(x.h, x.f, 'alice', x.cash.id)).length;
+    ok(await act(x.h, x.f, 'alice', 'ledger', { currency: 'EUR', accountId: x.cash.id }));
+    assert.equal((await entriesOf(x.h, x.f, 'alice', x.cash.id)).length, count);
+  });
+
+  test('a pair is corrected only as a pair: editing either half is refused, reversing one reverses both, deleting is refused', async () => {
+    const x = await aliceCash();
+    const [share, owed] = ok(await owe(x), 201).transactions;
+    for (const [label, t, body] of [['amount of the share', share, { amount: '50.00' }], ['kind of the owed amount', owed, { kind: 'expense' }], ['date', share, { date: '2026-09-01' }]]) {
+      const res = await txPatch(x.h, x.f, 'alice', t, body);
+      assert.equal(res.status, 409, label);
+      assert.equal(res.body.error.code, 'owed_pair_locked', label);
+    }
+    ok(await txPatch(x.h, x.f, 'alice', share, { notes: 'Bob paid at the harbour' }));
+    const del = await x.h.call('transactions', 'DELETE', { as: 'alice', query: x.f.q, body: { transactionId: owed.id, revision: owed.revision, reason: 'Probe' } });
+    assert.equal(del.status, 409);
+    assert.equal(del.body.error.code, 'owed_pair_locked');
+    const rev = ok(await x.h.call('transactions', 'POST', { as: 'alice', query: { ...x.f.q, action: 'reverse' }, body: { transactionId: owed.id, reason: 'Bob said I owe nothing' } }), 201);
+    assert.equal(rev.transactions.length, 4, 'both halves and both reversals');
+    // Both halves reversed: 400.00, spending 0.00, owed 0.00.
+    assert.deepEqual(await numbers(x), ['400.00', '0.00', '0.00', '0.00', '0.00']);
+  });
+
+  test('switching back to "Created by Shared expenses only" refuses new hand entries and keeps those already made', async () => {
+    const x = await aliceCash();
+    ok(await owe(x), 201);
+    ok(await setSettings(x.h, x.f, 'alice', { ownedEntries: 'shared-only' }));
+    assert.equal((await owe(x)).status, 400);
+    assert.equal((await txPost(x.h, x.f, 'alice', { accountId: x.cash.id, kind: 'repayment', amount: '1.00' })).status, 400);
+    assert.deepEqual(await numbers(x), ['400.00', '60.00', '60.00', '0.00', '-60.00']);
+  });
+
+  test('the backup check refuses a broken pair', async () => {
+    for (const [label, change] of [
+      ['unequal halves', (d) => { d.transactions.find((t) => t.kind === 'payable').amountMinor = 5000; }],
+      ['half without its partner', (d) => { d.transactions.find((t) => t.kind === 'expense').owedPairId = 'owe_other000000'; }],
+    ]) {
+      const x = await aliceCash();
+      ok(await owe(x), 201);
+      const name = `workspaces/${x.f.ws.id}/workspace.json`;
+      const { value } = await x.h.storage.getJson(name);
+      change(value);
+      await x.h.storage.putJson(name, value);
+      const res = await x.h.call('backups', 'POST', { as: 'alice', query: x.f.q, body: {} });
+      assert.equal(res.status, 422, label);
+      assert.match(res.body.error.message, /owed pair/, label);
+    }
+  });
+});
+

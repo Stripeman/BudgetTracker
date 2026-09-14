@@ -182,6 +182,8 @@ async function list(ctx, req) {
   return {
     body: {
       transactions: page, total: txns.length, offset, limit,
+      // The kinds that may be entered by hand here (group setting "Owed-to-others and repayment entries").
+      entryKinds: entryKinds(doc),
       summary: Object.entries(summary).map(([currency, s]) => ({
         currency, count: s.count, gross: money.toDecimal(s.gross, currency), refunds: money.toDecimal(s.refunds, currency),
         net: money.toDecimal(money.sum([s.gross, -s.refunds]), currency), income: money.toDecimal(s.income, currency),
@@ -196,22 +198,27 @@ async function list(ctx, req) {
   };
 }
 
-// `payable` (a share someone else paid, no money moved) and `repayment` are made only by the
-// shared-expense route for the person recording their own part of a group (BT-009). By hand they would
-// create money that never arrived — a payable of 100.00 raises a balance by 100.00 — or turn money
-// spent into money received, so they are refused here, and no entry may be changed to or from them
-// (financial recheck N1). `advance` and `reimbursement` stay manual: people lend money outside groups.
+// `payable` (a share someone else paid, no money moved) and `repayment` are made by the shared-expense
+// route for the person recording their own part of a group (BT-009). A lone payable by hand would create
+// money that never arrived — a payable of 100.00 raises a balance by 100.00 — so by default both are
+// refused here (financial recheck N1). A group may allow entering them by hand (the group setting
+// "Owed-to-others and repayment entries", Terry 2026-09-14): a repayment is then valid alone, and an
+// owed amount is always recorded as a pair with its matching share as spending (see create), never
+// alone. No entry is ever changed to or from them. `advance` and `reimbursement` stay manual.
 const SERVER_ONLY_KINDS = new Set(['payable', 'repayment']);
 function refuseServerOnlyKind(kind) {
-  if (SERVER_ONLY_KINDS.has(kind)) throw badRequest('Money owed for a shared expense and repayments of it are recorded from Shared expenses, not added here.', 'server_only_kind');
+  if (SERVER_ONLY_KINDS.has(kind)) throw badRequest('Money owed for a shared expense and repayments of it cannot be turned into other entries, or other entries into them.', 'server_only_kind');
 }
+const handEntryAllowed = (doc) => require('../_shared/group-settings').get(doc, 'ownedEntries') === 'manual';
+// The kinds a person may enter here, in this workspace (the client offers exactly these).
+const MANUAL_KINDS = Object.freeze(['expense', 'income', 'transfer', 'refund', 'fee', 'reimbursement', 'advance', 'adjustment', 'interest']);
+const entryKinds = (doc) => (handEntryAllowed(doc) ? [...MANUAL_KINDS, 'payable', 'repayment'] : [...MANUAL_KINDS]);
 
 async function create(ctx, req) {
   const wsId = requireId(query(req, 'workspaceId'), 'workspaceId');
   const body = fields.onlyKeys(readBody(req), CREATE_KEYS);
   const user = await readUser(ctx);
   const kind = fields.oneOf(body.kind, ledger.TX_KINDS, 'Kind', 'expense');
-  refuseServerOnlyKind(kind);
   const accountId = requireId(body.accountId, 'accountId');
   const { result } = await store.mutateWorkspace(ctx, wsId, (doc, member) => {
     const now = ctx.now();
@@ -258,6 +265,31 @@ async function create(ctx, req) {
       return { transactions: [legOut, legIn].map((x) => ledger.transactionView(doc, x, ctx.principal, now, look)) };
     }
 
+    if (SERVER_ONLY_KINDS.has(kind) && !handEntryAllowed(doc)) {
+      throw badRequest('Money owed for a shared expense and repayments of it are recorded from Shared expenses. An owner or manager can allow entering them by hand in the Shared expenses settings.', 'server_only_kind');
+    }
+    // An amount owed entered by hand is recorded as a pair, in this one write: the share as spending (in
+    // the chosen category, with the chosen merchant) and the matching payable. The balance does not
+    // change; spending grows by the share and what is owed by the same amount (Terry's decision C).
+    if (kind === 'payable') {
+      if (body.splits !== undefined && body.splits !== null && (!Array.isArray(body.splits) || body.splits.length)) throw badRequest('An amount owed takes one category, not split lines.', 'invalid_field');
+      const magnitude = -ledger.signedAmount('expense', body.amount, account.currency);
+      const owedPairId = newId('owe');
+      const common = {
+        ...base, accountId: account.id, currency: account.currency, splits: [], original: null, transferId: null, counterpartAccountId: null, owedPairId,
+        responsibleRef: people.requireRef(body.responsibleRef, { doc, user, visibility: account.visibility }),
+      };
+      const share = { ...common, id: newId('txn'), kind: 'expense', amountMinor: -magnitude, payeeId: resolvePayee(doc, ctx.principal, body, account, now), categoryId: checkCategory(doc, body.categoryId) };
+      const owed = { ...common, id: newId('txn'), kind: 'payable', amountMinor: magnitude, payeeId: null, categoryId: null, tags: [...base.tags], links: { ...base.links } };
+      history(share, member.subject, nowIso, ['create']);
+      history(owed, member.subject, nowIso, ['create']);
+      doc.transactions = [...(doc.transactions || []), share, owed];
+      ledger.assertLedgerInRange(doc);
+      ledger.assertMemberQuota(doc, member, ctx.env);
+      for (const x of [share, owed]) audit.record(doc, { actor: member.subject, action: 'transaction.create', targetType: 'transaction', targetId: x.id, scope: `account:${account.id}`, at: nowIso });
+      const look = lookups(doc);
+      return { transactions: [share, owed].map((x) => ledger.transactionView(doc, x, ctx.principal, now, look)) };
+    }
     const amountMinor = ledger.signedAmount(kind, body.amount, account.currency);
     const splits = ledger.validateSplits(body.splits, amountMinor, account.currency, doc);
     const txn = {
@@ -310,6 +342,11 @@ async function patch(ctx, req) {
     checkRevision(t, body.revision);
     const reason = fields.text(body.reason, { field: 'Reason', max: 200 });
     if (sharedLinked(t) && LOCKED_WHEN_REVERSED.some((k) => body[k] !== undefined)) throw sharedLocked();
+    // A hand-entered amount owed and its share stay one pair: corrected by reversing both, never edited
+    // (Terry's decision C).
+    if (t.owedPairId && LOCKED_WHEN_REVERSED.some((k) => body[k] !== undefined)) {
+      throw conflict('This amount owed and its matching share are recorded together, so their amount, date, type, category and merchant cannot change. Reverse it (both are reversed) and enter it again.', 'owed_pair_locked');
+    }
     if (inReversalPair(t) && LOCKED_WHEN_REVERSED.some((k) => body[k] !== undefined)) {
       throw conflict(t.reversedBy
         ? 'This entry has been reversed, so its amount, date, type, category and merchant can no longer change. Add a new entry with the correct details.'
@@ -437,6 +474,9 @@ function setDeleted(deleted) {
       const legs = linkedEntries(doc, t).filter((x) => Boolean(x.deletedAt) !== deleted);
       // Entries recorded from Shared expenses are removed only by their owner's update there (N2).
       if (deleted && legs.some(sharedLinked)) throw sharedLocked();
+      // A hand-entered amount owed and its share are corrected by reversing both, never deleted, so the
+      // pair can never be split (Terry's decision C).
+      if (deleted && legs.some((x) => x.owedPairId)) throw conflict('This amount owed and its matching share are recorded together. Reverse it instead (both are reversed).', 'owed_pair_locked');
       if (deleted && legs.some((x) => x.status === 'reconciled')) {
         throw conflict(legs.length > 1 && t.status !== 'reconciled'
           ? 'This entry is linked to a reconciled entry, so it cannot be deleted.'
@@ -505,13 +545,21 @@ async function reverse(ctx, req) {
     if (!reason) throw badRequest('Give a reason for the reversal. It is kept with both entries.', 'reason_required');
     // Dated like the entry it reverses unless told otherwise, so the pair nets out in the same budget
     // period (financial retest FIN-T4).
-    const rev = reverseEntry(doc, t, { by: member.subject, at: nowIso, reason, date: fields.date(body.date, 'Date') || t.date });
+    // A hand-entered amount owed and its matching share are reversed together, so the pair keeps
+    // netting out and never leaves a lone payable (Terry's decision C).
+    const targets = t.owedPairId ? (doc.transactions || []).filter((x) => x.owedPairId === t.owedPairId && !x.deletedAt && !x.reversedBy) : [t];
+    const date = fields.date(body.date, 'Date') || t.date;
+    const out = [];
+    for (const x of targets) {
+      const rev = reverseEntry(doc, x, { by: member.subject, at: nowIso, reason, date });
+      audit.record(doc, { actor: member.subject, action: 'transaction.reverse', targetType: 'transaction', targetId: x.id, scope: `account:${account.id}`, at: nowIso });
+      audit.record(doc, { actor: member.subject, action: 'transaction.create', targetType: 'transaction', targetId: rev.id, scope: `account:${account.id}`, at: nowIso });
+      out.push(x, rev);
+    }
     ledger.assertLedgerInRange(doc);
     ledger.assertMemberQuota(doc, member, ctx.env);
-    audit.record(doc, { actor: member.subject, action: 'transaction.reverse', targetType: 'transaction', targetId: t.id, scope: `account:${account.id}`, at: nowIso });
-    audit.record(doc, { actor: member.subject, action: 'transaction.create', targetType: 'transaction', targetId: rev.id, scope: `account:${account.id}`, at: nowIso });
     const look = lookups(doc);
-    return { transactions: [t, rev].map((x) => ledger.transactionView(doc, x, ctx.principal, now, look)) };
+    return { transactions: out.map((x) => ledger.transactionView(doc, x, ctx.principal, now, look)) };
   }, { idempotencyKey: header(req, 'idempotency-key') || undefined, idempotencyScope: 'transactions.reverse', requestHash: store.requestHash({ q: wsId, body }) });
   return { status: 201, body: result };
 }

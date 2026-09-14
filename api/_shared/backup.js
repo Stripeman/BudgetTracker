@@ -98,6 +98,17 @@ function checkInvariants(doc) {
     const reversal = txById.get(t.reversedBy);
     if (!reversal || !reversal.links || reversal.links.reverses !== t.id) throw invalidData('reversal link');
   }
+  // A hand-entered amount owed (group setting "Owed-to-others and repayment entries") is a pair: the
+  // share as spending and the matching payable, on one account in one currency on one date, opposite
+  // amounts, deleted or kept together — never a lone payable (BT-009 recheck, Terry's decision C).
+  const owedPairs = new Map();
+  for (const t of doc.transactions || []) if (t.owedPairId) owedPairs.set(t.owedPairId, [...(owedPairs.get(t.owedPairId) || []), t]);
+  for (const legs of owedPairs.values()) {
+    const [a, b] = legs;
+    if (legs.length !== 2 || legs.map((x) => x.kind).sort().join(',') !== 'expense,payable' || a.accountId !== b.accountId || a.currency !== b.currency
+        || a.date !== b.date || !money.isMinor(a.amountMinor) || !money.isMinor(b.amountMinor) || a.amountMinor + b.amountMinor !== 0
+        || Boolean(a.deletedAt) !== Boolean(b.deletedAt)) throw invalidData('owed pair');
+  }
   // A bill occurrence is recorded at most once among live entries (both legs of a transfer count once)
   // (SEC-B6). A recording cancelled by a live reversal no longer counts, so the occurrence can be
   // recorded again correctly — the same rule the bills module uses (bills.recordingCounts, FIN-R4).
