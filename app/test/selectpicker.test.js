@@ -336,9 +336,20 @@ describe("BT-004-05 inside a modal dialog", () => {
 });
 
 describe("BT-004-05 focus after navigation skips the hidden select (UX review U7)", () => {
+  // A browser's querySelectorAll returns a NodeList (no find, map or filter); the double returns an
+  // array, which hid a crash in the first version of this fix. The view here answers like a browser.
+  function asNodeLists(node) {
+    const real = node.querySelectorAll.bind(node);
+    node.querySelectorAll = (selector) => {
+      const found = real(selector);
+      return { length: found.length, item: (i) => found[i] || null, forEach: (fn) => found.forEach(fn), [Symbol.iterator]: () => found[Symbol.iterator]() };
+    };
+    return node;
+  }
+
   test("focusFirst lands on the heading even when a dropdown comes first in the view", async () => {
     const { focusFirst } = await import("../js/ui/dom.js");
-    const view = document.createElement("div");
+    const view = asNodeLists(document.createElement("div"));
     const select = pickerSelect(PERIODS, "monthly");
     view.appendChild(field("Show", select));
     const heading = document.createElement("h1");

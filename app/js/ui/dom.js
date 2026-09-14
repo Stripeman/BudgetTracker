@@ -86,7 +86,8 @@ export function announce(message) {
 const skipped = (node) => (node.classList && node.classList.contains("cmdpick__native")) || !!(node.closest && node.closest('[aria-hidden="true"]'));
 export function focusFirst(container) {
   if (!container) return;
-  const target = container.querySelectorAll("[autofocus], h1, h2, [tabindex='-1']").find((n) => !skipped(n)) || container;
+  // Array.from: a browser's querySelectorAll returns a NodeList, which has no find().
+  const target = Array.from(container.querySelectorAll("[autofocus], h1, h2, [tabindex='-1']")).find((n) => !skipped(n)) || container;
   if (typeof target.focus === "function") {
     if (!target.hasAttribute("tabindex") && !/^(A|BUTTON|INPUT|SELECT|TEXTAREA)$/.test(target.tagName)) target.setAttribute("tabindex", "-1");
     target.focus({ preventScroll: true });
