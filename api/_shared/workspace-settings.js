@@ -76,6 +76,20 @@ const SETTINGS = freezeAll({
     options: [opt('today', 'Today'), opt('due', 'Its due date')],
     explanation: 'The date a late bill payment is recorded with unless you enter another one. "Today" counts it in the budget period in which it was paid; "Its due date" counts it where it was owed.',
   },
+  // (h) Restores by members below manager (owners and managers are not limited by these, as today).
+  // Owners only. A member's restore only ever reaches their own private accounts, whatever is set.
+  memberRestoresPerDay: {
+    group: 'Restores by members', type: 'integer', default: MEMBER_RESTORES_MAX, min: 0, max: MEMBER_RESTORES_MAX, changedBy: 'owner',
+    label: 'Merge or replace restores a member may make each day',
+    explanation: `How many times a day each member may roll their own private records back from a backup (merge or replace). Each one first saves a recovery point, so ${MEMBER_RESTORES_MAX} is the most allowed. 0 turns these restores off for members. A member's restore only ever reaches their own private accounts, and owners and managers are not limited by this.`,
+  },
+  memberRestoreModes: {
+    group: 'Restores by members', type: 'set', default: ['create-new', 'merge', 'restore-deleted', 'replace'], changedBy: 'owner',
+    label: 'Kinds of restore members may use',
+    options: [opt('create-new', 'Create a new workspace from a backup'), opt('merge', 'Merge — add missing records'), opt('restore-deleted', 'Merge that also brings back deleted entries'), opt('replace', 'Replace — roll records back to the backup')],
+    requires: { 'restore-deleted': 'merge' },
+    explanation: 'Which kinds of restore a member may use for their own private records. Bringing back deleted entries is part of a merge, so it needs Merge. Owners and managers are not limited by this.',
+  },
 });
 const KEYS = Object.freeze(Object.keys(SETTINGS));
 const own = (o, k) => !!o && Object.prototype.hasOwnProperty.call(o, k);
@@ -200,4 +214,4 @@ function problem(doc) {
   return null;
 }
 
-module.exports = { SETTINGS, KEYS, values, get, valid, mayChange, parseChanges, changesFor, view, problem, defaultBudgetStart, membersChangeOthers, managesSharedLists };
+module.exports = { SETTINGS, KEYS, MEMBER_RESTORES_MAX, values, get, valid, mayChange, parseChanges, changesFor, view, problem, defaultBudgetStart, membersChangeOthers, managesSharedLists };

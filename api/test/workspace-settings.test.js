@@ -242,6 +242,96 @@ describe('(g) Who manages shared lists', () => {
   });
 });
 
+// ---- (h) restores by members -----------------------------------------------------------------------
+// Bob (member) rolls his own private card back from Alice's backup: each replace sets aside the entry
+// he added since, so it changes something and counts.
+async function memberRestoreSetup() {
+  const { h, f, id } = await setup();
+  h.clock.advance(60000);
+  const archiveId = ok(await h.call('backups', 'POST', { as: 'alice', query: f.q, body: {} }), 201).archive.archiveId;
+  let n = 0;
+  const addToCard = async () => { n += 1; h.clock.advance(60000); ok(await h.call('transactions', 'POST', { as: 'bob', query: f.q, body: { accountId: f.bobCard.id, kind: 'expense', amount: `${n}.00`, date: '2026-09-12' } }), 201); };
+  const preview = (as, mode, extra = {}) => h.call('restore', 'POST', { as, query: { action: 'preview' }, body: { workspaceId: id, archiveId, mode, ...extra } });
+  const replace = async (as = 'bob') => {
+    const pv = await preview(as, 'replace');
+    if (pv.status !== 200) return pv;
+    return h.call('restore', 'POST', { as, query: { action: 'execute' }, body: { workspaceId: id, archiveId, mode: 'replace', confirm: 'REPLACE', expectedEtag: pv.body.expectedEtag } });
+  };
+  return { h, f, id, archiveId, addToCard, preview, replace };
+}
+
+describe('(h) Restores by members: how many a day and which kinds (owners only)', () => {
+  test('by default a member may use every kind of restore, as before', async () => {
+    const x = await memberRestoreSetup();
+    for (const mode of ['merge', 'replace', 'create-new']) assert.equal((await x.preview('bob', mode)).status, 200, mode);
+    assert.equal((await x.preview('bob', 'merge', { restoreDeleted: true })).status, 200);
+    await x.addToCard();
+    assert.equal((await x.replace()).status, 200);
+  });
+
+  test('one a day: the second merge or replace that day is refused with the number; the next day it is allowed again', async () => {
+    const x = await memberRestoreSetup();
+    ok(await patchSettings(x.h, 'alice', x.id, { memberRestoresPerDay: 1 }));
+    await x.addToCard();
+    assert.equal((await x.replace()).status, 200);
+    await x.addToCard();
+    const second = await x.replace();
+    assert.equal(second.status, 429);
+    assert.equal(second.body.error.code, 'restore_limit');
+    assert.match(second.body.error.message, /at most 1 time a day/);
+    x.h.clock.advance(24 * 60 * 60 * 1000);
+    assert.equal((await x.replace()).status, 200, 'a day later');
+  });
+
+  test('0 a day turns merge and replace off for members (preview included); a workspace from a backup is still allowed; managers and owners are not limited', async () => {
+    const x = await memberRestoreSetup();
+    ok(await patchSettings(x.h, 'alice', x.id, { memberRestoresPerDay: 0 }));
+    await x.addToCard();
+    for (const mode of ['merge', 'replace']) {
+      const res = await x.preview('bob', mode);
+      assert.equal(res.status, 403, mode);
+      assert.equal(res.body.error.code, 'member_restores_off', mode);
+    }
+    assert.equal((await x.replace()).status, 403);
+    assert.equal((await x.preview('bob', 'create-new')).status, 200);
+    // The owner's own scope must differ from the backup for a replace to change anything.
+    ok(await x.h.call('transactions', 'POST', { as: 'alice', query: x.f.q, body: { accountId: x.f.joint.id, kind: 'expense', amount: '7.00', date: '2026-09-12' } }), 201);
+    assert.equal((await x.replace('alice')).status, 200, 'the owner restores as before');
+  });
+
+  test('kinds: a kind the owners switched off is refused for members; bringing back deleted entries needs its own tick', async () => {
+    const x = await memberRestoreSetup();
+    ok(await patchSettings(x.h, 'alice', x.id, { memberRestoreModes: ['create-new', 'merge'] }));
+    const replaced = await x.preview('bob', 'replace');
+    assert.equal(replaced.status, 403);
+    assert.equal(replaced.body.error.code, 'restore_mode_off');
+    assert.equal((await x.preview('bob', 'merge')).status, 200);
+    assert.equal((await x.preview('bob', 'merge', { restoreDeleted: true })).body.error.code, 'restore_mode_off');
+    ok(await patchSettings(x.h, 'alice', x.id, { memberRestoreModes: ['replace'] }));
+    assert.equal((await x.preview('bob', 'create-new')).body.error.code, 'restore_mode_off');
+    assert.equal((await x.preview('alice', 'merge', { restoreDeleted: true })).status, 200, 'the owner is not limited');
+  });
+
+  test('only owners change these: a manager is refused, naming who can; values outside 0–3 and deleted entries without Merge are refused', async () => {
+    const x = await memberRestoreSetup();
+    const carol = x.f.memberId('Carol');
+    ok(await x.h.call('members', 'PATCH', { as: 'alice', query: x.f.q, body: { memberId: carol, role: 'manager' } }));
+    const byManager = await patchSettings(x.h, 'carol', x.id, { memberRestoresPerDay: 1 });
+    assert.equal(byManager.status, 403);
+    assert.match(byManager.body.error.message, /Only owners can change/);
+    assert.equal((await patchSettings(x.h, 'carol', x.id, { memberRestoreModes: ['merge'] })).status, 403);
+    ok(await patchSettings(x.h, 'carol', x.id, { billReminderDays: 5 })); // a manager still changes the other settings
+    const seen = ok(await getWs(x.h, 'carol', x.id)).workspace.settingsList;
+    assert.deepEqual(seen.filter((s) => !s.canChange).map((s) => s.key), ['memberRestoresPerDay', 'memberRestoreModes']);
+    for (const bad of [{ memberRestoresPerDay: 4 }, { memberRestoresPerDay: -1 }, { memberRestoreModes: ['restore-deleted'] }, { memberRestoreModes: ['merge', 'merge'] }, { memberRestoreModes: 'merge' }]) {
+      assert.equal((await patchSettings(x.h, 'alice', x.id, bad)).body.error.code, 'invalid_setting', JSON.stringify(bad));
+    }
+    // Stored in the order of the list, whatever order it was sent in.
+    ok(await patchSettings(x.h, 'alice', x.id, { memberRestoreModes: ['replace', 'create-new'] }));
+    assert.deepEqual((await readDoc(x.h, x.id)).settings.memberRestoreModes, ['create-new', 'replace']);
+  });
+});
+
 // ---- (i) budget defaults and backdating -----------------------------------------------------------
 // The harness clock starts on Sunday 2026-09-13: the latest Monday on or before it is 2026-09-07, the
 // latest Saturday 2026-09-12, and the current monthly period starts 2026-09-01.
