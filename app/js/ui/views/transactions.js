@@ -351,7 +351,7 @@ export function openQuickEntry(ctx, { transaction } = {}) {
   // The dropdowns are TaskTracker's command picker (BT-004-05); suggestions, hints and the reversal
   // lock below still work on the selects, and the pickers follow them.
   const accountMarks = iconBadges(allAccounts);
-  const account = pickerSelect(accounts.map((a) => ({ value: a.id, label: `${a.name} (${a.currency})` })), editing ? transaction.accountId : (accounts[0] || {}).id, { disabled: editing }, { badgeOf: accountMarks });
+  const account = pickerSelect(accounts.map((a) => ({ value: a.id, label: `${a.name} (${a.currency})` })), editing ? transaction.accountId : (accounts[0] || {}).id, { disabled: editing }, { badgeOf: accountMarks, placeholder: "Choose an account…" });
   const category = pickerSelect([{ value: "", label: "Uncategorized" }].concat(categories.map((c) => ({ value: c.id, label: c.archived ? `${c.name} (archived)` : c.name }))), editing ? transaction.categoryId || "" : "", { disabled: isTransfer }, { badgeOf: categoryBadges(state) });
   const date = input({ type: "date", value: editing ? transaction.date : todayIso() });
   // An explicit list of the kinds a person may choose, never every label: kinds only Shared expenses
@@ -362,7 +362,8 @@ export function openQuickEntry(ctx, { transaction } = {}) {
   const manualKinds = ((sliceFor(state, "transactions").data || {}).entryKinds) || ["expense", "income", "transfer", "refund", "fee", "reimbursement", "advance", "adjustment", "interest"];
   const kindValues = editing && !manualKinds.includes(transaction.kind) ? [...manualKinds, transaction.kind] : manualKinds;
   const kind = pickerSelect(kindValues.map((value) => ({ value, label: KIND_LABELS[value] || value })), editing ? transaction.kind : "expense", { disabled: isTransfer }, { search: false });
-  const toAccount = pickerSelect(accounts.map((a) => ({ value: a.id, label: `${a.name} (${a.currency})` })), "", {}, { badgeOf: accountMarks });
+  // "Choose an account…", not the label-built "Choose to account…" (UX review U6).
+  const toAccount = pickerSelect(accounts.map((a) => ({ value: a.id, label: `${a.name} (${a.currency})` })), "", {}, { badgeOf: accountMarks, placeholder: "Choose an account…" });
   const toAmount = input({ inputmode: "decimal", placeholder: "Amount received" });
   const rate = input({ inputmode: "decimal", placeholder: "Exchange rate" });
   const tags = input({ placeholder: "Comma separated", value: editing ? transaction.tags.join(", ") : "" });

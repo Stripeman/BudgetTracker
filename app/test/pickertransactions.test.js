@@ -15,7 +15,9 @@ afterEach(() => dom.teardown());
 
 const tick = () => new Promise((resolve) => setTimeout(resolve, 0));
 const buttonNamed = (root, text) => root.querySelectorAll("button").find((b) => b.textContent === text);
-const spoken = (select) => triggerFor(select).getAttribute("aria-label");
+import { spokenOf } from "./pickerassert.js";
+// What a screen reader announces: the field's name, the value and how to use it (a11y review finding 6).
+const spoken = (select) => spokenOf(triggerFor(select));
 const key = (node, k) => node.dispatchEvent(new DomEvent("keydown", { bubbles: true, key: k }));
 
 function txCtx({ params = {} } = {}) {
@@ -58,6 +60,18 @@ function txCtx({ params = {} } = {}) {
   return { ctx: { store, api, params }, state, calls };
 }
 
+describe("BT-004-05 transactions: an empty field reads naturally (UX review U6)", () => {
+  test("the transfer's empty To account says “Choose an account…”, not “Choose to account…”", () => {
+    const { ctx } = txCtx();
+    openQuickEntry(ctx);
+    const root = dom.body.querySelector(".modal");
+    const to = pickerNamed(root, "To account");
+    assert.equal(to.value, "", "nothing chosen yet");
+    assert.equal(triggerFor(to).querySelector(".cmdpick__value").textContent, "Choose an account…");
+    assert.equal(spoken(to), "To account: Choose an account…. Choose.");
+  });
+});
+
 describe("BT-004-05 transactions: filters", () => {
   test("the filters are pickers with their marks; history keeps closed and archived choices, labelled", () => {
     const { ctx, state } = txCtx();
@@ -67,7 +81,7 @@ describe("BT-004-05 transactions: filters", () => {
     const grid = view.element.querySelector(".filters");
     assert.deepEqual(nativeDropdowns(grid), []);
     assert.deepEqual(pickerLabels(grid), ["Merchant", "Account", "Category", "Status"]);
-    assert.equal(spoken(pickerNamed(grid, "Merchant")), "Merchant: Any. Search and choose.");
+    assert.equal(spoken(pickerNamed(grid, "Merchant")), "Merchant: Any. Choose.");
     assert.equal(spoken(pickerNamed(grid, "Status")), "Status: Any. Choose.");
     assert.deepEqual(offeredOptions(pickerNamed(grid, "Merchant")), ["Any", "Fictional Bakery", "Fictional Video Store (closed)"]);
     assert.deepEqual(offeredOptions(pickerNamed(grid, "Category")), ["Any", "Groceries", "Fun", "Old hobby (archived)"]);
@@ -87,14 +101,14 @@ describe("BT-004-05 transactions: filters", () => {
     chooseOption(pickerNamed(grid, "Category"), "Groceries");
     await tick();
     assert.equal(calls.refresh.at(-1).categoryId, "cat_food");
-    assert.equal(spoken(pickerNamed(grid, "Category")), "Category: Groceries. Search and choose.");
+    assert.equal(spoken(pickerNamed(grid, "Category")), "Category: Groceries. Choose.");
     assert.ok(triggerFor(pickerNamed(grid, "Category")).querySelector(".cmdpick__badge").querySelector(".catlabel__icon"), "the chosen category's mark is on the trigger");
     chooseOption(pickerNamed(grid, "Status"), "Cleared");
     await tick();
     assert.deepEqual({ categoryId: calls.refresh.at(-1).categoryId, status: calls.refresh.at(-1).status }, { categoryId: "cat_food", status: "cleared" });
     buttonNamed(view.element, "Clear filters").click();
     await tick();
-    assert.equal(spoken(pickerNamed(grid, "Category")), "Category: Any. Search and choose.");
+    assert.equal(spoken(pickerNamed(grid, "Category")), "Category: Any. Choose.");
     assert.equal(spoken(pickerNamed(grid, "Status")), "Status: Any. Choose.");
     assert.deepEqual({ categoryId: calls.refresh.at(-1).categoryId, status: calls.refresh.at(-1).status }, { categoryId: undefined, status: undefined });
   });
@@ -104,7 +118,7 @@ describe("BT-004-05 transactions: filters", () => {
     const view = createView(ctx);
     dom.body.appendChild(view.element);
     view.update(state);
-    assert.equal(spoken(pickerNamed(view.element.querySelector(".filters"), "Merchant")), "Merchant: Fictional Video Store (closed). Search and choose.");
+    assert.equal(spoken(pickerNamed(view.element.querySelector(".filters"), "Merchant")), "Merchant: Fictional Video Store (closed). Choose.");
   });
 });
 
@@ -116,8 +130,8 @@ describe("BT-004-05 transactions: quick entry", () => {
     assert.deepEqual(nativeDropdowns(root), []);
     // The first Type is the new-merchant type (in the hidden "New merchant" box), the second the entry's.
     assert.deepEqual(pickerLabels(root), ["Type", "Account", "Category", "Type", "To account", "Status"]);
-    assert.equal(spoken(pickerNamed(root, "Account")), "Account: Fictional joint (EUR). Search and choose.");
-    assert.equal(spoken(pickerNamed(root, "Category")), "Category: Uncategorized. Search and choose.");
+    assert.equal(spoken(pickerNamed(root, "Account")), "Account: Fictional joint (EUR). Choose.");
+    assert.equal(spoken(pickerNamed(root, "Category")), "Category: Uncategorized. Choose.");
     assert.equal(spoken(pickerSpokenAs(root, "Type: Expense")), "Type: Expense. Choose.");
     assert.equal(spoken(pickerNamed(root, "Status")), "Status: Pending. Choose.");
     assert.equal(spoken(pickerSpokenAs(root, "Type: Other")), "Type: Other. Search and choose.", "fourteen merchant types");
@@ -160,14 +174,18 @@ describe("BT-004-05 transactions: quick entry", () => {
     assert.deepEqual(calls.suggest, ["p_bakery"]);
     const category = pickerNamed(root, "Category");
     const account = pickerNamed(root, "Account");
-    assert.equal(spoken(category), "Category: Fun. Search and choose.");
-    assert.equal(spoken(account), "Account: Fictional wallet (EUR). Search and choose.");
-    const categoryHint = root.querySelector(`#${triggerFor(category).getAttribute("aria-describedby")}`);
+    assert.equal(spoken(category), "Category: Fun. Choose.");
+    assert.equal(spoken(account), "Account: Fictional wallet (EUR). Choose.");
+    // The trigger's description is the suggestion's reason, followed by how to use the control (the
+    // instructions moved from its name into its description, a11y review finding 6).
+    const idsOf = (select) => String(triggerFor(select).getAttribute("aria-describedby") || "").split(/\s+/).filter(Boolean);
+    const hintOf = (select) => idsOf(select).map((id) => root.querySelector(`#${id}`)).find((n) => n && n.classList.contains("suggestion")) || null;
+    const categoryHint = hintOf(category);
     assert.ok(categoryHint, "the trigger is described by the suggestion");
     assert.match(categoryHint.textContent, /Your usual category here\./);
-    assert.match(root.querySelector(`#${triggerFor(account).getAttribute("aria-describedby")}`).textContent, /Your last entry at this merchant\./);
+    assert.match(hintOf(account).textContent, /Your last entry at this merchant\./);
     chooseOption(category, "Groceries");
-    assert.equal(triggerFor(category).hasAttribute("aria-describedby"), false, "the reason no longer applies once the person chose");
+    assert.deepEqual(idsOf(category), [`${triggerFor(category).id}-how`], "the reason no longer applies once the person chose; only how to use it remains");
     assert.equal(categoryHint.hidden, true);
   });
 

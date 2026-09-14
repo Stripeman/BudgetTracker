@@ -28,6 +28,8 @@ const BUILT_IN = Object.freeze([
   ['transfer', 'Transfer', 'system'], ['reversal', 'Refund or reversal', 'system'],
   // An amount owed for a shared expense: no money moved (BT-009 recheck N3, Terry: two lines, no heads).
   ['no-money-moved', 'No money moved', 'system'],
+  // The external-link cue beside a link that opens in a new tab (BT-011-06), drawn by the app.
+  ['external', 'Opens in a new tab', 'system'],
   ['home', 'Home', 'category'], ['bolt', 'Energy', 'category'], ['cart', 'Groceries', 'category'], ['utensils', 'Dining', 'category'],
   ['car', 'Car', 'category'], ['heart', 'Health', 'category'], ['shield', 'Protection', 'category'], ['film', 'Entertainment', 'category'],
   ['bag', 'Shopping', 'category'], ['plane', 'Travel', 'category'], ['book', 'Education', 'category'], ['gift', 'Gift', 'category'],

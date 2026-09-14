@@ -36,16 +36,74 @@ const same = (a, b, message = "not the expected element") => assert.ok(a === b, 
 const none = (a, message = "expected no element") => assert.ok(a === null || a === undefined, message);
 
 describe("BT-004-04 popup dismissal", () => {
-  test("1. a press outside closes it, without moving focus to the trigger", () => {
+  // After the press, the browser does its own default action (focus the pressed control, or nothing).
+  // The picker looks again only after that, on the next task.
+  const afterPress = () => new Promise((resolve) => setTimeout(resolve, 0));
+
+  test("1. a press outside on another control closes it, and focus stays where the person pressed", async () => {
     const { picker } = mountPicker();
-    const outside = document.createElement("p");
-    dom.body.appendChild(outside);
+    const other = document.createElement("button");
+    dom.body.appendChild(other);
     triggerOf(picker).click();
     assert.ok(isOpen(picker));
-    pressAt(outside);
+    pressAt(other);
+    other.focus(); // the browser's default action for a press on a button
     assert.equal(isOpen(picker), false);
     none(dom.body.querySelector(".cmdpick__panel"), "the panel left the page");
-    assert.ok(document.activeElement !== triggerOf(picker), "the press already went where the person chose");
+    await afterPress();
+    same(document.activeElement, other, "the press went where the person chose, and is left there");
+  });
+
+  test("1b. a press on something that cannot take focus returns focus to the trigger, never to the page (a11y review finding 2)", async () => {
+    const { picker } = mountPicker();
+    const title = document.createElement("h2");
+    dom.body.appendChild(title);
+    triggerOf(picker).click();
+    pressAt(title);
+    // What the browser does: the focused search box left with the panel, so focus fell to the body.
+    document.activeElement = dom.body;
+    assert.equal(isOpen(picker), false);
+    await afterPress();
+    same(document.activeElement, triggerOf(picker), "focus is back on the control, not on <body>");
+  });
+
+  test("1c. a tap inside a container that only takes focus programmatically (main, tabindex -1) returns focus to the trigger", async () => {
+    const { picker } = mountPicker();
+    const main = document.createElement("main");
+    main.setAttribute("tabindex", "-1");
+    const text = document.createElement("p");
+    main.appendChild(text);
+    dom.body.appendChild(main);
+    triggerOf(picker).click();
+    pressAt(text);
+    main.focus(); // the browser's default action: the nearest focusable ancestor
+    await afterPress();
+    same(document.activeElement, triggerOf(picker), "main is not a control; focus goes back to the picker");
+  });
+
+  test("1e. only focus the panel had is given back: when it did not hold focus, a press outside moves nothing", async () => {
+    const { picker } = mountPicker();
+    const title = document.createElement("h2");
+    dom.body.appendChild(title);
+    triggerOf(picker).click();
+    // Something else took focus while the list was open (it does not hold it any more).
+    const other = document.createElement("input");
+    dom.body.appendChild(other);
+    other.focus();
+    pressAt(title);
+    document.activeElement = dom.body; // the browser's default action for a press on text
+    await afterPress();
+    same(document.activeElement, dom.body, "the picker does not pull focus it never had");
+  });
+
+  test("1d. a press on the picker's own label does not close it under the pointer (the label's click toggles it)", () => {
+    const { picker } = mountPicker();
+    const label = document.createElement("label");
+    label.setAttribute("for", triggerOf(picker).id);
+    dom.body.appendChild(label);
+    triggerOf(picker).click();
+    pressAt(label);
+    assert.ok(isOpen(picker), "the press on its own label is not outside it");
   });
 
   test("2. a press inside the panel, or on its own trigger, does not close it", () => {

@@ -258,7 +258,7 @@ function openBudgetEditor(ctx, budget = null) {
   }
   function addRow(line = {}, { focus = false } = {}) {
     // `cat.focus()` below lands on the picker's trigger.
-    const cat = pickerSelect(categories.map((c) => ({ value: c.id, label: c.name })), line.categoryId || (categories[0] || {}).id, {}, { badgeOf: categoryMarks });
+    const cat = pickerSelect(categories.map((c) => ({ value: c.id, label: c.name })), line.categoryId || (categories[0] || {}).id, {}, { badgeOf: categoryMarks, placeholder: "Choose a category…" });
     const amount = input({ inputmode: "decimal", placeholder: "0.00" });
     amount.value = line.amount || "";
     const rollover = el("input", { type: "checkbox" });
@@ -355,8 +355,9 @@ function createWhatIf(ctx, params) {
   ], "one-off", {}, { search: false });
   // Filled by setChoices() below; the pickers follow the new options. The account's icon is read from
   // the current list, which setChoices replaces.
-  const account = pickerSelect([], "", {}, { badgeOf: (id) => { const a = accounts.find((x) => x.id === id); return a && a.icon ? icon(a.icon) : null; } });
-  const bill = pickerSelect([], "");
+  // Natural empty-field text while the choices load or when there are none (UX review U6).
+  const account = pickerSelect([], "", {}, { badgeOf: (id) => { const a = accounts.find((x) => x.id === id); return a && a.icon ? icon(a.icon) : null; }, placeholder: "Choose an account…" });
+  const bill = pickerSelect([], "", {}, { placeholder: "Choose a bill…" });
   const date = input({ type: "date" });
   date.value = todayIso();
   const amount = input({ inputmode: "decimal", placeholder: "-250.00 or 100.00" });

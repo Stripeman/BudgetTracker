@@ -149,6 +149,18 @@ export function createStore({ api }) {
         return { ok: false, error: err };
       }
     },
+
+    // Re-reads the effective preferences after a change made elsewhere, such as a site default
+    // (the staging link, BT-011-06), without re-initialising the app or changing the workspace.
+    async refreshPreferences() {
+      try {
+        commit({ preferences: await api.preferences() });
+        return { ok: true };
+      } catch (err) {
+        handleAuthLoss(err);
+        return { ok: false, error: err };
+      }
+    },
   };
 
   return {

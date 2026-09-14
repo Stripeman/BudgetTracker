@@ -399,7 +399,7 @@ export function openGroupExpense(ctx, { expense = null } = {}) {
   const linked = (data.myLedgers || []).find((l) => l.currency === currency && !l.accountUnavailable) || null;
   const mine = editing || linked ? [] : ledgerAccounts(state, currency);
   const ledgerBox = el("input", { type: "checkbox", id: `${key}-ledger` });
-  const ledgerAccount = pickerSelect(mine.map((a) => ({ value: a.id, label: `${a.name} (${a.currency})` })), (mine[0] || {}).id, {}, { badgeOf: iconBadges(mine) });
+  const ledgerAccount = pickerSelect(mine.map((a) => ({ value: a.id, label: `${a.name} (${a.currency})` })), (mine[0] || {}).id, {}, { badgeOf: iconBadges(mine), placeholder: "Choose an account…" });
   const ledgerChoice = el("div", { class: "stack" }, [
     el("div", { class: "field--inline" }, [ledgerBox, el("label", { for: ledgerBox.id, text: "Also record my part on my own account" })]),
     field("Account", ledgerAccount),
@@ -545,8 +545,9 @@ export function openRecordPayment(ctx, { from = null, to = null, amount: preset 
   const options = people.map((p) => ({ value: p.ref, label: `${p.name}${p.self ? " (you)" : ""}${p.type === "contact" ? " · contact" : ""}` }));
   const key = newIdempotencyKey();
   // People are searched, as in TaskTracker's people pickers.
-  const fromSel = pickerSelect(options, from || me);
-  const toSel = pickerSelect(options, to || (people.find((p) => p.ref !== (from || me)) || {}).ref);
+  // "Choose who paid…", not the label-built "Choose from…" (UX review U6).
+  const fromSel = pickerSelect(options, from || me, {}, { placeholder: "Choose who paid…" });
+  const toSel = pickerSelect(options, to || (people.find((p) => p.ref !== (from || me)) || {}).ref, {}, { placeholder: "Choose who was paid…" });
   const amount = input({ inputmode: "decimal", autocomplete: "off", required: true, placeholder: "0.00", value: preset });
   const date = input({ type: "date", value: todayIso() });
   const methodText = input({ maxlength: "60", autocomplete: "off", placeholder: "Cash, bank transfer…" });
@@ -554,7 +555,7 @@ export function openRecordPayment(ctx, { from = null, to = null, amount: preset 
   const linked = (data.myLedgers || []).some((l) => l.currency === currency);
   const mine = linked ? [] : ledgerAccounts(state, currency);
   const ledgerBox = el("input", { type: "checkbox", id: `${key}-ledger` });
-  const ledgerAccount = pickerSelect(mine.map((a) => ({ value: a.id, label: `${a.name} (${a.currency})` })), (mine[0] || {}).id, {}, { badgeOf: iconBadges(mine) });
+  const ledgerAccount = pickerSelect(mine.map((a) => ({ value: a.id, label: `${a.name} (${a.currency})` })), (mine[0] || {}).id, {}, { badgeOf: iconBadges(mine), placeholder: "Choose an account…" });
   const ledgerField = el("div", { class: "field--wide stack" }, [
     el("div", { class: "field--inline" }, [ledgerBox, el("label", { for: ledgerBox.id, text: "Also record it on my account as a repayment" })]),
     field("Account", ledgerAccount, { help: "A repayment clears money you lent. It is not counted as income or spending. Only you see which account." }),
@@ -611,7 +612,7 @@ function openConfirm(ctx, s, nameOf) {
   const linked = (data.myLedgers || []).some((l) => l.currency === s.currency);
   const mine = receiving && !linked ? ledgerAccounts(state, s.currency) : [];
   const ledgerBox = el("input", { type: "checkbox", id: uid("ledger") });
-  const ledgerAccount = pickerSelect(mine.map((a) => ({ value: a.id, label: `${a.name} (${a.currency})` })), (mine[0] || {}).id, {}, { badgeOf: iconBadges(mine) });
+  const ledgerAccount = pickerSelect(mine.map((a) => ({ value: a.id, label: `${a.name} (${a.currency})` })), (mine[0] || {}).id, {}, { badgeOf: iconBadges(mine), placeholder: "Choose an account…" });
   ledgerAccount.disabled = true;
   ledgerBox.addEventListener("change", () => { ledgerAccount.disabled = !ledgerBox.checked; });
   const confirm = button("Confirm", () => void go(), { variant: "primary" });
@@ -687,7 +688,7 @@ function openVoid(ctx, type, rec) {
 function openLedgerChoice(ctx, type, rec) {
   const state = ctx.store.getState();
   const mine = ledgerAccounts(state, rec.currency);
-  const account = pickerSelect(mine.map((a) => ({ value: a.id, label: `${a.name} (${a.currency})` })), (mine[0] || {}).id, {}, { badgeOf: iconBadges(mine) });
+  const account = pickerSelect(mine.map((a) => ({ value: a.id, label: `${a.name} (${a.currency})` })), (mine[0] || {}).id, {}, { badgeOf: iconBadges(mine), placeholder: "Choose an account…" });
   const modal = openModal({
     title: "Record on my account",
     body: [
