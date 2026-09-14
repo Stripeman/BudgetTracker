@@ -14,8 +14,8 @@
 const { readBody, query, forbidden, notFound, conflict } = require('../_shared/http');
 const { newId, requireId } = require('../_shared/ids');
 const { readDocument } = require('../_shared/schema');
-const { roleAtLeast } = require('../_shared/authz');
 const store = require('../_shared/store');
+const workspaceSettings = require('../_shared/workspace-settings');
 const fields = require('../_shared/fields');
 const audit = require('../_shared/audit');
 
@@ -129,7 +129,8 @@ function change(action) {
     const { result } = await store.mutateWorkspace(ctx, wsId, (doc, member) => {
       const c = (doc.contacts || []).find((x) => x.id === id);
       if (!c) throw notFound('Unknown contact.');
-      if (c.createdBy !== member.subject && !roleAtLeast(member.role, 'manager')) throw forbidden('Only the creator or a manager can change this contact.');
+      // Its creator, or whoever manages the workspace's shared lists (workspace setting, Terry 2026-09-14).
+      if (c.createdBy !== member.subject && !workspaceSettings.managesSharedLists(doc, member)) throw forbidden('Only the creator or a manager can change this contact.');
       const nowIso = ctx.nowIso();
       apply(c, member.subject, nowIso);
       const auditAction = { update: 'contact.update', archive: 'contact.delete', restore: 'contact.restore' }[action];

@@ -34,8 +34,10 @@ function recordHistory(b, by, at, changes, reason = '') {
   if (!changes.length) return;
   b.history = [...(b.history || []), { at, by, changes, reason }];
 }
-function mayEdit(budget, member) {
-  return budget.scope === 'shared' ? roleAtLeast(member.role, 'manager') : budget.ownerSubject === member.subject;
+// A shared budget: whoever manages the workspace's shared lists (workspace setting, Terry 2026-09-14);
+// a private budget: its owner only.
+function mayEdit(doc, budget, member) {
+  return budget.scope === 'shared' ? workspaceSettings.managesSharedLists(doc, member) : budget.ownerSubject === member.subject;
 }
 
 function validLines(lines, currency, doc) {
@@ -62,7 +64,7 @@ function view(doc, budget, member, today, now) {
   return {
     id: budget.id, name: budget.name, scope: budget.scope, currency: budget.currency, period: terms.period, startDate: terms.startDate,
     ...icons.effective('budget', budget, doc),
-    revision: budget.revision, ownedBySelf: budget.ownerSubject === member.subject, canEdit: mayEdit(budget, member),
+    revision: budget.revision, ownedBySelf: budget.ownerSubject === member.subject, canEdit: mayEdit(doc, budget, member),
     archived: !!budget.deletedAt, archivedAt: budget.deletedAt || null, archiveReason: budget.archiveReason || '',
     history: (budget.history || []).map((h) => ({ at: h.at, by: names.get(h.by) || 'Former member', changes: h.changes, reason: h.reason || '' })),
     lines: terms.lines.map(lineView),
@@ -86,7 +88,7 @@ async function create(ctx, req) {
   const catalog = await catalogFor(ctx, body);
   const { result } = await store.mutateWorkspace(ctx, wsId, (doc, member) => {
     const scope = fields.oneOf(body.scope, ['shared', 'private'], 'Scope', 'private');
-    if (scope === 'shared' && !roleAtLeast(member.role, 'manager')) throw forbidden('Only owners and managers can create shared budgets.');
+    if (scope === 'shared' && !workspaceSettings.managesSharedLists(doc, member)) throw forbidden(member.role === 'viewer' ? 'Viewers cannot create shared budgets.' : 'Only owners and managers can create shared budgets in this workspace.');
     const currency = body.currency || (doc.settings && doc.settings.reportingCurrency) || 'EUR';
     money.precisionOf(currency);
     const nowIso = ctx.nowIso();
@@ -113,7 +115,7 @@ async function create(ctx, req) {
 function locate(doc, member, id, { archived = false } = {}) {
   const b = (doc.budgets || []).find((x) => x.id === id);
   if (!b || !visibleTo(b, member, { archived })) throw notFound('Unknown budget.');
-  if (!mayEdit(b, member)) throw forbidden('You cannot change this budget.');
+  if (!mayEdit(doc, b, member)) throw forbidden('You cannot change this budget.');
   return b;
 }
 

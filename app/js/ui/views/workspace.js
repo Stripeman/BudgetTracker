@@ -13,6 +13,7 @@ import { messageFor } from "../../core/errors.js";
 import { ACCOUNT_TYPE_LABELS, BILL_TYPE_LABELS, MERCHANT_TYPE_LABELS } from "../../core/format.js";
 import { createIconPicker } from "../iconpicker.js";
 import { builtInIconFor, withIcon } from "../icons.js";
+import { managesSharedLists } from "../../core/workspacesettings.js";
 
 // Icons for the workspace's types (BT-011-05): accounts, bills and merchants of a type show this icon
 // unless one was chosen on the record itself.
@@ -315,7 +316,8 @@ export function createView(ctx) {
   function renderColours(state) {
     const data = sliceFor(state, "categories").data;
     if (!data || !sliceFor(state, "members").data) return;
-    const canEdit = ["owner", "manager"].includes(me().role);
+    // Categories are a shared list (workspace setting "Who manages shared lists"); the server decides.
+    const canEdit = ["owner", "manager"].includes(me().role) || (me().role === "member" && managesSharedLists(state));
     const cats = data.categories.filter((c) => !c.archived);
     const iconsData = sliceFor(state, "icons").data;
     const sig = JSON.stringify([cats.map((c) => [c.id, c.name, c.color, c.colorSource, c.icon, c.iconSource]), canEdit, iconsData ? iconsData.catalog : null]);

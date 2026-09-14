@@ -16,6 +16,7 @@ import { formatDate, formatAmount, todayIso } from "../../core/format.js";
 import { messageFor } from "../../core/errors.js";
 import { icon, withIcon } from "../icons.js";
 import { createIconPicker, iconChange } from "../iconpicker.js";
+import { managesSharedLists } from "../../core/workspacesettings.js";
 
 // Account icons for the forecast tables (BT-011-05), from the accounts the viewer may see.
 const accountIcons = (state) => new Map(((sliceFor(state, "accounts").data || {}).accounts || []).map((a) => [a.id, a.icon]));
@@ -243,12 +244,12 @@ function openBudgetLifecycle(ctx, budget, archive, after = null) {
 function openBudgetEditor(ctx, budget = null) {
   const state = ctx.store.getState();
   const editing = !!budget;
-  const role = ((state.workspaces || []).find((w) => w.id === state.selectedWorkspaceId) || {}).role;
   const categories = ((sliceFor(state, "categories").data || {}).categories || []).filter((c) => !c.archived && c.type !== "income");
   const currencies = [...new Set(((sliceFor(state, "accounts").data || {}).accounts || []).map((a) => a.currency))];
   const name = input({ maxlength: "80", autocomplete: "off" });
   name.value = editing ? budget.name : "";
-  const canShare = role === "owner" || role === "manager";
+  // Shared budgets belong to whoever manages shared lists (workspace setting; owners and managers by default).
+  const canShare = managesSharedLists(state);
   const scope = pickerSelect([{ value: "private", label: "Private to me" }].concat(canShare ? [{ value: "shared", label: "Shared (shared accounts only)" }] : []), editing ? budget.scope : (canShare ? "shared" : "private"), { disabled: editing }, { search: false });
   const currency = pickerSelect((currencies.length ? currencies : ["EUR"]).map((c) => ({ value: c, label: c })), editing ? budget.currency : currencies[0] || "EUR", { disabled: editing });
   // The workspace's settings give a new budget its period and start (Terry, 2026-09-14).

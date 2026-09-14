@@ -36,6 +36,14 @@ const SETTINGS = freezeAll({
     options: [opt('own', 'Only their own entries'), opt('any', 'Any entry, as a member who can add entries')],
     explanation: 'Who may correct or delete entries and bills on shared accounts. Owners and managers always can. With "Only their own entries" a member changes only what they added. With "Any entry" every member who can add entries may correct anyone\'s. Every correction is still kept with who, when and why, entries locked by reconciling or by Shared expenses stay locked, viewers never change anything, and private accounts are never affected.',
   },
+  // (g) Who manages the workspace's shared lists. Today: managers and owners (members may already add
+  // shared merchants and shared contacts, and change the ones they added; viewers add neither).
+  sharedListManagers: {
+    group: 'Entries and shared lists', type: 'choice', default: 'managers', changedBy: 'manager',
+    label: 'Who manages shared lists',
+    options: [opt('managers', 'Managers and owners'), opt('members', 'Any member who can add entries')],
+    explanation: 'Who may add and change the shared accounts, shared budgets and categories that everyone uses, and change any shared merchant or shared contact (members can always add those and change the ones they added). Viewers never can, and private accounts, budgets, merchants and contacts always stay with the person they belong to.',
+  },
   // (i) Budget defaults. `budgetPeriod` and `weekStart` existed before and were ignored; now they are
   // the defaults for new budgets (existing budgets keep their own period).
   budgetPeriod: {
@@ -145,6 +153,14 @@ function changesFor(doc, changes, member) {
 // (f) A plain member may change another member's entry or bill on a shared account.
 const membersChangeOthers = (doc) => get(doc, 'memberEditsOthers') === 'any';
 
+// (g) Who manages the shared lists: managers and owners always; members when the setting says so;
+// viewers never.
+function managesSharedLists(doc, member) {
+  if (!member) return false;
+  if (member.role === 'manager' || member.role === 'owner') return true;
+  return member.role === 'member' && get(doc, 'sharedListManagers') === 'members';
+}
+
 // (i) The default start of a new budget with this period: the first of the month for a monthly budget
 // (today's default), the latest week-start day on or before today for a weekly or two-weekly one.
 function defaultBudgetStart(doc, period, today) {
@@ -184,4 +200,4 @@ function problem(doc) {
   return null;
 }
 
-module.exports = { SETTINGS, KEYS, values, get, valid, mayChange, parseChanges, changesFor, view, problem, defaultBudgetStart, membersChangeOthers };
+module.exports = { SETTINGS, KEYS, values, get, valid, mayChange, parseChanges, changesFor, view, problem, defaultBudgetStart, membersChangeOthers, managesSharedLists };

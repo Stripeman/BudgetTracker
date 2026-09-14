@@ -182,6 +182,32 @@ describe("Workspace settings card", () => {
     assert.equal(reminderIn(null), "3");
   });
 
+  test("(g) a member is offered shared budgets only when the workspace lets members manage shared lists; a viewer never", () => {
+    const ready = (data) => ({ workspaceId: "ws_1", status: "ready", error: null, data });
+    const scopesFor = (role, settingValues) => {
+      const state = {
+        selectedWorkspaceId: "ws_1", preferences: null,
+        workspaces: [{ id: "ws_1", name: "Fictional household", role, kind: "household", settingValues }],
+        accounts: ready({ accounts: [] }), categories: ready({ categories: [{ id: "cat_food", name: "Groceries", color: "#16a34a", icon: null }] }),
+        budgets: ready({ budgets: [] }), forecast: ready({ forecast: { accounts: [], warnings: [], assumptions: [], horizonDays: 90 } }), bills: ready({ recurring: [] }),
+      };
+      const store = { getState: () => state, actions: { refreshForecast: async () => {}, refreshBudgets: async () => {}, refreshBills: async () => {}, write: async () => ({ ok: true }) } };
+      const view = createPlanning({ store, api: {} });
+      dom.body.appendChild(view.element);
+      view.update(state);
+      const add = buttonNamed(view.element, "Add budget");
+      if (!add) return "no Add budget";
+      add.click();
+      const modals = dom.body.querySelectorAll(".modal");
+      return offeredOptions(pickerNamed(modals[modals.length - 1], "Who it is for"));
+    };
+    const both = ["Private to me", "Shared (shared accounts only)"];
+    assert.deepEqual(scopesFor("member", { sharedListManagers: "managers" }), ["Private to me"]);
+    assert.deepEqual(scopesFor("member", { sharedListManagers: "members" }), both);
+    assert.deepEqual(scopesFor("manager", { sharedListManagers: "managers" }), both);
+    assert.equal(scopesFor("viewer", { sharedListManagers: "members" }), "no Add budget", "a viewer adds no budget at all, whatever the setting");
+  });
+
   test("settingText writes each kind of value in words", () => {
     const [period, , days, shared, modes] = LIST(true);
     assert.equal(settingText(period, "biweekly"), "Every two weeks");

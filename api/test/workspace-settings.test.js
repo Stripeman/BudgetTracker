@@ -173,6 +173,75 @@ describe("(f) Members may change other members' entries on shared accounts", () 
   });
 });
 
+// ---- (g) who manages shared lists ----------------------------------------------------------------
+// Fixture: Alice (owner) created the shared Joint account and the shared merchant "Fictional Grocer".
+async function sharedLists(h, f) {
+  const cat = await categoryId(h, f.q);
+  const contact = ok(await h.call('contacts', 'POST', { as: 'alice', body: { scope: 'workspace', workspaceId: f.ws.id, name: 'Dana Fictional' } }), 201).contact;
+  const budget = ok(await h.call('budgets', 'POST', { as: 'alice', query: f.q, body: { name: 'Fictional food', scope: 'shared', lines: [{ categoryId: cat, amount: '400.00' }] } }), 201).budget;
+  const privateBudget = ok(await h.call('budgets', 'POST', { as: 'alice', query: f.q, body: { name: 'Alice only', scope: 'private', lines: [{ categoryId: cat, amount: '50.00' }] } }), 201).budget;
+  const grocer = ok(await h.call('payees', 'GET', { as: 'alice', query: f.q })).payees.find((p) => p.id === f.merchants.grocer.id);
+  const joint = ok(await h.call('accounts', 'GET', { as: 'alice', query: f.q })).accounts.find((a) => a.id === f.joint.id);
+  // Each attempt by `as`: the HTTP status of every shared-list action.
+  return async (as) => {
+    const s = {};
+    s.addAccount = (await h.call('accounts', 'POST', { as, query: f.q, body: { name: `Shared by ${as}`, type: 'checking', currency: 'EUR', visibility: 'shared' } })).status;
+    s.editAccount = (await h.call('accounts', 'PATCH', { as, query: f.q, body: { accountId: joint.id, revision: (await h.call('accounts', 'GET', { as: 'alice', query: f.q })).body.accounts.find((a) => a.id === joint.id).revision, notes: `note by ${as}` } })).status;
+    s.addBudget = (await h.call('budgets', 'POST', { as, query: f.q, body: { name: `Budget by ${as}`, scope: 'shared', lines: [{ categoryId: cat, amount: '10.00' }] } })).status;
+    const b = ok(await h.call('budgets', 'GET', { as: 'alice', query: f.q })).budgets.find((x) => x.id === budget.id);
+    s.editBudget = (await h.call('budgets', 'PATCH', { as, query: f.q, body: { budgetId: b.id, revision: b.revision, name: `Food ${as}` } })).status;
+    s.addCategory = (await h.call('categories', 'POST', { as, query: f.q, body: { name: `Category ${as}` } })).status;
+    s.editCategory = (await h.call('categories', 'PATCH', { as, query: f.q, body: { categoryId: cat, name: `Groceries ${as}` } })).status;
+    const g = ok(await h.call('payees', 'GET', { as: 'alice', query: f.q })).payees.find((p) => p.id === grocer.id);
+    s.editMerchant = (await h.call('payees', 'PATCH', { as, query: f.q, body: { payeeId: g.id, revision: g.revision, notes: `note ${as}` } })).status;
+    s.editContact = (await h.call('contacts', 'PATCH', { as, body: { scope: 'workspace', workspaceId: f.ws.id, contactId: contact.id, notes: `note ${as}` } })).status;
+    s.addContact = (await h.call('contacts', 'POST', { as, body: { scope: 'workspace', workspaceId: f.ws.id, name: `Contact by ${as}` } })).status;
+    s.addMerchant = (await h.call('payees', 'POST', { as, query: f.q, body: { name: `Merchant by ${as}`, visibility: 'shared' } })).status;
+    const pb = (await h.call('budgets', 'PATCH', { as, query: f.q, body: { budgetId: privateBudget.id, revision: privateBudget.revision, name: 'Not yours' } })).status;
+    s.privateBudget = pb === 404 ? 'not found' : pb;
+    const pa = (await h.call('accounts', 'PATCH', { as, query: f.q, body: { accountId: f.aliceSavings.id, revision: 1, notes: 'Not yours' } })).status;
+    s.privateAccount = pa === 404 ? 'not found' : pa;
+    return s;
+  };
+}
+
+describe('(g) Who manages shared lists', () => {
+  test('by default managers and owners manage the shared lists; members add shared merchants and contacts only; viewers nothing', async () => {
+    const { h, f } = await setup();
+    const attempt = await sharedLists(h, f);
+    assert.deepEqual(await attempt('bob'), {
+      addAccount: 403, editAccount: 403, addBudget: 403, editBudget: 403, addCategory: 403, editCategory: 403, editMerchant: 403, editContact: 403,
+      addContact: 201, addMerchant: 201, privateBudget: 'not found', privateAccount: 'not found',
+    });
+    assert.deepEqual(await attempt('carol'), {
+      addAccount: 403, editAccount: 403, addBudget: 403, editBudget: 403, addCategory: 403, editCategory: 403, editMerchant: 403, editContact: 403,
+      addContact: 403, addMerchant: 403, privateBudget: 'not found', privateAccount: 'not found',
+    });
+  });
+
+  test('"Any member who can add entries": members manage every shared list; viewers still nothing; private items stay their owner\'s', async () => {
+    const { h, f, id } = await setup();
+    const attempt = await sharedLists(h, f);
+    ok(await patchSettings(h, 'alice', id, { sharedListManagers: 'members' }));
+    assert.deepEqual(await attempt('bob'), {
+      addAccount: 201, editAccount: 200, addBudget: 201, editBudget: 200, addCategory: 201, editCategory: 200, editMerchant: 200, editContact: 200,
+      addContact: 201, addMerchant: 201, privateBudget: 'not found', privateAccount: 'not found',
+    });
+    assert.deepEqual(await attempt('carol'), {
+      addAccount: 403, editAccount: 403, addBudget: 403, editBudget: 403, addCategory: 403, editCategory: 403, editMerchant: 403, editContact: 403,
+      addContact: 403, addMerchant: 403, privateBudget: 'not found', privateAccount: 'not found',
+    });
+    const budgets = ok(await h.call('budgets', 'GET', { as: 'bob', query: f.q })).budgets;
+    assert.ok(budgets.filter((b) => b.scope === 'shared').every((b) => b.canEdit === true), 'the budget list says Bob may edit shared budgets');
+    const grocer = ok(await h.call('payees', 'GET', { as: 'bob', query: f.q })).payees.find((p) => p.id === f.merchants.grocer.id);
+    assert.equal(grocer.canEdit, true);
+    // Every change Bob made is kept with his name (the audit log records who did it).
+    const doc = await readDoc(h, id);
+    const bobs = doc.audit.filter((a) => a.actor === 'google:g-bob').map((a) => a.action);
+    for (const action of ['account.create', 'account.update', 'budget.create', 'budget.update', 'category.create', 'category.update', 'payee.update', 'contact.update']) assert.ok(bobs.includes(action), action);
+  });
+});
+
 // ---- (i) budget defaults and backdating -----------------------------------------------------------
 // The harness clock starts on Sunday 2026-09-13: the latest Monday on or before it is 2026-09-07, the
 // latest Saturday 2026-09-12, and the current monthly period starts 2026-09-01.

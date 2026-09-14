@@ -9,19 +9,22 @@ import { newIdempotencyKey } from "../../core/api.js";
 import { ACCOUNT_TYPE_LABELS, todayIso } from "../../core/format.js";
 import { icon, withIcon, defaultIconFor } from "../icons.js";
 import { createIconPicker, iconChange } from "../iconpicker.js";
+import { managesSharedLists } from "../../core/workspacesettings.js";
 
 const CURRENCIES = ["EUR", "USD", "GBP", "CHF", "SEK", "NOK", "DKK", "PLN", "CZK", "HUF", "CAD", "AUD", "NZD", "JPY", "SGD", "HKD", "INR", "ZAR"];
 const GRANTABLE = [["view-balances", "See balance"], ["view-transactions", "See entries"], ["create", "Add entries"], ["edit", "Edit entries"], ["delete", "Delete entries"], ["comment", "Comment"], ["download-receipts", "Download receipts"], ["export", "Export"]];
 
-// Who may close or reopen: the owner of a private account, or an owner or manager for a shared one.
+// Who may edit, close or reopen: the owner of a private account; for a shared one whoever manages the
+// workspace's shared lists (owners and managers, or members too when the workspace setting says so).
 // Presentation only; the server decides.
-const canManage = (a, role) => a.ownedBySelf || (a.visibility === "shared" && (role === "owner" || role === "manager"));
+const canManage = (a, sharedLists) => a.ownedBySelf || (a.visibility === "shared" && sharedLists);
 
 export function createView(ctx) {
   const box = el("div");
   const element = el("section", {}, [pageHead("Accounts", [button("Add account", () => openAddAccount(ctx), { variant: "primary" })]), box]);
   function update(state) {
     const role = ((state.workspaces || []).find((w) => w.id === state.selectedWorkspaceId) || {}).role;
+    const sharedLists = managesSharedLists(state);
     const prefs = state.preferences;
     const accounts = sliceFor(state, "accounts");
     const s = stateView(accounts, { empty: "No accounts yet. Add a bank account, card, cash wallet or loan.", isEmpty: (d) => !d.accounts.length });
@@ -38,8 +41,8 @@ export function createView(ctx) {
         el("td", { "data-label": "Balance", class: "num" }, [a.balance !== undefined ? money(a.balance, a.currency, prefs) : el("span", { class: "muted small", text: "Not shared with you" })]),
         el("td", { "data-label": "" }, [el("div", { class: "row-actions" }, [
           button("Who can see this", () => openWhoCanSee(ctx, a), { small: true, attrs: { "aria-label": `Who can see ${a.name}` } }),
-          canManage(a, role) ? button("Edit", () => openEditAccount(ctx, a), { small: true, attrs: { "aria-label": `Edit ${a.name}` } }) : null,
-          canManage(a, role) ? button(a.status === "closed" ? "Reopen" : "Close", () => openLifecycle(ctx, a), { small: true, attrs: { "aria-label": `${a.status === "closed" ? "Reopen" : "Close"} ${a.name}` } }) : null,
+          canManage(a, sharedLists) ? button("Edit", () => openEditAccount(ctx, a), { small: true, attrs: { "aria-label": `Edit ${a.name}` } }) : null,
+          canManage(a, sharedLists) ? button(a.status === "closed" ? "Reopen" : "Close", () => openLifecycle(ctx, a), { small: true, attrs: { "aria-label": `${a.status === "closed" ? "Reopen" : "Close"} ${a.name}` } }) : null,
         ])]),
       ]))),
     ])]));
@@ -152,7 +155,7 @@ function openAddAccount(ctx) {
     title: "Add account",
     body: [el("div", { class: "form-grid" }, [
       field("Name", name), field("Type", type), iconBox, field("Currency", currency),
-      field("Who can see it", visibility, { wide: true, help: "New accounts are private by default. Workspace owners cannot see private accounts. Only owners and managers can create shared accounts." }),
+      field("Who can see it", visibility, { wide: true, help: "New accounts are private by default. Workspace owners cannot see private accounts. Shared accounts are created by whoever manages shared lists (owners and managers, unless Workspace settings say members too)." }),
       field("Opening balance", opening, { help: "Loans and other debts: enter the amount owed as a negative number, e.g. -20000.00." }),
       field("Opening date", openingDate), field("Institution", institution), field("Account number", last, { help: "Never store a full account or card number." }),
     ])],
