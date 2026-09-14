@@ -151,12 +151,21 @@ async function list(ctx, req) {
   // reimbursements (receivables) and adjustments have their own buckets and are never counted as
   // spending or income. With a category filter, split entries contribute only matching lines.
   const summary = {};
+  // What is owed to or by the viewer counts their OWN private accounts only (financial recheck F2): an
+  // amount someone else lent from a shared account is never the viewer's receivable.
+  const ownPrivate = new Set((doc.accounts || []).filter((a) => !a.deletedAt && a.visibility === 'private' && a.ownerSubject === ctx.principal.subject).map((a) => a.id));
+  const OWED = new Set(['advance', 'reimbursement', 'payable', 'repayment']);
+  // A removed account is out of every list and total (never erased, and its entries stay readable), so
+  // what was recorded there is not counted twice once it is recorded on another account (F2).
+  const removed = new Set((doc.accounts || []).filter((a) => a.deletedAt).map((a) => a.id));
   for (const t of txns) {
     const bucket = ledger.classify(t.kind);
-    if (t.deletedAt || bucket === 'transfer') continue;
+    if (t.deletedAt || bucket === 'transfer' || removed.has(t.accountId)) continue;
     let amount = t.amountMinor;
     if (f.categoryId && (t.splits || []).length) amount = money.sum(t.splits.filter((s) => s.categoryId === f.categoryId).map((s) => s.amountMinor));
-    const s = summary[t.currency] || (summary[t.currency] = { gross: 0, refunds: 0, income: 0, adjustments: 0, advances: 0, reimbursements: 0, payables: 0, repayments: 0, count: 0 });
+    const s = summary[t.currency] || (summary[t.currency] = { gross: 0, refunds: 0, income: 0, adjustments: 0, advances: 0, reimbursements: 0, payables: 0, repayments: 0, receivable: 0, count: 0 });
+    // advances − reimbursements − payables + repayments is −(the sum of their signed amounts).
+    if (OWED.has(bucket) && ownPrivate.has(t.accountId)) s.receivable = money.sum([s.receivable, -amount]);
     s.count += 1;
     if (bucket === 'spending') s.gross = money.sum([s.gross, -amount]);
     else if (bucket === 'refund') s.refunds = money.sum([s.refunds, amount]);
@@ -190,9 +199,10 @@ async function list(ctx, req) {
         adjustments: money.toDecimal(s.adjustments, currency), advances: money.toDecimal(s.advances, currency),
         reimbursements: money.toDecimal(s.reimbursements, currency),
         payables: money.toDecimal(s.payables, currency), repayments: money.toDecimal(s.repayments, currency),
-        // What is owed to the account holder (negative: what they owe): lent − repaid to them − owed
-        // to others + repaid by them. For an account that records shared expenses it is the balance.
-        receivable: money.toDecimal(money.sum([s.advances, -s.reimbursements, -s.payables, s.repayments]), currency),
+        // What is owed to the viewer (negative: what they owe), on their own private accounts only: lent
+        // − repaid to them − owed to others + repaid by them. For an account that records shared
+        // expenses it is the group balance.
+        receivable: money.toDecimal(s.receivable, currency),
       })),
     },
   };

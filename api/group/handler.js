@@ -196,10 +196,33 @@ const NOTES = Object.freeze({
 // Only the entries' owner runs this. Returns 'same', 'updated' or the problem that stopped it; `strict`
 // throws the problem instead (otherwise the entries are left for the owner to review — a derived
 // "needs review", never a stored flag).
-function syncRecord(ctx, doc, member, rec, type, { reason, strict }) {
+// Why an account can no longer hold a person's part (financial recheck F2): removed, out of their
+// reach, not their own private account (for example shared), or closed. null for their own usable
+// private account.
+function formerReason(ctx, doc, member, accountId) {
+  const a = (doc.accounts || []).find((x) => x.id === accountId);
+  if (!a || a.deletedAt) return 'deleted';
+  if (capabilitiesFor(doc, ctx.principal, a, ctx.now()).size === 0) return 'unavailable';
+  if (!ownPrivateAccount(doc, accountId, member.subject)) return 'shared';
+  if (a.status === 'closed') return 'closed';
+  return null;
+}
+// What stops the person writing their entries on an account now (reversing `toReverse`, or adding).
+function writeProblem(ctx, doc, accountId, rec, toReverse) {
   const now = ctx.now();
+  const account = (doc.accounts || []).find((a) => a.id === accountId);
+  if (!account || account.deletedAt || capabilitiesFor(doc, ctx.principal, account, now).size === 0) return 'unavailable';
+  if (account.status === 'closed') return 'closed';
+  if (account.currency !== rec.currency) return 'currency';
+  if (!can(doc, ctx.principal, account, 'create', now) || toReverse.some((t) => t.accountId === accountId && !canChangeRecord(doc, ctx.principal, account, t, 'edit', now))) return 'rights';
+  return null;
+}
+// Entries that can never be reversed where they are: the account is gone or out of the person's reach.
+const unreachable = (ctx, doc, rec, t) => ['unavailable', 'rights'].includes(writeProblem(ctx, doc, t.accountId, rec, [t]));
+
+function syncRecord(ctx, doc, member, rec, type, { reason, strict, stop = false }) {
   const nowIso = ctx.nowIso();
-  // Nothing is ever written to an account that is not the person's own private account (security
+  // Nothing new is recorded on an account that is not the person's own private account (security
   // recheck R1). A link whose account stopped being theirs (for example shared) needs another account.
   const link = groupLink(doc, member.subject, rec.currency);
   if (link && !ownPrivateAccount(doc, link.accountId, member.subject)) {
@@ -207,25 +230,30 @@ function syncRecord(ctx, doc, member, rec, type, { reason, strict }) {
     return 'not_own';
   }
   const live = liveEntries(doc, rec, type, member.subject);
-  // Entries already on an account that is no longer theirs are real cash history: kept exactly as
-  // recorded — never reversed, and never recorded again on another account.
-  if (live.some((t) => !ownPrivateAccount(doc, t.accountId, member.subject))) return 'same';
   const targetId = targetOf(doc, rec, member.subject);
+  // Financial recheck F2 (decision 2026-09-14): without an account of their own to record on, entries
+  // left on a former account are not touched — reversing them would record the person's part nowhere.
+  // Only stopping reverses them.
+  if (!targetId && !stop && live.some((t) => formerReason(ctx, doc, member, t.accountId))) {
+    if (strict) throw conflict('Your part of this is on an account that is no longer your own private account. Choose a private account of yours in Shared expenses to record it there.', 'account_needed');
+    return 'no_account';
+  }
   const desired = targetId ? groups.desiredEntries(rec, type, selfRef(member)) : [];
   const onTarget = live.filter((t) => t.accountId === targetId);
   const elsewhere = live.filter((t) => t.accountId !== targetId);
+  // F2: the person's own entries elsewhere are reversed where they are (they created them; this route
+  // may do so even though the transactions route locks them) and their whole part is recorded on the
+  // current account. Where the account is gone or out of reach they cannot be reversed: they are left
+  // exactly as they are (never deleted) and shown as left on a former account.
+  const movable = elsewhere.filter((t) => !unreachable(ctx, doc, rec, t));
   const matches = sameEntries(onTarget, desired);
-  if (matches && !elsewhere.length) return 'same';
-  const toReverse = matches ? elsewhere : live;
+  if (matches && !movable.length) return 'same';
+  const toReverse = matches ? movable : [...onTarget, ...movable];
   const toAdd = matches ? [] : desired;
   const touched = [...new Set([...toReverse.map((t) => t.accountId), ...(toAdd.length ? [targetId] : [])])];
   for (const id of touched) {
     const account = (doc.accounts || []).find((a) => a.id === id);
-    let problem = null;
-    if (!account || account.deletedAt || capabilitiesFor(doc, ctx.principal, account, now).size === 0) problem = 'unavailable';
-    else if (account.status === 'closed') problem = 'closed';
-    else if (account.currency !== rec.currency) problem = 'currency';
-    else if (!can(doc, ctx.principal, account, 'create', now) || toReverse.some((t) => t.accountId === id && !canChangeRecord(doc, ctx.principal, account, t, 'edit', now))) problem = 'rights';
+    const problem = writeProblem(ctx, doc, id, rec, toReverse);
     if (!problem) continue;
     if (!strict) return problem;
     if (problem === 'unavailable') throw notFound('Unknown account.');
@@ -252,12 +280,12 @@ const reasonFor = (rec, type, fallback) => (rec.voidedAt ? `${type === 'expense'
 
 // Every record in one currency, for the caller. Records whose entries sit on an account the caller
 // cannot change now are left as they are (they stay "needs review") and counted.
-function syncCurrency(ctx, doc, member, currency, reason) {
+function syncCurrency(ctx, doc, member, currency, reason, { stop = false } = {}) {
   const out = { updated: 0, blocked: 0 };
   for (const [type, list] of [['expense', doc.groupExpenses || []], ['settlement', doc.groupSettlements || []]]) {
     for (const rec of list) {
       if (rec.currency !== currency) continue;
-      const r = syncRecord(ctx, doc, member, rec, type, { reason: reasonFor(rec, type, reason), strict: false });
+      const r = syncRecord(ctx, doc, member, rec, type, { reason: reasonFor(rec, type, reason), strict: false, stop });
       if (r === 'updated') out.updated += 1;
       else if (r !== 'same') out.blocked += 1;
     }
@@ -311,7 +339,7 @@ function unlinkCurrency(ctx, doc, member, currency) {
     audit.record(doc, { actor: member.subject, action: 'group.ledger.unlink', targetType: 'group-ledger', targetId: current.id, scope: `self:${member.subject}`, at: nowIso });
   }
   endRecordLinks(doc, member, currency, nowIso, 'Stopped recording');
-  return syncCurrency(ctx, doc, member, currency, 'No longer recorded from Shared expenses');
+  return syncCurrency(ctx, doc, member, currency, 'No longer recorded from Shared expenses', { stop: true });
 }
 
 // After the caller adds, changes or voids a record, their own entries follow in the same write when they can.
@@ -321,27 +349,43 @@ function followOwnLink(ctx, doc, member, rec, type, reason) {
 
 // What the caller has recorded for one record, shown only to them.
 function myLedger(ctx, doc, member, rec, type, entriesFor = entryIndex(doc, member.subject)) {
-  const targetId = targetOf(doc, rec, member.subject);
+  // A link to an account that is no longer the person's usable private account (removed, out of reach or
+  // shared) is no account to record on (financial recheck F2); a closed own account still is, and asks
+  // to be reopened.
+  const linked = targetOf(doc, rec, member.subject);
+  const targetId = linked && ['deleted', 'unavailable', 'shared'].includes(formerReason(ctx, doc, member, linked)) ? null : linked;
   const live = entriesFor(rec, type);
   const desired = targetId ? groups.desiredEntries(rec, type, selfRef(member)) : [];
   if (!live.length && !desired.length) return null;
   const now = ctx.now();
   const sees = (id) => { const a = (doc.accounts || []).find((x) => x.id === id); return a && !a.deletedAt && capabilitiesFor(doc, ctx.principal, a, now).size > 0 ? a : null; };
-  // Kept as recorded on an account that is no longer their own private account (R1): nothing to update.
-  const foreign = live.find((t) => !ownPrivateAccount(doc, t.accountId, member.subject));
-  if (foreign) {
-    const where = sees(foreign.accountId);
-    return {
-      accountId: where ? where.id : null, accountName: where ? where.name : null, accountUnavailable: !where, needsReview: false, kept: true,
-      entries: live.filter((t) => sees(t.accountId)).map((t) => ({ id: t.id, kind: t.kind, amount: money.toDecimal(t.amountMinor, t.currency) })),
-    };
-  }
   const account = targetId ? sees(targetId) : null;
+  const onTarget = live.filter((t) => t.accountId === targetId);
+  const elsewhere = live.filter((t) => t.accountId !== targetId);
+  // Financial recheck F2: entries on an account that is no longer the person's usable private account
+  // need review, with the reason; once their part is on a current account, entries that cannot be
+  // reversed where they are (the account is gone or out of reach) are shown as left on a former account.
+  const former = elsewhere.map((t) => ({ t, reason: formerReason(ctx, doc, member, t.accountId) })).filter((x) => x.reason);
+  const movable = elsewhere.filter((t) => !unreachable(ctx, doc, rec, t));
+  const needsReview = targetId ? movable.length > 0 || !sameEntries(onTarget, desired) : former.length > 0;
+  const first = former[0] || null;
+  const firstAccount = first ? sees(first.t.accountId) : null;
+  const left = !!first && !!targetId && !movable.includes(first.t);
   return {
     accountId: account ? account.id : null, accountName: account ? account.name : null, accountUnavailable: !!targetId && !account,
-    needsReview: live.some((t) => t.accountId !== targetId) || !sameEntries(live.filter((t) => t.accountId === targetId), desired),
+    needsReview,
+    ...(first ? { formerAccount: { reason: first.reason, name: firstAccount ? firstAccount.name : null, left }, note: formerNote(first.reason, firstAccount ? firstAccount.name : null, { left, hasAccount: !!targetId }) } : {}),
     entries: live.filter((t) => sees(t.accountId)).map((t) => ({ id: t.id, kind: t.kind, amount: money.toDecimal(t.amountMinor, t.currency) })),
   };
+}
+
+// The plain explanation that goes with a former account (F2).
+function formerNote(reason, name, { left, hasAccount }) {
+  const where = reason === 'deleted' ? 'an account that no longer exists' : reason === 'unavailable' ? 'an account you can no longer see'
+    : reason === 'closed' ? `${name || 'an account'}, which is closed` : `${name || 'an account'}, which is now shared`;
+  if (left) return `Your part was recorded on ${where}. Those entries are left on a former account as they were, and your whole part is recorded on your current account.`;
+  if (reason === 'closed') return `Your part was recorded on ${where}. Reopen it on the Accounts page so it can be updated.`;
+  return `Your part was recorded on ${where}. ${hasAccount ? 'Update your account to record it on your own account instead.' : 'Choose a private account of yours to record it there.'}`;
 }
 
 // The caller's current links, one per currency, with how many records need updating.

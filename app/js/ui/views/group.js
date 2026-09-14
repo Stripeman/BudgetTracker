@@ -119,8 +119,12 @@ export function createView(ctx) {
     mount(needs, review.length ? el("section", { class: "notice notice--warning", "aria-labelledby": "grp-review" }, [
       titled("grp-review", "alert", "Your account needs updating"),
       el("ul", { class: "stack" }, review.map(([type, r]) => el("li", { class: "row" }, [
-        el("span", { text: `${type === "expense" ? `“${r.description}”` : "A payment"} is not yet up to date on ${r.myLedger.accountName || "your account"}.` }),
-        button("Update my account", () => void syncMine(ctx, type, r), { small: true, attrs: { "aria-label": `Update my account for ${type === "expense" ? r.description : "this payment"}` } }),
+        // The server's reason when the part sits on a former account (financial recheck F2).
+        el("span", { text: `${type === "expense" ? `“${r.description}”` : "A payment"}: ${r.myLedger.note || `not yet up to date on ${r.myLedger.accountName || "your account"}.`}` }),
+        // With no account of their own to record on, the person chooses one; updating would do nothing.
+        r.myLedger.accountId
+          ? button("Update my account", () => void syncMine(ctx, type, r), { small: true, attrs: { "aria-label": `Update my account for ${type === "expense" ? r.description : "this payment"}` } })
+          : button("Choose my account", () => openLedgerChoice(ctx, type, r), { small: true, attrs: { "aria-label": `Choose my account for ${type === "expense" ? r.description : "this payment"}` } }),
       ]))),
     ]) : null);
 

@@ -237,6 +237,22 @@ describe("Group settings card and who confirmed (Terry, 2026-09-14)", () => {
   });
 });
 
+describe("F2: a part left on an account that is no longer one's own", () => {
+  test("the notice gives the server's reason and, with no account to record on, offers to choose one instead of updating", () => {
+    const expense = { id: "gex_1", description: "Fictional pizza", date: "2026-09-12", currency: "USD", amount: "40.00", amountMinor: 4000, payers: [], shares: [], split: { method: "equal", lines: [] },
+      voided: false, canEdit: false, canVoid: false, revision: 1, history: [],
+      myLedger: { accountId: null, accountName: null, accountUnavailable: false, needsReview: true, formerAccount: { reason: "shared", name: "Bob Wallet", left: false },
+        note: "Your part was recorded on Bob Wallet, which is now shared. Choose a private account of yours to record it there.", entries: [] } };
+    const { ctx, state } = ctxWith(STRANDED, { expenses: [expense] });
+    const v = createGroupView(ctx);
+    v.update(state);
+    const text = v.element.textContent;
+    assert.match(text, /Your part was recorded on Bob Wallet, which is now shared\./);
+    assert.ok(buttonNamed(v.element, "Choose my account"), "offers to choose an account");
+    assert.equal(buttonNamed(v.element, "Update my account"), undefined, "no update without an account");
+  });
+});
+
 describe("S2 and finding 2: the own-account choice", () => {
   const OWN = { id: "acc_own", name: "Alice Cash", currency: "USD", status: "open", visibility: "private", ownedBySelf: true, capabilities: ["create", "view-transactions"] };
   const JOINT = { id: "acc_joint", name: "Joint", currency: "USD", status: "open", visibility: "shared", ownedBySelf: false, capabilities: ["create", "view-transactions"] };
