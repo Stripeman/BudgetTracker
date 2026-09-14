@@ -116,21 +116,60 @@ const findSettlement = (doc, id) => {
   if (!s) throw notFound('Unknown payment.');
   return s;
 };
-const canChangeExpense = (e, member) => writer(member) && (e.createdBy === member.subject || isManager(member));
+// Who may correct or void a shared expense: the group setting "changeExpenses" (Terry, 2026-09-14).
+// Viewers never may.
+const canChangeExpense = (doc, e, member) => writer(member)
+  && (e.createdBy === member.subject || isManager(member) || groupSettings.get(doc, 'changeExpenses') === 'any-writer');
+const expenseRuleText = (doc) => (groupSettings.get(doc, 'changeExpenses') === 'any-writer'
+  ? 'Viewers can see shared expenses but cannot change them.' : 'Only the person who added this expense, or a manager or owner, can change it.');
+
+// Who may withdraw a confirmed payment (setting "withdrawPayments"): the receiver or a manager or owner
+// (default), the receiver only, or anyone who can confirm payments. For a contact, who cannot sign in, a
+// manager or owner acts as the receiver. Viewers never withdraw.
+function canWithdraw(doc, s, member) {
+  if (!writer(member)) return false;
+  const me = selfRef(member);
+  const forContact = s.to.startsWith('contact:') && isManager(member);
+  const rule = groupSettings.get(doc, 'withdrawPayments');
+  if (rule === 'receiver') return s.to === me || forContact;
+  if (rule === 'confirmers') return s.to === me || forContact || groupSettings.confirmsAny(doc, member);
+  return s.to === me || isManager(member);
+}
+const withdrawRuleText = (doc) => ({
+  receiver: 'Only the person who received this payment can withdraw its confirmation.',
+  confirmers: 'Only the person who received this payment, or someone who can confirm payments, can withdraw its confirmation.',
+}[groupSettings.get(doc, 'withdrawPayments')] || 'Only the person who received this payment, or a manager or owner, can withdraw its confirmation.');
+
+// Who may dispute a reported payment (setting "disputePayments"): its receiver, or also a manager or
+// owner. The receiver always may, a viewer included (security review S7).
+const canDisputePayment = (doc, s, member) => s.to === selfRef(member)
+  || (groupSettings.get(doc, 'disputePayments') === 'receiver-or-manager' && isManager(member));
+
+// A new expense's payer and split when the request leaves them out: the group's defaults (setting (b)).
+function defaultPayers(doc, member) {
+  if (groupSettings.get(doc, 'paidBy') === 'nobody' || !member) throw badRequest('Say who paid for this expense.', 'invalid_payers');
+  return [{ ref: selfRef(member) }];
+}
+function defaultSplit(doc, member) {
+  if (groupSettings.get(doc, 'splitMethod') !== 'equal' || !member) throw badRequest('Choose how to split this expense: the group\'s default split needs a value for each person.', 'invalid_split');
+  const refs = groupSettings.get(doc, 'splitWho') === 'me' ? [selfRef(member)] : groups.participants(doc, null).filter((p) => p.active).map((p) => p.ref);
+  return { method: 'equal', lines: refs.map((ref) => ({ ref })) };
+}
 
 // The amount, payers, split and resulting shares, from the request and (for a correction) the record.
-function expenseMoney(doc, body, rec) {
+// A new expense without payers or a split takes the group's defaults for `member`.
+function expenseMoney(doc, body, rec, member = null) {
   const currency = rec ? rec.currency : currencyOf(doc, body.currency);
   const check = groups.participantChecker(doc, rec ? new Set(groups.recordRefs({ groupExpenses: [rec] })) : new Set());
   const amountMinor = !rec || body.amount !== undefined ? groups.positiveAmount(body.amount, currency, 'Amount') : rec.amountMinor;
   let payers;
-  if (!rec || body.payers !== undefined) payers = groups.normalizePayers(body.payers, amountMinor, currency, check);
+  if (!rec || body.payers !== undefined) payers = groups.normalizePayers(body.payers === undefined ? defaultPayers(doc, member) : body.payers, amountMinor, currency, check);
   else {
     payers = structuredClone(rec.payers);
     if (money.sum(payers.map((p) => p.amountMinor)) !== amountMinor) throw badRequest('The amount changed, so say again who paid how much.', 'payer_total');
   }
   let split;
-  if (!rec || body.split !== undefined) split = groups.normalizeSplit(body.split, amountMinor, currency, check);
+  if (!rec || body.split !== undefined) split = groups.normalizeSplit(body.split === undefined ? defaultSplit(doc, member) : body.split, amountMinor, currency, check);
   else {
     split = structuredClone(rec.split);
     if (split.method === 'amounts' && money.sum(split.lines.map((l) => l.value)) !== amountMinor) throw badRequest('The amount changed, so give the split amounts again.', 'split_amount_total');
@@ -416,7 +455,7 @@ function expenseView(ctx, doc, member, e) {
   try { computed = groups.computeShares(e.amountMinor, e.split); } catch { computed = null; }
   const adjustment = (i) => (computed && computed.shares[i] && computed.shares[i].ref === e.shares[i].ref && computed.shares[i].amountMinor === e.shares[i].amountMinor ? computed.shares[i].adjustmentMinor : 0);
   const residualMinor = computed ? computed.residualMinor : 0;
-  const changeable = canChangeExpense(e, member) && !e.voidedAt;
+  const changeable = canChangeExpense(doc, e, member) && !e.voidedAt;
   const out = {
     id: e.id, description: e.description, date: e.date, currency: e.currency, amount: dec(e.amountMinor), amountMinor: e.amountMinor,
     categoryId: e.categoryId || null, notes: e.notes || '',
@@ -478,8 +517,8 @@ function settlementView(ctx, doc, member, s) {
     // A disputed payment follows "Who can settle a disputed payment" (F1).
     canConfirm: live && s.status !== 'confirmed' && (s.status === 'disputed' ? canSettleDispute(doc, s, member)
       : s.to === me || (groupSettings.confirmsAny(doc, member) ? writer(member) : s.from !== me && toContact && open && isManager(member))),
-    canDispute: live && s.status === 'reported' && s.to === me,
-    canVoid: open && (s.status === 'confirmed' ? (s.to === me || isManager(member)) : (s.createdBy === member.subject || isManager(member))),
+    canDispute: live && s.status === 'reported' && canDisputePayment(doc, s, member),
+    canVoid: open && (s.status === 'confirmed' ? canWithdraw(doc, s, member) : (s.createdBy === member.subject || isManager(member))),
   };
   const mine = myLedger(ctx, doc, member, s, 'settlement');
   if (mine) out.myLedger = mine;
@@ -488,7 +527,7 @@ function settlementView(ctx, doc, member, s) {
 
 function balancesView(doc, parts) {
   const names = new Map(parts.map((p) => [p.ref, p.name]));
-  return groups.balances(doc, parts.map((p) => p.ref), { ensureCurrency: reportingCurrency(doc) }).map((b) => {
+  return groups.balances(doc, parts.map((p) => p.ref), { ensureCurrency: reportingCurrency(doc), countReported: groupSettings.get(doc, 'countReported') }).map((b) => {
     const dec = (m) => money.toDecimal(m, b.currency);
     const pair = (x) => ({ from: x.from, to: x.to, amountMinor: x.amountMinor, amount: dec(x.amountMinor) });
     return {
@@ -532,7 +571,9 @@ async function list(ctx, req) {
       // left out when there are none (like `myLedger` on a record).
       ...(() => { const mine = myLedgers(ctx, doc, member, entryIndex(doc, member.subject)); return mine.length ? { myLedgers: mine } : {}; })(),
       balances,
-      basis: 'Balances count confirmed payments only. Suggested and direct payments also count reported payments as made, so nobody is asked to pay twice; suggestions count a reported payment only up to what is owed. Disputed payments are not counted.',
+      basis: groupSettings.get(doc, 'countReported')
+        ? 'Balances count confirmed payments only. Suggested and direct payments also count reported payments as made, so nobody is asked to pay twice; suggestions count a reported payment only up to what is owed. Disputed payments are not counted.'
+        : 'Balances count confirmed payments only. Reported payments are not counted until they are confirmed, in the suggested and direct payments too. Disputed payments are not counted.',
     },
   };
 }
@@ -552,7 +593,7 @@ async function createExpense(ctx, req) {
   const { result } = await store.mutateWorkspace(ctx, wsId, (doc, member) => {
     requireWriter(member);
     const nowIso = ctx.nowIso();
-    const m = expenseMoney(doc, body, null);
+    const m = expenseMoney(doc, body, null, member);
     const rec = {
       id: newId('gex'), description: fields.text(body.description, { field: 'Description', max: 120, required: true }),
       date: fields.date(body.date, 'Date') || nowIso.slice(0, 10), currency: m.currency, amountMinor: m.amountMinor,
@@ -578,7 +619,7 @@ async function patchExpense(ctx, req) {
   const id = requireId(body.expenseId, 'expenseId');
   const { result } = await store.mutateWorkspace(ctx, wsId, (doc, member) => {
     const e = findExpense(doc, id);
-    if (!canChangeExpense(e, member)) throw forbidden('Only the person who added this expense, or a manager or owner, can change it.');
+    if (!canChangeExpense(doc, e, member)) throw forbidden(expenseRuleText(doc));
     if (e.voidedAt) throw conflict('This expense is void, so it cannot be changed. Add a new expense instead.', 'voided');
     checkRevision(e, body.revision);
     const reason = requireReason(body.reason, 'this correction');
@@ -621,8 +662,9 @@ async function createSettlement(ctx, req) {
     const from = check(body.from);
     const to = check(body.to);
     if (from === to) throw badRequest('A payment needs two different people.', 'same_person');
-    // Someone saying they RECEIVED a payment is the confirmation itself.
-    const receiver = to === selfRef(member);
+    // Someone saying they RECEIVED a payment is the confirmation itself, unless the group turned that
+    // off (setting "receiverConfirms", default on); then it is reported and confirmed as a separate step.
+    const receiver = to === selfRef(member) && groupSettings.get(doc, 'receiverConfirms');
     const s = {
       id: newId('gst'), from, to, amountMinor: groups.positiveAmount(body.amount, currency, 'Amount'), currency,
       date: fields.date(body.date, 'Date') || nowIso.slice(0, 10),
@@ -693,7 +735,9 @@ function settlementChange(kind) {
         if (ledgerAccountId) linkCurrency(ctx, doc, member, s.currency, ledgerAccountId);
         else followOwnLink(ctx, doc, member, s, 'settlement', 'Repayment');
       } else {
-        if (s.to !== me) throw forbidden('Only the person who received this payment can dispute it.');
+        if (!canDisputePayment(doc, s, member)) {
+          throw forbidden(groupSettings.get(doc, 'disputePayments') === 'receiver-or-manager' ? 'Only the person who received this payment, or a manager or owner, can dispute it.' : 'Only the person who received this payment can dispute it.');
+        }
         if (s.voidedAt) throw conflict('This payment is void.', 'already_void');
         if (s.status !== 'reported') throw conflict('Only a reported payment can be disputed. Void a confirmed payment instead.', 'not_disputable');
         checkRevision(s, body.revision);
@@ -724,10 +768,12 @@ async function voidRecord(ctx, req) {
     // receiving member or a manager or owner may, and it is recorded as a withdrawn confirmation
     // (security review S6). Before that, whoever reported it (or a manager or owner) may void it.
     const confirmedPayment = type === 'settlement' && rec.status === 'confirmed';
-    const allowed = writer(member) && (confirmedPayment ? (rec.to === selfRef(member) || isManager(member)) : (rec.createdBy === member.subject || isManager(member)));
+    // An expense follows the group setting "changeExpenses"; a confirmed payment "withdrawPayments".
+    const allowed = type === 'expense' ? canChangeExpense(doc, rec, member)
+      : writer(member) && (confirmedPayment ? canWithdraw(doc, rec, member) : (rec.createdBy === member.subject || isManager(member)));
     if (!allowed) {
-      throw forbidden(confirmedPayment ? 'Only the person who received this payment, or a manager or owner, can withdraw its confirmation.'
-        : `Only the person who added this ${type === 'expense' ? 'expense' : 'payment'}, or a manager or owner, can void it.`);
+      throw forbidden(type === 'expense' ? expenseRuleText(doc).replace('change it', 'void it') : confirmedPayment ? withdrawRuleText(doc)
+        : 'Only the person who added this payment, or a manager or owner, can void it.');
     }
     if (rec.voidedAt) throw conflict(`This ${type === 'expense' ? 'expense' : 'payment'} is already void.`, 'already_void');
     checkRevision(rec, body.revision);

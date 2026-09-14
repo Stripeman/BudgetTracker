@@ -35,6 +35,10 @@ const fmtFor = (state) => {
   return (decimal, currency) => formatAmount(decimal, currency, { numberFormat: effective.numberFormat });
 };
 const isZero = (decimal) => /^-?0(\.0+)?$/.test(String(decimal || "0"));
+// A group setting's value from the server's one list, and a person's own default over it (Terry's
+// settings b and e, 2026-09-14): the person's preference when set, otherwise the group's.
+const groupValue = (data, key, fallback) => { const s = ((data && data.groupSettings && data.groupSettings.settings) || []).find((x) => x.key === key); return s ? s.value : fallback; };
+const personalDefault = (state, key) => (((state && state.preferences) || {}).effective || {})[key] || null;
 const stampOf = (iso) => String(iso || "").replace("T", " ").slice(0, 16);
 // The arrow for the person looking: in (up) or out (down), never both ways (Terry, 2026-09-13).
 const arrow = (dir) => el("span", { class: `dir dir--${dir}` }, [icon(dir)]);
@@ -82,7 +86,10 @@ export function createView(ctx) {
   const settingsCard = el("section", { class: "card", "aria-labelledby": "grp-settings", hidden: true }, [titled("grp-settings", "filter", "Shared expenses settings"), settingsBox]);
   // Each person's own right to confirm payments, from the server (Terry, 2026-09-14).
   const myRight = el("p", { class: "muted small", hidden: true });
-  let mode = "suggested";
+  // Each person's own defaults for new expenses and their preferred balance view (settings b and e).
+  const mineBox = el("div");
+  const mineCard = el("section", { class: "card", "aria-labelledby": "grp-mine", hidden: true }, [titled("grp-mine", "user", "Your own defaults"), mineBox]);
+  let mode = personalDefault(ctx.store.getState(), "groupBalanceView") || "suggested";
   const element = el("section", {}, [
     el("div", { class: "page-head" }, [el("h1", { text: "Shared expenses" }), actions]),
     intro,
@@ -94,6 +101,7 @@ export function createView(ctx) {
       el("section", { class: "card", "aria-labelledby": "grp-expenses" }, [titled("grp-expenses", "receipt", "Expenses"), expensesBox]),
       el("section", { class: "card", "aria-labelledby": "grp-payments" }, [titled("grp-payments", "coins", "Payments"), myRight, paymentsBox]),
       settingsCard,
+      mineCard,
     ]),
   ]);
   void ctx.store.actions.refreshGroup();
@@ -136,6 +144,8 @@ export function createView(ctx) {
     // The group's settings, for owners and managers (the server decides who may change them).
     settingsCard.hidden = !(data.permissions.canManage && data.groupSettings);
     if (!settingsCard.hidden) renderSettings(data.groupSettings);
+    mineCard.hidden = !data.permissions.canAdd;
+    if (!mineCard.hidden) renderMine(state);
     const mine = data.groupSettings && data.groupSettings.mine;
     myRight.hidden = !mine;
     myRight.textContent = !mine ? "" : mine.effective ? "You can confirm any reported payment in this group."
@@ -209,6 +219,30 @@ export function createView(ctx) {
       ]))),
     ]) : null;
     mount(settingsBox, ...controls.map((c) => c.node), peopleBox, el("div", { class: "row" }, [save]), history);
+  }
+
+  // The person's own defaults (settings b and e): personal preferences that apply only to them and
+  // override the group's defaults for new expenses; "Use the group's setting" clears one.
+  function renderMine(state) {
+    const eff = ((state.preferences || {}).effective) || {};
+    const theGroups = (list) => [{ value: "", label: "Use the group's setting" }, ...list];
+    const pickers = [
+      ["groupSplitMethod", "Default split", theGroups(Object.entries(METHOD_LABELS).map(([value, label]) => ({ value, label })))],
+      ["groupSplitWho", "Who shares by default", theGroups([{ value: "everyone", label: "Everyone in the group" }, { value: "me", label: "Only me" }])],
+      ["groupPaidBy", "Who paid by default", theGroups([{ value: "me", label: "Me" }, { value: "nobody", label: "Nobody until I choose" }])],
+      ["groupBalanceView", "Balances shown as", [{ value: "", label: "Fewest payments" }, { value: "direct", label: "Keep who owes whom" }]],
+    ].map(([key, label, options]) => ({ key, label, pick: pickerSelect(options, eff[key] || "", {}, { search: false }) }));
+    const save = button("Save my defaults", async () => {
+      const patch = Object.fromEntries(pickers.filter((p) => (p.pick.value || null) !== (eff[p.key] || null)).map((p) => [p.key, p.pick.value || null]));
+      if (!Object.keys(patch).length) { announce("Nothing changed."); return; }
+      if (Object.prototype.hasOwnProperty.call(patch, "groupBalanceView")) mode = patch.groupBalanceView || "suggested";
+      await ctx.store.actions.savePreferences(patch);
+      announce("Your defaults are saved. They apply only to you.");
+    });
+    mount(mineBox,
+      el("p", { class: "muted small", text: "These apply only to you, on every device, and take the place of the group's defaults when you add an expense." }),
+      el("div", { class: "form-grid" }, pickers.map((p) => field(p.label, p.pick))),
+      el("div", { class: "row" }, [save]));
   }
 
   // One table per currency shown (the reporting currency, then any other with an open balance).
@@ -381,8 +415,13 @@ export function openGroupExpense(ctx, { expense = null } = {}) {
   const notes = el("textarea", { class: "field__input", maxlength: "2000", text: editing ? expense.notes : "" });
   const reason = input({ maxlength: "200", autocomplete: "off", placeholder: "Why is this being corrected?" });
 
+  // A new expense starts from the person's own defaults, otherwise the group's (setting b).
+  const defaultPaidBy = personalDefault(state, "groupPaidBy") || groupValue(data, "paidBy", "me");
+  const defaultWho = personalDefault(state, "groupSplitWho") || groupValue(data, "splitWho", "everyone");
+  const defaultMethod = personalDefault(state, "groupSplitMethod") || groupValue(data, "splitMethod", "equal");
+
   // Paid by.
-  const paid = new Map(editing ? expense.payers.map((p) => [p.ref, expense.payers.length > 1 ? p.amount : ""]) : [[me, ""]]);
+  const paid = new Map(editing ? expense.payers.map((p) => [p.ref, expense.payers.length > 1 ? p.amount : ""]) : defaultPaidBy === "nobody" ? [] : [[me, ""]]);
   const payerRows = people.map((p) => {
     const box = el("input", { type: "checkbox", id: uid("payer"), class: "split-row__box" });
     box.checked = paid.has(p.ref);
@@ -393,10 +432,10 @@ export function openGroupExpense(ctx, { expense = null } = {}) {
 
   // Shared by.
   const values = new Map(editing ? expense.split.lines.map((l) => [l.ref, l.value === null || l.value === undefined ? "" : String(l.value)]) : []);
-  const method = pickerSelect(Object.entries(METHOD_LABELS).map(([value, text]) => ({ value, label: text })), editing ? expense.split.method : "equal", {}, { search: false });
+  const method = pickerSelect(Object.entries(METHOD_LABELS).map(([value, text]) => ({ value, label: text })), editing ? expense.split.method : defaultMethod, {}, { search: false });
   const splitRows = people.map((p) => {
     const box = el("input", { type: "checkbox", id: uid("share"), class: "split-row__box" });
-    box.checked = editing ? values.has(p.ref) : !!p.active;
+    box.checked = editing ? values.has(p.ref) : defaultWho === "me" ? p.ref === me : !!p.active;
     const val = input({ inputmode: "decimal", autocomplete: "off", value: values.get(p.ref) || "" });
     const out = el("span", { class: "num split-row__share" });
     return { p, box, val, out, row: el("div", { class: "split-row" }, [box, el("label", { for: box.id, text: label(p) }), val, out]) };

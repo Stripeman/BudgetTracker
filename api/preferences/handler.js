@@ -74,6 +74,12 @@ const VALIDATORS = {
   // hard-codes it: each person sets it, or inherits the site default. Stored normalised; http to a
   // loopback host only while the API runs in local development.
   stagingUrl: (v, extra) => fields.webAddress(v, 'Staging link', { localHttp: !!(extra && extra.localHttp) }),
+  // Each person's own defaults for Shared expenses (BT-009, Terry 2026-09-14). Not set (null) means the
+  // group's setting; the balance view not set means Fewest payments.
+  groupSplitMethod: (v) => fields.oneOf(v, ['equal', 'amounts', 'percentages', 'shares'], 'Default split'),
+  groupSplitWho: (v) => fields.oneOf(v, ['everyone', 'me'], 'Who shares by default'),
+  groupPaidBy: (v) => fields.oneOf(v, ['me', 'nobody'], 'Who paid by default'),
+  groupBalanceView: (v) => fields.oneOf(v, ['suggested', 'direct'], 'Balance view'),
 };
 const BUILT_IN = { locale: 'en', timeZone: 'UTC', dateFormat: 'iso', numberFormat: '1,234.56', displayCurrency: null, balanceMasking: false, defaultWorkspaceId: null, dashboardWidgets: ['balances', 'upcoming', 'budgets', 'recent'], favoritePayees: [], categoryColors: {}, categoryIcons: {}, stagingUrl: null };
 

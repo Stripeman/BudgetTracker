@@ -237,6 +237,61 @@ describe("Group settings card and who confirmed (Terry, 2026-09-14)", () => {
   });
 });
 
+describe("Settings b and e: the group's defaults, each person's own, and the preferred balance view", () => {
+  const withSettings = (state, values) => {
+    state.group.data.groupSettings = { history: [], settings: Object.entries(values).map(([key, value]) => ({ key, type: "choice", label: key, explanation: "x", value, default: value, options: [] })) };
+  };
+  const boxes = (dialog) => dialog.querySelectorAll("input").filter((i) => i.getAttribute("class") === "split-row__box");
+  const methodOf = (dialog) => dialog.querySelectorAll("select").find((s) => s.querySelectorAll("option").some((o) => o.textContent === "By shares"));
+
+  test("a new expense starts from the group's defaults: nobody paid, only me sharing, split by shares", () => {
+    const { ctx, state } = ctxWith(STRANDED);
+    withSettings(state, { splitMethod: "shares", splitWho: "me", paidBy: "nobody" });
+    const dialog = openGroupExpense(ctx).element;
+    const [payAlice, payBob, shareAlice, shareBob] = boxes(dialog);
+    assert.deepEqual([payAlice.checked, payBob.checked, shareAlice.checked, shareBob.checked], [false, false, true, false]);
+    assert.equal(methodOf(dialog).value, "shares");
+  });
+
+  test("the person's own defaults take the place of the group's", () => {
+    const { ctx, state } = ctxWith(STRANDED);
+    withSettings(state, { splitMethod: "shares", splitWho: "me", paidBy: "nobody" });
+    state.preferences = { effective: { groupSplitMethod: "equal", groupSplitWho: "everyone", groupPaidBy: "me" } };
+    const dialog = openGroupExpense(ctx).element;
+    const [payAlice, payBob, shareAlice, shareBob] = boxes(dialog);
+    assert.deepEqual([payAlice.checked, payBob.checked, shareAlice.checked, shareBob.checked], [true, false, true, true]);
+    assert.equal(methodOf(dialog).value, "equal");
+  });
+
+  test("'Your own defaults' saves only what changed, as personal preferences", async () => {
+    const { ctx, state } = ctxWith(STRANDED);
+    const saved = [];
+    ctx.store.actions.savePreferences = async (patch) => { saved.push(patch); };
+    state.preferences = { effective: { groupSplitMethod: "shares" } };
+    const v = createGroupView(ctx);
+    v.update(state);
+    const card = v.element.querySelectorAll("section").find((s) => s.getAttribute("aria-labelledby") === "grp-mine");
+    assert.equal(card.hidden, false);
+    const selects = card.querySelectorAll("select");
+    assert.deepEqual(selects.map((s) => s.value), ["shares", "", "", ""]);
+    selects[0].value = "";
+    selects[1].value = "me";
+    selects[3].value = "direct";
+    buttonNamed(card, "Save my defaults").click();
+    await tick();
+    assert.deepEqual(saved, [{ groupSplitMethod: null, groupSplitWho: "me", groupBalanceView: "direct" }]);
+  });
+
+  test("someone who prefers 'Keep who owes whom' sees that view first", () => {
+    const { ctx, state } = ctxWith(STRANDED);
+    state.preferences = { effective: { groupBalanceView: "direct" } };
+    const v = createGroupView(ctx);
+    v.update(state);
+    assert.match(v.element.textContent, /Each person pays back the people who paid for them/);
+    assert.doesNotMatch(v.element.textContent, /The fewest payments that settle everyone/);
+  });
+});
+
 describe("F2: a part left on an account that is no longer one's own", () => {
   test("the notice gives the server's reason and, with no account to record on, offers to choose one instead of updating", () => {
     const expense = { id: "gex_1", description: "Fictional pizza", date: "2026-09-12", currency: "USD", amount: "40.00", amountMinor: 4000, payers: [], shares: [], split: { method: "equal", lines: [] },

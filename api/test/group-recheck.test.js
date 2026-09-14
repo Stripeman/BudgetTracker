@@ -254,7 +254,12 @@ describe('Group settings: one validated list, changed by owners and managers, wi
     const h = harness();
     const f = await fixture(h);
     let v = await view(h, f, 'carol');
-    assert.deepEqual(v.groupSettings.settings.map((s) => [s.key, s.type, s.value, s.default]), [['anyoneConfirms', 'boolean', true, true], ['ownedEntries', 'choice', 'shared-only', 'shared-only'], ['settleDisputes', 'choice', 'receiver', 'receiver']]);
+    assert.deepEqual(v.groupSettings.settings.map((s) => [s.key, s.type, s.value, s.default]), [
+      ['anyoneConfirms', 'boolean', true, true], ['ownedEntries', 'choice', 'shared-only', 'shared-only'],
+      ['splitMethod', 'choice', 'equal', 'equal'], ['splitWho', 'choice', 'everyone', 'everyone'], ['paidBy', 'choice', 'me', 'me'],
+      ['changeExpenses', 'choice', 'author-or-manager', 'author-or-manager'], ['withdrawPayments', 'choice', 'receiver-or-manager', 'receiver-or-manager'],
+      ['disputePayments', 'choice', 'receiver', 'receiver'], ['settleDisputes', 'choice', 'receiver', 'receiver'], ['receiverConfirms', 'boolean', true, true], ['countReported', 'boolean', true, true],
+    ]);
     for (const s of v.groupSettings.settings) assert.ok(s.label.length > 10 && s.explanation.length > 40, s.key);
     assert.deepEqual(v.groupSettings.settings[1].options.map((o) => o.value), ['shared-only', 'manual']);
     for (const w of ['bob', 'carol', 'eve']) assert.equal((await setSettings(h, f, w, { anyoneConfirms: false })).status, 403, w);
@@ -268,7 +273,7 @@ describe('Group settings: one validated list, changed by owners and managers, wi
     // The same value again changes nothing and adds no history.
     ok(await setSettings(h, f, 'alice', { ownedEntries: 'manual', anyoneConfirms: false }));
     v = await view(h, f, 'bob');
-    assert.deepEqual(v.groupSettings.settings.map((s) => s.value), [false, 'manual', 'receiver']);
+    assert.deepEqual(v.groupSettings.settings.map((s) => s.value), [false, 'manual', 'equal', 'everyone', 'me', 'author-or-manager', 'receiver-or-manager', 'receiver', 'receiver', true, true]);
     assert.deepEqual(v.groupSettings.history.map((x) => [x.by, x.key, x.from, x.to, x.reason]), [
       ['Frank Fictional', 'anyoneConfirms', true, false, 'We keep it strict'],
       ['Alice Fictional', 'ownedEntries', 'shared-only', 'manual', ''],
