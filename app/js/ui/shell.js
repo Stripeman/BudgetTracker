@@ -32,6 +32,8 @@ import * as join from "./views/join.js";
 import * as group from "./views/group.js";
 import { renderLanding, createOnboarding, openNewWorkspace } from "./views/landing.js";
 import { messageFor } from "../core/errors.js";
+import { confirmModal } from "./modal.js";
+import { unsavedNames, clearUnsaved } from "../core/unsaved.js";
 
 const VIEWS = { dashboard, group, transactions, bills, planning, accounts, payees, settings, workspace, join };
 
@@ -41,13 +43,22 @@ const VIEWS = { dashboard, group, transactions, bills, planning, accounts, payee
 const SHARED_EXPENSES_OFF = {
   createView(ctx) {
     const notice = el("p", { class: "notice" });
+    // A way back (UX/accessibility review of eefd115, finding 9): owners and managers go straight to the
+    // setting; everyone else is told whom to ask. A site switch-off is not the workspace's to undo.
+    const wayBack = el("div", { class: "row" });
     const view = {
-      element: el("section", {}, [el("div", { class: "page-head" }, [el("h1", { text: "Shared expenses" })]), notice]),
+      element: el("section", {}, [el("div", { class: "page-head" }, [el("h1", { text: "Shared expenses" })]), notice, wayBack]),
       update(state) {
         const site = state && state.site;
-        notice.textContent = site && site.modules && site.modules.sharedExpenses === false
+        const siteOff = !!(site && site.modules && site.modules.sharedExpenses === false);
+        const ws = ((state && state.workspaces) || []).find((w) => w.id === state.selectedWorkspaceId);
+        const manages = !!ws && (ws.role === "owner" || ws.role === "manager");
+        notice.textContent = siteOff
           ? "Shared expenses are turned off for this site by the site administrator. Nothing recorded has been removed."
-          : "Shared expenses are turned off in this workspace. Nothing recorded has been removed; an owner or manager can turn them on again in Workspace settings.";
+          : "Shared expenses are turned off in this workspace. Nothing recorded has been removed.";
+        mount(wayBack, siteOff ? null : manages
+          ? el("a", { class: "btn btn--primary", href: "#/workspace?setting=sharedExpenses", text: "Open Workspace settings" })
+          : el("p", { class: "muted", text: "Ask an owner or manager to turn it on." }));
       },
     };
     view.update(ctx.state);
@@ -65,6 +76,22 @@ export function createShell({ mountPoint, store, router, theme, api }) {
   let navigated = false;
   let menu = null;
   let wsPicker = null;
+
+  // Leaving a page with unsaved changes asks first (UX/accessibility review of eefd115, finding 3); the
+  // browser asks on its own when the tab is closed or reloaded (main.js).
+  if (router.setGuard) {
+    router.setGuard((hash) => {
+      const names = unsavedNames();
+      if (!names.length) return true;
+      confirmModal({
+        title: "Leave without saving?",
+        message: `You have unsaved changes in ${names.join(" and ")}. If you leave this page now, they are lost.`,
+        confirmLabel: "Leave without saving", danger: true,
+        onConfirm: () => { clearUnsaved(); if (router.go) router.go(hash); },
+      });
+      return false;
+    });
+  }
 
   // The skip link targets #main; with hash routing it must move focus, not navigate (A11Y-003).
   document.addEventListener("click", (event) => {
@@ -176,10 +203,15 @@ export function createShell({ mountPoint, store, router, theme, api }) {
     return wsPicker.element;
   }
 
+  // Open workspaces: not a deleted one (an owner keeps seeing a deleted workspace only in My settings'
+  // "Deleted workspaces", to bring it back — Terry, 2026-09-14).
+  const openWorkspaces = (state) => state.workspaces.filter((w) => w.status !== "archived");
+
   function renderHeader(state) {
     brandName.textContent = (state.site && state.site.branding && state.site.branding.name) || "BudgetTracker";
     const items = [brand];
-    if (state.workspaces.length) items.push(workspacePicker(state));
+    const open = openWorkspaces(state);
+    if (open.length) items.push(workspacePicker({ ...state, workspaces: open }));
     items.push(spacer);
     if (!menu) menu = buildMenu(state.auth.user);
     menu.refresh();
@@ -247,8 +279,8 @@ export function createShell({ mountPoint, store, router, theme, api }) {
     // Without a workspace there are no sections to navigate, so the nav is hidden (UX-011). My
     // settings stays reachable from the account menu: personal preferences, and for a site
     // administrator the icon catalogue (BT-011-05), need no workspace.
-    const onboarding = !state.workspaces.length && route.id !== "join" && route.id !== "settings";
-    nav.hidden = onboarding || (!state.workspaces.length && route.id === "settings");
+    const onboarding = !openWorkspaces(state).length && route.id !== "join" && route.id !== "settings";
+    nav.hidden = onboarding || (!openWorkspaces(state).length && route.id === "settings");
     if (onboarding) {
       if (viewKey !== "onboarding") { viewKey = "onboarding"; view = createOnboarding(ctx()); mount(main, view.element); document.title = "Create a workspace · BudgetTracker"; }
       return;

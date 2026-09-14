@@ -153,7 +153,12 @@ async function execute(ctx, req) {
   ledger.assertMemberQuota(probe, member, ctx.env);
   // Counted atomically in the backup index BEFORE the archive is written, and counted even if the
   // restore then fails, so parallel attempts cannot each write a recovery point (security retest SEC-T1).
-  if (!roleAtLeast(member.role, 'manager')) await backups.reserveRecoveryPoint(ctx, wsId, member.subject);
+  // Twice the restores the owners allow a member each day, as the fixed 6 was twice the ceiling of 3
+  // (security review of eefd115, I-2).
+  if (!roleAtLeast(member.role, 'manager')) {
+    const allowed = Math.min(workspaceSettings.get(doc, 'memberRestoresPerDay'), workspaceSettings.MEMBER_RESTORES_MAX);
+    await backups.reserveRecoveryPoint(ctx, wsId, member.subject, 2 * allowed);
+  }
   // 1. Recovery point of the current state. If this fails, nothing else happens.
   const { entry, sourceEtag } = await backups.createBackup(ctx, wsId, { reason: 'pre-restore', actor: ctx.principal.subject });
   if (sourceEtag !== etag) throw conflict('The workspace changed while preparing the restore. Nothing was changed.', 'stale_preview');

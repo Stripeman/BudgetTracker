@@ -19,7 +19,12 @@ import { previewSplit, precisionOf, formatMinor, parseAmount } from "../../core/
 import { icon, withIcon } from "../icons.js";
 import { messageFor } from "../../core/errors.js";
 // Values in words exactly as the workspace settings card shows them (eefd115).
-import { settingText } from "./workspace.js";
+import { createSettingsForm, settingText } from "../settingsform.js";
+import { trackUnsaved } from "../../core/unsaved.js";
+
+// Who changes the group's settings, said once (UX/accessibility review of eefd115, findings 6 and 11).
+const INTRO_CHANGE = "These decide how everyone in this group works. Owners and managers change them. Each one starts with how Shared expenses has always worked, and every change is kept below.";
+const INTRO_READ = "These decide how everyone in this group works. Owners and managers change them; you can see how it is set up and every change below.";
 
 export const METHOD_LABELS = Object.freeze({ equal: "Equally", amounts: "By amounts", percentages: "By percentages", shares: "By shares" });
 const VALUE_LABELS = { amounts: "Amount for", percentages: "Percent for", shares: "Shares for" };
@@ -83,9 +88,17 @@ export function createView(ctx) {
   const settleBox = el("div");
   const expensesBox = el("div");
   const paymentsBox = el("div");
-  // The group's settings (Terry, 2026-09-14), shown to owners and managers.
+  // The group's settings (Terry, 2026-09-14), in the settings card shared with the workspace settings:
+  // owners and managers change them, everyone else reads them and their history (decision 11).
   const settingsBox = el("div");
   const settingsCard = el("section", { class: "card", "aria-labelledby": "grp-settings", hidden: true }, [titled("grp-settings", "filter", "Shared expenses settings"), settingsBox]);
+  let lastSettings = null;
+  const settingsForm = createSettingsForm({
+    id: "grp-set", storageKey: "bt.settingsGroups.group", onSave: (changes, reason) => saveGroupSettings(changes, reason),
+    // Leaving the page or closing the tab with unsaved changes asks first (finding 3).
+    onDirtyChange: (dirty) => trackUnsaved("group-settings", "Shared expenses settings", dirty),
+  });
+  mount(settingsBox, settingsForm.element);
   // Each person's own right to confirm payments, from the server (Terry, 2026-09-14).
   const myRight = el("p", { class: "muted small", hidden: true });
   // Each person's own defaults for new expenses and their preferred balance view (settings b and e).
@@ -143,9 +156,10 @@ export function createView(ctx) {
     renderSettle(tables, data, fmt, nameOf, me);
     renderExpenses(data, fmt, nameOf, me, effective.dateFormat, state);
     renderPayments(data, fmt, nameOf, me, effective.dateFormat, state);
-    // The group's settings, for owners and managers (the server decides who may change them).
-    settingsCard.hidden = !(data.permissions.canManage && data.groupSettings);
-    if (!settingsCard.hidden) renderSettings(data.groupSettings);
+    // The group's settings for everyone: owners and managers change them, others read them (the server
+    // decides who may change them).
+    settingsCard.hidden = !data.groupSettings;
+    if (!settingsCard.hidden) renderSettings(data.groupSettings, !!data.permissions.canManage);
     mineCard.hidden = !data.permissions.canAdd;
     if (!mineCard.hidden) renderMine(state);
     const mine = data.groupSettings && data.groupSettings.mine;
@@ -154,76 +168,68 @@ export function createView(ctx) {
       : data.permissions.canManage ? "You can confirm payments made to you, and payments to contacts." : "You can confirm payments made to you.";
   }
 
-  // Every setting from the server's one list (Terry, 2026-09-14): a checkbox for on/off, a choice for the
-  // others, each with its plain explanation. Save sends only what changed; who changed what is listed.
-  function renderSettings(gs) {
-    // The same presentation as the workspace settings card (eefd115): the command picker for on/off and
-    // for choices, grouped under headings, each with its plain explanation, and values in words.
-    const shown = (key, value) => { const s = gs.settings.find((x) => x.key === key); return s ? settingText(s, value) : String(value); };
-    const controls = gs.settings.map((s) => {
-      const options = s.type === "boolean" ? [{ value: "true", label: "On" }, { value: "false", label: "Off" }] : (s.options || []).map((o) => ({ value: String(o.value), label: o.label }));
-      const pick = pickerSelect(options, String(s.value), {}, { search: false });
-      const read = () => (s.type === "boolean" ? pick.value === "true" : ((s.options || []).find((o) => String(o.value) === pick.value) || { value: s.value }).value);
-      // An option's own explanation follows the setting's (financial recheck N-4).
-      const help = [s.explanation, ...(s.options || []).filter((o) => o.explanation).map((o) => `“${o.label}”: ${o.explanation}`)].join(" ");
-      return { s, read, node: field(s.label, pick, { help, wide: true }) };
-    });
-    const grouped = [];
-    for (const c of controls) {
-      const name = c.s.group || "Shared expenses";
-      let g = grouped.find((x) => x.name === name);
-      if (!g) { g = { name, nodes: [] }; grouped.push(g); }
-      g.nodes.push(c.node);
-    }
-    const reason = input({ maxlength: "200", placeholder: "Optional", autocomplete: "off" });
-    const status = el("p", { class: "field__help", role: "status" });
-    // "Can confirm payments" for each person (owners and managers only; the server sends the list only to them).
-    const perPerson = (gs.perMember || []).find((p) => p.key === "confirmOverrides") || { label: "Can confirm payments",
-      options: [{ value: "inherit", label: "Use the group setting" }, { value: "yes", label: "Yes" }, { value: "no", label: "No" }] };
+  // "Can confirm payments" for each person (owners and managers only; the server sends the list only to them).
+  const perPersonOf = (gs) => (gs.perMember || []).find((p) => p.key === "confirmOverrides") || { label: "Can confirm payments", setting: "anyoneConfirms",
+    options: [{ value: "inherit", label: "Use the group setting" }, { value: "yes", label: "Yes" }, { value: "no", label: "No" }] };
+
+  // The per-person pickers, shown in the group of the setting they override, with unsaved and undo.
+  function personExtra(gs, onChange) {
+    const perPerson = perPersonOf(gs);
     const people = (gs.members || []).map((m) => {
       const pick = pickerSelect(perPerson.options, m.override, { "aria-label": `${perPerson.label}: ${m.name}` }, { search: false });
+      pick.addEventListener("change", onChange);
       const now = m.role === "viewer" ? "Only payments made to them (a viewer)" : m.effective ? "Can confirm any payment now" : "Only payments made to them now";
       // field() names the picker's trigger by the visible label (BT-004-07); the legend says what it is.
       return { m, pick, node: field(m.name, pick, { help: now }) };
     });
-    const peopleBox = people.length ? el("fieldset", { class: "plain-fieldset field--wide" }, [
-      el("legend", { class: "field__label", text: perPerson.label }),
-      el("p", { class: "field__help", text: "Each person follows the group setting above unless you choose Yes or No for them. Yes lets them confirm any reported payment, their own included; No lets them confirm only payments made to them. A viewer can only ever confirm payments made to them." }),
-      el("div", { class: "form-grid" }, people.map((p) => p.node)),
-    ]) : null;
+    const group = (gs.settings.find((s) => s.key === perPerson.setting) || {}).group;
+    const overrides = () => Object.fromEntries(people.filter((p) => p.pick.value !== p.m.override).map((p) => [p.m.memberId, p.pick.value]));
+    return {
+      group,
+      node: el("fieldset", { class: "plain-fieldset setting" }, [
+        el("legend", { class: "field__label", text: perPerson.label }),
+        el("p", { class: "field__help", text: "Each person follows the group setting above unless you choose Yes or No for them. Yes lets them confirm any reported payment, their own included; No lets them confirm only payments made to them. A viewer can only ever confirm payments made to them." }),
+        el("div", { class: "stack" }, people.map((p) => p.node)),
+      ]),
+      isDirty: () => Object.keys(overrides()).length > 0,
+      changes: () => (Object.keys(overrides()).length ? { confirmOverrides: overrides() } : {}),
+      reset: () => { for (const p of people) p.pick.value = p.m.override; },
+    };
+  }
+
+  // Every setting from the server's one list in the shared settings card; everyone reads the history.
+  function renderSettings(gs, canManage) {
+    lastSettings = gs;
+    const perPerson = perPersonOf(gs);
+    const shown = (key, value) => { const s = gs.settings.find((x) => x.key === key); return s ? settingText(s, value) : String(value); };
     const optionLabel = (value) => { const o = perPerson.options.find((x) => x.value === value); return o ? o.label : String(value); };
-    const save = button("Save settings", async () => {
-      const changes = Object.fromEntries(controls.filter((c) => c.read() !== c.s.value).map((c) => [c.s.key, c.read()]));
-      const overrides = Object.fromEntries(people.filter((p) => p.pick.value !== p.m.override).map((p) => [p.m.memberId, p.pick.value]));
-      if (Object.keys(overrides).length) changes.confirmOverrides = overrides;
-      if (!Object.keys(changes).length) { status.textContent = "Nothing changed."; announce("Nothing changed."); return; }
-      const body = { changes, ...(reason.value.trim() ? { reason: reason.value.trim() } : {}) };
-      const out = await ctx.store.actions.write((ws) => ctx.api.groupAction(ws, "settings", body), ["group"]);
-      if (!out.ok) { status.textContent = messageFor(out.error); announce(messageFor(out.error)); return; }
-      // Said only for what the server now holds (security recheck of 47617b5, M1): every value asked for
-      // is compared with the settings it returned.
-      const kept = (out.result && out.result.groupSettings) || null;
-      const missed = !kept ? [] : [
-        ...Object.entries(changes).filter(([k]) => k !== "confirmOverrides").filter(([k, v]) => { const s = (kept.settings || []).find((x) => x.key === k); return !s || s.value !== v; }).map(([k]) => (gs.settings.find((x) => x.key === k) || { label: k }).label),
-        ...Object.entries(overrides).filter(([id, v]) => { const m = (kept.members || []).find((x) => x.memberId === id); return !m || m.override !== v; }).map(([id]) => `${perPerson.label}: ${(people.find((p) => p.m.memberId === id) || { m: { name: id } }).m.name}`),
-      ];
-      const said = missed.length ? `Not everything was saved: ${missed.join("; ")}. The settings shown are what is saved now.` : "Settings saved. Everyone in the group now works this way.";
-      status.textContent = said;
-      announce(said);
-    }, { variant: "primary" });
-    const history = gs.history.length ? el("details", { class: "more" }, [
-      el("summary", { text: `Changes (${gs.history.length})` }),
-      el("ul", { class: "history-list" }, gs.history.slice().reverse().map((h) => el("li", {}, [
-        el("div", { class: "muted small", text: `${stampOf(h.at)} · ${h.by}` }),
-        el("div", { text: h.member ? `${h.label} for ${h.member}: ${optionLabel(h.from)} → ${optionLabel(h.to)}` : `${h.label}: ${shown(h.key, h.from)} → ${shown(h.key, h.to)}` }),
-        h.reason ? el("div", { class: "muted small", text: `Reason: ${h.reason}` }) : null,
-      ]))),
-    ]) : null;
-    mount(settingsBox,
-      ...grouped.flatMap((g) => [el("h3", { class: "section-title", text: g.name }), el("div", { class: "form-grid" }, g.nodes)]),
-      peopleBox,
-      el("div", { class: "form-grid" }, [field("Reason for the change (optional)", reason, { help: "Kept with the change in the history below.", wide: true })]),
-      el("div", { class: "row" }, [save]), status, history);
+    settingsForm.render({
+      settings: gs.settings.map((s) => ({ ...s, canChange: canManage })),
+      intro: canManage ? INTRO_CHANGE : INTRO_READ,
+      history: (gs.history || []).map((h) => ({
+        when: stampOf(h.at), by: h.by, reason: h.reason || "",
+        text: h.member ? `${h.label} for ${h.member}: ${optionLabel(h.from)} → ${optionLabel(h.to)}` : `${h.label}: ${shown(h.key, h.from)} → ${shown(h.key, h.to)}`,
+      })),
+      extrasSig: JSON.stringify(canManage ? gs.members || null : null),
+      makeExtras: canManage && (gs.members || []).length ? (onChange) => [personExtra(gs, onChange)] : null,
+    });
+  }
+
+  async function saveGroupSettings(changes, reason) {
+    const gs = lastSettings || { settings: [], members: [] };
+    const perPerson = perPersonOf(gs);
+    const body = { changes, ...(reason ? { reason } : {}) };
+    const out = await ctx.store.actions.write((ws) => ctx.api.groupAction(ws, "settings", body), ["group"]);
+    if (!out.ok) return { ok: false, error: out.error };
+    // Said only for what the server now holds (security recheck of 47617b5, M1): every value asked for
+    // is compared with the settings it returned.
+    const overrides = changes.confirmOverrides || {};
+    const kept = (out.result && out.result.groupSettings) || null;
+    const missed = !kept ? [] : [
+      ...Object.entries(changes).filter(([k]) => k !== "confirmOverrides").filter(([k, v]) => { const s = (kept.settings || []).find((x) => x.key === k); return !s || s.value !== v; }).map(([k]) => (gs.settings.find((x) => x.key === k) || { label: k }).label),
+      ...Object.entries(overrides).filter(([id, v]) => { const m = (kept.members || []).find((x) => x.memberId === id); return !m || m.override !== v; }).map(([id]) => `${perPerson.label}: ${((gs.members || []).find((m) => m.memberId === id) || { name: id }).name}`),
+    ];
+    return { ok: true, said: missed.length ? `Not everything was saved: ${missed.join("; ")}. The settings shown are what is saved now.` : "Settings saved. Everyone in the group now works this way." };
   }
 
   // The person's own defaults (settings b and e): personal preferences that apply only to them and
@@ -381,7 +387,8 @@ export function createView(ctx) {
     ])]));
   }
 
-  return { element, update };
+  // Leaving the page (the shell asked first) forgets the card's unsaved mark.
+  return { element, update, destroy: () => settingsForm.destroy() };
 }
 
 const REFRESH = ["group", "accounts", "transactions"];

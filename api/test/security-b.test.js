@@ -70,7 +70,7 @@ describe('SEC-B3 and SEC-B4 bills cannot break or stall shared views', () => {
     code(await bill(h, f.q, 'bob', { name: 'Ancient', accountId: f.joint.id, amount: '1.00', schedule: { freq: 'weekly', startDate: '1100-01-01' } }), 400, 'invalid_date');
     code(await h.call('budgets', 'GET', { as: 'carol', query: { ...f.q, date: '9999-12-01' } }), 400, 'invalid_date');
     const cats = Object.fromEntries(ok(await h.call('categories', 'GET', { as: 'alice', query: f.q })).categories.map((c) => [c.name, c.id]));
-    ok(await h.call('budgets', 'POST', { as: 'alice', query: f.q, body: { name: 'Food', scope: 'shared', startDate: '2026-01-01', lines: [{ categoryId: cats.Groceries, amount: '100.00' }] } }), 201);
+    ok(await h.call('budgets', 'POST', { as: 'alice', query: f.q, body: { name: 'Food', scope: 'shared', startDate: '2026-01-01', confirmBackdate: true, lines: [{ categoryId: cats.Groceries, amount: '100.00' }] } }), 201);
     for (let i = 0; i < 5; i += 1) ok(await bill(h, f.q, 'bob', { name: `Old ${i}`, accountId: f.joint.id, amount: '1.00', categoryId: cats.Groceries, schedule: { freq: 'weekly', startDate: '1900-01-07' } }), 201);
     const started = Date.now();
     ok(await h.call('budgets', 'GET', { as: 'carol', query: { ...f.q, date: '2200-12-01' } }));

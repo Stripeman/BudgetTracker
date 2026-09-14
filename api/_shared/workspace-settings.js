@@ -33,24 +33,24 @@ const SETTINGS = freezeAll({
   // administrator's module switch is the upper bound: off for the site is off everywhere.
   sharedExpenses: {
     group: 'Shared expenses', type: 'boolean', default: (doc) => !doc || doc.kind !== 'personal', changedBy: 'manager',
-    label: 'Shared expenses',
+    label: 'Use Shared expenses in this workspace',
     explanation: 'Split costs with the people in this workspace and see who owes whom. When it is off, the Shared expenses page and its dashboard summary are hidden and nobody can add to it; nothing already recorded is removed, and it all comes back when it is turned on again. It starts on for groups, trips and households and off for personal workspaces.',
   },
   // (f) Changing other members' entries on shared accounts (api/_shared/authz.js canChangeRecord).
   // Today a plain member changes only records they created there.
   memberEditsOthers: {
     group: 'Entries and shared lists', type: 'choice', default: 'own', changedBy: 'manager',
-    label: "Members may change other members' entries",
-    options: [opt('own', 'Only their own entries'), opt('any', 'Any entry, as a member who can add entries')],
-    explanation: 'Who may correct or delete entries and bills on shared accounts. Owners and managers always can. With "Only their own entries" a member changes only what they added. With "Any entry" every member who can add entries may correct anyone\'s. Every correction is still kept with who, when and why, entries locked by reconciling or by Shared expenses stay locked, viewers never change anything, and private accounts are never affected.',
+    label: 'Which entries a member may correct on shared accounts',
+    options: [opt('own', 'Only entries they added'), opt('any', 'Any entry')],
+    explanation: 'Owners and managers can always correct any entry on shared accounts. With “Only entries they added” a member corrects or deletes only what they added; with “Any entry” every member who can add entries may correct anyone’s entries and bills there. Every correction is still kept with who, when and why, entries locked by reconciling or by Shared expenses stay locked, viewers never change anything, and private accounts are never affected.',
   },
   // (g) Who manages the workspace's shared lists. Today: managers and owners (members may already add
   // shared merchants and shared contacts, and change the ones they added; viewers add neither).
   sharedListManagers: {
     group: 'Entries and shared lists', type: 'choice', default: 'managers', changedBy: 'manager',
-    label: 'Who manages shared lists',
-    options: [opt('managers', 'Managers and owners'), opt('members', 'Any member who can add entries')],
-    explanation: 'Who may add and change the shared accounts, shared budgets and categories that everyone uses, and change any shared merchant or shared contact (members can always add those and change the ones they added). Viewers never can, and private accounts, budgets, merchants and contacts always stay with the person they belong to.',
+    label: 'Who can add and change shared accounts, budgets and categories',
+    options: [opt('managers', 'Owners and managers only'), opt('members', 'Owners, managers and members')],
+    explanation: 'This covers the shared accounts, shared budgets and categories everyone uses, and changing any shared merchant or shared contact. Members can always add shared merchants and contacts and change the ones they added. Viewers never can, and private accounts, budgets, merchants and contacts always stay with the person they belong to.',
   },
   // (i) Budget defaults. `budgetPeriod` and `weekStart` existed before and were ignored; now they are
   // the defaults for new budgets (existing budgets keep their own period).
@@ -68,15 +68,15 @@ const SETTINGS = freezeAll({
   },
   budgetBackdating: {
     group: 'Budgets', type: 'choice', default: 'confirm', changedBy: 'manager',
-    label: 'Budget changes may apply to past periods',
-    options: [opt('confirm', 'Only after confirming'), opt('never', 'Never')],
-    explanation: 'Whether a change to a budget\'s plan may reach back into periods that have already finished. With "Only after confirming" the person changing it must tick a box to say it is intended. With "Never" a change always starts in the current period or later, so finished periods keep the plan they had.',
+    label: 'Changing a budget for periods that have finished',
+    options: [opt('confirm', 'Allowed after a confirmation'), opt('never', 'Not allowed')],
+    explanation: 'Whether a change to a budget’s plan may reach back into periods that have already finished. With “Allowed after a confirmation” the person changing it must tick a box to say it is intended; with “Not allowed” a change always starts in the current period or later, so finished periods keep the plan they had.',
   },
   // (j) Bill defaults. Each bill's own reminder still wins; an entered date always wins.
   billReminderDays: {
-    group: 'Bills', type: 'integer', default: 3, min: 0, max: 60, changedBy: 'manager',
-    label: 'Show new bills as due soon (days before)',
-    explanation: 'How many days before a payment is due a new bill appears under Due soon. Each bill can still have its own number, which wins, and bills that already exist keep theirs.',
+    group: 'Bills', type: 'integer', default: 3, min: 0, max: 60, unit: 'days', changedBy: 'manager',
+    label: 'Days before the due date a new bill shows as Due soon',
+    explanation: 'New bills show under Due soon this many days before each payment. Each bill can still have its own number, which wins, and bills that already exist keep theirs.',
   },
   overdueRecordDate: {
     group: 'Bills', type: 'choice', default: 'today', changedBy: 'manager',
@@ -88,14 +88,19 @@ const SETTINGS = freezeAll({
   // Owners only. A member's restore only ever reaches their own private accounts, whatever is set.
   memberRestoresPerDay: {
     group: 'Restores by members', type: 'integer', default: MEMBER_RESTORES_MAX, min: 0, max: MEMBER_RESTORES_MAX, changedBy: 'owner',
-    label: 'Merge or replace restores a member may make each day',
-    explanation: `How many times a day each member may roll their own private records back from a backup (merge or replace). Each one first saves a recovery point, so ${MEMBER_RESTORES_MAX} is the most allowed. 0 turns these restores off for members. A member's restore only ever reaches their own private accounts, and owners and managers are not limited by this.`,
+    label: 'How often a member may restore their own records',
+    // Shown as words; stored and validated as the number (0 to the ceiling).
+    optionLabels: { 0: 'Not allowed', 1: 'Once a day', 2: 'Up to 2 a day', 3: 'Up to 3 a day' },
+    explanation: `How many merge or replace restores each member may make in a day, for their own private records only. Each restore first saves a safety copy of the workspace, which is why ${MEMBER_RESTORES_MAX} a day is the most. Owners and managers are not limited by this.`,
+    // Members have no restore screen yet (the Backups card is for owners and managers).
+    groupNote: "Members can't restore from the app yet; this applies to restores through the API.",
   },
   memberRestoreModes: {
     group: 'Restores by members', type: 'set', default: ['create-new', 'merge', 'restore-deleted', 'replace'], changedBy: 'owner',
     label: 'Kinds of restore members may use',
     options: [opt('create-new', 'Create a new workspace from a backup'), opt('merge', 'Merge — add missing records'), opt('restore-deleted', 'Merge that also brings back deleted entries'), opt('replace', 'Replace — roll records back to the backup')],
     requires: { 'restore-deleted': 'merge' },
+    requiresMessage: '“Merge that also brings back deleted entries” needs “Merge” ticked as well.',
     explanation: 'Which kinds of restore a member may use for their own private records. Bringing back deleted entries is part of a merge, so it needs Merge. Owners and managers are not limited by this.',
   },
 });
@@ -139,17 +144,23 @@ const get = (doc, key) => values(doc)[key];
 const mayChange = (key, member) => !!member && ROLE_ORDER.indexOf(member.role) >= ROLE_ORDER.indexOf(SETTINGS[key].changedBy);
 const whoLabel = (key) => (SETTINGS[key].changedBy === 'owner' ? 'owners' : 'owners and managers');
 
+// Why a value is refused, naming the setting as the card shows it (UX review of eefd115, finding 1);
+// `details.setting` lets the app mark that control.
+function refusal(k, v) {
+  const s = SETTINGS[k];
+  const brokenRequirement = s.type === 'set' && Array.isArray(v) && Object.entries(s.requires || {}).some(([a, b]) => v.includes(a) && !v.includes(b));
+  if (brokenRequirement && s.requiresMessage) return s.requiresMessage;
+  if (s.type === 'integer' && !s.optionLabels) return `“${s.label}”: enter a whole number from ${s.min} to ${s.max}.`;
+  return `“${s.label}”: choose one of the options shown.`;
+}
+
 // A change request `{ <key>: <value> }`: only known keys, only valid values.
 function parseChanges(input) {
   if (!isPlainObject(input)) throw badRequest('Send the settings to change.', 'invalid_field');
   const out = {};
   for (const [k, v] of Object.entries(input)) {
     if (!own(SETTINGS, k)) throw badRequest(`There is no workspace setting called ${JSON.stringify(k).slice(0, 60)}.`, 'unknown_setting');
-    if (!valid(k, v)) {
-      const s = SETTINGS[k];
-      const extra = s.type === 'integer' ? ` Choose a whole number from ${s.min} to ${s.max}.` : s.requires ? ' Bringing back deleted entries needs Merge.' : '';
-      throw badRequest(`${s.label}: that is not one of its values.${extra}`, 'invalid_setting');
-    }
+    if (!valid(k, v)) throw badRequest(refusal(k, v), 'invalid_setting', { setting: k });
     out[k] = SETTINGS[k].type === 'set' ? canonicalSet(k, v) : v;
   }
   return out;
@@ -163,7 +174,7 @@ function changesFor(doc, changes, member) {
   const now = values(doc);
   const out = [];
   for (const [k, to] of Object.entries(changes)) {
-    if (!mayChange(k, member)) throw new HttpError(403, 'forbidden', `Only ${whoLabel(k)} can change "${SETTINGS[k].label}".`);
+    if (!mayChange(k, member)) throw new HttpError(403, 'forbidden', `Only ${whoLabel(k)} can change “${SETTINGS[k].label}”.`, { setting: k });
     const from = own(s, k) ? s[k] : now[k];
     if (JSON.stringify(from) !== JSON.stringify(to)) out.push({ key: k, from, to });
   }
@@ -212,7 +223,13 @@ function view(doc, member, site) {
       key: k, group: s.group, type: s.type, label: s.label, explanation: s.explanation, value: v[k], default: defaultOf(k, doc),
       changedBy: s.changedBy, canChange: mayChange(k, member),
       ...(s.options ? { options: s.options.map((o) => ({ ...o })) } : {}),
+      // A small number shown as words ("Once a day"); the value stays the number.
+      ...(s.optionLabels ? { options: Object.entries(s.optionLabels).map(([value, label]) => ({ value: Number(value), label })) } : {}),
       ...(s.type === 'integer' ? { min: s.min, max: s.max } : {}),
+      ...(s.unit ? { unit: s.unit } : {}),
+      // A kind that needs another (the app unticks it while that one is off), with the refusal's words.
+      ...(s.requires ? { requires: { ...s.requires }, requiresMessage: s.requiresMessage } : {}),
+      ...(s.groupNote ? { groupNote: s.groupNote } : {}),
       ...(k === 'sharedExpenses' && !siteAllowsSharedExpenses(site) ? { offForSite: true } : {}),
     };
   });
@@ -224,10 +241,15 @@ function view(doc, member, site) {
 function problem(doc) {
   if (doc.settings === undefined) return null;
   if (!isPlainObject(doc.settings)) return 'workspace settings';
+  // As tolerant as reads (security review of eefd115, L-1; the group settings' rule, 12bee63): a value
+  // this version does not know — left by a later version after a rollback, or an earlier "custom" budget
+  // period — reads as the default and must not stop backups or restores. Only broken structure is refused:
+  // one value where one value belongs, a list of values for a set. Unknown keys are not ours to judge.
+  const scalar = (v) => v === null || typeof v === 'boolean' || typeof v === 'string' || (typeof v === 'number' && Number.isFinite(v));
   for (const k of KEYS) {
     if (!own(doc.settings, k)) continue;
     const x = doc.settings[k];
-    if (!valid(k, x) && !(SETTINGS[k].legacy || []).includes(x)) return 'workspace settings';
+    if (SETTINGS[k].type === 'set' ? !(Array.isArray(x) && x.every(scalar)) : !scalar(x)) return 'workspace settings';
   }
   return null;
 }

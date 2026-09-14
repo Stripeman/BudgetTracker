@@ -269,6 +269,11 @@ function openBudgetEditor(ctx, budget = null) {
   const effectiveFrom = input({ type: "date" });
   effectiveFrom.value = editing ? budget.status.period.start : "";
   const confirmBackdate = el("input", { type: "checkbox" });
+  // A NEW budget that starts before its current period needs the same confirmation (FIN-1); the box
+  // appears once the server says so. Under "Not allowed" it never does: the server's reason is shown.
+  const createConfirm = el("input", { type: "checkbox" });
+  const createConfirmRow = el("label", { class: "field--inline field__label" }, [createConfirm, "Also count the periods that have finished"]);
+  createConfirmRow.hidden = true;
   const reason = input({ maxlength: "200", placeholder: "Optional" });
   const chosenIcon = editing && budget.iconSource === "record" ? budget.icon : null;
   const iconPick = createIconPicker({ value: chosenIcon, inherited: "target", name: editing ? budget.name : "New budget" });
@@ -308,7 +313,7 @@ function openBudgetEditor(ctx, budget = null) {
   const modal = openModal({
     title: editing ? `Edit ${budget.name}` : "Add budget",
     body: [
-      el("div", { class: "form-grid" }, [field("Name", name), iconPick.element, field("Who it is for", scope, { help: "A shared budget counts shared accounts only, so members' private spending never appears in it." }), field("Currency", currency), field("Period", period), field("Starts on", start)]),
+      el("div", { class: "form-grid" }, [field("Name", name), iconPick.element, field("Who it is for", scope, { help: "A shared budget counts shared accounts only, so members' private spending never appears in it." }), field("Currency", currency), field("Period", period, editing ? {} : { help: `${(PERIODS.find((p) => p.value === wsValues.budgetPeriod) || PERIODS.find((p) => p.value === "monthly")).label} is this workspace's usual period (Workspace settings).` }), field("Starts on", start)]),
       el("h3", { text: "Categories" }), linesBox, addLine,
       editing ? el("div", { class: "form-grid" }, [
         field("Plan changes apply from", effectiveFrom, { help: neverBackdate
@@ -316,7 +321,12 @@ function openBudgetEditor(ctx, budget = null) {
           : `Earlier periods keep the plan they had. A date before ${formatDate(budget.status.period.start)} changes periods that have finished and needs confirming.` }),
         neverBackdate ? null : el("label", { class: "field--inline field__label" }, [confirmBackdate, "Also change finished periods"]),
         field("Reason for the change", reason),
-      ]) : null,
+      ]) : el("div", { class: "form-grid" }, [
+        el("p", { class: "field__help field--wide", text: neverBackdate
+          ? "This workspace does not let a new budget start in a period that has finished."
+          : "A start before the current period counts periods that have finished and needs confirming." }),
+        createConfirmRow,
+      ]),
     ],
     actions: [cancel, save],
   });
@@ -353,12 +363,17 @@ function openBudgetEditor(ctx, budget = null) {
       }
       if (Object.keys(body).length === 2) { announce("Nothing changed."); modal.close(); return; }
     } else {
-      body = { name: name.value.trim(), scope: scope.value, currency: currency.value, period: period.value, startDate: start.value, lines, ...(iconPick.getValue() ? { icon: iconPick.getValue() } : {}) };
+      body = { name: name.value.trim(), scope: scope.value, currency: currency.value, period: period.value, startDate: start.value, lines, ...(iconPick.getValue() ? { icon: iconPick.getValue() } : {}), ...(createConfirm.checked ? { confirmBackdate: true } : {}) };
     }
     modal.setBusy(true);
     const out = await ctx.store.actions.write((ws) => (editing ? ctx.api.updateBudget(ws, body) : ctx.api.createBudget(ws, body)), ["budgets"]);
     modal.setBusy(false);
-    if (!out.ok) { modal.setError(out.error); return; }
+    if (!out.ok) {
+      // The server asks for the confirmation: offer it beside the message.
+      if (!editing && out.error && out.error.code === "backdate_unconfirmed") createConfirmRow.hidden = false;
+      modal.setError(out.error);
+      return;
+    }
     announce(editing ? "Budget saved." : "Budget added.");
     modal.close();
   });

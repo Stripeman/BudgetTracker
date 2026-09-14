@@ -39,14 +39,30 @@ export function buildHash(id, params = {}) {
   return `#${route.path}${qs ? `?${qs}` : ""}`;
 }
 
+// A guard (the shell's unsaved-changes question, UX/accessibility review of eefd115, finding 3) is asked
+// before the page is left within the app. When it says no, the address is put back and nobody is told of
+// a change; the browser's report of that put-back is ignored.
 export function createRouter(win = globalThis) {
   const listeners = new Set();
   let current = parseHash(win.location.hash);
-  const onChange = () => { current = parseHash(win.location.hash); for (const l of listeners) l(current); };
+  let currentHash = win.location.hash;
+  let guard = null;
+  let restoring = null;
+  const onChange = () => {
+    const hash = win.location.hash;
+    if (restoring !== null) { const was = restoring; restoring = null; if (hash === was) return; }
+    if (guard && hash !== currentHash && !guard(hash)) { restoring = currentHash; win.location.hash = currentHash; return; }
+    currentHash = hash;
+    current = parseHash(hash);
+    for (const l of listeners) l(current);
+  };
   return {
     current: () => current,
     subscribe(fn) { listeners.add(fn); return () => listeners.delete(fn); },
     navigate(id, params) { win.location.hash = buildHash(id, params); },
+    setGuard(fn) { guard = fn; },
+    // Goes to an address the person has chosen to go to (after the guard's question).
+    go(hash) { win.location.hash = hash; },
     start() { win.addEventListener("hashchange", onChange); onChange(); },
   };
 }

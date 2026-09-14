@@ -184,7 +184,7 @@ describe('FIN-R6/R7 carry-over', () => {
     const f = await household(h);
     const c = await cats(h, f.q);
     for (const d of ['2026-08-04', '2026-08-11', '2026-08-18', '2026-08-25']) await txn(h, f.q, { accountId: f.joint.id, kind: 'expense', amount: '90.00', date: d, categoryId: c.Groceries });
-    const b = ok(await h.call('budgets', 'POST', { as: 'alice', query: f.q, body: { name: 'W', scope: 'shared', currency: 'EUR', period: 'weekly', startDate: '2026-07-06', lines: [{ categoryId: c.Groceries, amount: '100.00', rollover: true }] } }), 201).budget;
+    const b = ok(await h.call('budgets', 'POST', { as: 'alice', query: f.q, body: { name: 'W', scope: 'shared', currency: 'EUR', period: 'weekly', startDate: '2026-07-06', confirmBackdate: true, lines: [{ categoryId: c.Groceries, amount: '100.00', rollover: true }] } }), 201).budget;
     const edited = ok(await h.call('budgets', 'PATCH', { as: 'alice', query: f.q, body: { budgetId: b.id, revision: b.revision, period: 'monthly', startDate: '2026-09-01', effectiveFrom: '2026-09-01', confirmBackdate: true, lines: [{ categoryId: c.Groceries, amount: '400.00', rollover: true }] } })).budget;
     assert.deepEqual(edited.status.period, { start: '2026-09-01', end: '2026-09-30' });
     // Before the fix: August (monthly, 360.00 spent) was compared with the weekly 100.00 → −260.00.
@@ -287,7 +287,7 @@ describe('FIN-R13 overdue occurrences from earlier periods', () => {
     const f = await household(h);
     const c = await cats(h, f.q);
     const power = ok(await bill(h, f.q, { name: 'Power', accountId: f.joint.id, amount: '60.00', schedule: { freq: 'monthly', startDate: '2026-08-15' }, trackFrom: '2026-08-15', categoryId: c.Utilities }), 201).recurring;
-    ok(await h.call('budgets', 'POST', { as: 'alice', query: f.q, body: { name: 'U', scope: 'shared', currency: 'EUR', startDate: '2026-08-01', lines: [{ categoryId: c.Utilities, amount: '100.00' }] } }), 201);
+    ok(await h.call('budgets', 'POST', { as: 'alice', query: f.q, body: { name: 'U', scope: 'shared', currency: 'EUR', startDate: '2026-08-01', confirmBackdate: true, lines: [{ categoryId: c.Utilities, amount: '100.00' }] } }), 201);
     // 15 Aug (overdue) + 15 Sep = 120.00 owed; available 100.00 − 120.00 = −20.00.
     // Before the fix only 15 Sep counted: committed 60.00, available 40.00.
     const line = await budgetLine(h, f.q);
@@ -301,7 +301,7 @@ describe('FIN-R13 overdue occurrences from earlier periods', () => {
     const f = await household(h);
     const c = await cats(h, f.q);
     ok(await bill(h, f.q, { name: 'Power', accountId: f.joint.id, amount: '60.00', schedule: { freq: 'monthly', startDate: '2026-07-15' }, trackFrom: '2026-09-01', categoryId: c.Utilities }), 201);
-    ok(await h.call('budgets', 'POST', { as: 'alice', query: f.q, body: { name: 'U', scope: 'shared', currency: 'EUR', startDate: '2026-08-01', lines: [{ categoryId: c.Utilities, amount: '100.00' }] } }), 201);
+    ok(await h.call('budgets', 'POST', { as: 'alice', query: f.q, body: { name: 'U', scope: 'shared', currency: 'EUR', startDate: '2026-08-01', confirmBackdate: true, lines: [{ categoryId: c.Utilities, amount: '100.00' }] } }), 201);
     assert.equal((await budgetLine(h, f.q)).committed, '60.00');
   });
 });
@@ -313,7 +313,7 @@ describe('FIN-R14 budget plan dates', () => {
     const h = harness();
     const f = await household(h);
     const c = await cats(h, f.q);
-    const b = ok(await h.call('budgets', 'POST', { as: 'alice', query: f.q, body: { name: 'Food', scope: 'shared', currency: 'EUR', startDate: '2026-01-01', lines: [{ categoryId: c.Groceries, amount: '400.00' }] } }), 201).budget;
+    const b = ok(await h.call('budgets', 'POST', { as: 'alice', query: f.q, body: { name: 'Food', scope: 'shared', currency: 'EUR', startDate: '2026-01-01', confirmBackdate: true, lines: [{ categoryId: c.Groceries, amount: '400.00' }] } }), 201).budget;
     const lines = [{ categoryId: c.Groceries, amount: '500.00' }];
     // Before the fix any past date was accepted, rewriting finished periods.
     code(await h.call('budgets', 'PATCH', { as: 'alice', query: f.q, body: { budgetId: b.id, revision: 1, lines, effectiveFrom: '2026-08-01' } }), 409, 'backdate_unconfirmed');
@@ -330,7 +330,7 @@ describe('FIN-R14 budget plan dates', () => {
     const h = harness();
     const f = await household(h);
     const c = await cats(h, f.q);
-    const b = ok(await h.call('budgets', 'POST', { as: 'alice', query: f.q, body: { name: 'Food', scope: 'shared', currency: 'EUR', startDate: '2026-01-01', lines: [{ categoryId: c.Groceries, amount: '400.00' }] } }), 201).budget;
+    const b = ok(await h.call('budgets', 'POST', { as: 'alice', query: f.q, body: { name: 'Food', scope: 'shared', currency: 'EUR', startDate: '2026-01-01', confirmBackdate: true, lines: [{ categoryId: c.Groceries, amount: '400.00' }] } }), 201).budget;
     // A future version (1 Oct, 600.00) does not apply today: the top level stays at 400.00.
     const future = ok(await h.call('budgets', 'PATCH', { as: 'alice', query: f.q, body: { budgetId: b.id, revision: 1, lines: [{ categoryId: c.Groceries, amount: '600.00' }], effectiveFrom: '2026-10-01' } })).budget;
     assert.equal((await stored(h, f.q, b.id)).lines[0].amountMinor, 40000);

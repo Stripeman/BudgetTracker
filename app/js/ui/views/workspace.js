@@ -3,7 +3,9 @@
 // confirmation, last successful backup shown), and recent activity in plain language. Every
 // control is presentation; the server enforces.
 import { el, mount, announce } from "../dom.js";
-import { pageHead, stateView, field, input, pickerSelect, controlElement, button, badge, commitOnConfirm, categoryLabel, uid } from "../components.js";
+import { pageHead, stateView, field, input, pickerSelect, controlElement, button, badge, commitOnConfirm, categoryLabel } from "../components.js";
+import { createSettingsForm, settingText } from "../settingsform.js";
+import { trackUnsaved } from "../../core/unsaved.js";
 import { createThemePicker } from "../themepicker.js";
 import { colourEntries } from "../../core/categories.js";
 import { openModal, confirmModal } from "../modal.js";
@@ -55,14 +57,56 @@ const WS_FIELDS = { name: "Name", "settings.reportingCurrency": "Reporting curre
 const MEMBER_EVENTS = { removed: "removed", left: "left the workspace" };
 const stamp = (iso) => iso.replace("T", " ").slice(0, 16);
 
-// A workspace setting's value in words (Terry, 2026-09-14): On/Off, the chosen option's label, a number,
-// or the chosen kinds. An unknown value is shown as it is.
-export function settingText(s, v) {
-  if (s.type === "boolean") return v === true ? "On" : v === false ? "Off" : String(v);
-  if (s.type === "integer") return String(v);
-  const labelOf = (x) => { const o = (s.options || []).find((y) => y.value === x); return o ? o.label : String(x); };
-  if (s.type === "set") return Array.isArray(v) && v.length ? v.map(labelOf).join(", ") : "None";
-  return labelOf(v);
+// A setting's value in words now lives with the shared settings card (app/js/ui/settingsform.js).
+export { settingText };
+
+// Who changes workspace settings, said once (UX/accessibility review of eefd115, finding 6).
+const INTRO_CHANGE = "These decide how everyone in this workspace works. Owners and managers change them; the ones marked “Owners only” can be changed by owners alone. Each one starts with how BudgetTracker has always worked. Privacy and safety rules are not settings: private accounts stay private, nothing is ever deleted and every change is kept.";
+const INTRO_READ = "These decide how everyone in this workspace works. Owners and managers change them; you can see how it is set up and every change below.";
+
+// "Delete workspace" (Terry, 2026-09-14: "the workspace owner should be able to delete their own
+// workspace(s)"). Underneath it stays the recoverable archive (BT-001-05: nothing is ever physically
+// deleted) — the dialog says so and names where it comes back. Owners only; a site administrator never
+// gets this, or any other access to the workspace's records (CLAUDE.md §3).
+const DELETE_MESSAGE = "Everyone loses access and it disappears from your lists. Nothing is erased: you can bring it back from Deleted workspaces in My settings.";
+function openDeleteDialog(ctx, workspace) {
+  const { store, navigate } = ctx;
+  const reason = input({ maxlength: "200" });
+  reason.value = "No longer needed";
+  const confirmName = input({ maxlength: "80", autocomplete: "off" });
+  const formId = `delete-workspace-${workspace.id}`;
+  const go = el("button", { type: "submit", class: "btn btn--danger", text: "Delete workspace", form: formId });
+  const form = el("form", { class: "form-grid", novalidate: true, id: formId }, [
+    field("Reason", reason),
+    field(`Type ${workspace.name} to confirm`, confirmName),
+  ]);
+  const modal = openModal({
+    title: `Delete ${workspace.name}?`,
+    body: [el("p", { text: DELETE_MESSAGE }), form],
+    actions: [button("Cancel", () => modal.close()), go],
+  });
+  async function submit() {
+    modal.setError("");
+    confirmName.removeAttribute("aria-invalid");
+    confirmName.removeAttribute("aria-errormessage");
+    if (confirmName.value !== workspace.name) {
+      confirmName.setAttribute("aria-invalid", "true");
+      confirmName.setAttribute("aria-errormessage", modal.errorId);
+      modal.setError(`Type the workspace name, ${workspace.name}, to confirm.`);
+      confirmName.focus();
+      return;
+    }
+    modal.setBusy(true);
+    const out = await store.actions.deleteWorkspace(workspace.id, reason.value.trim());
+    modal.setBusy(false);
+    if (!out.ok) { modal.setError(out.error); return; }
+    modal.close();
+    announce(`${workspace.name} deleted. You can bring it back from Deleted workspaces in My settings.`);
+    if (navigate) navigate("dashboard");
+  }
+  go.addEventListener("click", (e) => { e.preventDefault(); void submit(); });
+  form.addEventListener("submit", (e) => { e.preventDefault(); void submit(); });
+  return modal;
 }
 
 export function createView(ctx) {
@@ -77,6 +121,9 @@ export function createView(ctx) {
   const settingsBox = el("div", { class: "stack" });
   const coloursBox = el("div", { class: "stack" });
   const typesBox = el("div", { class: "stack" });
+  // "Delete workspace" (owners only): a separate danger-style card at the bottom of the page, outside
+  // the two-column grid, built only for an owner (finding: it must not exist in the DOM for anyone else).
+  const deleteBox = el("div");
   const element = el("section", {}, [
     pageHead("Workspace"),
     el("div", { class: "grid grid--two" }, [
@@ -90,9 +137,28 @@ export function createView(ctx) {
       el("section", { class: "card card--full", "aria-labelledby": "ws-colours" }, [el("h2", { class: "card__title", id: "ws-colours", text: "Category colours and icons" }), coloursBox]),
       el("section", { class: "card", "aria-labelledby": "ws-types" }, [el("h2", { class: "card__title", id: "ws-types", text: "Icons for types" }), typesBox]),
     ]),
+    deleteBox,
   ]);
 
   const me = () => ((sliceFor(store.getState(), "members").data || {}).members || []).find((m) => m.self) || { role: "viewer" };
+
+  // Workspace settings (Terry, 2026-09-14: "the user should be able to decide"), in the settings card
+  // shared with the group settings (app/js/ui/settingsform.js; UX/accessibility review of eefd115).
+  const form = createSettingsForm({
+    id: "ws-set", storageKey: "bt.settingsGroups.workspace",
+    // Leaving the page or closing the tab with unsaved changes asks first (finding 3).
+    onDirtyChange: (dirty) => trackUnsaved("workspace-settings", "Workspace settings", dirty),
+    onSave: async (changes, reason) => {
+      const body = { settings: changes, ...(reason ? { reason } : {}) };
+      const out = await store.actions.write((ws) => api.request("workspaces", { method: "PATCH", query: { id: ws }, body }), []);
+      if (!out.ok) return { ok: false, error: out.error };
+      // The app's copy of each workspace's setting values (the nav, defaults in forms) follows the change.
+      if (store.actions.refreshWorkspaces) await store.actions.refreshWorkspaces();
+      await loadInfo();
+      return { ok: true, said: "Settings saved. Everyone in the workspace now works this way." };
+    },
+  });
+  mount(settingsBox, form.element);
 
   async function loadInvites() {
     const role = me().role;
@@ -211,12 +277,12 @@ export function createView(ctx) {
     } catch (err) { mount(formerBox, el("p", { class: "error-text", role: "alert", text: messageFor(err) })); }
   }
 
-  // The workspace itself, read once: its settings (everyone) and its change history (owners and
-  // managers). `saved` re-renders after a save with focus back on Save and the result beside it.
-  async function loadInfo({ saved = false } = {}) {
+  // The workspace itself, read once: its settings and their history (everyone) and its full change
+  // history (owners and managers).
+  async function loadInfo() {
     try {
       const { workspace } = await api.request("workspaces", { query: { id: wsId } });
-      renderSettings(workspace, { saved });
+      renderSettings(workspace);
       renderHistory(workspace);
     } catch (err) {
       mount(settingsBox, el("p", { class: "error-text", role: "alert", text: messageFor(err) }));
@@ -244,73 +310,24 @@ export function createView(ctx) {
       : el("p", { class: "muted small", text: "No changes to the workspace's name or settings yet." }));
   }
 
-  // Workspace settings (Terry, 2026-09-14: "the user should be able to decide"): every setting from the
-  // server's one list, grouped, each with its plain explanation. Dropdowns are the command picker
-  // (BT-004-05); a list of kinds is a set of checkboxes. The server decides who may change what; a
-  // setting this person may not change is shown as text with who can. Save sends only what changed.
-  function settingControl(s) {
-    const who = s.changedBy === "owner" ? "Only owners change this." : "Owners and managers change this.";
-    // Shared expenses switched off for the whole site stay off here, whatever the workspace says.
-    const siteNote = s.offForSite ? " The site administrator has turned this off for the whole site, so it stays off here for now." : "";
-    if (!s.canChange) {
-      return { s, read: () => s.value, node: el("div", { class: "field field--wide" }, [
-        el("p", { class: "field__label", text: s.label }),
-        el("p", { text: settingText(s, s.value) }),
-        el("p", { class: "field__help", text: `${s.explanation}${siteNote} ${who}` }),
-      ]) };
-    }
-    if (s.type === "set") {
-      const boxes = (s.options || []).map((o) => { const box = el("input", { type: "checkbox", id: uid("wset") }); box.checked = Array.isArray(s.value) && s.value.includes(o.value); return [o, box]; });
-      return { s, read: () => boxes.filter(([, b]) => b.checked).map(([o]) => o.value), node: el("fieldset", { class: "plain-fieldset field--wide" }, [
-        el("legend", { class: "field__label", text: s.label }),
-        ...boxes.map(([o, b]) => el("div", { class: "field--inline" }, [b, el("label", { for: b.id, text: o.label })])),
-        el("p", { class: "field__help", text: s.explanation }),
-      ]) };
-    }
-    const options = s.type === "boolean" ? [{ value: "true", label: "On" }, { value: "false", label: "Off" }]
-      : s.type === "integer" ? Array.from({ length: s.max - s.min + 1 }, (_, i) => ({ value: String(s.min + i), label: String(s.min + i) }))
-        : (s.options || []).map((o) => ({ value: String(o.value), label: o.label }));
-    const pick = pickerSelect(options, String(s.value));
-    const read = () => (s.type === "boolean" ? pick.value === "true"
-      : s.type === "integer" ? Number(pick.value)
-        : ((s.options || []).find((o) => String(o.value) === pick.value) || { value: s.value }).value);
-    return { s, read, node: field(s.label, pick, { help: `${s.explanation}${siteNote}`, wide: true }) };
-  }
-
-  function renderSettings(workspace, { saved = false } = {}) {
+  // The settings and their history, from the one list; everyone reads the history (decision 6).
+  function renderSettings(workspace) {
     const list = workspace.settingsList || [];
-    if (!list.length) { mount(settingsBox, el("p", { class: "muted", text: "There are no workspace settings to show." })); return; }
-    const controls = list.map(settingControl);
-    const groups = [];
-    for (const c of controls) {
-      let g = groups.find((x) => x.name === c.s.group);
-      if (!g) { g = { name: c.s.group, items: [] }; groups.push(g); }
-      g.items.push(c.node);
-    }
-    const changeable = controls.some((c) => c.s.canChange);
-    const reason = input({ maxlength: "200", placeholder: "Optional", autocomplete: "off" });
-    const status = el("p", { class: "field__help", role: "status", text: saved ? "Saved. Everyone in the workspace now works this way." : "" });
-    const save = button("Save workspace settings", async () => {
-      const changes = Object.fromEntries(controls.filter((c) => c.s.canChange && JSON.stringify(c.read()) !== JSON.stringify(c.s.value)).map((c) => [c.s.key, c.read()]));
-      if (!Object.keys(changes).length) { status.textContent = "Nothing changed."; announce("Nothing changed."); return; }
-      const body = { settings: changes, ...(reason.value.trim() ? { reason: reason.value.trim() } : {}) };
-      const out = await store.actions.write((ws) => api.request("workspaces", { method: "PATCH", query: { id: ws }, body }), []);
-      if (!out.ok) { status.textContent = messageFor(out.error); announce(messageFor(out.error)); return; }
-      announce("Workspace settings saved.");
-      // The app's copy of each workspace's setting values (the nav, defaults in forms) follows the change.
-      if (store.actions.refreshWorkspaces) await store.actions.refreshWorkspaces();
-      await loadInfo({ saved: true });
-    }, { variant: "primary" });
-    mount(settingsBox,
-      el("p", { class: "field__help", text: changeable
-        ? "These decide how everyone in this workspace works. Each one starts with how BudgetTracker has always worked. Privacy and safety rules are not settings: private accounts stay private, nothing is ever deleted and every change is kept."
-        : "These decide how everyone in this workspace works. You can see how it is set up; owners and managers change it." }),
-      ...groups.flatMap((g) => [el("h3", { class: "section-title", text: g.name }), el("div", { class: "form-grid" }, g.items)]),
-      changeable ? el("div", { class: "form-grid" }, [field("Reason for the change (optional)", reason, { help: "Kept with the change under Workspace changes.", wide: true })]) : null,
-      changeable ? el("div", { class: "row" }, [save]) : null,
-      changeable ? status : null);
-    if (saved) save.focus();
+    const byKey = new Map(list.map((s) => [s.key, s]));
+    const show = (v) => (v === null || v === undefined || v === "" ? "—" : String(v));
+    const history = (workspace.settingsHistory || []).map((h) => ({
+      when: stamp(h.at), by: h.by, reason: h.reason || "",
+      text: (h.changes || []).map((c) => {
+        const s = byKey.get(String(c.field).slice("settings.".length));
+        return s ? `${s.label}: ${settingText(s, c.from)} → ${settingText(s, c.to)}` : `${WS_FIELDS[c.field] || c.field}: ${show(c.from)} → ${show(c.to)}`;
+      }).join("; "),
+    }));
+    form.render({ settings: list, history, intro: list.some((s) => s.canChange) ? INTRO_CHANGE : INTRO_READ });
+    // Opened from a link that names a setting (the Shared expenses "off" page, finding 9): focus on it,
+    // with its group open, once.
+    if (!linkedFocusDone && ctx.params && ctx.params.setting) linkedFocusDone = form.focusSetting(ctx.params.setting);
   }
+  let linkedFocusDone = false;
 
   // Workspace category colours (BT-011-04): owners and managers choose them; everyone sees them.
   // Each member may still pick personal colours in My settings.
@@ -508,8 +525,27 @@ export function createView(ctx) {
     if (!loaded) { loaded = true; void loadInvites(); void loadBackups(); void loadAudit(); void loadInfo(); }
     // A removal, role change or rejoin changes the members list; the former members reload with it.
     if (members.data !== lastMembers) { lastMembers = members.data; void loadFormer(); }
+    renderDelete(state, role);
   }
-  return { element, update };
+
+  // "Delete workspace" (owners only). Built only when this person owns the current workspace, so the
+  // card and its button do not exist in the DOM for anyone else (not merely hidden).
+  let deleteSig = "";
+  function renderDelete(state, role) {
+    const workspace = (state.workspaces || []).find((w) => w.id === wsId);
+    const owner = role === "owner" && !!workspace;
+    const sig = JSON.stringify([owner, workspace ? workspace.name : null]);
+    if (sig === deleteSig) return;
+    deleteSig = sig;
+    if (!owner) { mount(deleteBox); return; }
+    mount(deleteBox, el("section", { class: "card card--danger", "aria-labelledby": "ws-delete" }, [
+      el("h2", { class: "card__title", id: "ws-delete", text: "Delete workspace" }),
+      el("p", { class: "field__help", text: "Everyone in this workspace loses access. It can be brought back from Deleted workspaces in My settings." }),
+      button("Delete workspace…", () => { openDeleteDialog(ctx, workspace); }, { variant: "danger" }),
+    ]));
+  }
+  // Leaving the page (the shell asked first) forgets the card's unsaved mark.
+  return { element, update, destroy: () => form.destroy() };
 }
 
 function openRestore(ctx, wsId, archive) {

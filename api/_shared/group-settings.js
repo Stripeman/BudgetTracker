@@ -51,7 +51,7 @@ const SETTINGS = Object.freeze({
   }),
   // (c) Who may correct or void a shared expense. Viewers never may.
   changeExpenses: Object.freeze({
-    type: 'choice', default: 'author-or-manager', label: 'Who may correct or void a shared expense',
+    type: 'choice', default: 'author-or-manager', label: 'Who can correct or void a shared expense',
     options: Object.freeze([
       Object.freeze({ value: 'author-or-manager', label: 'The person who added it, or a manager or owner' }),
       Object.freeze({ value: 'any-writer', label: 'Any member who can add expenses' }),
@@ -60,7 +60,7 @@ const SETTINGS = Object.freeze({
   }),
   // (d) Payment rules. The payer confirms only as "Can confirm payments" allows; every action is attributed.
   withdrawPayments: Object.freeze({
-    type: 'choice', default: 'receiver-or-manager', label: 'Who may withdraw a confirmed payment',
+    type: 'choice', default: 'receiver-or-manager', label: 'Who can withdraw a confirmed payment',
     options: Object.freeze([
       Object.freeze({ value: 'receiver-or-manager', label: 'The receiver, or a manager or owner' }),
       Object.freeze({ value: 'receiver', label: 'The receiver only' }),
@@ -70,7 +70,7 @@ const SETTINGS = Object.freeze({
     explanation: 'Withdrawing keeps the payment and its reason in the history, and for a contact a manager or owner acts as the receiver.',
   }),
   disputePayments: Object.freeze({
-    type: 'choice', default: 'receiver', label: 'Who may dispute a reported payment',
+    type: 'choice', default: 'receiver', label: 'Who can dispute a reported payment',
     options: Object.freeze([Object.freeze({ value: 'receiver', label: 'The receiver' }), Object.freeze({ value: 'receiver-or-manager', label: 'The receiver, or a manager or owner' })]),
     explanation: 'A disputed payment is not counted until it is sorted out, and the person who received it can always dispute it.',
   }),
@@ -180,15 +180,16 @@ function parseChanges(input) {
   for (const [k, v] of Object.entries(input)) {
     if (own(PER_MEMBER, k)) {
       const p = PER_MEMBER[k];
-      if (!isPlainObject(v) || !Object.keys(v).length) throw badRequest(`${p.label}: choose a setting for each person.`, 'invalid_setting');
+      // Refusals name the setting as the card shows it (UX review of eefd115, finding 1).
+      if (!isPlainObject(v) || !Object.keys(v).length) throw badRequest(`“${p.label}”: choose a setting for each person.`, 'invalid_setting', { setting: k });
       for (const [id, x] of Object.entries(v)) {
-        if (typeof id !== 'string' || !/^[A-Za-z0-9_-]{1,64}$/.test(id) || !p.options.some((o) => o.value === x)) throw badRequest(`${p.label}: that is not one of its values.`, 'invalid_setting');
+        if (typeof id !== 'string' || !/^[A-Za-z0-9_-]{1,64}$/.test(id) || !p.options.some((o) => o.value === x)) throw badRequest(`“${p.label}”: choose one of the options shown.`, 'invalid_setting', { setting: k });
       }
       out[k] = { ...v };
       continue;
     }
     if (!own(SETTINGS, k)) throw badRequest(`There is no setting called ${JSON.stringify(k)}.`, 'unknown_setting');
-    if (!valid(k, v)) throw badRequest(`${SETTINGS[k].label}: that is not one of its values.`, 'invalid_setting');
+    if (!valid(k, v)) throw badRequest(`“${SETTINGS[k].label}”: choose one of the options shown.`, 'invalid_setting', { setting: k });
     out[k] = v;
   }
   return out;

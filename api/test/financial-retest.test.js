@@ -70,7 +70,7 @@ describe('FIN-T3 paying an overdue bill does not change what is available', () =
     const f = await household(h);
     const c = await cats(h, f.q);
     const power = ok(await h.call('recurring', 'POST', { as: 'alice', query: f.q, body: { name: 'Power', billType: 'utilities', accountId: f.joint.id, amount: '60.00', schedule: { freq: 'monthly', startDate: '2026-08-20' }, categoryId: c.Utilities, trackFrom: '2026-08-01' } }), 201).recurring;
-    ok(await h.call('budgets', 'POST', { as: 'alice', query: f.q, body: { name: 'Utilities', scope: 'shared', currency: 'EUR', startDate: '2026-08-01', lines: [{ categoryId: c.Utilities, amount: '100.00' }] } }), 201);
+    ok(await h.call('budgets', 'POST', { as: 'alice', query: f.q, body: { name: 'Utilities', scope: 'shared', currency: 'EUR', startDate: '2026-08-01', confirmBackdate: true, lines: [{ categoryId: c.Utilities, amount: '100.00' }] } }), 201);
     // September: spent 0.00; owed 60.00 (20 Aug, overdue) + 60.00 (20 Sep) = 120.00; available -20.00.
     let line = await budgetLine(h, f.q);
     assert.deepEqual([line.actual, line.committed, line.available], ['0.00', '120.00', '-20.00']);
@@ -120,7 +120,7 @@ describe('FIN-T6 a new period start day cannot count days twice without confirma
     const h = harness();
     const f = await household(h);
     const c = await cats(h, f.q);
-    const b = ok(await h.call('budgets', 'POST', { as: 'alice', query: f.q, body: { name: 'Groceries', scope: 'shared', currency: 'EUR', startDate: '2026-08-01', lines: [{ categoryId: c.Groceries, amount: '400.00' }] } }), 201).budget;
+    const b = ok(await h.call('budgets', 'POST', { as: 'alice', query: f.q, body: { name: 'Groceries', scope: 'shared', currency: 'EUR', startDate: '2026-08-01', confirmBackdate: true, lines: [{ categoryId: c.Groceries, amount: '400.00' }] } }), 201).budget;
     // From 1 Sep with the 15th as start day, the period containing 1 Sep is 15 Aug - 14 Sep:
     // 15-31 Aug were already counted in August.
     const change = { budgetId: b.id, revision: b.revision, startDate: '2026-08-15', effectiveFrom: '2026-09-01' };
@@ -146,7 +146,7 @@ describe('FIN-U2 a change of amounts alone needs no confirmation within the curr
     const h = harness();
     const f = await household(h);
     const c = await cats(h, f.q);
-    const b = ok(await h.call('budgets', 'POST', { as: 'alice', query: f.q, body: { name: 'Groceries', scope: 'shared', currency: 'EUR', startDate: '2026-08-01', lines: [{ categoryId: c.Groceries, amount: '400.00' }] } }), 201).budget;
+    const b = ok(await h.call('budgets', 'POST', { as: 'alice', query: f.q, body: { name: 'Groceries', scope: 'shared', currency: 'EUR', startDate: '2026-08-01', confirmBackdate: true, lines: [{ categoryId: c.Groceries, amount: '400.00' }] } }), 201).budget;
     ok(await h.call('budgets', 'PATCH', { as: 'alice', query: f.q, body: { budgetId: b.id, revision: b.revision, lines: [{ categoryId: c.Groceries, amount: '450.00' }], effectiveFrom: '2026-09-13' } }));
     assert.equal((await budgetLine(h, f.q)).planned, '450.00');
   });

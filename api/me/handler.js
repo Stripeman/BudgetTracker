@@ -18,14 +18,14 @@ async function get(ctx) {
     const { value } = await ctx.storage.getJson(store.paths.workspace(id));
     const doc = readDocument('workspace', value);
     const member = doc && activeMember(doc, ctx.principal);
-    if (member) workspaces.push(model.summary(doc, member));
+    if (model.listed(doc, member)) workspaces.push(model.summary(doc, member));
   }
   const { site: siteDoc } = await site.readSite(ctx.storage);
   const stored = user.preferences || {};
   // The site's staging-link default reaches only site administrators and active members of at least
   // one workspace (security review of d363eff, finding 1). `workspaces` holds exactly the workspaces
-  // where this person is an active member.
-  const visible = ctx.siteAdmin || workspaces.length ? siteDoc : site.withoutStagingDefault(siteDoc);
+  // where this person is an active member; a deleted (archived) one an owner still sees does not count.
+  const visible = ctx.siteAdmin || workspaces.some((w) => w.status !== 'archived') ? siteDoc : site.withoutStagingDefault(siteDoc);
   return {
     body: {
       // `subject` is the caller's own provider subject, shown so an operator can list it in

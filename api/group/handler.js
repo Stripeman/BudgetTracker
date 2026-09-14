@@ -652,7 +652,7 @@ async function createExpense(ctx, req) {
   const ledgerAccountId = ledgerChoice(body.ledger);
   // Read before the write, and only when the request leaves the payer or the split out.
   const mine = body.payers === undefined || body.split === undefined ? await ownDefaults(ctx) : {};
-  const { result } = await store.mutateWorkspace(ctx, wsId, (doc, member) => {
+  const { result } = await mutateGroup(ctx, wsId, (doc, member) => {
     requireWriter(member);
     const nowIso = ctx.nowIso();
     const m = expenseMoney(doc, body, null, member, mine);
@@ -679,7 +679,7 @@ async function patchExpense(ctx, req) {
   const wsId = requireId(query(req, 'workspaceId'), 'workspaceId');
   const body = fields.onlyKeys(readBody(req), PATCH_KEYS);
   const id = requireId(body.expenseId, 'expenseId');
-  const { result } = await store.mutateWorkspace(ctx, wsId, (doc, member) => {
+  const { result } = await mutateGroup(ctx, wsId, (doc, member) => {
     const e = findExpense(doc, id);
     if (!canChangeExpense(doc, e, member)) throw forbidden(expenseRuleText(doc));
     if (e.voidedAt) throw conflict('This expense is void, so it cannot be changed. Add a new expense instead.', 'voided');
@@ -716,7 +716,7 @@ async function createSettlement(ctx, req) {
   const wsId = requireId(query(req, 'workspaceId'), 'workspaceId');
   const body = fields.onlyKeys(readBody(req), SETTLE_KEYS);
   const ledgerAccountId = ledgerChoice(body.ledger);
-  const { result } = await store.mutateWorkspace(ctx, wsId, (doc, member) => {
+  const { result } = await mutateGroup(ctx, wsId, (doc, member) => {
     requireWriter(member);
     const nowIso = ctx.nowIso();
     const currency = settlementCurrency(doc, body.currency);
@@ -761,7 +761,7 @@ function settlementChange(kind) {
     const body = fields.onlyKeys(readBody(req), kind === 'confirm' ? ['settlementId', 'revision', 'ledger'] : ['settlementId', 'revision', 'reason']);
     const id = requireId(body.settlementId, 'settlementId');
     const ledgerAccountId = kind === 'confirm' ? ledgerChoice(body.ledger) : null;
-    const { result } = await store.mutateWorkspace(ctx, wsId, (doc, member) => {
+    const { result } = await mutateGroup(ctx, wsId, (doc, member) => {
       const s = findSettlement(doc, id);
       const me = selfRef(member);
       // A viewer may confirm or dispute a payment made to them, and nothing else (security review S7).
@@ -832,7 +832,7 @@ async function voidRecord(ctx, req) {
   const body = fields.onlyKeys(readBody(req), ['expenseId', 'settlementId', 'revision', 'reason']);
   const type = pickType(body);
   const id = requireId(type === 'expense' ? body.expenseId : body.settlementId, type === 'expense' ? 'expenseId' : 'settlementId');
-  const { result } = await store.mutateWorkspace(ctx, wsId, (doc, member) => {
+  const { result } = await mutateGroup(ctx, wsId, (doc, member) => {
     const rec = type === 'expense' ? findExpense(doc, id) : findSettlement(doc, id);
     // Once a payment is confirmed, the payer or reporter alone can no longer take it back: only its
     // receiving member or a manager or owner may, and it is recorded as a withdrawn confirmation
@@ -889,7 +889,7 @@ async function ledgerAction(ctx, req) {
   if (!type && !money.isCurrency(body.currency)) throw badRequest('currency must be a currency code such as "EUR".', 'invalid_field');
   const choosing = Object.prototype.hasOwnProperty.call(body, 'accountId');
   const accountId = choosing && body.accountId !== null ? requireId(body.accountId, 'accountId') : null;
-  const { result } = await store.mutateWorkspace(ctx, wsId, (doc, member) => {
+  const { result } = await mutateGroup(ctx, wsId, (doc, member) => {
     // Bringing one's own entries up to date, or stopping, only writes to one's own private account, so a
     // viewer may do it too — for example after being made a viewer (security review S7). Starting or
     // moving a link is for members, managers and owners.
@@ -948,7 +948,7 @@ async function settingsAction(ctx, req) {
   const body = fields.onlyKeys(readBody(req), ['changes', 'reason']);
   const changes = groupSettings.parseChanges(body.changes);
   const reason = fields.text(body.reason, { field: 'Reason', max: 200 });
-  const { result } = await store.mutateWorkspace(ctx, wsId, (doc, member) => {
+  const { result } = await mutateGroup(ctx, wsId, (doc, member) => {
     if (!isManager(member)) throw forbidden('Only owners and managers can change the group\'s settings.');
     const at = ctx.nowIso();
     const changed = groupSettings.apply(doc, changes, { by: member.subject, at, reason });
@@ -975,6 +975,18 @@ async function sharedExpensesGate(ctx, req) {
   const { doc } = await store.loadWorkspace(ctx, requireId(query(req, 'workspaceId'), 'workspaceId'));
   const { site } = await siteSettings.readSite(ctx.storage);
   workspaceSettings.assertSharedExpenses(doc, site);
+  gateSite.set(ctx, site);
+}
+
+// Every group write checks Shared expenses again on the document it is about to change, in the same
+// ETag-guarded write, so a switch-off that lands between the gate's read and the write refuses the write
+// (security review of eefd115, L-2). The site's switch is the one the gate read for this request.
+const gateSite = new WeakMap();
+function mutateGroup(ctx, wsId, fn, options) {
+  return store.mutateWorkspace(ctx, wsId, (doc, member) => {
+    workspaceSettings.assertSharedExpenses(doc, gateSite.get(ctx));
+    return fn(doc, member);
+  }, options);
 }
 const gated = (fn) => async (ctx, req) => { await sharedExpensesGate(ctx, req); return fn(ctx, req); };
 

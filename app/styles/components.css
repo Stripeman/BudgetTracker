@@ -83,6 +83,9 @@ fieldset.budget-line { margin: 0; padding: var(--space-3); border: 1px solid var
 .themepick__icon { color: var(--swatch, currentColor); }
 /* One compact row per category: name, colour and icon side by side when there is room (UXI-3). */
 .card--full { grid-column: 1 / -1; }
+/* "Delete workspace" (Terry, 2026-09-14): a danger-style card, set apart from the ordinary ones. */
+.card--danger { border-color: var(--color-danger); }
+.card--danger .card__title { color: var(--color-danger-text); }
 .catrow { display: grid; gap: var(--space-2) var(--space-3); align-items: start; grid-template-columns: repeat(auto-fit, minmax(min(13rem, 100%), 1fr)); padding-block: var(--space-2); border-top: 1px solid var(--border); }
 .catrow__name { margin: 0; padding-top: var(--space-4); font-size: var(--text-base); }
 .catrow__meta, .catrow > .error-text { grid-column: 1 / -1; }
@@ -581,3 +584,41 @@ fieldset.budget-line { margin: 0; padding: var(--space-3); border: 1px solid var
 }
 .workspaces__marker--o { color: var(--accent-text); }
 .workspaces__marker--m { color: color-mix(in srgb, var(--accent-text) 70%, var(--text-muted)); }
+
+/* ---------- settings cards (workspace and group; UX/accessibility review of eefd115) ---------- */
+.settings__intro { max-width: 46rem; }
+/* Group headings inside a card are never larger than the card's own title (finding 7): the same size,
+   set apart by weight and colour. */
+.settings-group { border-top: 1px solid var(--border); }
+.settings-group__title { margin: 0; font-size: var(--text-sm); }
+.settings-group__toggle {
+  display: inline-flex; align-items: center; gap: var(--space-2); width: 100%; min-height: var(--control-height);
+  padding: var(--space-2) 0; border: 0; background: transparent; color: var(--text); font: inherit; font-weight: var(--weight-medium);
+  text-align: left; cursor: pointer;
+}
+/* The arrow follows aria-expanded and has no text alternative, so the button is named by the group alone. */
+.settings-group__toggle::before { content: "▸" / ""; display: inline-block; width: 1em; color: var(--text-muted); }
+.settings-group__toggle[aria-expanded="true"]::before { content: "▾" / ""; }
+.settings-group__body { display: flex; flex-direction: column; gap: var(--space-4); padding: 0 0 var(--space-4); }
+.settings-group__body[hidden] { display: none; }
+/* Controls at normal form width, not the whole card (finding 2). */
+.setting { max-width: 34rem; display: flex; flex-direction: column; gap: var(--space-1); }
+.setting > .badge { align-self: flex-start; }
+.setting__more { margin: 0; }
+.linklike { align-self: flex-start; padding: 0; border: 0; background: transparent; color: var(--accent-text); font: inherit; font-size: var(--text-xs); text-decoration: underline; cursor: pointer; }
+.input-with-unit { display: flex; align-items: center; gap: var(--space-2); }
+.input-with-unit .field__input { max-width: 7rem; }
+.input-with-unit__unit { font-size: var(--text-sm); color: var(--text-muted); }
+.settings-dl { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--space-1); margin: 0; max-width: 46rem; }
+.settings-dl__label { font-size: var(--text-sm); font-weight: var(--weight-medium); margin-top: var(--space-3); }
+.settings-dl__value { margin: 0; }
+.settings-dl__help { margin: 0; display: flex; flex-direction: column; gap: var(--space-1); }
+/* Save stays in reach however long the card is (finding 2). */
+.settings-bar {
+  position: sticky; bottom: 0; z-index: 5; display: flex; flex-direction: column; gap: var(--space-1);
+  margin-top: var(--space-3); padding: var(--space-3) 0; background: var(--surface); border-top: 1px solid var(--border);
+}
+.settings-bar__unsaved { margin: 0; font-size: var(--text-sm); font-weight: var(--weight-medium); }
+/* A field marked invalid shows it, not only in words beside it (finding 1); only fields already marked. */
+.field__input[aria-invalid="true"], .cmdpick__trigger[aria-invalid="true"] { border-color: var(--color-danger); }
+fieldset[aria-invalid="true"] > legend { color: var(--color-danger-text); }
