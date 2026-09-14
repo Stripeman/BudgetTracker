@@ -511,3 +511,124 @@ describe('finding 1: each person\'s entries are theirs alone', () => {
     assert.ok(v.expenses.every((x) => x.myLedger && !x.myLedger.needsReview));
   });
 });
+
+// ---- restores (S1, S4) ----------------------------------------------------------------------------
+const backupNow = async (h, f) => { h.clock.advance(60000); return ok(await h.call('backups', 'POST', { as: 'alice', query: f.q, body: {} }), 201).archive.archiveId; };
+async function restoreAs(h, f, archiveId, mode) {
+  h.clock.advance(60000);
+  const pv = ok(await h.call('restore', 'POST', { as: 'alice', query: { action: 'preview' }, body: { workspaceId: f.ws.id, archiveId, mode } }));
+  assert.equal(pv.canExecute, true, JSON.stringify(pv.blockers));
+  return ok(await h.call('restore', 'POST', { as: 'alice', query: { action: 'execute' }, body: { workspaceId: f.ws.id, archiveId, mode, ...(mode === 'create-new' ? {} : { expectedEtag: pv.expectedEtag }), ...(mode === 'replace' ? { confirm: 'REPLACE' } : {}) } }), mode === 'create-new' ? 201 : 200);
+}
+const liveFor = async (h, f, w, accountId, id) => (await entriesOf(h, f, w, accountId)).filter((t) => t.links.groupExpenseId === id && !t.reversedBy && !t.links.reverses).length;
+// Increment 1's per-record link, planted as it stored it: Bob's pizza on his own wallet.
+async function plantRecordLink(h, f, expenseId, walletId) {
+  const name = `workspaces/${f.ws.id}/workspace.json`;
+  const { value: doc } = await h.storage.getJson(name);
+  const { newEntry } = require('../_shared/entries');
+  const at = '2026-09-13T10:00:00.000Z';
+  const rec = doc.groupExpenses.find((x) => x.id === expenseId);
+  rec.ledgerLinks = [{ subject: 'google:g-bob', accountId: walletId, linkedAt: at, endedAt: null }];
+  // Bob paid 40.00 and shares 20.00: expense −20.00, advance −20.00.
+  doc.transactions.push(
+    newEntry({ accountId: walletId, currency: 'EUR', kind: 'expense', amountMinor: -2000, date: rec.date, links: { groupExpenseId: expenseId }, by: 'google:g-bob', at }),
+    newEntry({ accountId: walletId, currency: 'EUR', kind: 'advance', amountMinor: -2000, date: rec.date, links: { groupExpenseId: expenseId }, by: 'google:g-bob', at }),
+  );
+  await h.storage.putJson(name, doc);
+}
+async function bobEditsPizza(h, f, id) {
+  const e = (await view(h, f, 'bob')).expenses.find((x) => x.id === id);
+  ok(await G(h, f, 'bob', 'PATCH', { body: { expenseId: id, revision: e.revision, description: 'Fictional pizza night', reason: 'Typo' } }));
+}
+
+describe('S1: restores never take a personal ledger link from an archive', () => {
+  test('replace: a link for the currency that was stopped after the backup stays stopped', async () => {
+    const h = harness();
+    const f = await fixture(h);
+    const wallet = await account(h, f, 'bob', { name: 'Bob Wallet', type: 'cash', currency: 'EUR', openingBalance: '100.00' });
+    const e = await addExpense(h, f, 'bob', { description: 'Fictional pizza', amount: '40.00', payers: [{ ref: f.refs.bob }], split: equal(f.refs.bob, f.refs.alice), ledger: { accountId: wallet.id } });
+    assert.equal(await balanceOf(h, f, 'bob', wallet.id), '60.00');
+    const b0 = await backupNow(h, f);
+    ok(await act(h, f, 'bob', 'ledger', { currency: 'EUR', accountId: null }));
+    // Something for the replace to roll back.
+    await addExpense(h, f, 'alice', { description: 'After the backup', amount: '10.00', payers: [{ ref: f.refs.alice }], split: equal(f.refs.alice, f.refs.dana) });
+    assert.equal(await balanceOf(h, f, 'bob', wallet.id), '100.00');
+    await restoreAs(h, f, b0, 'replace');
+    const v = await view(h, f, 'bob');
+    assert.equal(v.myLedgers, undefined);
+    assert.equal(v.expenses.find((x) => x.id === e.id).myLedger, undefined);
+    await bobEditsPizza(h, f, e.id);
+    assert.equal(await balanceOf(h, f, 'bob', wallet.id), '100.00');
+    assert.equal(await liveFor(h, f, 'bob', wallet.id, e.id), 0);
+  });
+
+  test('replace: a per-record link that was stopped after the backup is not brought back with the archived record', async () => {
+    const h = harness();
+    const f = await fixture(h);
+    const wallet = await account(h, f, 'bob', { name: 'Bob Wallet', type: 'cash', currency: 'EUR', openingBalance: '100.00' });
+    const e = await addExpense(h, f, 'bob', { description: 'Fictional pizza', amount: '40.00', payers: [{ ref: f.refs.bob }], split: equal(f.refs.bob, f.refs.alice) });
+    await plantRecordLink(h, f, e.id, wallet.id);
+    assert.equal(await balanceOf(h, f, 'bob', wallet.id), '60.00');
+    const b0 = await backupNow(h, f);
+    ok(await act(h, f, 'bob', 'ledger', { expenseId: e.id, accountId: null }));
+    assert.equal(await balanceOf(h, f, 'bob', wallet.id), '100.00');
+    // Something for the replace to roll back; the pizza itself must keep the link it has now (ended).
+    await addExpense(h, f, 'alice', { description: 'After the backup', amount: '10.00', payers: [{ ref: f.refs.alice }], split: equal(f.refs.alice, f.refs.dana) });
+    await restoreAs(h, f, b0, 'replace');
+    assert.equal((await view(h, f, 'bob')).expenses.find((x) => x.id === e.id).myLedger, undefined, 'still stopped');
+    // Bob's own edit writes nothing to his private wallet: 100.00, no live entries.
+    await bobEditsPizza(h, f, e.id);
+    assert.equal(await balanceOf(h, f, 'bob', wallet.id), '100.00');
+    assert.equal(await liveFor(h, f, 'bob', wallet.id, e.id), 0);
+  });
+
+  test('replace then merge: an expense brought back whole comes back without anyone\'s link', async () => {
+    const h = harness();
+    const f = await fixture(h);
+    const wallet = await account(h, f, 'bob', { name: 'Bob Wallet', type: 'cash', currency: 'EUR', openingBalance: '100.00' });
+    const early = await backupNow(h, f);
+    const e = await addExpense(h, f, 'bob', { description: 'Fictional pizza', amount: '40.00', payers: [{ ref: f.refs.bob }], split: equal(f.refs.bob, f.refs.alice) });
+    await plantRecordLink(h, f, e.id, wallet.id);
+    const b0 = await backupNow(h, f);
+    ok(await act(h, f, 'bob', 'ledger', { expenseId: e.id, accountId: null }));
+    await restoreAs(h, f, early, 'replace');
+    assert.deepEqual((await view(h, f)).expenses, [], 'set aside');
+    await restoreAs(h, f, b0, 'merge');
+    assert.deepEqual((await view(h, f)).expenses.map((x) => x.id), [e.id], 'back');
+    assert.equal((await view(h, f, 'bob')).expenses[0].myLedger, undefined, 'no link came back');
+    await bobEditsPizza(h, f, e.id);
+    assert.equal(await balanceOf(h, f, 'bob', wallet.id), '100.00');
+    assert.equal(await liveFor(h, f, 'bob', wallet.id, e.id), 0);
+  });
+});
+
+describe('S4: create-new carries no other member\'s identifiers', () => {
+  test('no other member\'s subject, member id or account id anywhere in the new document; the restorer\'s own link still works', async () => {
+    const h = harness();
+    const f = await fixture(h);
+    const wallet = await account(h, f, 'bob', { name: 'Bob Wallet', type: 'cash', currency: 'EUR', openingBalance: '100.00' });
+    const cash = await account(h, f, 'alice', { name: 'Alice Cash', type: 'cash', currency: 'EUR', openingBalance: '500.00' });
+    // Bob adds and records a hostel paid by him for Alice and Dana; Alice corrects the payer to herself.
+    const e = await addExpense(h, f, 'bob', { description: 'Fictional hostel', amount: '30.00', payers: [{ ref: f.refs.bob }], split: equal(f.refs.alice, f.refs.dana), ledger: { accountId: wallet.id } });
+    ok(await G(h, f, 'alice', 'PATCH', { body: { expenseId: e.id, revision: e.revision, reason: 'Alice paid', payers: [{ ref: f.refs.alice }] } }));
+    ok(await act(h, f, 'alice', 'ledger', { currency: 'EUR', accountId: cash.id }));
+    const b0 = await backupNow(h, f);
+    const res = await restoreAs(h, f, b0, 'create-new');
+    const { value: doc } = await h.storage.getJson(`workspaces/${res.workspace.id}/workspace.json`);
+    const text = JSON.stringify(doc);
+    for (const [label, secret] of [['Bob\'s subject', 'google:g-bob'], ['Bob\'s member id', f.mid('Bob')], ['Bob\'s wallet', wallet.id], ['Frank\'s subject', 'google:g-frank'], ['Carol\'s subject', 'google:g-carol'], ['Eve\'s subject', 'google:g-eve']]) {
+      assert.equal(text.includes(secret), false, label);
+    }
+    // Who added it shows as a former member; Alice's own part is still recorded on her own account:
+    // paid 30.00, share 15.00 → cash 470.00, spending 15.00, lent 15.00.
+    const q = { workspaceId: res.workspace.id };
+    const nv = ok(await h.call('group', 'GET', { as: 'alice', query: q }));
+    assert.equal(nv.expenses[0].createdBy, 'Former member');
+    const hist = ok(await h.call('group', 'GET', { as: 'alice', query: { ...q, action: 'history', expenseId: e.id } }));
+    assert.equal(hist.createdBy, 'Former member');
+    assert.deepEqual(nv.myLedgers.map((l) => [l.accountId, l.reviewCount]), [[cash.id, 0]]);
+    assert.equal(nv.expenses[0].myLedger.needsReview, false);
+    const s = ok(await h.call('transactions', 'GET', { as: 'alice', query: { ...q, accountId: cash.id } })).summary[0];
+    assert.deepEqual([s.gross, s.advances, s.receivable], ['15.00', '15.00', '15.00']);
+  });
+});
