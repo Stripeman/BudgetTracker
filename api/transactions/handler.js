@@ -158,9 +158,19 @@ async function list(ctx, req) {
   // A removed account is out of every list and total (never erased, and its entries stay readable), so
   // what was recorded there is not counted twice once it is recorded on another account (F2).
   const removed = new Set((doc.accounts || []).filter((a) => a.deletedAt).map((a) => a.id));
+  // The viewer's own entries from Shared expenses on an account they can no longer change (for example
+  // after being made a viewer) are left there, never deleted, and their part is recorded again on an
+  // account of theirs: like entries on a removed account, they count in none of the viewer's totals
+  // (financial recheck of 53cf181, N-2).
+  const accountById = new Map((doc.accounts || []).map((a) => [a.id, a]));
+  const leftBehind = (t) => {
+    if (t.createdBy !== ctx.principal.subject || !t.links || !(t.links.groupExpenseId || t.links.groupSettlementId) || t.reversedBy || t.links.reverses) return false;
+    const a = accountById.get(t.accountId);
+    return !a || !can(doc, ctx.principal, a, 'create', now) || !canChangeRecord(doc, ctx.principal, a, t, 'edit', now);
+  };
   for (const t of txns) {
     const bucket = ledger.classify(t.kind);
-    if (t.deletedAt || bucket === 'transfer' || removed.has(t.accountId)) continue;
+    if (t.deletedAt || bucket === 'transfer' || removed.has(t.accountId) || leftBehind(t)) continue;
     let amount = t.amountMinor;
     if (f.categoryId && (t.splits || []).length) amount = money.sum(t.splits.filter((s) => s.categoryId === f.categoryId).map((s) => s.amountMinor));
     const s = summary[t.currency] || (summary[t.currency] = { gross: 0, refunds: 0, income: 0, adjustments: 0, advances: 0, reimbursements: 0, payables: 0, repayments: 0, receivable: 0, count: 0 });

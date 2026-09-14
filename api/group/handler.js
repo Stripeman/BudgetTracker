@@ -418,7 +418,8 @@ function myLedger(ctx, doc, member, rec, type, entriesFor = entryIndex(doc, memb
   // Financial recheck F2: entries on an account that is no longer the person's usable private account
   // need review, with the reason; once their part is on a current account, entries that cannot be
   // reversed where they are (the account is gone or out of reach) are shown as left on a former account.
-  const former = elsewhere.map((t) => ({ t, reason: formerReason(ctx, doc, member, t.accountId) })).filter((x) => x.reason);
+  // An account the person still sees but can no longer change is "read-only" (financial recheck N-2).
+  const former = elsewhere.map((t) => { const r = formerReason(ctx, doc, member, t.accountId); return { t, reason: r === 'shared' && unreachable(ctx, doc, rec, t) ? 'read-only' : r }; }).filter((x) => x.reason);
   const movable = elsewhere.filter((t) => !unreachable(ctx, doc, rec, t));
   const needsReview = targetId ? movable.length > 0 || !sameEntries(onTarget, desired) : former.length > 0;
   const first = former[0] || null;
@@ -435,7 +436,8 @@ function myLedger(ctx, doc, member, rec, type, entriesFor = entryIndex(doc, memb
 // The plain explanation that goes with a former account (F2).
 function formerNote(reason, name, { left, hasAccount }) {
   const where = reason === 'deleted' ? 'an account that no longer exists' : reason === 'unavailable' ? 'an account you can no longer see'
-    : reason === 'closed' ? `${name || 'an account'}, which is closed` : `${name || 'an account'}, which is now shared`;
+    : reason === 'closed' ? `${name || 'an account'}, which is closed` : reason === 'read-only' ? `${name || 'an account'}, which you can no longer change`
+      : `${name || 'an account'}, which is now shared`;
   if (left) return `Your part was recorded on ${where}. Those entries are left on a former account as they were, and your whole part is recorded on your current account.`;
   if (reason === 'closed') return `Your part was recorded on ${where}. Reopen it on the Accounts page so it can be updated.`;
   return `Your part was recorded on ${where}. ${hasAccount ? 'Update your account to record it on your own account instead.' : 'Choose a private account of yours to record it there.'}`;

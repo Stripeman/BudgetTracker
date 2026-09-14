@@ -87,6 +87,57 @@ describe('N-3: "Keep who owes whom" counts a reported payment only up to what is
   });
 });
 
+const account = async (h, f, w, body) => ok(await h.call('accounts', 'POST', { ...who(w), query: f.q, body: { type: 'cash', currency: 'EUR', ...body } }), 201).account;
+const accountNow = async (h, f, w, id) => ok(await h.call('accounts', 'GET', { ...who(w), query: f.q })).accounts.find((a) => a.id === id);
+const summary = async (h, f, w, accountId) => {
+  const s = ok(await h.call('transactions', 'GET', { ...who(w), query: { ...f.q, ...(accountId ? { accountId } : {}) } })).summary.find((x) => x.currency === 'EUR');
+  return s ? { spending: s.gross, outstanding: s.receivable } : { spending: '0.00', outstanding: '0.00' };
+};
+const netOf = async (h, f, name) => (await view(h, f)).balances.find((b) => b.currency === 'EUR').rows.find((r) => r.name === name).net;
+
+describe('N-2: entries the person can no longer change but still sees are left and kept out of their totals', () => {
+  test('Bob, made a viewer on his former purse, brings his part up to date on his Tin: his 30.00 share counts once', async () => {
+    const h = harness();
+    const f = await fixture(h);
+    const { alice, bob, carol } = f.refs;
+    // Bob records on his purse (100.00). 90.00 paid by Alice, shared by Alice, Bob and Carol: Bob's share
+    // 30.00 is spending, owed 30.00, no money moved.
+    const purse = await account(h, f, 'bob', { name: 'Bob Purse', openingBalance: '100.00' });
+    ok(await act(h, f, 'bob', 'ledger', { currency: 'EUR', accountId: purse.id }));
+    await addExpense(h, f, 'alice', { description: 'Fictional dinner', amount: '90.00', payers: [{ ref: alice }], split: equal(alice, bob, carol) });
+    ok(await act(h, f, 'bob', 'ledger', { currency: 'EUR' }));
+    // He shares the purse; Alice closes it; Bob chooses his Tin (50.00) while it is closed, so nothing moves.
+    ok(await h.call('accounts', 'PATCH', { as: 'bob', query: f.q, body: { accountId: purse.id, revision: (await accountNow(h, f, 'bob', purse.id)).revision, visibility: 'shared', confirmShare: true } }));
+    ok(await h.call('accounts', 'POST', { as: 'alice', query: { ...f.q, action: 'close' }, body: { accountId: purse.id, revision: (await accountNow(h, f, 'alice', purse.id)).revision, reason: 'Closing' } }));
+    const tin = await account(h, f, 'bob', { name: 'Bob Tin', openingBalance: '50.00' });
+    ok(await act(h, f, 'bob', 'ledger', { currency: 'EUR', accountId: tin.id }));
+    // Alice makes Bob a viewer and reopens the purse: Bob still sees it but can no longer change it.
+    ok(await h.call('members', 'PATCH', { as: 'alice', query: f.q, body: { memberId: f.mid('Bob'), role: 'viewer' } }));
+    ok(await h.call('accounts', 'POST', { as: 'alice', query: { ...f.q, action: 'reopen' }, body: { accountId: purse.id, revision: (await accountNow(h, f, 'alice', purse.id)).revision } }));
+    ok(await act(h, f, 'bob', 'ledger', { currency: 'EUR' }));
+    // His part is now on the Tin (share 30.00, owed 30.00); the purse keeps its two entries, left there.
+    // Counted once: spending 30.00; outstanding −30.00, his group balance.
+    assert.deepEqual(await summary(h, f, 'bob'), { spending: '30.00', outstanding: '-30.00' });
+    assert.equal(await netOf(h, f, 'Bob Fictional'), '-30.00');
+    const mine = (await view(h, f, 'bob')).expenses[0].myLedger;
+    assert.deepEqual([mine.needsReview, mine.formerAccount.reason, mine.formerAccount.left], [false, 'read-only', true]);
+    assert.equal((await h.storage.getJson(`workspaces/${f.ws.id}/workspace.json`)).value.transactions.filter((t) => t.accountId === purse.id && !t.reversedBy && !t.links.reverses).length, 2, 'kept, never deleted');
+  });
+
+  test('entries the person can still change keep counting, even on an account that is now shared: Bob\'s 30.00 share on his shared wallet', async () => {
+    const h = harness();
+    const f = await fixture(h);
+    const { alice, bob, carol } = f.refs;
+    const wallet = await account(h, f, 'bob', { name: 'Bob Wallet', openingBalance: '100.00' });
+    ok(await act(h, f, 'bob', 'ledger', { currency: 'EUR', accountId: wallet.id }));
+    await addExpense(h, f, 'alice', { description: 'Fictional dinner', amount: '90.00', payers: [{ ref: alice }], split: equal(alice, bob, carol) });
+    ok(await act(h, f, 'bob', 'ledger', { currency: 'EUR' }));
+    ok(await h.call('accounts', 'PATCH', { as: 'bob', query: f.q, body: { accountId: wallet.id, revision: (await accountNow(h, f, 'bob', wallet.id)).revision, visibility: 'shared', confirmShare: true } }));
+    // Bob is still a member who may change his own entries there: his 30.00 share is still his spending.
+    assert.equal((await summary(h, f, 'bob')).spending, '30.00');
+  });
+});
+
 describe('Personal defaults on the server: a request without payer or split takes the caller\'s own defaults, else the group\'s', () => {
   const prefs = (h, w, body) => h.call('preferences', 'PUT', { ...who(w), body });
   const amounts = (e) => [e.payers.map((p) => [p.ref, p.amount]), e.shares.map((s) => [s.ref, s.amount])];
