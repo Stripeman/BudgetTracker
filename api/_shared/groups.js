@@ -447,6 +447,43 @@ function invariantProblem(doc) {
     if (!refOk(s.from) || !refOk(s.to) || s.from === s.to) return 'group settlement people';
     if (!SETTLEMENT_STATES.includes(s.status)) return 'group settlement state';
   }
+  // Personal ledger links and the entries they make (security review S8). Documents without them —
+  // older archives — pass unchanged.
+  const subjects = new Set((doc.members || []).map((m) => m.subject));
+  const accountsById = new Map((doc.accounts || []).map((a) => [a.id, a]));
+  const activeLinks = new Set();
+  for (const l of doc.groupLedgers || []) {
+    if (!l || typeof l.id !== 'string' || !subjects.has(l.subject) || !money.isCurrency(l.currency)) return 'group ledger link';
+    const a = accountsById.get(l.accountId);
+    if (!a || a.currency !== l.currency) return 'group ledger link';
+    if (!l.endedAt) {
+      const k = `${l.subject}|${l.currency}`;
+      if (activeLinks.has(k)) return 'group ledger link';
+      activeLinks.add(k);
+    }
+  }
+  for (const r of [...(doc.groupExpenses || []), ...(doc.groupSettlements || [])]) {
+    if (r.ledgerLinks === undefined) continue;
+    if (!Array.isArray(r.ledgerLinks)) return 'group ledger link';
+    const active = new Set();
+    for (const l of r.ledgerLinks) {
+      if (!l || !subjects.has(l.subject) || !accountsById.has(l.accountId)) return 'group ledger link';
+      if (!l.endedAt) {
+        if (active.has(l.subject)) return 'group ledger link';
+        active.add(l.subject);
+      }
+    }
+  }
+  // An entry recorded from a shared expense or payment names a record that exists — in the lists, or
+  // set aside whole by a replace restore (nothing is ever deleted).
+  const setAside = (collection) => (doc.superseded || []).filter((s) => s && s.collection === collection && s.record).map((s) => s.record.id);
+  const expenseIds = new Set([...(doc.groupExpenses || []).map((e) => e.id), ...setAside('groupExpenses')]);
+  const settlementIds = new Set([...(doc.groupSettlements || []).map((s) => s.id), ...setAside('groupSettlements')]);
+  for (const t of doc.transactions || []) {
+    const l = t.links || {};
+    if (l.groupExpenseId !== undefined && l.groupExpenseId !== null && !expenseIds.has(l.groupExpenseId)) return 'transaction group link';
+    if (l.groupSettlementId !== undefined && l.groupSettlementId !== null && !settlementIds.has(l.groupSettlementId)) return 'transaction group link';
+  }
   return null;
 }
 

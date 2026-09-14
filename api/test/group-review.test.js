@@ -632,3 +632,58 @@ describe('S4: create-new carries no other member\'s identifiers', () => {
     assert.deepEqual([s.gross, s.advances, s.receivable], ['15.00', '15.00', '15.00']);
   });
 });
+
+describe('S8: the integrity check covers personal ledger links and the entries they make', () => {
+  // Bob records his part on his wallet; the stored document is then tampered with and backed up.
+  async function linked() {
+    const h = harness();
+    const f = await fixture(h);
+    const wallet = await account(h, f, 'bob', { name: 'Bob Wallet', type: 'cash', currency: 'EUR', openingBalance: '100.00' });
+    const e = await addExpense(h, f, 'bob', { description: 'Fictional pizza', amount: '40.00', payers: [{ ref: f.refs.bob }], split: equal(f.refs.bob, f.refs.alice), ledger: { accountId: wallet.id } });
+    return { h, f, wallet, e };
+  }
+  const tamperAndBackUp = async ({ h, f }, change) => {
+    const name = `workspaces/${f.ws.id}/workspace.json`;
+    const { value } = await h.storage.getJson(name);
+    change(value);
+    await h.storage.putJson(name, value);
+    return h.call('backups', 'POST', { as: 'alice', query: f.q, body: {} });
+  };
+
+  test('an untouched workspace with links backs up', async () => {
+    const x = await linked();
+    ok(await tamperAndBackUp(x, () => {}), 201);
+  });
+
+  test('links to unknown people or accounts, links in another currency, two active links and entries for unknown records are refused', async () => {
+    for (const [label, rule, change] of [
+      ['unknown person', 'group ledger link', (d) => { d.groupLedgers[0].subject = 'google:g-nobody'; }],
+      ['unknown account', 'group ledger link', (d) => { d.groupLedgers[0].accountId = 'acc_nosuch00000'; }],
+      ['other currency', 'group ledger link', (d) => { d.groupLedgers[0].currency = 'USD'; }],
+      ['two active for one currency', 'group ledger link', (d) => { d.groupLedgers.push({ ...d.groupLedgers[0], id: 'gld_second00000' }); }],
+      ['two active on one record', 'group ledger link', (d) => { const s = d.groupLedgers[0]; d.groupExpenses[0].ledgerLinks = [{ subject: s.subject, accountId: s.accountId, linkedAt: s.linkedAt, endedAt: null }, { subject: s.subject, accountId: s.accountId, linkedAt: s.linkedAt, endedAt: null }]; }],
+      ['record link to unknown person', 'group ledger link', (d) => { d.groupExpenses[0].ledgerLinks = [{ subject: 'google:g-nobody', accountId: d.groupLedgers[0].accountId, linkedAt: d.groupLedgers[0].linkedAt, endedAt: null }]; }],
+      ['entry for an unknown expense', 'transaction group link', (d) => { d.transactions.find((t) => t.links && t.links.groupExpenseId).links.groupExpenseId = 'gex_nosuch00000'; }],
+      ['entry for an unknown payment', 'transaction group link', (d) => { d.transactions.find((t) => t.links && t.links.groupExpenseId).links = { groupSettlementId: 'gst_nosuch00000' }; }],
+    ]) {
+      const res = await tamperAndBackUp(await linked(), change);
+      assert.equal(res.status, 422, label);
+      assert.equal(res.body.error.code, 'backup_invalid', label);
+      assert.match(res.body.error.message, new RegExp(rule), label);
+    }
+  });
+
+  test('entries of an expense that a replace set aside still point at a record that exists', async () => {
+    const h = harness();
+    const f = await fixture(h);
+    const wallet = await account(h, f, 'bob', { name: 'Bob Wallet', type: 'cash', currency: 'EUR', openingBalance: '100.00' });
+    const early = await backupNow(h, f);
+    const e = await addExpense(h, f, 'bob', { description: 'Fictional pizza', amount: '40.00', payers: [{ ref: f.refs.bob }], split: equal(f.refs.bob, f.refs.alice), ledger: { accountId: wallet.id } });
+    ok(await act(h, f, 'bob', 'ledger', { currency: 'EUR', accountId: null }));
+    await restoreAs(h, f, early, 'replace');
+    const { value: doc } = await h.storage.getJson(`workspaces/${f.ws.id}/workspace.json`);
+    assert.deepEqual(doc.superseded.map((s) => s.record.id), [e.id]);
+    assert.ok(doc.transactions.some((t) => t.links && t.links.groupExpenseId === e.id), 'Bob\'s reversed entries still name it');
+    await backupNow(h, f);
+  });
+});
