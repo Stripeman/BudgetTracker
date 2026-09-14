@@ -334,7 +334,12 @@ export function openQuickEntry(ctx, { transaction } = {}) {
   const account = pickerSelect(accounts.map((a) => ({ value: a.id, label: `${a.name} (${a.currency})` })), editing ? transaction.accountId : (accounts[0] || {}).id, { disabled: editing }, { badgeOf: accountMarks });
   const category = pickerSelect([{ value: "", label: "Uncategorized" }].concat(categories.map((c) => ({ value: c.id, label: c.archived ? `${c.name} (archived)` : c.name }))), editing ? transaction.categoryId || "" : "", { disabled: isTransfer }, { badgeOf: categoryBadges(state) });
   const date = input({ type: "date", value: editing ? transaction.date : todayIso() });
-  const kind = pickerSelect(Object.entries(KIND_LABELS).map(([value, label]) => ({ value, label })), editing ? transaction.kind : "expense", { disabled: isTransfer }, { search: false });
+  // An explicit list of the kinds a person may choose, never every label: kinds only Shared expenses
+  // make (owed to others, repayment made) are not offered (financial recheck N1). An entry that already
+  // has another kind keeps showing it.
+  const manualKinds = ["expense", "income", "transfer", "refund", "fee", "reimbursement", "advance", "adjustment", "interest"];
+  const kindValues = editing && !manualKinds.includes(transaction.kind) ? [...manualKinds, transaction.kind] : manualKinds;
+  const kind = pickerSelect(kindValues.map((value) => ({ value, label: KIND_LABELS[value] || value })), editing ? transaction.kind : "expense", { disabled: isTransfer }, { search: false });
   const toAccount = pickerSelect(accounts.map((a) => ({ value: a.id, label: `${a.name} (${a.currency})` })), "", {}, { badgeOf: accountMarks });
   const toAmount = input({ inputmode: "decimal", placeholder: "Amount received" });
   const rate = input({ inputmode: "decimal", placeholder: "Exchange rate" });

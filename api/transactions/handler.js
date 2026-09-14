@@ -196,11 +196,22 @@ async function list(ctx, req) {
   };
 }
 
+// `payable` (a share someone else paid, no money moved) and `repayment` are made only by the
+// shared-expense route for the person recording their own part of a group (BT-009). By hand they would
+// create money that never arrived — a payable of 100.00 raises a balance by 100.00 — or turn money
+// spent into money received, so they are refused here, and no entry may be changed to or from them
+// (financial recheck N1). `advance` and `reimbursement` stay manual: people lend money outside groups.
+const SERVER_ONLY_KINDS = new Set(['payable', 'repayment']);
+function refuseServerOnlyKind(kind) {
+  if (SERVER_ONLY_KINDS.has(kind)) throw badRequest('Money owed for a shared expense and repayments of it are recorded from Shared expenses, not added here.', 'server_only_kind');
+}
+
 async function create(ctx, req) {
   const wsId = requireId(query(req, 'workspaceId'), 'workspaceId');
   const body = fields.onlyKeys(readBody(req), CREATE_KEYS);
   const user = await readUser(ctx);
   const kind = fields.oneOf(body.kind, ledger.TX_KINDS, 'Kind', 'expense');
+  refuseServerOnlyKind(kind);
   const accountId = requireId(body.accountId, 'accountId');
   const { result } = await store.mutateWorkspace(ctx, wsId, (doc, member) => {
     const now = ctx.now();
@@ -336,6 +347,9 @@ async function patch(ctx, req) {
       for (const k of ['date', 'postedDate']) if (body[k] !== undefined) { t[k] = fields.date(body[k], k, { required: k === 'date' }); pair[k] = t[k]; changed.push(k); }
     } else {
       const kind = body.kind !== undefined ? fields.oneOf(body.kind, ledger.TX_KINDS.filter((k) => k !== 'transfer'), 'Kind') : t.kind;
+      // No entry becomes, or stops being, a kind only Shared expenses make, and such an entry's amount
+      // is not changed by hand (financial recheck N1).
+      if (body.kind !== undefined || body.amount !== undefined) { refuseServerOnlyKind(kind); refuseServerOnlyKind(t.kind); }
       if (body.amount !== undefined || body.kind !== undefined) {
         const amountText = body.amount !== undefined ? body.amount : money.toDecimal(kind === 'adjustment' ? t.amountMinor : Math.abs(t.amountMinor), t.currency);
         t.amountMinor = ledger.signedAmount(kind, amountText, t.currency);
