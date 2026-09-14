@@ -115,6 +115,19 @@ export function createStore({ api }) {
     // The last forecast parameters are kept, so a refresh after a write keeps the chosen horizon.
     refreshForecast: (params) => { if (params) lastForecast = params; return loadSlice("forecast", (id) => api.forecast(id, lastForecast)); },
 
+    // Re-reads the workspace list (names, roles and each workspace's setting values) after a change such
+    // as a workspace setting, without resetting the selected workspace's data.
+    async refreshWorkspaces() {
+      try {
+        const list = await api.workspaces();
+        commit({ workspaces: list.workspaces });
+        return { ok: true };
+      } catch (err) {
+        handleAuthLoss(err);
+        return { ok: false, error: err };
+      }
+    },
+
     async createWorkspace(body, key) {
       const out = await api.createWorkspace(body, key);
       const list = await api.workspaces();

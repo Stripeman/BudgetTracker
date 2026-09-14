@@ -17,6 +17,7 @@ import { createWorkspacePicker } from "./workspacepicker.js";
 import { createStagingMenuEntry, openPersonalStagingEditor } from "./staginglink.js";
 import { AUTH } from "../core/api.js";
 import { ROUTES, navRoutes } from "../core/router.js";
+import { sharedExpensesOn } from "../core/workspacesettings.js";
 import { Status } from "../core/store.js";
 
 import * as dashboard from "./views/dashboard.js";
@@ -33,6 +34,26 @@ import { renderLanding, createOnboarding, openNewWorkspace } from "./views/landi
 import { messageFor } from "../core/errors.js";
 
 const VIEWS = { dashboard, group, transactions, bills, planning, accounts, payees, settings, workspace, join };
+
+// Shared expenses turned off (workspace settings, Terry 2026-09-14): the page says so and loads nothing;
+// the server refuses /api/group as well. Nothing recorded is removed. The message follows the current
+// reason (the site's switch or the workspace's setting) on every update.
+const SHARED_EXPENSES_OFF = {
+  createView(ctx) {
+    const notice = el("p", { class: "notice" });
+    const view = {
+      element: el("section", {}, [el("div", { class: "page-head" }, [el("h1", { text: "Shared expenses" })]), notice]),
+      update(state) {
+        const site = state && state.site;
+        notice.textContent = site && site.modules && site.modules.sharedExpenses === false
+          ? "Shared expenses are turned off for this site by the site administrator. Nothing recorded has been removed."
+          : "Shared expenses are turned off in this workspace. Nothing recorded has been removed; an owner or manager can turn them on again in Workspace settings.";
+      },
+    };
+    view.update(ctx.state);
+    return view;
+  },
+};
 
 export function createShell({ mountPoint, store, router, theme, api }) {
   const header = el("header", { class: "app__header" });
@@ -170,10 +191,10 @@ export function createShell({ mountPoint, store, router, theme, api }) {
     if (pickerHadFocus && !wsPicker.hasFocus()) wsPicker.restoreFocus();
   }
 
-  // Sections depend on the workspace kind (Shared expenses: groups, trips and households, BT-009).
+  // Sections depend on the workspace: Shared expenses only while it is on (its setting, bounded by the site).
   function renderNav(route, state) {
     const ws = state.workspaces.find((w) => w.id === state.selectedWorkspaceId);
-    mount(nav, ...navRoutes(ws && ws.kind).map((r) => el("a", { href: `#${r.path}`, "aria-current": r.id === route.id ? "page" : null, text: r.label })));
+    mount(nav, ...navRoutes(ws || null, state.site).map((r) => el("a", { href: `#${r.path}`, "aria-current": r.id === route.id ? "page" : null, text: r.label })));
   }
 
   function renderFooter(state) {
@@ -186,11 +207,13 @@ export function createShell({ mountPoint, store, router, theme, api }) {
   }
 
   function renderView(state, route) {
-    const key = `${route.id}|${state.selectedWorkspaceId}|${JSON.stringify(route.params)}`;
+    const ws = state.workspaces.find((w) => w.id === state.selectedWorkspaceId);
+    const groupOff = route.id === "group" && !sharedExpensesOn(ws || null, state.site);
+    const key = `${route.id}|${state.selectedWorkspaceId}|${JSON.stringify(route.params)}|${groupOff ? "off" : "on"}`;
     if (key !== viewKey) {
       if (view && view.destroy) view.destroy();
       viewKey = key;
-      const mod = VIEWS[route.id] || dashboard;
+      const mod = groupOff ? SHARED_EXPENSES_OFF : VIEWS[route.id] || dashboard;
       view = mod.createView({ ...ctx(), params: route.params });
       mount(main, view.element);
       // On in-app navigation focus moves to the new view's heading so a screen reader announces

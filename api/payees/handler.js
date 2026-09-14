@@ -71,8 +71,11 @@ function currency(value) {
   return value;
 }
 
-function mayEdit(p, member) {
-  return p.ownerSubject === member.subject || (p.visibility === 'shared' && roleAtLeast(member.role, 'manager'));
+const workspaceSettings = require('../_shared/workspace-settings');
+// Its creator, or for a shared merchant whoever manages the workspace's shared lists (workspace
+// setting, Terry 2026-09-14). A viewer's own shared merchant does not exist: viewers cannot add them.
+function mayEdit(doc, p, member) {
+  return p.ownerSubject === member.subject || (p.visibility === 'shared' && workspaceSettings.managesSharedLists(doc, member));
 }
 
 // A merchant visible only because it appears on an entry the viewer can see shows its NAME only —
@@ -96,7 +99,7 @@ function view(doc, p, principal, member, stats, now) {
     defaultAccountId: acct && can(doc, principal, acct, 'view-transactions', now) ? acct.id : null,
     defaultCurrency: p.defaultCurrency || null, tags: p.tags || [], revision: p.revision || 1,
     ...icons.effective('merchant', p, doc),
-    canEdit: !!member && mayEdit(p, member),
+    canEdit: !!member && mayEdit(doc, p, member),
     // Others see a once-private merchant's history only from when it was shared, and without the
     // values it had before (security review SEC-B11).
     history: (p.history || []).filter((h) => p.ownerSubject === principal.subject || !p.sharedAt || h.at >= p.sharedAt).slice(-20).map((h) => ({
@@ -279,7 +282,7 @@ async function patch(ctx, req) {
     const now = ctx.now();
     const nowIso = ctx.nowIso();
     const p = locate(doc, ctx.principal, id, now);
-    if (!mayEdit(p, member)) throw forbidden('You cannot edit this merchant.');
+    if (!mayEdit(doc, p, member)) throw forbidden('You cannot edit this merchant.');
     checkRevision(p, body.revision);
     const reason = fields.text(body.reason, { field: 'Reason', max: 200 });
     const { set, changes } = recorder(p);
@@ -329,7 +332,7 @@ function lifecycle(action) {
       const now = ctx.now();
       const nowIso = ctx.nowIso();
       const p = locate(doc, ctx.principal, id, now);
-      if (!mayEdit(p, member)) throw forbidden('You cannot close or reopen this merchant.');
+      if (!mayEdit(doc, p, member)) throw forbidden('You cannot close or reopen this merchant.');
       checkRevision(p, body.revision);
       const reason = fields.text(body.reason, { field: 'Reason', max: 200 });
       const { set, changes } = recorder(p);

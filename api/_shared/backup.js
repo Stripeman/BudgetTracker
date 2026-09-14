@@ -81,6 +81,9 @@ function checkInvariants(doc) {
   // The group settings object (Terry, 2026-09-14): its shape, and valid values for known keys.
   const settingsProblem = require('./group-settings').problem(doc);
   if (settingsProblem) throw invalidData(settingsProblem);
+  // The workspace settings (Terry, 2026-09-14): an object, and valid (or earlier accepted) values.
+  const workspaceSettingsProblem = require('./workspace-settings').problem(doc);
+  if (workspaceSettingsProblem) throw invalidData(workspaceSettingsProblem);
   // A reversal matches the entry it reverses: same account and kind, exactly the opposite amount.
   const txById = new Map((doc.transactions || []).map((t) => [t.id, t]));
   for (const t of doc.transactions || []) {
