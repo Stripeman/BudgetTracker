@@ -241,10 +241,15 @@ function view(doc, member, site) {
 function problem(doc) {
   if (doc.settings === undefined) return null;
   if (!isPlainObject(doc.settings)) return 'workspace settings';
+  // As tolerant as reads (security review of eefd115, L-1; the group settings' rule, 12bee63): a value
+  // this version does not know — left by a later version after a rollback, or an earlier "custom" budget
+  // period — reads as the default and must not stop backups or restores. Only broken structure is refused:
+  // one value where one value belongs, a list of values for a set. Unknown keys are not ours to judge.
+  const scalar = (v) => v === null || typeof v === 'boolean' || typeof v === 'string' || (typeof v === 'number' && Number.isFinite(v));
   for (const k of KEYS) {
     if (!own(doc.settings, k)) continue;
     const x = doc.settings[k];
-    if (!valid(k, x) && !(SETTINGS[k].legacy || []).includes(x)) return 'workspace settings';
+    if (SETTINGS[k].type === 'set' ? !(Array.isArray(x) && x.every(scalar)) : !scalar(x)) return 'workspace settings';
   }
   return null;
 }

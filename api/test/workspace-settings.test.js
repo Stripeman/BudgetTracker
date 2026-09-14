@@ -590,9 +590,15 @@ describe('Workspace settings: older documents, backups and restores', () => {
     assert.deepEqual(doc.history[doc.history.length - 1].changes, [{ field: 'settings.budgetPeriod', from: 'custom', to: 'monthly' }]);
   });
 
-  test('a backup refuses a document whose settings hold a value no version accepted', async () => {
+  // As tolerant as reads (security review of eefd115, L-1; the same rule as group settings, 12bee63): a
+  // single value this version does not know reads as the default and does not stop a backup; only broken
+  // structure is refused.
+  test('a backup tolerates a well-typed unknown value and refuses only broken structure', async () => {
     const { h, id } = await setup();
     await editDoc(h, id, (doc) => { doc.settings.weekStart = 'someday'; });
+    assert.equal((await h.call('backups', 'POST', { as: 'alice', query: { workspaceId: id }, body: {} })).status, 201);
+    assert.equal(valueOf(ok(await getWs(h, 'alice', id)).workspace, 'weekStart'), 1);
+    await editDoc(h, id, (doc) => { doc.settings.weekStart = { day: 'someday' }; });
     const res = await h.call('backups', 'POST', { as: 'alice', query: { workspaceId: id }, body: {} });
     assert.equal(res.status, 422);
     assert.match(res.body.error.message, /workspace settings/);

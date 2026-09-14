@@ -68,3 +68,46 @@ describe('M-1: a transfer bill into a private account is changed only by people 
     assert.equal(ok(await h.call('recurring', 'PATCH', { as: 'bob', query: f.q, body: { recurringId: bill.id, revision: seen.revision, name: 'Bob renamed it' } })).recurring.name, 'Bob renamed it');
   });
 });
+
+// ---- L-1: backups are as tolerant as reads (a later version's values after a rollback) ----------------
+async function editDoc(h, id, fn) {
+  const { value } = await h.storage.getJson(docPath(id));
+  fn(value);
+  await h.storage.putJson(docPath(id), value);
+}
+const valuesOf = async (h, id) => ok(await h.call('workspaces', 'GET', { as: 'alice', query: { id } })).workspace.settingValues;
+const backupStatus = async (h, id) => (await h.call('backups', 'POST', { as: 'alice', query: { workspaceId: id }, body: {} })).status;
+
+describe('L-1: a well-typed value this version does not know reads as its default and never stops a backup or a restore', () => {
+  test('unknown values of the right shape: read as the defaults; backup and a replace preview go ahead', async () => {
+    const h = harness();
+    const f = await household(h);
+    const id = f.ws.id;
+    await editDoc(h, id, (doc) => Object.assign(doc.settings, {
+      weekStart: 3, memberEditsOthers: 'everyone', billReminderDays: 999, sharedExpenses: 'maybe', memberRestoreModes: ['merge', 'teleport'],
+      futureSetting: { anything: 'left by a later version' },
+    }));
+    const v = await valuesOf(h, id);
+    assert.deepEqual([v.weekStart, v.memberEditsOthers, v.billReminderDays, v.sharedExpenses, v.memberRestoreModes], [1, 'own', 3, true, ['create-new', 'merge', 'restore-deleted', 'replace']]);
+    assert.equal(await backupStatus(h, id), 201);
+    h.clock.advance(60000);
+    const archiveId = ok(await h.call('backups', 'GET', { as: 'alice', query: f.q })).archives[0].archiveId;
+    assert.equal((await h.call('restore', 'POST', { as: 'alice', query: { action: 'preview' }, body: { workspaceId: id, archiveId, mode: 'replace' } })).status, 200);
+  });
+
+  test('broken structure is still refused: settings that are not an object, an object or list where one value belongs, a set that is not a list of values', async () => {
+    const cases = [
+      ['settings a list', (doc) => { doc.settings = ['not', 'an', 'object']; }],
+      ['weekStart an object', (doc) => { doc.settings.weekStart = { n: 1 }; }],
+      ['billReminderDays a list', (doc) => { doc.settings.billReminderDays = [3]; }],
+      ['memberRestoreModes a word', (doc) => { doc.settings.memberRestoreModes = 'merge'; }],
+      ['memberRestoreModes holding an object', (doc) => { doc.settings.memberRestoreModes = ['merge', { x: 1 }]; }],
+    ];
+    for (const [label, change] of cases) {
+      const h = harness();
+      const f = await household(h);
+      await editDoc(h, f.ws.id, change);
+      assert.equal(await backupStatus(h, f.ws.id), 422, label);
+    }
+  });
+});
