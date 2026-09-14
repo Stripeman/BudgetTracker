@@ -164,7 +164,9 @@ export function createView(ctx) {
       const options = s.type === "boolean" ? [{ value: "true", label: "On" }, { value: "false", label: "Off" }] : (s.options || []).map((o) => ({ value: String(o.value), label: o.label }));
       const pick = pickerSelect(options, String(s.value), {}, { search: false });
       const read = () => (s.type === "boolean" ? pick.value === "true" : ((s.options || []).find((o) => String(o.value) === pick.value) || { value: s.value }).value);
-      return { s, read, node: field(s.label, pick, { help: s.explanation, wide: true }) };
+      // An option's own explanation follows the setting's (financial recheck N-4).
+      const help = [s.explanation, ...(s.options || []).filter((o) => o.explanation).map((o) => `“${o.label}”: ${o.explanation}`)].join(" ");
+      return { s, read, node: field(s.label, pick, { help, wide: true }) };
     });
     const grouped = [];
     for (const c of controls) {
