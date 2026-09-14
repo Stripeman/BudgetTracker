@@ -186,7 +186,15 @@ export function createView(ctx) {
       if (Object.keys(overrides).length) changes.confirmOverrides = overrides;
       if (!Object.keys(changes).length) { announce("Nothing changed."); return; }
       const out = await ctx.store.actions.write((ws) => ctx.api.groupAction(ws, "settings", { changes }), ["group"]);
-      announce(out.ok ? "Settings saved. Everyone in the group now works this way." : messageFor(out.error));
+      if (!out.ok) { announce(messageFor(out.error)); return; }
+      // Said only for what the server now holds (security recheck of 47617b5, M1): every value asked for
+      // is compared with the settings it returned.
+      const kept = (out.result && out.result.groupSettings) || null;
+      const missed = !kept ? [] : [
+        ...Object.entries(changes).filter(([k]) => k !== "confirmOverrides").filter(([k, v]) => { const s = (kept.settings || []).find((x) => x.key === k); return !s || s.value !== v; }).map(([k]) => (gs.settings.find((x) => x.key === k) || { label: k }).label),
+        ...Object.entries(overrides).filter(([id, v]) => { const m = (kept.members || []).find((x) => x.memberId === id); return !m || m.override !== v; }).map(([id]) => `${perPerson.label}: ${(people.find((p) => p.m.memberId === id) || { m: { name: id } }).m.name}`),
+      ];
+      announce(missed.length ? `Not everything was saved: ${missed.join("; ")}. The settings shown are what is saved now.` : "Settings saved. Everyone in the group now works this way.");
     }, { variant: "primary" });
     const history = gs.history.length ? el("details", { class: "more" }, [
       el("summary", { text: `Changes (${gs.history.length})` }),

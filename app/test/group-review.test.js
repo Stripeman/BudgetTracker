@@ -171,6 +171,31 @@ describe("Group settings card and who confirmed (Terry, 2026-09-14)", () => {
     assert.deepEqual(calls.map((c) => [c.action, c.body]), [["settings", { changes: { confirmOverrides: { mem_bob: "no" } } }]]);
   });
 
+  test("'Settings saved' is said only for what the server kept; anything it did not keep is named (security recheck M1)", async () => {
+    const members = [
+      { memberId: "mem_bob", name: "Bob Fictional", role: "member", override: "inherit", effective: true },
+      { memberId: "mem_eve", name: "Eve Outsider", role: "member", override: "inherit", effective: true },
+    ];
+    const said = () => (document.getElementById("a11y-live") || { textContent: "" }).textContent;
+    for (const [keptBob, expected] of [["no", /^Settings saved\./], ["inherit", /^Not everything was saved: Can confirm payments: Bob Fictional\./]]) {
+      const { ctx, state, calls } = ctxWith(STRANDED);
+      state.group.data.groupSettings = { ...SETTINGS, members };
+      // The server's answer: Eve's No is kept; Bob's is kept only in the first case.
+      ctx.api.groupAction = async (ws, action, body) => { calls.push({ action, body }); return { groupSettings: { ...SETTINGS, members: [{ ...members[0], override: keptBob }, { ...members[1], override: "no" }] } }; };
+      const v = createGroupView(ctx);
+      v.update(state);
+      const card = cardOf(v.element);
+      const picker = (name) => card.querySelectorAll("select").find((s) => s.getAttribute("aria-label") === `Can confirm payments: ${name}`);
+      picker("Bob Fictional").value = "no";
+      picker("Eve Outsider").value = "no";
+      buttonNamed(card, "Save settings").click();
+      await tick(); await tick();
+      assert.deepEqual(calls.map((c) => c.body), [{ changes: { confirmOverrides: { mem_bob: "no", mem_eve: "no" } } }], "both in one request");
+      assert.match(said(), expected);
+      v.element.remove && v.element.remove();
+    }
+  });
+
   test("someone who is not a manager is told their own right to confirm payments", () => {
     for (const [mine, text] of [[{ override: "no", effective: false }, /You can confirm payments made to you\./], [{ override: "inherit", effective: true }, /You can confirm any reported payment in this group\./]]) {
       const { ctx, state } = ctxWith(STRANDED);

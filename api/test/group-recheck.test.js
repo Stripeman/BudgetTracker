@@ -539,6 +539,55 @@ describe('B per person: "Can confirm payments" for each member (Terry, 2026-09-1
   });
 });
 
+describe('M1 (security recheck of 47617b5): several per-person rights saved in one request are all kept', () => {
+  const setPerson = (h, f, w, overrides, reason) => setSettings(h, f, w, { confirmOverrides: overrides }, reason);
+  const stored = async (h, f) => (await h.storage.getJson(`workspaces/${f.ws.id}/workspace.json`)).value;
+  const rights = async (h, f) => (await view(h, f, 'alice')).groupSettings.members.map((m) => [m.name, m.override, m.effective]);
+  const personHistory = async (h, f) => (await view(h, f, 'alice')).groupSettings.history.filter((x) => x.key === 'confirmOverrides').map((x) => [x.member, x.from, x.to]);
+
+  test('two in one request: Bob and Eve are both set to No, both lose Confirm on their own payment, and history and audit say so once each', async () => {
+    const h = harness();
+    const f = await fixture(h);
+    const { alice, bob, eve } = f.refs;
+    ok(await setPerson(h, f, 'alice', { [f.mid('Bob')]: 'no', [f.mid('Eve')]: 'no' }, 'Both keep their own accounts'));
+    // Group on (the default): everyone else follows it; Bob and Eve are No.
+    assert.deepEqual(await rights(h, f), [
+      ['Alice Fictional', 'inherit', true], ['Bob Fictional', 'no', false], ['Carol Fictional', 'inherit', false], ['Frank Fictional', 'inherit', true], ['Eve Outsider', 'no', false],
+    ]);
+    const doc = await stored(h, f);
+    assert.deepEqual(Object.keys(doc.groupSettings.perMember.confirmOverrides).sort(), [f.mid('Bob'), f.mid('Eve')].sort(), 'both are stored');
+    assert.equal((await confirm(h, f, 'bob', await settle(h, f, 'bob', { from: bob, to: alice, amount: '10.00' }))).status, 403);
+    assert.equal((await confirm(h, f, 'eve', await settle(h, f, 'eve', { from: eve, to: alice, amount: '4.00' }))).status, 403);
+    assert.deepEqual(await personHistory(h, f), [['Bob Fictional', 'inherit', 'no'], ['Eve Outsider', 'inherit', 'no']]);
+    const audits = doc.audit.filter((a) => a.action === 'group.settings.update');
+    assert.deepEqual(audits.map((a) => a.fields), [['confirmOverrides']], 'one audited change for the one request');
+  });
+
+  test('three in one request with the group setting turned off: every value is kept, and a repeated value records nothing', async () => {
+    const h = harness();
+    const f = await fixture(h);
+    const { alice, bob, eve } = f.refs;
+    ok(await setSettings(h, f, 'alice', { anyoneConfirms: false, confirmOverrides: { [f.mid('Bob')]: 'yes', [f.mid('Eve')]: 'yes', [f.mid('Frank')]: 'no' } }, 'New rules'));
+    // Group off: Alice (no override) and Carol (viewer) cannot confirm any payment; Bob and Eve (Yes) can; Frank (No) cannot.
+    assert.deepEqual(await rights(h, f), [
+      ['Alice Fictional', 'inherit', false], ['Bob Fictional', 'yes', true], ['Carol Fictional', 'inherit', false], ['Frank Fictional', 'no', false], ['Eve Outsider', 'yes', true],
+    ]);
+    assert.equal((await confirm(h, f, 'bob', await settle(h, f, 'bob', { from: bob, to: alice, amount: '10.00' }))).status, 200);
+    assert.equal((await confirm(h, f, 'eve', await settle(h, f, 'eve', { from: eve, to: alice, amount: '4.00' }))).status, 200);
+    const all = (await view(h, f, 'alice')).groupSettings.history.map((x) => [x.key, x.member || null, x.from, x.to]);
+    assert.deepEqual(all, [
+      ['anyoneConfirms', null, true, false], ['confirmOverrides', 'Bob Fictional', 'inherit', 'yes'], ['confirmOverrides', 'Eve Outsider', 'inherit', 'yes'], ['confirmOverrides', 'Frank Fictional', 'inherit', 'no'],
+    ]);
+    // Bob again Yes (no change) and Eve to No: only Eve's change is kept and stored.
+    ok(await setPerson(h, f, FRANK, { [f.mid('Bob')]: 'yes', [f.mid('Eve')]: 'no' }));
+    assert.deepEqual((await rights(h, f)).filter(([n]) => n === 'Bob Fictional' || n === 'Eve Outsider'), [['Bob Fictional', 'yes', true], ['Eve Outsider', 'no', false]]);
+    assert.deepEqual((await personHistory(h, f)).slice(3), [['Eve Outsider', 'yes', 'no']]);
+    const doc = await stored(h, f);
+    assert.deepEqual(Object.fromEntries(Object.entries(doc.groupSettings.perMember.confirmOverrides).map(([id, o]) => [id, o.value])),
+      { [f.mid('Bob')]: 'yes', [f.mid('Eve')]: 'no', [f.mid('Frank')]: 'no' });
+  });
+});
+
 describe('C: "Owed-to-others and repayment entries"', () => {
   const MANUAL = ['expense', 'income', 'transfer', 'refund', 'fee', 'reimbursement', 'advance', 'adjustment', 'interest'];
   const kindsOffered = async (h, f) => ok(await h.call('transactions', 'GET', { as: 'alice', query: f.q })).entryKinds;

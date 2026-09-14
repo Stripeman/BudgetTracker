@@ -139,12 +139,15 @@ function apply(doc, changes, { by, at, reason = '' }) {
   if (!changed.length && !personal.length) return [];
   const gs = isPlainObject(doc.groupSettings) ? doc.groupSettings : {};
   const perMember = isPlainObject(gs.perMember) ? { ...gs.perMember } : {};
+  // Every change of the request goes into ONE map per key, built from what is stored, so several people
+  // changed at once are all kept (security recheck of 47617b5, M1); the history below lists exactly these.
+  const maps = {};
   for (const { key, m, to } of personal) {
-    const map = { ...perMemberStored(doc, key) };
+    if (!maps[key]) maps[key] = { ...perMemberStored(doc, key) };
     // "Use the group setting" is kept as that value, so the record of the earlier choice stays readable.
-    map[m.id] = { value: to, at, by, period: periodOf(m) };
-    perMember[key] = map;
+    maps[key][m.id] = { value: to, at, by, period: periodOf(m) };
   }
+  Object.assign(perMember, maps);
   doc.groupSettings = {
     ...gs,
     values: { ...stored(doc), ...Object.fromEntries(changed.map((k) => [k, changes[k]])) },
