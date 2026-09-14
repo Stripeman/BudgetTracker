@@ -179,8 +179,11 @@ export function withIcon(id, content, { className = "" } = {}) {
 
 // Money direction (BT-011-05): an arrow says only whether money comes in (upward) or goes out
 // (downward) — never both ways (Terry, 2026-09-13). A transfer leg is in or out by its own sign;
-// refunds and reversals keep a return arrow. Decided from the entry itself.
+// refunds and reversals keep a return arrow. Decided from the entry itself. An amount owed to others
+// for a shared expense (`payable`), or its reversal, moved no money, so it has no direction at all
+// (BT-009 recheck N3): callers show "No money moved" instead of an arrow.
 export function directionOf(t) {
+  if (t.kind === "payable") return "none";
   if ((t.links && t.links.reverses) || t.kind === "refund") return "reversal";
   const minor = t.amountMinor !== undefined ? t.amountMinor : Number(String(t.amount || "0").replace(/[^0-9.-]/g, ""));
   return minor >= 0 ? "money-in" : "money-out";

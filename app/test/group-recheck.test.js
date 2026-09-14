@@ -4,7 +4,8 @@ import { test, describe, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import { installDom } from "./domdouble.js";
 import { offeredOptions } from "./pickerassert.js";
-import { createView, openQuickEntry } from "../js/ui/views/transactions.js";
+import { createView, openQuickEntry, entryAmount } from "../js/ui/views/transactions.js";
+import { directionOf } from "../js/ui/icons.js";
 
 let dom;
 beforeEach(() => { dom = installDom(); });
@@ -34,6 +35,14 @@ function txCtx() {
 const openDialog = (ctx, options) => { openQuickEntry(ctx, options); return document.body.querySelector(".modal"); };
 // The entry's own Type picker (the new-merchant form in the same dialog has a "Type" too).
 const entryType = (dialog) => dialog.querySelectorAll("select").find((s) => s.querySelectorAll("option").some((o) => o.textContent === "Expense"));
+const listOf = (entries) => {
+  const { ctx, state } = txCtx();
+  state.transactions.data = { transactions: entries, summary: [], total: entries.length };
+  const view = createView(ctx);
+  document.body.appendChild(view.element);
+  view.update(state);
+  return view.element;
+};
 
 // Bob's 80.00 owed for Alice's dinner, recorded on his wallet from Shared expenses.
 const OWED = {
@@ -62,15 +71,37 @@ describe("N2: entries recorded from Shared expenses are locked on the Transactio
   });
 
   test("the list offers Edit but no Reverse or Delete for them", () => {
-    const { ctx, state } = txCtx();
-    state.transactions.data = { transactions: [OWED], summary: [], total: 1 };
-    const view = createView(ctx);
-    document.body.appendChild(view.element);
-    view.update(state);
     // The DOM double has no descendant selectors; the page's other buttons are not Edit, Reverse or Delete.
-    const labels = view.element.querySelectorAll("button").map((b) => b.textContent);
+    const labels = listOf([OWED]).querySelectorAll("button").map((b) => b.textContent);
     assert.ok(labels.includes("Edit"), labels.join(", "));
     assert.equal(labels.includes("Reverse"), false);
     assert.equal(labels.includes("Delete"), false);
+  });
+});
+
+describe("N3: an amount owed shows no money arrow, because no money moved", () => {
+  test("a payable and its reversal have no direction; repayment, reimbursement and advance keep theirs", () => {
+    assert.equal(directionOf({ kind: "payable", amountMinor: 2500 }), "none");
+    assert.equal(directionOf({ kind: "payable", amountMinor: -2500, links: { reverses: "txn_x" } }), "none");
+    assert.equal(directionOf({ kind: "repayment", amountMinor: -2500 }), "money-out");
+    assert.equal(directionOf({ kind: "reimbursement", amountMinor: 2500 }), "money-in");
+    assert.equal(directionOf({ kind: "advance", amountMinor: -2500 }), "money-out");
+    assert.equal(directionOf({ kind: "expense", amountMinor: -2500 }), "money-out");
+    assert.equal(directionOf({ kind: "repayment", amountMinor: 2500, links: { reverses: "txn_y" } }), "reversal");
+  });
+
+  test("an amount owed says No money moved beside it, with no arrow; a repayment keeps its money-out arrow", () => {
+    const owed = entryAmount({ kind: "payable", amountMinor: 2500, amount: "25.00", currency: "EUR" }, { effective: {} });
+    assert.ok(owed.querySelector("svg") === null, "no arrow");
+    assert.match(owed.textContent, /EUR 25\.00/);
+    assert.match(owed.textContent, /No money moved/);
+    const repaid = entryAmount({ kind: "repayment", amountMinor: -2500, amount: "-25.00", currency: "EUR" }, { effective: {} });
+    assert.equal(repaid.querySelector("svg").getAttribute("data-icon"), "money-out");
+  });
+
+  test("the Transactions list shows Bob's 80.00 owed without a money-in arrow", () => {
+    const list = listOf([OWED]);
+    assert.match(list.textContent, /EUR 80\.00\s*No money moved/);
+    assert.equal(list.querySelectorAll("svg").filter((s) => s.getAttribute("data-icon") === "money-in").length, 0);
   });
 });

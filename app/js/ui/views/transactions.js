@@ -23,9 +23,18 @@ import { messageFor } from "../../core/errors.js";
 import { evaluateAmount, isPlainAmount } from "../../core/calc.js";
 import { formatDate, formatAmount, todayIso, KIND_LABELS, MERCHANT_TYPE_LABELS } from "../../core/format.js";
 import { icon, withIcon, defaultIconFor } from "../icons.js";
-import { amountWithDirection, transferLabel } from "../components.js";
+import { amountWithDirection, transferLabel, amountText } from "../components.js";
+import { directionOf } from "../icons.js";
 
 export { amountWithDirection };
+
+// The amount shown for an entry: with its money arrow (in or out), or — for an amount owed to others for
+// a shared expense, where no money moved — no arrow and the words "No money moved" (Terry's rule: arrows
+// only for money actually in or out; BT-009 recheck N3).
+export function entryAmount(t, prefs) {
+  if (directionOf(t) !== "none") return amountWithDirection(t, prefs);
+  return el("span", { class: "amount-dir" }, [amountText(t.amount, t.currency, prefs), el("span", { class: "muted small", text: " No money moved" })]);
+}
 
 const PRECISION = { JPY: 0, KRW: 0, ISK: 0, CLP: 0, VND: 0, BHD: 3, KWD: 3, JOD: 3, OMR: 3, TND: 3 };
 const precisionOf = (c) => (c in PRECISION ? PRECISION[c] : 2);
@@ -173,7 +182,7 @@ export function createView(ctx) {
       el("td", { "data-label": "Category" }, [t.splits.length ? "Split"
         : categories.get(t.categoryId) ? categoryLabel(categories.get(t.categoryId).name, categories.get(t.categoryId).shownColor, categories.get(t.categoryId).shownIcon)
           : (t.kind === "transfer" ? "—" : withIcon("tag", "Uncategorized"))]),
-      el("td", { "data-label": "Amount", class: "num" }, [amountWithDirection(t, prefs)]),
+      el("td", { "data-label": "Amount", class: "num" }, [entryAmount(t, prefs)]),
       el("td", { "data-label": "Status" }, [
         badge(STATUS_LABELS[t.status] || t.status),
         t.reversedBy ? [" ", badge("Reversed", "closed")] : null,
