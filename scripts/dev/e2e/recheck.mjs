@@ -29,6 +29,8 @@ const personValue = (s, person) => s.evaluate(`(() => { const sel = [...document
 // A full reload only once the page is quiet: a request still running when the page reloads is
 // cancelled and would otherwise stay counted as in flight in the harness.
 const fresh = async (s, route) => { await s.settle(); await s.reload(); await s.goto(route); };
+// Formats a plain number back to a two-decimal balance string for hand-computed expectations.
+const money2 = (n) => n.toFixed(2);
 
 // Presses Save settings and waits for the app to say it saved (the polite live region), then for
 // the re-read that follows.
@@ -366,7 +368,11 @@ export async function run(h, t) {
   const balanceNow = async (id) => (await api("bob").ok("accounts", { query: q })).accounts.find((a) => a.id === id).balance;
   const walletBefore = await balanceNow(wallet.id);
   const spare = firstRecord(await api("bob").ok("accounts", { method: "POST", query: q, body: { name: "E2E Bob Spare", type: "cash", currency: "EUR", openingBalance: "50.00" } }));
-  await api("bob").ok("group", { method: "POST", query: { ...q, action: "ledger" }, body: { currency: "EUR", accountId: spare.id } });
+  // Sharing the wallet ended Bob's EUR link, so this is a first link again (financial recheck FA-1):
+  // his pending cash (the dinner and taxi netting) needs confirming before it is recorded on the spare.
+  const spareRefused = await api("bob").request("group", { method: "POST", query: { ...q, action: "ledger" }, body: { currency: "EUR", accountId: spare.id } });
+  t.check("FA-1: choosing the spare after sharing ended the link is a first link too; refused without confirmBackdated", { expected: 409, actual: spareRefused.status });
+  await api("bob").ok("group", { method: "POST", query: { ...q, action: "ledger" }, body: { currency: "EUR", accountId: spare.id, confirmBackdated: true } });
   await fresh(b.bob, "group");
   const bobNet = (await api("bob").ok("group", { query: q })).balances.find((x) => x.currency === "EUR").rows.find((r) => r.ref === B).net;
   const bobAll = (await api("bob").ok("transactions", { query: q })).summary.find((s) => s.currency === "EUR");
@@ -455,6 +461,73 @@ export async function run(h, t) {
     expected: { createdBySelf: false, buttons: [] }, actual: { createdBySelf: oldEntry ? oldEntry.createdBySelf : "missing", buttons: bobRow },
   });
 
+  // ---- FA-1, FA-2, FA-3 (financial recheck of 41494d1) -----------------------------------------------
+  // Reuses workspace R rather than creating a new one (the harness's per-day workspace quota is shared
+  // across every scenario in one run): Bob's wallet there was funded only by a plain transfer, never
+  // through the group ledger, so EUR is still unlinked for him. He reports paying Alice 18.00, and she
+  // confirms it, before he links anything.
+  const faq = R.q;
+  const faB = R.ref("bob");
+  const faA = R.ref("alice");
+  const faS = (await api("bob").ok("group", { method: "POST", query: { ...faq, action: "settle" }, body: { from: faB, to: faA, amount: "18.00" } })).settlement;
+  await api("alice").ok("group", { method: "POST", query: { ...faq, action: "confirm" }, body: { settlementId: faS.id, revision: faS.revision } });
+  const faWallet = bobWallet;
+  const faWalletStart = (await api("bob").ok("accounts", { query: faq })).accounts.find((x) => x.id === faWallet.id).balance;
+  await b.bob.settle(); await b.bob.reload(); await b.bob.useWorkspace(R.name); await b.bob.goto("group");
+
+  // FA-1: Bob adds his own small expense, with "Also record my part on my own account" and his new
+  // wallet, for the FIRST time. His own share is exempt from the warning, but the 18.00 he already paid
+  // Alice is not: the server refuses with 409, and a second dialog shows its own message before he can
+  // continue.
+  await b.bob.click({ role: "button", name: "Add expense", scope: ".page-head" });
+  await b.bob.waitFor("!!document.querySelector('.modal')", { what: "Bob's Add shared expense dialog" });
+  await b.bob.fill({ label: "Description", scope: ".modal" }, "E2E FA snack");
+  await b.bob.fill({ label: "Amount (EUR)", scope: ".modal" }, "6.00");
+  await b.bob.click({ label: "Also record my part on my own account", scope: ".modal" });
+  await b.bob.click({ role: "button", name: "Save expense", scope: ".modal" });
+  await b.bob.waitFor("!!document.querySelectorAll('.modal').length && document.querySelectorAll('.modal').length > 1", { what: "the backdating warning dialog to appear on top of the first" });
+  const warnText = await b.bob.evaluate("(() => { const m = document.querySelectorAll('.modal'); return m[m.length - 1].innerText; })()");
+  t.check("FA-1: the second dialog shows the server's own warning, with the 18.00 Bob already paid Alice before he ever linked an account", {
+    expected: { title: true, amount: true }, actual: { title: warnText.includes("Link this account"), amount: /1 cash entry totaling -18\.00/.test(warnText) },
+  });
+  await b.bob.click({ role: "button", name: "Link anyway" });
+  await b.bob.waitFor("!document.querySelector('.modal')", { what: "both dialogs to close once the retry succeeds" });
+  const faAfterLink = await api("bob").ok("group", { query: faq });
+  const faWalletBal = (await api("bob").ok("accounts", { query: faq })).accounts.find((x) => x.id === faWallet.id).balance;
+  // Bob's snack (paid 6.00, split equally between two people: share 3.00, lent 3.00 = -6.00) plus his
+  // earlier repayment to Alice (-18.00), on top of the wallet's starting balance (faWalletStart, which
+  // already carries the 50.00 opening plus the 5.00 transfer in from the Joint earlier in this scenario).
+  const faWalletExpected = money2(Number(faWalletStart) - 6 - 18);
+  t.check(`FA-1: once linked, Bob's snack (his own share, exempt) and his earlier repayment (the reason for the warning) are both recorded — ${faWalletStart} - 6.00 - 18.00 = ${faWalletExpected}`, {
+    expected: { snack: true, walletBal: faWalletExpected }, actual: { snack: faAfterLink.expenses.some((x) => x.description === "E2E FA snack"), walletBal: faWalletBal },
+  });
+
+  // FA-3: Alice corrects the snack; nothing tells Bob until he next reads Shared expenses, so the
+  // Dashboard now says so too, without him visiting Shared expenses first.
+  const faSnack = faAfterLink.expenses.find((x) => x.description === "E2E FA snack");
+  await api("alice").ok("group", { method: "PATCH", query: faq, body: { expenseId: faSnack.id, revision: faSnack.revision, amount: "9.00", payers: [{ ref: faB }], reason: "E2E receipt was 9.00" } });
+  await b.bob.settle(); await b.bob.reload(); await b.bob.useWorkspace(R.name); await b.bob.goto("dashboard");
+  const dashText = await b.bob.text("body");
+  t.check("FA-3: without visiting Shared expenses first, Bob's Dashboard says Shared expenses needs his attention, after Alice's correction he was never told about there", {
+    expected: true, actual: dashText.includes("Shared expenses needs your attention"),
+  });
+  const dashLink = await b.bob.evaluate("(() => { const a = [...document.querySelectorAll('a')].find((x) => x.textContent === 'Shared expenses needs your attention'); return a ? a.getAttribute('href') : null; })()");
+  t.check("FA-3: the notice links to Shared expenses", { expected: "#/group", actual: dashLink });
+
+  // FA-2: removing the still-linked wallet says explicitly that recording moves to another account.
+  await b.bob.goto("accounts");
+  await b.bob.click({ role: "button", name: "Remove E2E Bob Wallet" });
+  await b.bob.waitFor("!!document.querySelector('.modal')", { what: "the Remove dialog" });
+  const removeText = await b.bob.text(".modal");
+  t.check("FA-2: the Remove dialog says the account is linked in Shared expenses and recording will move elsewhere", {
+    expected: true, actual: removeText.includes("This account is linked in Shared expenses. If you record your part there again, it will be recorded on a different account."),
+  });
+  await b.bob.click({ role: "button", name: "Cancel", scope: ".modal" });
+  await b.bob.waitFor("!document.querySelector('.modal')", { what: "the Remove dialog to close" });
+
   // ---- every browser stayed clean -----------------------------------------------------------------
-  for (const s of Object.values(b)) { await s.settle(); t.check(`${s.name}: no exceptions, console errors or failed requests in the browser`, { expected: [], actual: s.problems() }); }
+  // Bob's browser intentionally triggered one 409 confirm_backdated (FA-1, above) before confirming;
+  // that is the point of the check, not a problem.
+  const allowHttp = [{ status: 409, path: /\/api\/group/ }];
+  for (const s of Object.values(b)) { await s.settle(); t.check(`${s.name}: no exceptions, console errors or failed requests in the browser`, { expected: [], actual: s.problems({ allowHttp }) }); }
 }
