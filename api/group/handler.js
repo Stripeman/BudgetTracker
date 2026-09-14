@@ -58,6 +58,7 @@ const entries = require('../_shared/entries');
 const model = require('../_shared/workspace-model');
 const siteSettings = require('../_shared/site');
 const workspaceSettings = require('../_shared/workspace-settings');
+const { readDocument } = require('../_shared/schema');
 
 const CREATE_KEYS = ['description', 'date', 'amount', 'currency', 'categoryId', 'notes', 'payers', 'split', 'ledger'];
 const PATCH_KEYS = ['expenseId', 'revision', 'reason', 'description', 'date', 'amount', 'categoryId', 'notes', 'payers', 'split'];
@@ -148,30 +149,41 @@ const canDisputePayment = (doc, s, member) => s.to === selfRef(member)
   || (groupSettings.get(doc, 'disputePayments') === 'receiver-or-manager' && isManager(member));
 
 // A new expense's payer and split when the request leaves them out: the group's defaults (setting (b)).
-function defaultPayers(doc, member) {
-  if (groupSettings.get(doc, 'paidBy') === 'nobody' || !member) throw badRequest('Say who paid for this expense.', 'invalid_payers');
+// The caller's own defaults win over the group's when set (personal preferences groupPaidBy,
+// groupSplitMethod, groupSplitWho), so the API and the browser start a new expense the same way
+// (financial recheck of 53cf181, personal-defaults note).
+function defaultPayers(doc, member, mine = {}) {
+  const paidBy = mine.paidBy || groupSettings.get(doc, 'paidBy');
+  if (paidBy === 'nobody' || !member) throw badRequest('Say who paid for this expense.', 'invalid_payers');
   return [{ ref: selfRef(member) }];
 }
-function defaultSplit(doc, member) {
-  if (groupSettings.get(doc, 'splitMethod') !== 'equal' || !member) throw badRequest('Choose how to split this expense: the group\'s default split needs a value for each person.', 'invalid_split');
-  const refs = groupSettings.get(doc, 'splitWho') === 'me' ? [selfRef(member)] : groups.participants(doc, null).filter((p) => p.active).map((p) => p.ref);
+function defaultSplit(doc, member, mine = {}) {
+  const method = mine.method || groupSettings.get(doc, 'splitMethod');
+  if (method !== 'equal' || !member) throw badRequest('Choose how to split this expense: the default split needs a value for each person.', 'invalid_split');
+  const refs = (mine.who || groupSettings.get(doc, 'splitWho')) === 'me' ? [selfRef(member)] : groups.participants(doc, null).filter((p) => p.active).map((p) => p.ref);
   return { method: 'equal', lines: refs.map((ref) => ({ ref })) };
+}
+// The caller's own defaults for a new expense, from their preferences; none set means the group's.
+async function ownDefaults(ctx) {
+  const { value } = await ctx.storage.getJson(store.paths.user(ctx.principal.subject));
+  const prefs = ((readDocument('user', value) || {}).preferences) || {};
+  return { method: prefs.groupSplitMethod || null, who: prefs.groupSplitWho || null, paidBy: prefs.groupPaidBy || null };
 }
 
 // The amount, payers, split and resulting shares, from the request and (for a correction) the record.
 // A new expense without payers or a split takes the group's defaults for `member`.
-function expenseMoney(doc, body, rec, member = null) {
+function expenseMoney(doc, body, rec, member = null, mine = {}) {
   const currency = rec ? rec.currency : currencyOf(doc, body.currency);
   const check = groups.participantChecker(doc, rec ? new Set(groups.recordRefs({ groupExpenses: [rec] })) : new Set());
   const amountMinor = !rec || body.amount !== undefined ? groups.positiveAmount(body.amount, currency, 'Amount') : rec.amountMinor;
   let payers;
-  if (!rec || body.payers !== undefined) payers = groups.normalizePayers(body.payers === undefined ? defaultPayers(doc, member) : body.payers, amountMinor, currency, check);
+  if (!rec || body.payers !== undefined) payers = groups.normalizePayers(body.payers === undefined ? defaultPayers(doc, member, mine) : body.payers, amountMinor, currency, check);
   else {
     payers = structuredClone(rec.payers);
     if (money.sum(payers.map((p) => p.amountMinor)) !== amountMinor) throw badRequest('The amount changed, so say again who paid how much.', 'payer_total');
   }
   let split;
-  if (!rec || body.split !== undefined) split = groups.normalizeSplit(body.split === undefined ? defaultSplit(doc, member) : body.split, amountMinor, currency, check);
+  if (!rec || body.split !== undefined) split = groups.normalizeSplit(body.split === undefined ? defaultSplit(doc, member, mine) : body.split, amountMinor, currency, check);
   else {
     split = structuredClone(rec.split);
     if (split.method === 'amounts' && money.sum(split.lines.map((l) => l.value)) !== amountMinor) throw badRequest('The amount changed, so give the split amounts again.', 'split_amount_total');
@@ -603,10 +615,12 @@ async function createExpense(ctx, req) {
   const wsId = requireId(query(req, 'workspaceId'), 'workspaceId');
   const body = fields.onlyKeys(readBody(req), CREATE_KEYS);
   const ledgerAccountId = ledgerChoice(body.ledger);
+  // Read before the write, and only when the request leaves the payer or the split out.
+  const mine = body.payers === undefined || body.split === undefined ? await ownDefaults(ctx) : {};
   const { result } = await store.mutateWorkspace(ctx, wsId, (doc, member) => {
     requireWriter(member);
     const nowIso = ctx.nowIso();
-    const m = expenseMoney(doc, body, null, member);
+    const m = expenseMoney(doc, body, null, member, mine);
     const rec = {
       id: newId('gex'), description: fields.text(body.description, { field: 'Description', max: 120, required: true }),
       date: fields.date(body.date, 'Date') || nowIso.slice(0, 10), currency: m.currency, amountMinor: m.amountMinor,

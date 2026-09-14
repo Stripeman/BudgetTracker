@@ -86,3 +86,40 @@ describe('N-3: "Keep who owes whom" counts a reported payment only up to what is
     assert.deepEqual((await tables(x)).direct, [[x.bob, x.alice, '30.00'], [x.carol, x.alice, '30.00']]);
   });
 });
+
+describe('Personal defaults on the server: a request without payer or split takes the caller\'s own defaults, else the group\'s', () => {
+  const prefs = (h, w, body) => h.call('preferences', 'PUT', { ...who(w), body });
+  const amounts = (e) => [e.payers.map((p) => [p.ref, p.amount]), e.shares.map((s) => [s.ref, s.amount])];
+
+  test('Bob\'s own "Only me": his 60.00 is his alone; Alice, with no defaults of her own, splits 60.00 among all six (10.00 each)', async () => {
+    const h = harness();
+    const f = await fixture(h);
+    ok(await prefs(h, 'bob', { groupSplitWho: 'me' }));
+    const mine = await addExpense(h, f, 'bob', { description: 'Fictional snack', amount: '60.00' });
+    assert.deepEqual(amounts(mine), [[[f.refs.bob, '60.00']], [[f.refs.bob, '60.00']]]);
+    // Six active people (Alice, Bob, Carol, Frank, Eve and Dana): 60.00 / 6 = 10.00 each, paid by Alice.
+    const hers = await addExpense(h, f, 'alice', { description: 'Fictional lunch', amount: '60.00' });
+    assert.deepEqual(amounts(hers), [[[f.refs.alice, '60.00']], Object.values(f.refs).map((ref) => [ref, '10.00'])]);
+  });
+
+  test('Bob\'s own "nobody paid" or "by shares" refuses a request that leaves the payer or the split out, although the group\'s defaults would not', async () => {
+    const h = harness();
+    const f = await fixture(h);
+    ok(await prefs(h, 'bob', { groupPaidBy: 'nobody' }));
+    assert.equal((await G(h, f, 'bob', 'POST', { body: { description: 'Fictional tea', amount: '6.00' } })).status, 400);
+    assert.equal((await G(h, f, 'bob', 'POST', { body: { description: 'Fictional tea', amount: '6.00', payers: [{ ref: f.refs.bob }] } })).status, 201, 'with a payer given it is accepted');
+    ok(await prefs(h, 'bob', { groupPaidBy: null, groupSplitMethod: 'shares' }));
+    assert.equal((await G(h, f, 'bob', 'POST', { body: { description: 'Fictional tea', amount: '6.00' } })).status, 400);
+  });
+
+  test('Eve\'s own "everyone" wins over the group\'s "only the person adding it"; Bob, with none of his own, follows the group', async () => {
+    const h = harness();
+    const f = await fixture(h);
+    ok(await setSettings(h, f, 'alice', { splitWho: 'me' }));
+    ok(await prefs(h, 'eve', { groupSplitWho: 'everyone' }));
+    const eves = await addExpense(h, f, 'eve', { description: 'Fictional cake', amount: '60.00' });
+    assert.deepEqual(amounts(eves)[1], Object.values(f.refs).map((ref) => [ref, '10.00']));
+    const bobs = await addExpense(h, f, 'bob', { description: 'Fictional juice', amount: '60.00' });
+    assert.deepEqual(amounts(bobs)[1], [[f.refs.bob, '60.00']]);
+  });
+});
