@@ -58,7 +58,7 @@ $swaEnv = if ($Environment -eq 'production') { 'production' } else { 'preview' }
 Write-Host "Deploy: commit $($commit.Substring(0,7)) -> $SwaName ($swaEnv)"
 $env:SWA_CLI_DEPLOYMENT_TOKEN = $token
 try {
-  npx --no-install swa deploy .local/artifact/site --api-location .local/artifact/api --api-language node --api-version 22--env $swaEnv --no-use-keychain | Out-Host
+  npx --no-install swa deploy .local/artifact/site --api-location .local/artifact/api --api-language node --api-version 22 --env $swaEnv --no-use-keychain | Out-Host
   if ($LASTEXITCODE -ne 0) { throw 'Deployment command failed.' }
 } finally {
   Remove-Item Env:SWA_CLI_DEPLOYMENT_TOKEN -ErrorAction SilentlyContinue
