@@ -584,9 +584,10 @@ fieldset.budget-line { margin: 0; padding: var(--space-3); border: 1px solid var
 
 /* ---------- settings cards (workspace and group; UX/accessibility review of eefd115) ---------- */
 .settings__intro { max-width: 46rem; }
-/* Group headings inside a card are smaller than the page's section titles (finding 7). */
+/* Group headings inside a card are never larger than the card's own title (finding 7): the same size,
+   set apart by weight and colour. */
 .settings-group { border-top: 1px solid var(--border); }
-.settings-group__title { margin: 0; font-size: var(--text-base); }
+.settings-group__title { margin: 0; font-size: var(--text-sm); }
 .settings-group__toggle {
   display: inline-flex; align-items: center; gap: var(--space-2); width: 100%; min-height: var(--control-height);
   padding: var(--space-2) 0; border: 0; background: transparent; color: var(--text); font: inherit; font-weight: var(--weight-medium);
@@ -615,3 +616,6 @@ fieldset.budget-line { margin: 0; padding: var(--space-3); border: 1px solid var
   margin-top: var(--space-3); padding: var(--space-3) 0; background: var(--surface); border-top: 1px solid var(--border);
 }
 .settings-bar__unsaved { margin: 0; font-size: var(--text-sm); font-weight: var(--weight-medium); }
+/* A field marked invalid shows it, not only in words beside it (finding 1); only fields already marked. */
+.field__input[aria-invalid="true"], .cmdpick__trigger[aria-invalid="true"] { border-color: var(--color-danger); }
+fieldset[aria-invalid="true"] > legend { color: var(--color-danger-text); }

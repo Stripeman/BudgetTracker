@@ -30,6 +30,13 @@ const personValue = (s, person) => s.evaluate(`(() => { const sel = [...document
 // cancelled and would otherwise stay counted as in flight in the harness.
 const fresh = async (s, route) => { await s.settle(); await s.reload(); await s.goto(route); };
 
+// Opens a collapsed settings group (the shared settings card, fix/workspace-settings-ux).
+async function openGroup(s, group) {
+  const state = await s.evaluate(`(() => { const b = [...document.querySelectorAll('${SETTINGS} button.settings-group__toggle')].find((x) => x.textContent === ${JSON.stringify(group)}); return b ? b.getAttribute('aria-expanded') : null; })()`);
+  if (state === null) throw new Error(`${s.name}: there is no settings group ${group}`);
+  if (state === "false") await s.click({ role: "button", name: group, scope: SETTINGS });
+}
+
 // Presses Save settings and waits for the app to say it saved (the polite live region), then for
 // the re-read that follows.
 async function saveSettings(s) {
@@ -138,7 +145,8 @@ export async function run(h, t) {
   const bobNo = {
     confirm: await confirmButtons(b.bob, "Confirm You paid Alice Fictional"),
     says: (await b.bob.text(PAYMENTS)).includes("You can confirm payments made to you."),
-    card: await b.bob.evaluate(`!!document.querySelector('${SETTINGS}:not([hidden])')`),
+    // Since the UX review of eefd115 members read the card (no controls), like the workspace card.
+    card: await b.bob.evaluate(`(() => { const c = document.querySelector('${SETTINGS}:not([hidden])'); return !c ? 'none' : c.querySelectorAll('select').length ? 'controls' : 'read-only'; })()`),
     direct: (await api("bob").request("group", { method: "POST", query: { ...q, action: "confirm" }, body: { settlementId: s3.id, revision: s3.revision } })).status,
   };
   await fresh(b.carol, "group");
@@ -151,8 +159,8 @@ export async function run(h, t) {
     expected: { listed: [`Can confirm payments: ${DISPLAY.alice}`, `Can confirm payments: ${DISPLAY.bob}`, `Can confirm payments: ${DISPLAY.carol}`], bob: "no", carol: "no", bobHelp: true, carolHelp: true, history: 2 },
     actual: { listed, bob: aliceCard.bob, carol: aliceCard.carol, bobHelp: aliceCard.text.includes("Only payments made to them now"), carolHelp: aliceCard.text.includes("Only payments made to them (a viewer)"), history: aliceCard.history },
   });
-  t.check("B per person: in Bob's browser there is no Confirm on his own payment, he is told he confirms payments made to him, sees no settings card, and the API refuses him", {
-    expected: { confirm: 0, says: true, card: false, direct: 403 }, actual: bobNo,
+  t.check("B per person: in Bob's browser there is no Confirm on his own payment, he is told he confirms payments made to him, reads the settings card without controls, and the API refuses him", {
+    expected: { confirm: 0, says: true, card: "read-only", direct: 403 }, actual: bobNo,
   });
   t.check("B per person: Carol still confirms the payment made to her in her browser", {
     expected: { status: "confirmed", confirmation: { by: DISPLAY.carol, relation: "receiver" } }, actual: { status: carolGot.status, confirmation: carolGot.confirmation },
@@ -181,6 +189,7 @@ export async function run(h, t) {
   const kindsDefault = await typeChoices(b.alice);
   await b.alice.click({ role: "button", name: "Cancel", scope: ".modal" });
   await b.alice.goto("group");
+  await openGroup(b.alice, "Entries on your own account");
   await b.alice.choose("Owed-to-others and repayment entries", "Also allow entering them by hand", { scope: SETTINGS });
   await saveSettings(b.alice);
   await fresh(b.alice, "transactions");
@@ -260,6 +269,7 @@ export async function run(h, t) {
   await fresh(b.bob, "group");
   const bobCouldEdit = await ferryEdit(b.bob);
   await fresh(b.alice, "group");
+  await openGroup(b.alice, "Corrections");
   await b.alice.choose("Who can correct or void a shared expense", "Any member who can add expenses", { scope: SETTINGS });
   await saveSettings(b.alice);
   await fresh(b.bob, "group");
