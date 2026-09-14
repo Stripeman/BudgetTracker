@@ -44,6 +44,16 @@ export function createView(ctx) {
   const prefBox = el("div", { class: "form-grid" });
   const contactsBox = el("div");
   const colourBox = el("div", { class: "stack" });
+  // "Deleted workspaces" (owners only; Terry, 2026-09-14): the server already returns a deleted
+  // (archived) workspace only to its owners, so this needs no extra check of its own. Hidden until this
+  // person has ever had one to show, so the card does not flash empty and then appear.
+  const deletedBox = el("div", { class: "stack" });
+  const deletedStatus = el("p", { class: "field__help", role: "status", tabindex: "-1" });
+  const deletedCard = el("section", { class: "card", "aria-labelledby": "set-deleted", hidden: true }, [
+    el("h2", { class: "card__title", id: "set-deleted", text: "Deleted workspaces" }),
+    el("p", { class: "field__help", text: "Workspaces you deleted. Nothing in them was erased; bring one back to give everyone who was in it their access again." }),
+    deletedStatus, deletedBox,
+  ]);
   // Site administrators only (BT-011-05): the icon catalogue. It holds no financial data and gives
   // no access to any workspace.
   // Category colours and icons belong to a workspace, so the card is hidden without one.
@@ -193,6 +203,7 @@ export function createView(ctx) {
       el("section", { class: "card", "aria-labelledby": "set-contacts" }, [el("h2", { class: "card__title", id: "set-contacts", text: "Private contacts" }), el("p", { class: "field__help", text: "Only you can see these. Use them on your private records; use workspace contacts for shared ones." }), contactsBox]),
       colourCard,
       catalogCard,
+      deletedCard,
     ]),
   ]);
 
@@ -374,6 +385,37 @@ export function createView(ctx) {
     }
   }
 
+  // "Deleted workspaces": rendered on every update() (not gated behind the preferences-signature
+  // cache below), since it depends on state.workspaces, not on preferences.
+  let deletedShown = false;
+  let deletedSig = "";
+  function renderDeleted(state) {
+    const deleted = (state.workspaces || []).filter((w) => w.status === "archived");
+    if (deleted.length) deletedShown = true;
+    deletedCard.hidden = !deletedShown;
+    if (!deletedShown) return;
+    const sig = JSON.stringify(deleted.map((w) => [w.id, w.name, w.archivedAt]));
+    if (sig === deletedSig) return;
+    deletedSig = sig;
+    mount(deletedBox, deleted.length
+      ? el("ul", { class: "stack" }, deleted.map((w) => {
+          const err = el("p", { class: "error-text small", role: "alert", hidden: true });
+          const restore = button("Bring back", async () => {
+            err.hidden = true; err.textContent = "";
+            const out = await store.actions.restoreWorkspace(w.id);
+            if (out.ok) {
+              deletedStatus.textContent = `${w.name} is back. Everyone who was in it has their access again; choose it in the workspace picker.`;
+              deletedStatus.focus();
+            } else {
+              err.textContent = messageFor(out.error);
+              err.hidden = false;
+            }
+          }, { small: true, attrs: { "aria-label": `Bring back ${w.name}` } });
+          return el("li", { class: "row" }, [el("strong", { text: w.name }), el("span", { class: "muted small", text: `Deleted ${(w.archivedAt || "").slice(0, 10)}` }), restore, err]);
+        }))
+      : el("p", { class: "muted small", text: "No deleted workspaces." }));
+  }
+
   let rendered = "";
   function update(state) {
     // Show the saved name, or suggest the Google one once, without overwriting what is being typed.
@@ -387,6 +429,7 @@ export function createView(ctx) {
         });
       }
     }
+    renderDeleted(state);
     const prefs = state.preferences;
     if (!prefs) return;
     renderStaging(state);
@@ -417,7 +460,7 @@ export function createView(ctx) {
       prefControl("Display currency", "displayCurrency", pickerSelect(CURRENCIES.map((c) => ({ value: c, label: c || "Account currency" })), e.displayCurrency || ""), prefs),
       prefControl("Date format", "dateFormat", pickerSelect([{ value: "iso", label: "2026-09-13" }, { value: "dmy", label: "13/09/2026" }, { value: "mdy", label: "09/13/2026" }], e.dateFormat, {}, { search: false }), prefs),
       prefControl("Number format", "numberFormat", pickerSelect(["1,234.56", "1.234,56", "1 234,56"].map((v) => ({ value: v, label: v })), e.numberFormat, {}, { search: false }), prefs),
-      prefControl("Default workspace", "defaultWorkspaceId", pickerSelect([{ value: "", label: "First available" }].concat(state.workspaces.map((w) => ({ value: w.id, label: w.name }))), e.defaultWorkspaceId || ""), prefs),
+      prefControl("Default workspace", "defaultWorkspaceId", pickerSelect([{ value: "", label: "First available" }].concat(state.workspaces.filter((w) => w.status !== "archived").map((w) => ({ value: w.id, label: w.name }))), e.defaultWorkspaceId || ""), prefs),
     );
     // An enhanced select's focus() lands on its trigger.
     if (focusedKey && prefControls[focusedKey]) prefControls[focusedKey].focus();

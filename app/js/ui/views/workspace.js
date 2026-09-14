@@ -64,6 +64,51 @@ export { settingText };
 const INTRO_CHANGE = "These decide how everyone in this workspace works. Owners and managers change them; the ones marked “Owners only” can be changed by owners alone. Each one starts with how BudgetTracker has always worked. Privacy and safety rules are not settings: private accounts stay private, nothing is ever deleted and every change is kept.";
 const INTRO_READ = "These decide how everyone in this workspace works. Owners and managers change them; you can see how it is set up and every change below.";
 
+// "Delete workspace" (Terry, 2026-09-14: "the workspace owner should be able to delete their own
+// workspace(s)"). Underneath it stays the recoverable archive (BT-001-05: nothing is ever physically
+// deleted) — the dialog says so and names where it comes back. Owners only; a site administrator never
+// gets this, or any other access to the workspace's records (CLAUDE.md §3).
+const DELETE_MESSAGE = "Everyone loses access and it disappears from your lists. Nothing is erased: you can bring it back from Deleted workspaces in My settings.";
+function openDeleteDialog(ctx, workspace) {
+  const { store, navigate } = ctx;
+  const reason = input({ maxlength: "200" });
+  reason.value = "No longer needed";
+  const confirmName = input({ maxlength: "80", autocomplete: "off" });
+  const formId = `delete-workspace-${workspace.id}`;
+  const go = el("button", { type: "submit", class: "btn btn--danger", text: "Delete workspace", form: formId });
+  const form = el("form", { class: "form-grid", novalidate: true, id: formId }, [
+    field("Reason", reason),
+    field(`Type ${workspace.name} to confirm`, confirmName),
+  ]);
+  const modal = openModal({
+    title: `Delete ${workspace.name}?`,
+    body: [el("p", { text: DELETE_MESSAGE }), form],
+    actions: [button("Cancel", () => modal.close()), go],
+  });
+  async function submit() {
+    modal.setError("");
+    confirmName.removeAttribute("aria-invalid");
+    confirmName.removeAttribute("aria-errormessage");
+    if (confirmName.value !== workspace.name) {
+      confirmName.setAttribute("aria-invalid", "true");
+      confirmName.setAttribute("aria-errormessage", modal.errorId);
+      modal.setError(`Type the workspace name, ${workspace.name}, to confirm.`);
+      confirmName.focus();
+      return;
+    }
+    modal.setBusy(true);
+    const out = await store.actions.deleteWorkspace(workspace.id, reason.value.trim());
+    modal.setBusy(false);
+    if (!out.ok) { modal.setError(out.error); return; }
+    modal.close();
+    announce(`${workspace.name} deleted. You can bring it back from Deleted workspaces in My settings.`);
+    if (navigate) navigate("dashboard");
+  }
+  go.addEventListener("click", (e) => { e.preventDefault(); void submit(); });
+  form.addEventListener("submit", (e) => { e.preventDefault(); void submit(); });
+  return modal;
+}
+
 export function createView(ctx) {
   const { api, store } = ctx;
   const wsId = store.getState().selectedWorkspaceId;
@@ -76,6 +121,9 @@ export function createView(ctx) {
   const settingsBox = el("div", { class: "stack" });
   const coloursBox = el("div", { class: "stack" });
   const typesBox = el("div", { class: "stack" });
+  // "Delete workspace" (owners only): a separate danger-style card at the bottom of the page, outside
+  // the two-column grid, built only for an owner (finding: it must not exist in the DOM for anyone else).
+  const deleteBox = el("div");
   const element = el("section", {}, [
     pageHead("Workspace"),
     el("div", { class: "grid grid--two" }, [
@@ -89,6 +137,7 @@ export function createView(ctx) {
       el("section", { class: "card card--full", "aria-labelledby": "ws-colours" }, [el("h2", { class: "card__title", id: "ws-colours", text: "Category colours and icons" }), coloursBox]),
       el("section", { class: "card", "aria-labelledby": "ws-types" }, [el("h2", { class: "card__title", id: "ws-types", text: "Icons for types" }), typesBox]),
     ]),
+    deleteBox,
   ]);
 
   const me = () => ((sliceFor(store.getState(), "members").data || {}).members || []).find((m) => m.self) || { role: "viewer" };
@@ -476,6 +525,24 @@ export function createView(ctx) {
     if (!loaded) { loaded = true; void loadInvites(); void loadBackups(); void loadAudit(); void loadInfo(); }
     // A removal, role change or rejoin changes the members list; the former members reload with it.
     if (members.data !== lastMembers) { lastMembers = members.data; void loadFormer(); }
+    renderDelete(state, role);
+  }
+
+  // "Delete workspace" (owners only). Built only when this person owns the current workspace, so the
+  // card and its button do not exist in the DOM for anyone else (not merely hidden).
+  let deleteSig = "";
+  function renderDelete(state, role) {
+    const workspace = (state.workspaces || []).find((w) => w.id === wsId);
+    const owner = role === "owner" && !!workspace;
+    const sig = JSON.stringify([owner, workspace ? workspace.name : null]);
+    if (sig === deleteSig) return;
+    deleteSig = sig;
+    if (!owner) { mount(deleteBox); return; }
+    mount(deleteBox, el("section", { class: "card card--danger", "aria-labelledby": "ws-delete" }, [
+      el("h2", { class: "card__title", id: "ws-delete", text: "Delete workspace" }),
+      el("p", { class: "field__help", text: "Everyone in this workspace loses access. It can be brought back from Deleted workspaces in My settings." }),
+      button("Delete workspace…", () => { openDeleteDialog(ctx, workspace); }, { variant: "danger" }),
+    ]));
   }
   // Leaving the page (the shell asked first) forgets the card's unsaved mark.
   return { element, update, destroy: () => form.destroy() };

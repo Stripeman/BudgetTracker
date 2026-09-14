@@ -83,6 +83,9 @@ fieldset.budget-line { margin: 0; padding: var(--space-3); border: 1px solid var
 .themepick__icon { color: var(--swatch, currentColor); }
 /* One compact row per category: name, colour and icon side by side when there is room (UXI-3). */
 .card--full { grid-column: 1 / -1; }
+/* "Delete workspace" (Terry, 2026-09-14): a danger-style card, set apart from the ordinary ones. */
+.card--danger { border-color: var(--color-danger); }
+.card--danger .card__title { color: var(--color-danger-text); }
 .catrow { display: grid; gap: var(--space-2) var(--space-3); align-items: start; grid-template-columns: repeat(auto-fit, minmax(min(13rem, 100%), 1fr)); padding-block: var(--space-2); border-top: 1px solid var(--border); }
 .catrow__name { margin: 0; padding-top: var(--space-4); font-size: var(--text-base); }
 .catrow__meta, .catrow > .error-text { grid-column: 1 / -1; }

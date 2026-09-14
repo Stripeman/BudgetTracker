@@ -203,10 +203,15 @@ export function createShell({ mountPoint, store, router, theme, api }) {
     return wsPicker.element;
   }
 
+  // Open workspaces: not a deleted one (an owner keeps seeing a deleted workspace only in My settings'
+  // "Deleted workspaces", to bring it back — Terry, 2026-09-14).
+  const openWorkspaces = (state) => state.workspaces.filter((w) => w.status !== "archived");
+
   function renderHeader(state) {
     brandName.textContent = (state.site && state.site.branding && state.site.branding.name) || "BudgetTracker";
     const items = [brand];
-    if (state.workspaces.length) items.push(workspacePicker(state));
+    const open = openWorkspaces(state);
+    if (open.length) items.push(workspacePicker({ ...state, workspaces: open }));
     items.push(spacer);
     if (!menu) menu = buildMenu(state.auth.user);
     menu.refresh();
@@ -274,8 +279,8 @@ export function createShell({ mountPoint, store, router, theme, api }) {
     // Without a workspace there are no sections to navigate, so the nav is hidden (UX-011). My
     // settings stays reachable from the account menu: personal preferences, and for a site
     // administrator the icon catalogue (BT-011-05), need no workspace.
-    const onboarding = !state.workspaces.length && route.id !== "join" && route.id !== "settings";
-    nav.hidden = onboarding || (!state.workspaces.length && route.id === "settings");
+    const onboarding = !openWorkspaces(state).length && route.id !== "join" && route.id !== "settings";
+    nav.hidden = onboarding || (!openWorkspaces(state).length && route.id === "settings");
     if (onboarding) {
       if (viewKey !== "onboarding") { viewKey = "onboarding"; view = createOnboarding(ctx()); mount(main, view.element); document.title = "Create a workspace · BudgetTracker"; }
       return;
