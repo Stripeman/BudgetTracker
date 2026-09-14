@@ -1,13 +1,15 @@
 // Seeds FICTIONAL local data for development and screenshots: one household with Alice (owner),
 // Bob (member) and Carol (viewer), a shared joint account, private accounts, merchants, ~40 entries
 // over recent weeks, a card payment transfer and a grant. Runs the real handlers against the local
-// file storage in .local/dev-data. Refuses to run if that directory already has data; delete
-// .local/dev-data yourself to reseed (it contains fictional data only).
+// file storage in .local/dev-data (or <BT_DEV_DATA_ROOT>/dev-data, a directory inside .local/ that the
+// multi-user browser harness gives each run). Refuses to run if that directory already has data;
+// delete .local/dev-data yourself to reseed (it contains fictional data only).
 import fs from "node:fs";
 import path from "node:path";
 import { randomBytes } from "node:crypto";
 import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
+import { resolveDataRoot } from "./dataroot.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 const require = createRequire(import.meta.url);
@@ -15,12 +17,14 @@ const { invoke } = require(path.join(ROOT, "api/_shared/runtime.js"));
 const { createFileStorage } = require(path.join(ROOT, "api/_shared/storage.js"));
 const { ROUTES } = require(path.join(ROOT, "api/_shared/routes.js"));
 
-const DATA_DIR = path.join(ROOT, ".local", "dev-data");
+let dirs;
+try { dirs = resolveDataRoot(process.env, ROOT); } catch (err) { console.error(err.message); process.exit(2); }
+const DATA_DIR = dirs.dataDir;
 if (fs.existsSync(DATA_DIR) && fs.readdirSync(DATA_DIR).length) {
   console.error(`${path.relative(ROOT, DATA_DIR)} already contains data. Delete it yourself to reseed (fictional data only).`);
   process.exit(2);
 }
-const KEY_FILE = path.join(ROOT, ".local", "dev-backup-key");
+const KEY_FILE = dirs.keyFile;
 fs.mkdirSync(path.dirname(KEY_FILE), { recursive: true });
 if (!fs.existsSync(KEY_FILE)) fs.writeFileSync(KEY_FILE, randomBytes(32).toString("base64"), { mode: 0o600 });
 
@@ -30,7 +34,7 @@ const USERS = {
   carol: { userId: "dev-carol", email: "carol@example.com", name: "Carol Fictional" },
 };
 const storage = createFileStorage(DATA_DIR);
-const backupStorage = createFileStorage(path.join(ROOT, ".local", "dev-backups"));
+const backupStorage = createFileStorage(dirs.backupDir);
 const env = { BT_ENVIRONMENT: "local", BT_LOCAL_DEV: "1", BT_SITE_ADMINS: "dave@example.com", BT_BACKUP_KEYS: `dev1:${fs.readFileSync(KEY_FILE, "utf8").trim()}`, BT_BACKUP_ACTIVE_KEY: "dev1" };
 
 async function call(route, method, as, { query = {}, body } = {}) {
