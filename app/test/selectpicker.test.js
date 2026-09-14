@@ -335,6 +335,37 @@ describe("BT-004-05 inside a modal dialog", () => {
   });
 });
 
+describe("BT-004-05 focus after navigation skips the hidden select (UX review U7)", () => {
+  test("focusFirst lands on the heading even when a dropdown comes first in the view", async () => {
+    const { focusFirst } = await import("../js/ui/dom.js");
+    const view = document.createElement("div");
+    const select = pickerSelect(PERIODS, "monthly");
+    view.appendChild(field("Show", select));
+    const heading = document.createElement("h1");
+    heading.textContent = "Merchants";
+    view.appendChild(heading);
+    dom.body.appendChild(view);
+    focusFirst(view);
+    same(document.activeElement, heading, "not the hidden select (tabindex -1), and not its trigger");
+  });
+
+  test("focusFirst skips anything inside an aria-hidden subtree", async () => {
+    const { focusFirst } = await import("../js/ui/dom.js");
+    const view = document.createElement("div");
+    const decoy = document.createElement("div");
+    decoy.setAttribute("aria-hidden", "true");
+    const hiddenTarget = document.createElement("span");
+    hiddenTarget.setAttribute("tabindex", "-1");
+    decoy.appendChild(hiddenTarget);
+    view.appendChild(decoy);
+    const heading = document.createElement("h2");
+    view.appendChild(heading);
+    dom.body.appendChild(view);
+    focusFirst(view);
+    same(document.activeElement, heading);
+  });
+});
+
 describe("BT-004-05 nothing is cut off (real layout is checked in a browser)", () => {
   test("the panel is at least as wide as its trigger, through a custom property", () => {
     const create = document.createElement;
