@@ -27,9 +27,10 @@ import * as accounts from "./accounts.mjs";
 import * as remove from "./remove.mjs";
 import * as deleteworkspace from "./deleteworkspace.mjs";
 import * as move from "./move.mjs";
+import * as analytics from "./analytics.mjs";
 
-const SCENARIOS = [privacy, shared, concurrency, guards, dropdown, staging, recheck, settings, accounts, remove, deleteworkspace, move];
-const ALIASES = { group: "shared", "shared-expenses": "shared", picker: "dropdown", dropdowns: "dropdown", "route-guards": "guards", "staging-link": "staging", "workspace-settings": "settings", "edit-account": "accounts", "remove-account": "remove", "delete-workspace": "deleteworkspace", archive: "deleteworkspace", "move-entry": "move", "move-account": "move" };
+const SCENARIOS = [privacy, shared, concurrency, guards, dropdown, staging, recheck, settings, accounts, remove, deleteworkspace, move, analytics];
+const ALIASES = { group: "shared", "shared-expenses": "shared", picker: "dropdown", dropdowns: "dropdown", "route-guards": "guards", "staging-link": "staging", "workspace-settings": "settings", "edit-account": "accounts", "remove-account": "remove", "delete-workspace": "deleteworkspace", archive: "deleteworkspace", "move-entry": "move", "move-account": "move", usage: "analytics", "site-usage": "analytics" };
 const rel = (p) => path.relative(ROOT, p).replace(/\\/g, "/");
 
 let args;

@@ -10,6 +10,8 @@
 //   users/{sha256(subject)}.json              one person's profile, preferences, private
 //                                              contacts and derived workspace index
 //   site/settings.json                        operational site settings (no financial data)
+//   site/usage.json                           aggregate usage/activity counts for the site-admin
+//                                              Usage page (BT-012-01); no financial data
 const { update } = require('./storage');
 const { readDocument, stampDocument } = require('./schema');
 const { notFound, conflict } = require('./http');
@@ -23,6 +25,7 @@ const paths = Object.freeze({
   attachment: (wsId, sha) => `workspaces/${requireId(wsId, 'workspaceId')}/attachments/${sha}`,
   user: (subject) => `users/${userKey(subject)}.json`,
   site: () => 'site/settings.json',
+  usage: () => 'site/usage.json',
 });
 
 const IDEMPOTENCY_TTL_MS = 48 * 60 * 60 * 1000;

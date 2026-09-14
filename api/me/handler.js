@@ -6,6 +6,7 @@ const { activeMember } = require('../_shared/authz');
 const store = require('../_shared/store');
 const model = require('../_shared/workspace-model');
 const site = require('../_shared/site');
+const usage = require('../_shared/usage');
 const { appInfo } = require('../_shared/version');
 const prefs = require('../preferences/handler');
 const fields = require('../_shared/fields');
@@ -13,6 +14,9 @@ const { readBody } = require('../_shared/http');
 
 async function get(ctx) {
   const user = await store.ensureUser(ctx);
+  // Usage/activity touch (BT-012-01), the natural once-per-boot touchpoint. Never lets a usage
+  // recording problem break sign-in or the boot payload.
+  try { await usage.touch(ctx, ctx.principal); } catch (err) { if (ctx.log) (ctx.log.error || ctx.log)(`usage_touch_failed ${(err && err.code) || 'unknown'}`); }
   const workspaces = [];
   for (const id of user.workspaceIds || []) {
     const { value } = await ctx.storage.getJson(store.paths.workspace(id));

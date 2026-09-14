@@ -18,6 +18,9 @@ export const ROUTES = Object.freeze([
   { id: "workspace", path: "/workspace", label: "Workspace" },
   { id: "settings", path: "/settings", label: "My settings" },
   { id: "join", path: "/join", label: "Join", hidden: true },
+  // Site usage (BT-012-01): site administrators only. Not a workspace section, so it is left out of
+  // navRoutes() (like "join") and added to the nav directly by the shell, only for site admins.
+  { id: "analytics", path: "/analytics", label: "Usage", hidden: true },
 ]);
 
 // The sections shown in the nav for this workspace (a workspace summary, or just its kind) and site.
