@@ -8,6 +8,8 @@
 //   DELETE  { transactionId, revision, reason } soft delete (both legs of a transfer; a reversal
 //           and the entry it reverses together)
 //   POST    ?action=restore { transactionId }  restores the same group
+//   POST    ?action=move { transactionId, revision, toAccountId, reason }  moves one entry (or one leg
+//           of a transfer) to another account of the same currency, kept as an amendment (BT-006-05)
 const { readBody, query, header, badRequest, forbidden, notFound, conflict } = require('../_shared/http');
 const { newId, requireId } = require('../_shared/ids');
 const { capabilitiesFor, can, canChangeRecord } = require('../_shared/authz');
@@ -197,8 +199,14 @@ async function list(ctx, req) {
     const view = ledger.transactionView(doc, t, ctx.principal, now, look);
     const account = look.accounts.get(t.accountId);
     view.responsible = people.labelFor(t.responsibleRef, { doc, user });
-    view.canEdit = canChangeRecord(doc, ctx.principal, account, t, 'edit', now);
+    const canEditThis = canChangeRecord(doc, ctx.principal, account, t, 'edit', now);
+    view.canEdit = canEditThis;
     view.canDelete = canChangeRecord(doc, ctx.principal, account, t, 'delete', now);
+    // "Move to another account" needs the same edit right (BT-006-05); a reason is given only when the
+    // person could otherwise change the entry, so a viewer just sees no action, not an explanation of a
+    // rule that would not matter to them.
+    view.moveBlockedReason = canEditThis ? moveBlockReason(t) : null;
+    view.canMove = canEditThis && !view.moveBlockedReason;
     return view;
   });
   return {
@@ -344,12 +352,37 @@ function checkRevision(t, revision) {
   if (revision !== t.revision) throw conflict('This entry changed since you loaded it. Reload to see the latest version.', 'stale_revision');
 }
 
+// The account an entry is being MOVED to (BT-006-05): the caller needs the create right there, not just
+// edit/view. Deny by default: an account outside the caller's access fails as not found — whether it
+// belongs to nobody, another workspace or another member's private records — so the refusal never
+// confirms it exists. Unlike `accountFor`, a deleted account is looked up so a caller who can already
+// see it (their own removed account) gets a specific reason instead of "not found".
+function moveDestination(doc, principal, accountId, now) {
+  const account = (doc.accounts || []).find((a) => a.id === accountId);
+  if (!account || capabilitiesFor(doc, principal, account, now).size === 0) throw notFound('Unknown account.');
+  if (!can(doc, principal, account, 'create', now)) throw forbidden(`You do not have create permission on ${account.name}.`);
+  if (account.deletedAt) throw conflict(`${account.name} has been removed. Bring it back on the Accounts page first.`, 'account_removed');
+  if (account.status === 'closed') throw conflict(`${account.name} is closed. Reopen it on the Accounts page to add entries.`, 'account_closed');
+  return account;
+}
+
 // Entries recorded from a shared expense or payment (server-set group links) follow that record: their
 // owner's update from Shared expenses reverses and replaces them. Changing their financial details,
 // reversing or deleting them here would leave them wrong until that update, so only notes, tags and
 // status change here (financial recheck N2).
 const sharedLinked = (t) => Boolean(t.links && (t.links.groupExpenseId || t.links.groupSettlementId));
 const sharedLocked = () => conflict('This entry was recorded from Shared expenses, so its amount, date, type, category and merchant follow the shared expense. Change it in Shared expenses; notes, tags and status can be changed here.', 'shared_expense_locked');
+
+// Why an otherwise-editable entry cannot be MOVED (BT-006-05), in the same words the move action would
+// refuse with — used both to answer a move attempt and to tell the Transactions list which rows offer
+// "Move to another account" and why not (a plain reason, never colour alone).
+function moveBlockReason(t) {
+  if (sharedLinked(t)) return 'This entry was recorded from Shared expenses. Change it in Shared expenses.';
+  if (t.owedPairId) return 'This amount owed and its matching share are recorded together on one account. Reverse it (both are reversed) and enter it again.';
+  if (inReversalPair(t)) return t.reversedBy ? 'This entry has been reversed, so it cannot be moved.' : 'This is a reversal, so it always stays with the entry it reverses.';
+  if (t.status === 'reconciled') return 'This entry is reconciled. Change its status to cleared before moving it.';
+  return null;
+}
 
 async function patch(ctx, req) {
   const wsId = requireId(query(req, 'workspaceId'), 'workspaceId');
@@ -587,11 +620,94 @@ async function reverse(ctx, req) {
   return { status: 201, body: result };
 }
 
+const MOVE_KEYS = ['transactionId', 'revision', 'toAccountId', 'reason'];
+
+// MOVE TO ANOTHER ACCOUNT (Terry, 2026-09-14: "i should be able to move a transaction from one account
+// to the next if i accidentally choose the wrong account in the first place"). A dedicated action, not a
+// silent PATCH field, because it touches two accounts' history, audit and balances: the caller needs the
+// change right on the entry's CURRENT account (existing canChangeRecord rules, including workspace
+// setting (f) if turned on) AND the create right on the DESTINATION account. Same currency only. The
+// move is kept as ONE atomic ETag-guarded write with an amendment on `accountId` (and, for one leg of a
+// transfer, the other leg's `counterpartAccountId`) — who, when, why — never a silent overwrite. Balances,
+// totals, forecasts and budgets are derived on read from `accountId`, so they follow automatically.
+async function move(ctx, req) {
+  const wsId = requireId(query(req, 'workspaceId'), 'workspaceId');
+  const body = fields.onlyKeys(readBody(req), MOVE_KEYS);
+  const id = requireId(body.transactionId, 'transactionId');
+  const toAccountId = requireId(body.toAccountId, 'toAccountId');
+  const user = await readUser(ctx);
+  const { result } = await store.mutateWorkspace(ctx, wsId, (doc, member) => {
+    const now = ctx.now();
+    const nowIso = ctx.nowIso();
+    const { t, account } = findTxn(doc, ctx.principal, id, now);
+    if (t.deletedAt) throw conflict('Restore this entry before moving it.', 'deleted');
+    if (!canChangeRecord(doc, ctx.principal, account, t, 'edit', now)) throw forbidden('You cannot move this entry.');
+    checkRevision(t, body.revision);
+    const blocked = moveBlockReason(t);
+    if (sharedLinked(t)) throw sharedLocked();
+    if (t.owedPairId) throw conflict(blocked, 'owed_pair_locked');
+    if (inReversalPair(t)) throw conflict(blocked, 'reversal_locked');
+    if (t.status === 'reconciled') throw conflict(blocked, 'reconciled_locked');
+    if (toAccountId === t.accountId) throw badRequest('Choose a different account to move this entry to.', 'same_account');
+    // Deny by default: an account the caller cannot see fails as not found, never confirming it exists.
+    const dest = moveDestination(doc, ctx.principal, toAccountId, now);
+    if (dest.currency !== t.currency) throw badRequest(`${dest.name} is in ${dest.currency}; enter it again on that account.`, 'currency_mismatch');
+    // One leg of a transfer: the OTHER leg's counterpartAccountId follows in the same write, and the
+    // destination may not equal the other leg's own account (a transfer needs two different accounts).
+    const pair = t.transferId ? (doc.transactions || []).find((x) => x.transferId === t.transferId && x.id !== t.id) : null;
+    if (pair && pair.accountId === dest.id) throw badRequest('A transfer needs two different accounts.', 'invalid_transfer');
+    if (pair) {
+      const pairAccount = (doc.accounts || []).find((a) => a.id === pair.accountId);
+      if (!pairAccount || !canChangeRecord(doc, ctx.principal, pairAccount, pair, 'edit', now)) throw forbidden('You cannot move both sides of this transfer.');
+    }
+    // A merchant already on the entry must stay usable on the new account (BT-007-01): a private
+    // merchant never lands on a shared account, and never on another private account than its own.
+    if (t.payeeId) {
+      const payee = (doc.payees || []).find((p) => p.id === t.payeeId);
+      if (payee && !merchants.usableOn(payee, dest)) {
+        throw conflict('Merchants used on a private account are not available on other private accounts or on a shared account. Change the merchant first, or choose another destination.', 'merchant_not_usable');
+      }
+    }
+    // Likewise a private contact (BT-005-01): usable only on its owner's private records.
+    if (t.responsibleRef) people.requireRef(t.responsibleRef, { doc, user, visibility: dest.visibility });
+    const reason = fields.text(body.reason, { field: 'Reason', max: 200 });
+    if (!reason) throw badRequest('Give a reason for this move. It is kept with the entry\'s history.', 'reason_required');
+
+    const fromAccountId = t.accountId;
+    t.accountId = dest.id;
+    t.revision += 1;
+    t.updatedAt = nowIso;
+    t.updatedBy = member.subject;
+    history(t, member.subject, nowIso, ['move']);
+    amend(t, member.subject, nowIso, reason, [{ field: 'accountId', from: fromAccountId, to: dest.id }]);
+    audit.record(doc, { actor: member.subject, action: 'transaction.move-out', targetType: 'transaction', targetId: t.id, scope: `account:${fromAccountId}`, at: nowIso });
+    audit.record(doc, { actor: member.subject, action: 'transaction.move-in', targetType: 'transaction', targetId: t.id, scope: `account:${dest.id}`, at: nowIso });
+    const touched = [t];
+    if (pair) {
+      const pairFrom = pair.counterpartAccountId;
+      pair.counterpartAccountId = dest.id;
+      pair.revision += 1;
+      pair.updatedAt = nowIso;
+      pair.updatedBy = member.subject;
+      history(pair, member.subject, nowIso, ['move']);
+      amend(pair, member.subject, nowIso, reason, [{ field: 'counterpartAccountId', from: pairFrom, to: dest.id }]);
+      audit.record(doc, { actor: member.subject, action: 'transaction.move', targetType: 'transaction', targetId: pair.id, scope: `account:${pair.accountId}`, at: nowIso });
+      touched.push(pair);
+    }
+    ledger.assertLedgerInRange(doc);
+    ledger.assertMemberQuota(doc, member, ctx.env);
+    const look = lookups(doc);
+    return { transactions: touched.map((x) => ledger.transactionView(doc, x, ctx.principal, now, look)) };
+  });
+  return { body: result };
+}
+
 // The full amendment history of one entry: who changed what, from what to what, when and why.
 async function amendmentHistory(ctx, req) {
   const wsId = requireId(query(req, 'workspaceId'), 'workspaceId');
   const { doc } = await store.loadWorkspace(ctx, wsId);
-  const { t } = findTxn(doc, ctx.principal, requireId(query(req, 'transactionId'), 'transactionId'), ctx.now());
+  const now = ctx.now();
+  const { t } = findTxn(doc, ctx.principal, requireId(query(req, 'transactionId'), 'transactionId'), now);
   const names = new Map((doc.members || []).map((m) => [m.subject, m.name || 'Member']));
   const value = (field, v) => {
     if (field === 'amountMinor' && typeof v === 'number') return money.toDecimal(v, t.currency);
@@ -599,10 +715,25 @@ async function amendmentHistory(ctx, req) {
     if (field === 'original' && v && typeof v === 'object' && money.isMinor(v.amountMinor)) return { ...v, amount: money.toDecimal(v.amountMinor, v.currency) };
     return v;
   };
+  // A moved entry's before/after account (BT-006-05) is named only to someone who can already see that
+  // account — the same rule a transfer's counterpart follows (SEC-B12; security recheck L3) — so a
+  // history shared across two accounts never discloses another member's private account by id or name.
+  const accountRef = (id) => {
+    const a = id && (doc.accounts || []).find((x) => x.id === id);
+    if (!a || !can(doc, ctx.principal, a, 'view-balances', now)) return { id: null, name: null };
+    return { id: a.id, name: a.name };
+  };
+  const ACCOUNT_FIELDS = new Set(['accountId', 'counterpartAccountId']);
+  const change = (c) => {
+    if (!ACCOUNT_FIELDS.has(c.field)) return { ...c, from: value(c.field, c.from), to: value(c.field, c.to) };
+    const from = accountRef(c.from);
+    const to = accountRef(c.to);
+    return { field: c.field, from: from.id, fromName: from.name, to: to.id, toName: to.name };
+  };
   return {
     body: {
       transactionId: t.id, createdAt: t.createdAt, createdBy: names.get(t.createdBy) || 'Former member',
-      amendments: (t.amendments || []).map((a) => ({ at: a.at, by: names.get(a.by) || 'Former member', reason: a.reason, changes: a.changes.map((c) => ({ ...c, from: value(c.field, c.from), to: value(c.field, c.to) })) })),
+      amendments: (t.amendments || []).map((a) => ({ at: a.at, by: names.get(a.by) || 'Former member', reason: a.reason, changes: a.changes.map(change) })),
     },
   };
 }
@@ -611,6 +742,7 @@ async function post(ctx, req) {
   const action = query(req, 'action');
   if (action === 'restore') return setDeleted(false)(ctx, req);
   if (action === 'reverse') return reverse(ctx, req);
+  if (action === 'move') return move(ctx, req);
   if (action !== undefined) throw notFound();
   return create(ctx, req);
 }

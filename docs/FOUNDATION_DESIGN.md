@@ -58,6 +58,48 @@ All changes so far only add optional fields and collections to the version-1 wor
 | Workspace settings in `settings` (Terry, 2026-09-14; BT-011-07..13): `sharedExpenses`, `memberEditsOthers`, `sharedListManagers`, `budgetBackdating`, `billReminderDays`, `overdueRecordDate`, `memberRestoresPerDay`, `memberRestoreModes`, next to the existing `budgetPeriod` and `weekStart` | The default, which is today's behaviour; a stored value that is no longer valid also reads as the default. A stored `budgetPeriod: "custom"` (accepted before) reads as monthly and still passes the integrity check |
 | Workspace summary `settingValues`; workspace GET `settingsList` | Not sent (older API) |
 
+### Moving an entry to another account (BT-006-05)
+
+Terry, 2026-09-14: "on a transaction i should be able to move a transaction from one account to the next
+if i accidently choose the wrong account in the first place". No new persisted field: a move is `accountId`
+(and, for one leg of a transfer, the other leg's `counterpartAccountId`) changed in place and recorded as
+an ordinary amendment, so `schemaVersion` stays 1 and every existing consumer of `accountId` — balances,
+totals, budgets, forecasts, bill occurrence tracking, backups and restores — follows automatically with no
+extra code. A dedicated action (`POST /api/transactions?action=move`), never a silent PATCH field, because
+a move touches two accounts' access, history and audit rather than one record's own fields.
+
+- **Two permissions, not one.** The caller needs the existing change right on the entry's CURRENT account
+  (`canChangeRecord`, so workspace setting (f) "members may change other members' entries" applies here
+  too) AND the CREATE right on the DESTINATION account (`moveDestination`, the same rule a new entry would
+  need there). An account the caller cannot see at all fails as not found (404), whether it belongs to
+  nobody, another workspace or another member's private records — never confirming it exists, and never
+  revealing its name or id. One leg of a transfer needs the change right on the OTHER leg's account too,
+  since that leg's `counterpartAccountId` changes in the same write.
+- **Same currency only.** Multi-currency conversion is not built for entries; a mismatch is refused with a
+  plain reason naming the destination and its currency.
+- **Every existing lock still applies**, with the same codes and messages the entry already refuses PATCH
+  and DELETE with: reconciled (`reconciled_locked`), a reversal or a reversed entry (`reversal_locked`), a
+  hand-entered amount-owed pair (`owed_pair_locked`, Terry's decision C), an entry recorded from Shared
+  expenses (`shared_expense_locked`, N2 — moved only by its owner's update there), and a deleted entry
+  (`deleted`, restore it first). New refusals: `same_account`, `currency_mismatch`, `account_removed` and
+  `account_closed` for the destination only (moving an entry OFF a closed account is an allowed
+  correction — PATCH already edits entries on a closed account without requiring it to reopen first), and
+  `invalid_transfer` when a transfer's destination would equal its other leg's own account.
+- **Directory compatibility.** A merchant or a private contact already on the entry must stay usable on the
+  new account (`merchants.usableOn`, `people.requireRef`): a private merchant or private contact never
+  lands on a shared account, or on another private account than its own.
+- **Masked history, like a transfer's counterpart.** The amendment-history endpoint names each side's
+  before/after account (`fromName`/`toName`) only to a viewer who can already see that account — the same
+  rule `counterpartAccountId` already follows on the transaction view (SEC-B12; security recheck of
+  `47617b5`, L3) — so moving an entry onto or off a shared account never discloses a private account it
+  came from or went to by id or name; the raw ids stay masked to `null` and the client reads "another
+  account". Audit is scoped per account (`transaction.move-out` on the old one, `transaction.move-in` on
+  the new one, `transaction.move` on a transfer's other leg, whose own account did not change).
+- **Restores.** A create-new restore's account-reference scrubbing (already applied to transfer
+  counterparts, security recheck L2) now also covers a move's amendment `from`/`to` account ids: an
+  account that does not come along in the new workspace is nulled there too, never carrying another
+  member's private account id into a workspace that has no member but the restorer.
+
 ### Shared expenses (BT-009, increment 1 and its review fixes)
 
 - **Currencies.** New expenses are in the workspace's reporting currency. Payments may also be in any currency that still has an open balance, so a balance left from before a change can always be cleared. The reporting currency cannot change while any shared balance is open (`409 group_balances_open`, naming the currency). Balances are kept per currency, and the view and dashboard show every currency with an open balance (financial review finding 3).
