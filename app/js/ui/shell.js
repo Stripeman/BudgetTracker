@@ -36,20 +36,22 @@ import { messageFor } from "../core/errors.js";
 const VIEWS = { dashboard, group, transactions, bills, planning, accounts, payees, settings, workspace, join };
 
 // Shared expenses turned off (workspace settings, Terry 2026-09-14): the page says so and loads nothing;
-// the server refuses /api/group as well. Nothing recorded is removed.
+// the server refuses /api/group as well. Nothing recorded is removed. The message follows the current
+// reason (the site's switch or the workspace's setting) on every update.
 const SHARED_EXPENSES_OFF = {
   createView(ctx) {
-    const site = ctx.state && ctx.state.site;
-    const siteOff = !!(site && site.modules && site.modules.sharedExpenses === false);
-    return {
-      element: el("section", {}, [
-        el("div", { class: "page-head" }, [el("h1", { text: "Shared expenses" })]),
-        el("p", { class: "notice", text: siteOff
+    const notice = el("p", { class: "notice" });
+    const view = {
+      element: el("section", {}, [el("div", { class: "page-head" }, [el("h1", { text: "Shared expenses" })]), notice]),
+      update(state) {
+        const site = state && state.site;
+        notice.textContent = site && site.modules && site.modules.sharedExpenses === false
           ? "Shared expenses are turned off for this site by the site administrator. Nothing recorded has been removed."
-          : "Shared expenses are turned off in this workspace. Nothing recorded has been removed; an owner or manager can turn them on again in Workspace settings." }),
-      ]),
-      update() {},
+          : "Shared expenses are turned off in this workspace. Nothing recorded has been removed; an owner or manager can turn them on again in Workspace settings.";
+      },
     };
+    view.update(ctx.state);
+    return view;
   },
 };
 

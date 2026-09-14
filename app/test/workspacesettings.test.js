@@ -11,6 +11,8 @@ import { createView as createPlanning, defaultBudgetStart, backdateProblem } fro
 import { openBillEditor } from "../js/ui/views/bills.js";
 import { createView as createDashboard } from "../js/ui/views/dashboard.js";
 import { navRoutes } from "../js/core/router.js";
+import { createShell } from "../js/ui/shell.js";
+import { createThemeController } from "../js/ui/theme.js";
 
 let dom;
 beforeEach(() => { dom = installDom(); });
@@ -250,6 +252,38 @@ describe("Workspace settings card", () => {
     const siteOff = dash({ sharedExpenses: true }, { modules: { sharedExpenses: false } });
     assert.doesNotMatch(siteOff.text, /Your balance/);
     assert.equal(siteOff.refreshed, 0);
+  });
+
+  test("(a) the shell: Shared expenses opened while off says so (workspace or site) and has no nav item; turned on, the real page is used", () => {
+    const listeners = new Set();
+    let state = {
+      auth: { status: "ready", user: { name: "Bob Fictional" } }, preferences: null, site: null, app: { version: "0.0.0-test", environment: "test" },
+      workspaces: [{ id: "ws_1", name: "Fictional household", kind: "household", status: "active", role: "member", settingValues: { sharedExpenses: false } }],
+      selectedWorkspaceId: "ws_1",
+    };
+    let groupLoads = 0;
+    const store = {
+      getState: () => state, subscribe(fn) { listeners.add(fn); return () => listeners.delete(fn); },
+      actions: { refreshGroup: async () => { groupLoads += 1; }, refreshTransactions: async () => {}, refreshBills: async () => {}, refreshForecast: async () => {}, savePreferences: async () => ({ ok: true }), selectWorkspace: async () => {} },
+    };
+    const commit = (patch) => { state = { ...state, ...patch }; for (const fn of listeners) fn(state); };
+    const theme = createThemeController({ root: { setAttribute() {} }, storage: { getItem: () => null, setItem() {} }, media: { matches: false, addEventListener() {} } });
+    const router = { current: () => ({ id: "group", params: {} }), subscribe() {}, navigate() {} };
+    const mountPoint = document.createElement("div");
+    dom.body.appendChild(mountPoint);
+    createShell({ mountPoint, store, router, theme, api: {} }).render();
+    const main = () => mountPoint.querySelector("main").textContent;
+    const nav = () => mountPoint.querySelector("nav").querySelectorAll("a").map((a) => a.textContent);
+    assert.match(main(), /Shared expenses are turned off in this workspace\. Nothing recorded has been removed/);
+    assert.equal(nav().includes("Shared expenses"), false);
+    assert.equal(groupLoads, 0, "nothing is loaded while it is off");
+    commit({ workspaces: [{ ...state.workspaces[0], settingValues: { sharedExpenses: true } }], site: { modules: { sharedExpenses: false } } });
+    assert.match(main(), /turned off for this site by the site administrator/);
+    assert.equal(nav().includes("Shared expenses"), false);
+    commit({ site: { modules: { sharedExpenses: true } } });
+    assert.doesNotMatch(main(), /turned off/);
+    assert.equal(nav().includes("Shared expenses"), true);
+    assert.equal(groupLoads, 1, "the real page loads Shared expenses once it is on");
   });
 
   test("settingText writes each kind of value in words", () => {
