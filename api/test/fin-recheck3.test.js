@@ -43,3 +43,46 @@ describe('N-4: "Anyone who can confirm payments" says plainly that it includes t
     ]);
   });
 });
+
+const act = (h, f, w, action, body) => G(h, f, w, 'POST', { query: { action }, body });
+const setSettings = (h, f, w, changes) => act(h, f, w, 'settings', { changes });
+const equal = (...refs) => ({ method: 'equal', lines: refs.map((ref) => ({ ref })) });
+const addExpense = async (h, f, w, body) => ok(await G(h, f, w, 'POST', { body }), 201).expense;
+const settle = async (h, f, w, body) => ok(await act(h, f, w, 'settle', body), 201).settlement;
+
+describe('N-3: "Keep who owes whom" counts a reported payment only up to what is owed, like the suggestions', () => {
+  // 90.00 paid by Alice, shared by Alice, Bob and Carol: 30.00 each. Bob owes Alice 30.00, Carol 30.00.
+  async function dinner() {
+    const h = harness();
+    const f = await fixture(h);
+    const { alice, bob, carol } = f.refs;
+    await addExpense(h, f, 'alice', { description: 'Fictional dinner', amount: '90.00', payers: [{ ref: alice }], split: equal(alice, bob, carol) });
+    return { h, f, alice, bob, carol };
+  }
+  const tables = async (x) => { const t = (await view(x.h, x.f)).balances.find((b) => b.currency === 'EUR'); const pairs = (l) => l.map((p) => [p.from, p.to, p.amount]); return { direct: pairs(t.direct), suggestions: pairs(t.suggestions) }; };
+
+  test('Bob reports 50.00 against his 30.00 debt: both views show only Carol pays Alice 30.00, never Alice pays Bob', async () => {
+    const x = await dinner();
+    await settle(x.h, x.f, 'bob', { from: x.bob, to: x.alice, amount: '50.00' });
+    assert.deepEqual(await tables(x), { direct: [[x.carol, x.alice, '30.00']], suggestions: [[x.carol, x.alice, '30.00']] });
+  });
+
+  test('a report below the debt counts in full; two reports count in order, the second only up to what is left', async () => {
+    const x = await dinner();
+    await settle(x.h, x.f, 'bob', { from: x.bob, to: x.alice, amount: '10.00' });
+    // 30.00 − 10.00 = 20.00 left from Bob; Carol 30.00.
+    assert.deepEqual((await tables(x)).direct, [[x.bob, x.alice, '20.00'], [x.carol, x.alice, '30.00']]);
+    const y = await dinner();
+    await settle(y.h, y.f, 'bob', { from: y.bob, to: y.alice, amount: '20.00' });
+    await settle(y.h, y.f, 'bob', { from: y.bob, to: y.alice, amount: '20.00' });
+    // 20.00 counts in full, the second only up to the 10.00 left: Bob owes nothing more.
+    assert.deepEqual((await tables(y)).direct, [[y.carol, y.alice, '30.00']]);
+  });
+
+  test('with reported payments not counted (setting e off), the direct view counts confirmed payments only', async () => {
+    const x = await dinner();
+    await settle(x.h, x.f, 'bob', { from: x.bob, to: x.alice, amount: '50.00' });
+    ok(await setSettings(x.h, x.f, 'alice', { countReported: false }));
+    assert.deepEqual((await tables(x)).direct, [[x.bob, x.alice, '30.00'], [x.carol, x.alice, '30.00']]);
+  });
+});
