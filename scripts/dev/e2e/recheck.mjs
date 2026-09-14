@@ -126,6 +126,37 @@ export async function run(h, t) {
     actual: { bobOffered: (bobRowButtons || []).includes("Confirm"), aliceOffered: (aliceRowButtons || []).includes("Confirm"), bobDirect: bobOverDispute, bobReads: (await b.bob.text(PAYMENTS)).includes("Confirmed over a dispute by Alice Fictional.") },
   });
 
+  // ---- R3-2: Bob reports a payment again after Alice disputed it; under the default only Alice may confirm it
+  const sE = (await api("bob").ok("group", { method: "POST", query: { ...q, action: "settle" }, body: { from: B, to: A, amount: "6.00" } })).settlement;
+  await api("alice").ok("group", { method: "POST", query: { ...q, action: "dispute" }, body: { settlementId: sE.id, revision: sE.revision, reason: "E2E second dispute" } });
+  const sF = (await api("bob").ok("group", { method: "POST", query: { ...q, action: "settle" }, body: { from: B, to: A, amount: "6.00" } })).settlement;
+  await Promise.all([fresh(b.alice, "group"), fresh(b.bob, "group")]);
+  const rowButtonsWith = (s, text) => s.evaluate(`(() => { const r = [...document.querySelectorAll('${PAYMENTS} tr')].find((x) => x.innerText.includes(${JSON.stringify(text)})); return r ? [...r.querySelectorAll('button')].map((x) => x.textContent.trim()) : null; })()`);
+  const bobAgain = await rowButtonsWith(b.bob, "Reported again after a dispute");
+  const aliceAgain = await rowButtonsWith(b.alice, "Reported again after a dispute");
+  t.check("R3-2: Bob reports his payment again after Alice disputed it; both browsers show it as reported again after a dispute; Bob is offered no Confirm, Alice is", {
+    expected: { linked: sE.id, bobSees: true, bobConfirm: false, aliceConfirm: true },
+    actual: { linked: sF.reportedAgainOf, bobSees: !!bobAgain, bobConfirm: (bobAgain || []).includes("Confirm"), aliceConfirm: (aliceAgain || []).includes("Confirm") },
+  });
+  // Alice settles it: she confirms the payment reported again and voids the one she disputed, so no
+  // dispute stays open between them for the rest of the scenario.
+  await api("alice").ok("group", { method: "POST", query: { ...q, action: "confirm" }, body: { settlementId: sF.id, revision: sF.revision } });
+  await api("alice").ok("group", { method: "POST", query: { ...q, action: "void" }, body: { settlementId: sE.id, revision: sE.revision + 1, reason: "E2E paid again instead" } });
+
+  // ---- R3-1: with managers allowed to settle disputes, Alice (owner) cannot settle Bob's dispute of her own payment
+  await api("alice").ok("group", { method: "POST", query: { ...q, action: "settings" }, body: { changes: { settleDisputes: "receiver-or-manager" } } });
+  const sG = (await api("alice").ok("group", { method: "POST", query: { ...q, action: "settle" }, body: { from: A, to: B, amount: "7.00" } })).settlement;
+  await api("bob").ok("group", { method: "POST", query: { ...q, action: "dispute" }, body: { settlementId: sG.id, revision: sG.revision, reason: "E2E not mine" } });
+  await Promise.all([fresh(b.alice, "group"), fresh(b.bob, "group")]);
+  const aliceNotMine = await rowButtonsWith(b.alice, "Disputed: E2E not mine");
+  const bobNotMine = await rowButtonsWith(b.bob, "Disputed: E2E not mine");
+  const aliceDirect = (await api("alice").request("group", { method: "POST", query: { ...q, action: "confirm" }, body: { settlementId: sG.id, revision: sG.revision + 1 } })).status;
+  t.check("R3-1: with managers allowed to settle disputes, Alice's browser offers no Confirm on her own payment Bob disputed and the API refuses her; Bob's offers it", {
+    expected: { aliceSees: true, aliceConfirm: false, aliceDirect: 403, bobConfirm: true },
+    actual: { aliceSees: !!aliceNotMine, aliceConfirm: (aliceNotMine || []).includes("Confirm"), aliceDirect, bobConfirm: (bobNotMine || []).includes("Confirm") },
+  });
+  await api("alice").ok("group", { method: "POST", query: { ...q, action: "settings" }, body: { changes: { settleDisputes: "receiver" } } });
+
   // ---- B per person: the group setting is on; Alice sets Bob to No in her card ------------------
   // Bob loses Confirm on his own payment (the API refuses him too); Carol still confirms one made to her.
   const s3 = (await api("bob").ok("group", { method: "POST", query: { ...q, action: "settle" }, body: { from: B, to: A, amount: "10.00" } })).settlement;
@@ -339,17 +370,28 @@ export async function run(h, t) {
       choose: await b.bob.evaluate("[...document.querySelectorAll('button')].some((x) => x.textContent.trim() === 'Choose my account')"),
     },
   });
-  // F2: Bob chooses a new private account. His own entries on the shared wallet are reversed there (it is
-  // back to its 100.00 opening balance), his whole part is recorded on the new account, his page has
-  // nothing left to update, and that account's outstanding equals his balance in the group.
+  // F2 and N-1: Bob chooses a new private account. Only his parts that moved no cash (shares someone else
+  // paid) move there; the repayments he really paid from the wallet stay on it, so no balance changes. His
+  // page has nothing left to update, and his outstanding over all his accounts equals his group balance.
+  const balanceNow = async (id) => (await api("bob").ok("accounts", { query: q })).accounts.find((a) => a.id === id).balance;
+  const walletBefore = await balanceNow(wallet.id);
   const spare = firstRecord(await api("bob").ok("accounts", { method: "POST", query: q, body: { name: "E2E Bob Spare", type: "cash", currency: "EUR", openingBalance: "50.00" } }));
   await api("bob").ok("group", { method: "POST", query: { ...q, action: "ledger" }, body: { currency: "EUR", accountId: spare.id } });
   await fresh(b.bob, "group");
   const bobNet = (await api("bob").ok("group", { query: q })).balances.find((x) => x.currency === "EUR").rows.find((r) => r.ref === B).net;
-  const spareSummary = (await api("bob").ok("transactions", { query: { ...q, accountId: spare.id } })).summary.find((s) => s.currency === "EUR");
-  t.check("F2: once Bob chooses E2E Bob Spare his browser shows nothing to update, the shared wallet is back to 100.00, and the spare's outstanding equals his group balance", {
-    expected: { notice: false, wallet: "100.00", outstanding: bobNet },
-    actual: { notice: (await b.bob.text("body")).includes("Your account needs updating"), wallet: (await api("bob").ok("accounts", { query: q })).accounts.find((a) => a.id === wallet.id).balance, outstanding: spareSummary ? spareSummary.receivable : null },
+  const bobAll = (await api("bob").ok("transactions", { query: q })).summary.find((s) => s.currency === "EUR");
+  const liveShared = async (id) => (await api("bob").ok("transactions", { query: { ...q, accountId: id } })).transactions.filter((x) => x.fromSharedExpense && !x.reversedBy && !(x.links && x.links.reverses));
+  const walletKinds = [...new Set((await liveShared(wallet.id)).map((x) => x.kind))];
+  // Shares someone else paid arrive on the spare as pairs (share and amount owed) that net to 0.00; any
+  // repayment not recorded anywhere before is recorded on the spare, the account he records on now.
+  const onSpare = await liveShared(spare.id);
+  const pairsNet = onSpare.filter((x) => x.kind === "expense" || x.kind === "payable").reduce((a, x) => a + x.amountMinor, 0);
+  t.check("N-1 and F2: once Bob chooses E2E Bob Spare his browser shows nothing to update; the wallet keeps its balance and only the repayments he really paid from it; the shares others paid arrive on the spare as pairs netting 0.00; his outstanding over all his accounts equals his group balance", {
+    expected: { notice: false, walletSame: true, walletKinds: ["repayment"], sparePairsNet: 0, spareKinds: true, outstanding: bobNet },
+    actual: {
+      notice: (await b.bob.text("body")).includes("Your account needs updating"), walletSame: (await balanceNow(wallet.id)) === walletBefore, walletKinds, sparePairsNet: pairsNet,
+      spareKinds: onSpare.every((x) => ["expense", "payable", "repayment"].includes(x.kind)), outstanding: bobAll ? bobAll.receivable : null,
+    },
   });
 
   // ---- E: parallel requests against the file-backed dev server ------------------------------------
@@ -387,6 +429,17 @@ export async function run(h, t) {
   t.check("L3: Alice's browser shows the Joint's side as 'Transfer to another account' and her page and API answer hold no id of Bob's wallet; Bob's shows his wallet", {
     expected: { alice: "Transfer to another account", alicePage: false, aliceApi: false, bob: "Transfer to E2E Bob Wallet" },
     actual: { alice: await transferRow(b.alice), alicePage: await b.alice.evaluate(`document.documentElement.outerHTML.includes(${JSON.stringify(bobWallet.id)})`), aliceApi: JSON.stringify(aliceList).includes(bobWallet.id), bob: await transferRow(b.bob) },
+  });
+  // R3-3: Alice's private bill moves 25.00 into the Joint. Bob sees that entry, but nothing in his API
+  // answer or his page names the bill.
+  const aliceSavings = firstRecord(await api("alice").ok("accounts", { method: "POST", query: R.q, body: { name: "E2E Alice Savings", type: "savings", currency: "EUR", openingBalance: "300.00" } }));
+  const fund = firstRecord(await api("alice").ok("recurring", { method: "POST", query: R.q, body: { name: "E2E house fund", billType: "savings", kind: "transfer", accountId: aliceSavings.id, toAccountId: joint.id, amount: "25.00", schedule: { freq: "monthly", startDate: "2026-09-01" } } }));
+  await api("alice").ok("recurring", { method: "POST", query: { ...R.q, action: "record" }, body: { recurringId: fund.id, occurrence: "2026-09-01" } });
+  const bobList = await api("bob").ok("transactions", { query: R.q });
+  await fresh(b.bob, "transactions");
+  t.check("R3-3: Alice's private bill moves 25.00 into the Joint; Bob sees the entry, but his API answer and his page hold no id of that bill", {
+    expected: { seesEntry: true, api: false, page: false },
+    actual: { seesEntry: bobList.transactions.some((x) => x.kind === "transfer" && x.amount === "25.00"), api: JSON.stringify(bobList).includes(fund.id), page: await b.bob.evaluate(`document.documentElement.outerHTML.includes(${JSON.stringify(fund.id)})`) },
   });
   // A per-person right for Bob is keyed by his member id: it must not come along either.
   await api("alice").ok("group", { method: "POST", query: { ...R.q, action: "settings" }, body: { changes: { confirmOverrides: { [R.memberOf("bob").id]: "no" } } } });

@@ -152,6 +152,17 @@ describe("Group settings card and who confirmed (Terry, 2026-09-14)", () => {
     assert.deepEqual(calls.map((c) => [c.action, c.body]), [["settings", { changes: { anyoneConfirms: false } }]]);
   });
 
+  test("an option's own explanation is shown with its setting (financial recheck N-4)", () => {
+    const { ctx, state } = ctxWith(STRANDED);
+    state.group.data.groupSettings = { history: [], settings: [
+      { key: "settleDisputes", type: "choice", label: "Who can settle a disputed payment", explanation: "A disputed payment counts once someone allowed here confirms it.", value: "receiver", default: "receiver",
+        options: [{ value: "receiver", label: "The person who received it" }, { value: "confirmers", label: "Anyone who can confirm payments", explanation: "This includes the person who paid." }] },
+    ] };
+    const v = createGroupView(ctx);
+    v.update(state);
+    assert.match(cardOf(v.element).textContent, /“Anyone who can confirm payments”: This includes the person who paid\./);
+  });
+
   test("owners and managers set each person's right to confirm payments; saving sends only what changed", async () => {
     const { ctx, state, calls } = ctxWith(STRANDED);
     state.group.data.groupSettings = { ...SETTINGS, members: [

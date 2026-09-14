@@ -51,6 +51,14 @@ function writeOpen(key, value) {
 const SITE_OFF = "The site administrator has turned this off for the whole site, so it stays off here for now.";
 const own = (o, k) => Object.prototype.hasOwnProperty.call(o, k);
 
+// An option's own explanation follows the setting's, behind "More about this" (financial recheck N-4:
+// "This includes the person who paid.", named against its option's label since it applies to that
+// choice only).
+function withOptionNotes(s, rest) {
+  const notes = (s.options || []).filter((o) => o.explanation).map((o) => `“${o.label}”: ${o.explanation}`).join(" ");
+  return [rest, notes].filter(Boolean).join(" ");
+}
+
 // `render(model)`: { settings: [{ key, group, type, label, explanation, value, options?, min?, max?,
 //   unit?, requires?, requiresMessage?, canChange, changedBy?, offForSite?, groupNote? }], intro,
 //   history: [{ when, by, text, reason }], makeExtras?(onChange) → [{ group, node, isDirty(), changes(),
@@ -109,7 +117,7 @@ export function createSettingsForm({ id, storageKey, onSave, onDirtyChange = () 
       el("dd", { class: "settings-dl__help" }, [
         el("span", { class: "field__help", text: first }),
         s.offForSite ? el("span", { class: "field__help", text: ` ${SITE_OFF}` }) : null,
-        ...moreAbout(s, rest),
+        ...moreAbout(s, withOptionNotes(s, rest)),
       ]),
     ];
   }
@@ -191,7 +199,7 @@ export function createSettingsForm({ id, storageKey, onSave, onDirtyChange = () 
       pick.addEventListener("change", () => { c.clearInvalid(refs.error && refs.error.id); refreshDirty(); });
     }
     c.changed = () => JSON.stringify(c.read()) !== JSON.stringify(s.value);
-    c.wrapper = el("div", { class: "setting", dataset: { setting: s.key } }, [badgeNode, c.node, siteNote, ...moreAbout(s, rest)]);
+    c.wrapper = el("div", { class: "setting", dataset: { setting: s.key } }, [badgeNode, c.node, siteNote, ...moreAbout(s, withOptionNotes(s, rest))]);
     return c;
   }
 

@@ -4,7 +4,7 @@ import { test, describe, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import { installDom } from "./domdouble.js";
 import { offeredOptions } from "./pickerassert.js";
-import { createView, openQuickEntry, entryAmount } from "../js/ui/views/transactions.js";
+import { createView, openQuickEntry, entryAmount, sharedLinked } from "../js/ui/views/transactions.js";
 import { directionOf } from "../js/ui/icons.js";
 
 let dom;
@@ -83,6 +83,14 @@ describe("N2: entries recorded from Shared expenses are locked on the Transactio
     assert.ok(labels.includes("Edit"), labels.join(", "));
     assert.equal(labels.includes("Reverse"), false);
     assert.equal(labels.includes("Delete"), false);
+  });
+});
+
+describe("R3-3: an entry from Shared expenses is locked by its flag, even when its link is not shown", () => {
+  test("sharedLinked follows fromSharedExpense when the server leaves the link out", () => {
+    assert.equal(sharedLinked({ fromSharedExpense: true, links: {} }), true);
+    assert.equal(sharedLinked({ fromSharedExpense: false, links: {} }), false);
+    assert.equal(sharedLinked({ links: { groupExpenseId: "gex_x" } }), true);
   });
 });
 
