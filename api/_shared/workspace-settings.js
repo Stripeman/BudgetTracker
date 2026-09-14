@@ -28,6 +28,14 @@ const freezeAll = (o) => Object.freeze(Object.fromEntries(Object.entries(o).map(
 
 // `group` orders the list in the interface; `changedBy` is the lowest role that may change the key.
 const SETTINGS = freezeAll({
+  // (f) Changing other members' entries on shared accounts (api/_shared/authz.js canChangeRecord).
+  // Today a plain member changes only records they created there.
+  memberEditsOthers: {
+    group: 'Entries and shared lists', type: 'choice', default: 'own', changedBy: 'manager',
+    label: "Members may change other members' entries",
+    options: [opt('own', 'Only their own entries'), opt('any', 'Any entry, as a member who can add entries')],
+    explanation: 'Who may correct or delete entries and bills on shared accounts. Owners and managers always can. With "Only their own entries" a member changes only what they added. With "Any entry" every member who can add entries may correct anyone\'s. Every correction is still kept with who, when and why, entries locked by reconciling or by Shared expenses stay locked, viewers never change anything, and private accounts are never affected.',
+  },
   // (i) Budget defaults. `budgetPeriod` and `weekStart` existed before and were ignored; now they are
   // the defaults for new budgets (existing budgets keep their own period).
   budgetPeriod: {
@@ -134,6 +142,9 @@ function changesFor(doc, changes, member) {
 
 // ---- rules used by the handlers ------------------------------------------------------------------
 
+// (f) A plain member may change another member's entry or bill on a shared account.
+const membersChangeOthers = (doc) => get(doc, 'memberEditsOthers') === 'any';
+
 // (i) The default start of a new budget with this period: the first of the month for a monthly budget
 // (today's default), the latest week-start day on or before today for a weekly or two-weekly one.
 function defaultBudgetStart(doc, period, today) {
@@ -173,4 +184,4 @@ function problem(doc) {
   return null;
 }
 
-module.exports = { SETTINGS, KEYS, values, get, valid, mayChange, parseChanges, changesFor, view, problem, defaultBudgetStart };
+module.exports = { SETTINGS, KEYS, values, get, valid, mayChange, parseChanges, changesFor, view, problem, defaultBudgetStart, membersChangeOthers };

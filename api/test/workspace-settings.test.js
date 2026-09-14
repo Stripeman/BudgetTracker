@@ -113,6 +113,66 @@ describe('Workspace settings: one list, today\'s behaviour by default', () => {
   });
 });
 
+// ---- (f) changing other members' entries on shared accounts --------------------------------------
+// Fixture: Alice (owner) recorded "Fictional Grocer" 82.40 on the shared Joint account; Bob is a member,
+// Carol a viewer; Alice Savings is Alice's private account.
+const editEntry = (h, as, f, t, extra) => h.call('transactions', 'PATCH', { as, query: f.q, body: { transactionId: t.id, revision: t.revision, ...extra } });
+const entryOf = async (h, id, txId) => (await readDoc(h, id)).transactions.find((t) => t.id === txId);
+const canEditAs = async (h, as, f, txId) => ok(await h.call('transactions', 'GET', { as, query: f.q })).transactions.find((t) => t.id === txId).canEdit;
+
+describe("(f) Members may change other members' entries on shared accounts", () => {
+  test('by default a member changes only their own entries on a shared account, as before', async () => {
+    const { h, f } = await setup();
+    assert.equal(await canEditAs(h, 'bob', f, f.grocery.id), false);
+    assert.equal((await editEntry(h, 'bob', f, f.grocery, { amount: '90.00', reason: 'Fictional receipt' })).status, 403);
+    const mine = ok(await h.call('transactions', 'POST', { as: 'bob', query: f.q, body: { accountId: f.joint.id, kind: 'expense', amount: '12.00', date: '2026-09-12' } }), 201).transactions[0];
+    ok(await editEntry(h, 'bob', f, mine, { amount: '13.00', reason: 'Fictional typo' }));
+  });
+
+  test('"Any entry": a member corrects and deletes another member\'s shared entry; each change keeps who, when and why; nothing is removed', async () => {
+    const { h, f, id } = await setup();
+    ok(await patchSettings(h, 'alice', id, { memberEditsOthers: 'any' }, 'We share the bookkeeping'));
+    assert.equal(await canEditAs(h, 'bob', f, f.grocery.id), true);
+    ok(await editEntry(h, 'bob', f, f.grocery, { amount: '90.00', reason: 'Fictional receipt' }));
+    const t = await entryOf(h, id, f.grocery.id);
+    assert.equal(t.amountMinor, -9000);
+    const a = t.amendments[t.amendments.length - 1];
+    assert.equal(a.by, 'google:g-bob');
+    assert.equal(a.reason, 'Fictional receipt');
+    assert.deepEqual(a.changes.find((c) => c.field === 'amountMinor'), { field: 'amountMinor', from: -8240, to: -9000 });
+    assert.equal(t.createdBy, 'google:g-alice', 'the entry is still Alice\'s');
+    const other = ok(await h.call('transactions', 'POST', { as: 'alice', query: f.q, body: { accountId: f.joint.id, kind: 'expense', amount: '5.00', date: '2026-09-12' } }), 201).transactions[0];
+    ok(await h.call('transactions', 'DELETE', { as: 'bob', query: f.q, body: { transactionId: other.id, revision: other.revision, reason: 'Entered twice' } }));
+    const gone = await entryOf(h, id, other.id);
+    assert.ok(gone && gone.deletedAt, 'kept, marked deleted');
+    assert.equal(gone.deletedBy, 'google:g-bob');
+  });
+
+  test('"Any entry" never reaches viewers, private accounts or locked entries', async () => {
+    const { h, f, id } = await setup();
+    const privateEntry = ok(await h.call('transactions', 'POST', { as: 'alice', query: f.q, body: { accountId: f.aliceSavings.id, kind: 'expense', amount: '20.00', date: '2026-09-12' } }), 201).transactions[0];
+    ok(await editEntry(h, 'alice', f, f.grocery, { status: 'reconciled' }));
+    const reconciled = await entryOf(h, id, f.grocery.id);
+    ok(await patchSettings(h, 'alice', id, { memberEditsOthers: 'any' }));
+    assert.equal((await editEntry(h, 'carol', f, reconciled, { notes: 'viewer' })).status, 403, 'a viewer still cannot');
+    const priv = await editEntry(h, 'bob', f, privateEntry, { amount: '1.00', reason: 'x' });
+    assert.ok(priv.status === 404 || priv.status === 403, `Alice's private account stays hers (${priv.status})`);
+    assert.equal((await entryOf(h, id, privateEntry.id)).amountMinor, -2000);
+    const locked = await editEntry(h, 'bob', f, reconciled, { amount: '1.00', reason: 'x' });
+    assert.equal(locked.status, 409);
+    assert.equal(locked.body.error.code, 'reconciled_locked');
+  });
+
+  test('bills on a shared account follow the same setting', async () => {
+    const { h, f, id } = await setup();
+    const bill = ok(await h.call('recurring', 'POST', { as: 'alice', query: f.q, body: { name: 'Fictional internet', accountId: f.joint.id, amount: '40.00', schedule: { freq: 'monthly', interval: 1, startDate: '2026-09-20' } } }), 201).recurring;
+    const rename = () => h.call('recurring', 'PATCH', { as: 'bob', query: f.q, body: { recurringId: bill.id, revision: bill.revision, name: 'Fictional fibre' } });
+    assert.equal((await rename()).status, 403);
+    ok(await patchSettings(h, 'alice', id, { memberEditsOthers: 'any' }));
+    assert.equal(ok(await rename()).recurring.name, 'Fictional fibre');
+  });
+});
+
 // ---- (i) budget defaults and backdating -----------------------------------------------------------
 // The harness clock starts on Sunday 2026-09-13: the latest Monday on or before it is 2026-09-07, the
 // latest Saturday 2026-09-12, and the current monthly period starts 2026-09-01.
