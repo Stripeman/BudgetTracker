@@ -839,6 +839,65 @@ describe('R3-1 (security recheck of 53cf181): the person who paid never settles 
   });
 });
 
+describe('R3-2 (security recheck of 53cf181): a payment reported again while one between the same people is disputed settles that dispute', () => {
+  const dispute = (h, f, w, s) => act(h, f, w, 'dispute', { settlementId: s.id, revision: s.revision, reason: 'Never arrived' });
+  const fresh = async (h, f, s, w) => (await view(h, f, w)).settlements.find((x) => x.id === s.id);
+  const nets = async (h, f) => { const rows = (await view(h, f)).balances.find((b) => b.currency === 'EUR').rows; return ['Alice Fictional', 'Bob Fictional'].map((n) => rows.find((r) => r.name === n).net); };
+
+  test('default: Bob reports again after Alice disputes; it is marked and linked; Bob cannot confirm it, Alice can (over the dispute); history and audit say so', async () => {
+    const h = harness();
+    const f = await fixture(h);
+    const { alice, bob } = f.refs;
+    const s1 = await settle(h, f, 'bob', { from: bob, to: alice, amount: '20.00' });
+    ok(await dispute(h, f, 'alice', s1));
+    const s2 = await settle(h, f, 'bob', { from: bob, to: alice, amount: '20.00' });
+    assert.deepEqual([s2.status, s2.reportedAgainOf], ['reported', s1.id]);
+    assert.equal((await fresh(h, f, s2, 'bob')).canConfirm, false, 'no Confirm for Bob under the default');
+    assert.equal((await confirm(h, f, 'bob', s2)).status, 403);
+    const forAlice = await fresh(h, f, s2, 'alice');
+    assert.deepEqual([forAlice.canConfirm, forAlice.canDispute], [true, true], 'the receiver confirms or disputes normally');
+    // Nothing counted yet: both payments are uncounted (disputed, reported). Alice 0.00, Bob 0.00.
+    assert.deepEqual(await nets(h, f), ['0.00', '0.00']);
+    const done = ok(await confirm(h, f, 'alice', forAlice)).settlement;
+    assert.equal(done.confirmedOverDispute, true);
+    // Counted now: Bob paid out 20.00 (+20.00), Alice received it (−20.00); the first stays disputed.
+    assert.deepEqual(await nets(h, f), ['-20.00', '20.00']);
+    assert.equal((await fresh(h, f, s1, 'alice')).status, 'disputed');
+    const events = ok(await G(h, f, 'alice', 'GET', { query: { action: 'history', settlementId: s2.id } })).history.map((x) => x.event);
+    assert.deepEqual(events, ['reported-again', 'confirmed-over-dispute']);
+    const doc = (await h.storage.getJson(`workspaces/${f.ws.id}/workspace.json`)).value;
+    assert.deepEqual(doc.audit.filter((a) => a.targetId === s2.id).map((a) => [a.action, a.fields || null]), [['group.settlement.report', ['reportedAgainAfterDispute']], ['group.settlement.confirm', ['overDispute']]]);
+  });
+
+  test('not marked for another pair of people or once the dispute is resolved; under "anyone who can confirm payments" the payer may confirm it', async () => {
+    const h = harness();
+    const f = await fixture(h);
+    const { alice, bob, carol } = f.refs;
+    const s1 = await settle(h, f, 'bob', { from: bob, to: alice, amount: '20.00' });
+    ok(await dispute(h, f, 'alice', s1));
+    assert.equal((await settle(h, f, 'bob', { from: bob, to: carol, amount: '5.00' })).reportedAgainOf, null, 'another pair');
+    const during = await settle(h, f, 'bob', { from: bob, to: alice, amount: '20.00' });
+    assert.equal(during.reportedAgainOf, s1.id, 'reported again during the dispute');
+    // Alice voids the disputed payment: nothing is disputed between them any more.
+    ok(await act(h, f, 'alice', 'void', { settlementId: s1.id, revision: (await fresh(h, f, s1, 'alice')).revision, reason: 'Sorted out' }));
+    // The report made during the dispute is now an ordinary report: Bob may confirm it (anyone may, by default).
+    assert.equal((await fresh(h, f, during, 'bob')).canConfirm, true);
+    assert.equal(ok(await confirm(h, f, 'bob', during)).settlement.confirmedOverDispute, false);
+    const later = await settle(h, f, 'bob', { from: bob, to: alice, amount: '20.00' });
+    assert.equal(later.reportedAgainOf, null);
+    assert.equal(ok(await confirm(h, f, 'bob', later)).settlement.confirmedOverDispute, false, 'confirmed as an ordinary payment');
+    // Anyone who can confirm settles disputes: Bob may confirm his own report again.
+    const h2 = harness();
+    const f2 = await fixture(h2);
+    ok(await setSettings(h2, f2, 'alice', { settleDisputes: 'confirmers' }));
+    const t1 = await settle(h2, f2, 'bob', { from: f2.refs.bob, to: f2.refs.alice, amount: '20.00' });
+    ok(await dispute(h2, f2, 'alice', t1));
+    const t2 = await settle(h2, f2, 'bob', { from: f2.refs.bob, to: f2.refs.alice, amount: '20.00' });
+    const mine = ok(await confirm(h2, f2, 'bob', t2)).settlement;
+    assert.deepEqual([mine.confirmedOverDispute, mine.confirmation.relation], [true, 'payer']);
+  });
+});
+
 describe('R3-3 (security recheck of 53cf181): a link names another record only to someone who may see it', () => {
   test('a transfer from Alice\'s private bill into the shared Joint: Bob, Carol and Eve see no bill id on its shared side; Alice does', async () => {
     const h = harness();

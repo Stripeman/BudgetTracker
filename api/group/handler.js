@@ -490,6 +490,12 @@ function canSettleDispute(doc, s, member) {
   if (rule === 'confirmers') return forContact || groupSettings.confirmsAny(doc, member);
   return forContact;
 }
+// The earlier payment between the same two people, in the same currency, that is still disputed when a
+// new one is reported (security recheck R3-2): the new report settles that dispute, so confirming it
+// follows "Who can settle a disputed payment". Once the earlier one is resolved, nothing is open.
+const openDisputeFor = (doc, s) => (s.reportedAgainOf
+  ? (doc.groupSettlements || []).find((x) => x.id === s.reportedAgainOf && x.status === 'disputed' && !x.voidedAt) || null : null);
+const settlesDispute = (doc, s) => !s.voidedAt && (s.status === 'disputed' || (s.status === 'reported' && !!openDisputeFor(doc, s)));
 const settleDisputeText = (doc) => ({
   'receiver-or-manager': 'This payment is disputed, so only the person who received it, or a manager or owner, can confirm it.',
   confirmers: 'This payment is disputed, so only someone who can confirm payments can confirm it.',
@@ -509,6 +515,8 @@ function settlementView(ctx, doc, member, s) {
     confirmedByReporter: !!s.confirmedByReporter, withdrawn: !!s.withdrawn,
     // Confirmed over its receiver's dispute (F1): always shown as such.
     confirmedOverDispute: !!s.confirmedOverDispute,
+    // Reported again while an earlier payment between them was disputed (R3-2): the earlier one's id.
+    reportedAgainOf: s.reportedAgainOf || null,
     // Who confirmed, relative to the payment: its receiver, the person who paid it, or someone else.
     confirmation: s.status === 'confirmed' && s.confirmedBy ? {
       by: nameOf(doc, s.confirmedBy),
@@ -520,7 +528,7 @@ function settlementView(ctx, doc, member, s) {
     // confirms (S5). Once confirmed, only the receiving member or a manager or owner may withdraw it (S6).
     // Per person (Terry, 2026-09-14): an owner's or manager's override for this member, otherwise the group setting.
     // A disputed payment follows "Who can settle a disputed payment" (F1).
-    canConfirm: live && s.status !== 'confirmed' && (s.status === 'disputed' ? canSettleDispute(doc, s, member)
+    canConfirm: live && s.status !== 'confirmed' && (settlesDispute(doc, s) ? canSettleDispute(doc, s, member)
       : s.to === me || (groupSettings.confirmsAny(doc, member) ? writer(member) : s.from !== me && toContact && open && isManager(member))),
     canDispute: live && s.status === 'reported' && canDisputePayment(doc, s, member),
     canVoid: open && (s.status === 'confirmed' ? canWithdraw(doc, s, member) : (s.createdBy === member.subject || isManager(member))),
@@ -670,18 +678,25 @@ async function createSettlement(ctx, req) {
     // Someone saying they RECEIVED a payment is the confirmation itself, unless the group turned that
     // off (setting "receiverConfirms", default on); then it is reported and confirmed as a separate step.
     const receiver = to === selfRef(member) && groupSettings.get(doc, 'receiverConfirms');
+    // Reported again while an earlier payment between the same two people in this currency is disputed
+    // (security recheck R3-2): still allowed — people do pay again — but marked, linked to the disputed
+    // one, and confirming it settles that dispute. The receiver recording it confirms it over the dispute.
+    const earlier = (doc.groupSettlements || []).find((x) => x.from === from && x.to === to && x.currency === currency && x.status === 'disputed' && !x.voidedAt) || null;
     const s = {
       id: newId('gst'), from, to, amountMinor: groups.positiveAmount(body.amount, currency, 'Amount'), currency,
       date: fields.date(body.date, 'Date') || nowIso.slice(0, 10),
       method: fields.text(body.method, { field: 'Payment method', max: 60 }), notes: fields.text(body.notes, { field: 'Notes', max: 500, multiline: true }),
       status: receiver ? 'confirmed' : 'reported', confirmedBy: receiver ? member.subject : null, confirmedAt: receiver ? nowIso : null,
       createdBy: member.subject, createdAt: nowIso, revision: 1, voidedAt: null,
-      history: [{ revision: 1, at: nowIso, by: member.subject, event: 'reported' }, ...(receiver ? [{ revision: 1, at: nowIso, by: member.subject, event: 'confirmed' }] : [])],
+      reportedAgainOf: earlier ? earlier.id : null,
+      ...(receiver && earlier ? { confirmedOverDispute: true } : {}),
+      history: [{ revision: 1, at: nowIso, by: member.subject, event: earlier ? 'reported-again' : 'reported', ...(earlier ? { of: earlier.id } : {}) },
+        ...(receiver ? [{ revision: 1, at: nowIso, by: member.subject, event: earlier ? 'confirmed-over-dispute' : 'confirmed' }] : [])],
       ledgerLinks: [],
     };
     doc.groupSettlements = [...(doc.groupSettlements || []), s];
-    audit.record(doc, { actor: member.subject, action: 'group.settlement.report', targetType: 'group-settlement', targetId: s.id, at: nowIso });
-    if (receiver) audit.record(doc, { actor: member.subject, action: 'group.settlement.confirm', targetType: 'group-settlement', targetId: s.id, at: nowIso });
+    audit.record(doc, { actor: member.subject, action: 'group.settlement.report', targetType: 'group-settlement', targetId: s.id, at: nowIso, ...(earlier ? { fields: ['reportedAgainAfterDispute'] } : {}) });
+    if (receiver) audit.record(doc, { actor: member.subject, action: 'group.settlement.confirm', targetType: 'group-settlement', targetId: s.id, at: nowIso, ...(earlier ? { fields: ['overDispute'] } : {}) });
     // Recorded on the caller's own account through a new or changed link for this currency, or the one
     // they already have. Anyone in the payment has a part in it; entries follow once it is confirmed.
     if (ledgerAccountId) linkCurrency(ctx, doc, member, s.currency, ledgerAccountId);
@@ -712,7 +727,8 @@ function settlementChange(kind) {
         const anyone = groupSettings.confirmsAny(doc, member);
         // Over a dispute, only as "Who can settle a disputed payment" allows (financial recheck F1): being
         // able to confirm payments moves a reported payment to confirmed, never a disputed one on its own.
-        const overDispute = s.status === 'disputed' && !s.voidedAt;
+        // A report made again while an earlier one between them is disputed settles that dispute (R3-2).
+        const overDispute = settlesDispute(doc, s);
         if (overDispute) {
           if (!canSettleDispute(doc, s, member)) throw forbidden(settleDisputeText(doc));
         } else if (!anyone) {
