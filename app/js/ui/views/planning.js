@@ -313,7 +313,7 @@ function openBudgetEditor(ctx, budget = null) {
   const modal = openModal({
     title: editing ? `Edit ${budget.name}` : "Add budget",
     body: [
-      el("div", { class: "form-grid" }, [field("Name", name), iconPick.element, field("Who it is for", scope, { help: "A shared budget counts shared accounts only, so members' private spending never appears in it." }), field("Currency", currency), field("Period", period), field("Starts on", start)]),
+      el("div", { class: "form-grid" }, [field("Name", name), iconPick.element, field("Who it is for", scope, { help: "A shared budget counts shared accounts only, so members' private spending never appears in it." }), field("Currency", currency), field("Period", period, editing ? {} : { help: `${(PERIODS.find((p) => p.value === wsValues.budgetPeriod) || PERIODS.find((p) => p.value === "monthly")).label} is this workspace's usual period (Workspace settings).` }), field("Starts on", start)]),
       el("h3", { text: "Categories" }), linesBox, addLine,
       editing ? el("div", { class: "form-grid" }, [
         field("Plan changes apply from", effectiveFrom, { help: neverBackdate

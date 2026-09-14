@@ -8,7 +8,7 @@ import { installDom, DomEvent } from "./domdouble.js";
 import { nativeDropdowns, pickerLabels, pickerNamed, chooseOption, offeredOptions, triggerFor, spokenOf } from "./pickerassert.js";
 import { createView as createWorkspace, settingText } from "../js/ui/views/workspace.js";
 import { createView as createPlanning, defaultBudgetStart, backdateProblem } from "../js/ui/views/planning.js";
-import { openBillEditor } from "../js/ui/views/bills.js";
+import { openBillEditor, createView as createBills } from "../js/ui/views/bills.js";
 import { createView as createDashboard } from "../js/ui/views/dashboard.js";
 import { navRoutes } from "../js/core/router.js";
 import { createShell } from "../js/ui/shell.js";
@@ -526,6 +526,68 @@ describe("Settings card (shared by the workspace and group settings; UX review o
     const card = settingsCard(view.element);
     assert.equal(bodyOf(card, "Shared expenses").hidden, false, "its group is open");
     assert.ok(document.activeElement === triggerFor(pickerNamed(card, "Use Shared expenses in this workspace")), "focus is on the setting");
+  });
+
+  test("finding 10: Add budget says its period is the workspace's usual one (Workspace settings)", () => {
+    const ready = (data) => ({ workspaceId: "ws_1", status: "ready", error: null, data });
+    const state = {
+      selectedWorkspaceId: "ws_1", preferences: null,
+      workspaces: [{ id: "ws_1", name: "Fictional household", role: "owner", kind: "household", settingValues: { budgetPeriod: "weekly", weekStart: 1, budgetBackdating: "confirm" } }],
+      accounts: ready({ accounts: [] }), categories: ready({ categories: [{ id: "cat_food", name: "Groceries", color: "#16a34a", icon: null }] }),
+      budgets: ready({ budgets: [] }), forecast: ready({ forecast: { accounts: [], warnings: [], assumptions: [], horizonDays: 90 } }), bills: ready({ recurring: [] }),
+    };
+    const store = { getState: () => state, actions: { refreshForecast: async () => {}, refreshBudgets: async () => {}, refreshBills: async () => {}, write: async () => ({ ok: true }) } };
+    const view = createPlanning({ store, api: {} });
+    dom.body.appendChild(view.element);
+    view.update(state);
+    buttonNamed(view.element, "Add budget").click();
+    assert.match(dom.body.querySelector(".modal").textContent, /Weekly is this workspace's usual period \(Workspace settings\)\./);
+  });
+
+  test("finding 10: a new bill says where its due-soon days come from; editing a bill does not", () => {
+    const ready = (data) => ({ workspaceId: "ws_1", status: "ready", error: null, data });
+    const state = {
+      selectedWorkspaceId: "ws_1", preferences: null,
+      workspaces: [{ id: "ws_1", name: "Fictional household", role: "owner", kind: "household", settingValues: { billReminderDays: 10 } }],
+      accounts: ready({ accounts: [{ id: "acc_joint", name: "Fictional joint", currency: "EUR", access: "shared", status: "open", capabilities: ["create"], icon: "bank" }] }),
+      categories: ready({ categories: [] }), payees: ready({ payees: [] }), bills: ready({ recurring: [], summary: { overdue: 0, dueSoon: 0, next30Days: [] } }),
+    };
+    const ctx = { store: { getState: () => state, actions: { write: async () => ({ ok: true }) } }, api: { people: async () => ({ options: [] }) } };
+    openBillEditor(ctx);
+    assert.match(dom.body.querySelector(".modal").textContent, /New bills start with this workspace's 10 days \(Workspace settings\)\./);
+    dom.teardown(); dom = installDom();
+    openBillEditor(ctx, { id: "bill_x", name: "Fictional rent", billType: "housing", kind: "expense", accountId: "acc_joint", amount: "950.00", currency: "EUR", amountType: "fixed",
+      schedule: { freq: "monthly", interval: 1, startDate: "2026-01-01" }, reminderDays: 3, revision: 1, versions: [], skips: [], pauses: [], history: [] });
+    assert.doesNotMatch(dom.body.querySelector(".modal").textContent, /Workspace settings/);
+  });
+
+  test("finding 10: recording a late bill says where its date comes from (Workspace settings); an on-time one says nothing", async () => {
+    const record = async (overdueRecordDate, overdue) => {
+      const ready = (data) => ({ workspaceId: "ws_1", status: "ready", error: null, data });
+      const bill = { id: "bill_rent", name: "Fictional rent", billType: "housing", kind: "expense", accountId: "acc_joint", accountName: "Fictional joint",
+        amount: "950.00", currency: "EUR", amountType: "fixed", schedule: { freq: "monthly", interval: 1, startDate: "2026-01-01" }, reminderDays: 3, categoryId: null, payeeId: null,
+        iconSource: null, icon: "home", nextDue: "2026-09-01", revision: 1, responsible: null, overdue: overdue ? ["2026-09-01"] : [], reminders: overdue ? [] : ["2026-09-01"],
+        canRecord: true, canEdit: true, inactiveReason: null, ended: false, pausedNow: false, versions: [], skips: [], pauses: [], history: [] };
+      const state = {
+        selectedWorkspaceId: "ws_1", preferences: null,
+        workspaces: [{ id: "ws_1", name: "Fictional household", role: "owner", kind: "household", settingValues: { overdueRecordDate } }],
+        accounts: ready({ accounts: [{ id: "acc_joint", name: "Fictional joint", currency: "EUR", access: "shared", status: "open", capabilities: ["create"], icon: "bank" }] }),
+        categories: ready({ categories: [] }), payees: ready({ payees: [] }), bills: ready({ recurring: [bill], summary: { overdue: overdue ? 1 : 0, dueSoon: overdue ? 0 : 1, next30Days: [] } }),
+      };
+      const draft = { amountIsEstimate: false, amount: "950.00", date: overdueRecordDate === "due" || !overdue ? "2026-09-01" : "2026-09-14", categoryId: null, payeeId: null, payeeName: null, currency: "EUR", overdue };
+      const ctx = { store: { getState: () => state, actions: { write: async () => ({ ok: true }), refreshBills: async () => {} } }, api: { billDraft: async () => ({ draft }), people: async () => ({ options: [] }) } };
+      const view = createBills(ctx);
+      dom.body.appendChild(view.element);
+      view.update(state);
+      view.element.querySelectorAll("button").find((b) => (b.getAttribute("aria-label") || "").startsWith("Review and record Fictional rent")).click();
+      for (let i = 0; i < 4; i += 1) await tick();
+      const text = dom.body.querySelector(".modal").textContent;
+      dom.teardown(); dom = installDom();
+      return text;
+    };
+    assert.match(await record("due", true), /Filled in with the due date \(Workspace settings\)\./);
+    assert.match(await record("today", true), /Filled in with today's date \(Workspace settings\)\./);
+    assert.doesNotMatch(await record("today", false), /Workspace settings/);
   });
 
   test("settingText writes each kind of value in words", () => {
