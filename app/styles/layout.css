@@ -54,6 +54,28 @@
 ul.stack, ol.stack { list-style: none; margin: 0; padding: 0; }
 .row { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); }
 
+/* ---------- the staging link (BT-011-06) ----------
+   In the account menu the link IS a menu item (.menu__item, like My settings and Sign out); "Edit"
+   sits beside it as a quieter outlined button, and the external-link cue follows the text in the
+   muted colour. A long label is cut with an ellipsis rather than widening the menu at 390 px. In My
+   settings the host is shown under the link and wraps rather than widening the card. */
+.menu__row { display: flex; align-items: center; }
+.menu__row > .menu__item { flex: 1 1 auto; min-width: 0; }
+.menu__text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.menu__link .icon, .staging__link .icon { color: var(--text-muted); }
+.menu__edit {
+  flex: 0 0 auto; margin-right: var(--space-3); padding: var(--space-1) var(--space-2);
+  background: none; border: 1px solid var(--border-strong); border-radius: var(--control-radius);
+  cursor: pointer; font-size: var(--text-xs); color: var(--text-muted);
+}
+.menu__edit:hover { background: var(--surface-sunken); color: var(--text); }
+.staging__current { display: flex; flex-direction: column; align-items: flex-start; gap: var(--space-1); margin-bottom: var(--space-2); min-width: 0; }
+.staging__current .staging__none { margin: 0; }
+.staging__link { display: inline-flex; align-items: center; gap: var(--space-1); font-weight: var(--weight-medium); }
+.staging__host { overflow-wrap: anywhere; }
+.staging__site { gap: var(--space-2); margin-top: var(--space-3); padding-top: var(--space-3); border-top: 1px solid var(--border); }
+.staging__heading { margin: 0; font-size: var(--text-sm); }
+
 @media (max-width: 40rem) {
   .app__main { padding: var(--space-4) var(--space-3) var(--space-8); }
   .app__header { padding: var(--space-2) var(--space-3); flex-wrap: nowrap; }

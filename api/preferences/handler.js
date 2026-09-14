@@ -63,8 +63,11 @@ const VALIDATORS = {
   favoritePayees: (v) => { if (!Array.isArray(v) || v.length > 50 || !v.every(isSafeId)) throw badRequest('Favourite payees are not valid.', 'invalid_field'); return [...new Set(v)]; },
   categoryColors,
   categoryIcons,
+  // The staging (preview) site's address, opened from the account menu (BT-011-06). Never written
+  // in the repository: each person sets it, or inherits the site default.
+  stagingUrl: (v) => fields.webAddress(v, 'Staging link'),
 };
-const BUILT_IN = { locale: 'en', timeZone: 'UTC', dateFormat: 'iso', numberFormat: '1,234.56', displayCurrency: null, balanceMasking: false, defaultWorkspaceId: null, dashboardWidgets: ['balances', 'upcoming', 'budgets', 'recent'], favoritePayees: [], categoryColors: {}, categoryIcons: {} };
+const BUILT_IN = { locale: 'en', timeZone: 'UTC', dateFormat: 'iso', numberFormat: '1,234.56', displayCurrency: null, balanceMasking: false, defaultWorkspaceId: null, dashboardWidgets: ['balances', 'upcoming', 'budgets', 'recent'], favoritePayees: [], categoryColors: {}, categoryIcons: {}, stagingUrl: null };
 
 function resolve(stored, siteDoc) {
   const effective = {};
