@@ -47,11 +47,23 @@
 //   A8 Inside an aria-modal dialog the panel is appended to the dialog, not the body, so assistive
 //      technology that honours aria-modal can still reach its options; the dialog's Tab trap leaves
 //      Tab inside the panel to the panel (modal.js).
+//   A9 A press outside that lands on something that cannot take focus returns focus to the trigger
+//      (never <body>); a press on the field's own label is not outside the picker.
 import { el, clear } from "./dom.js";
 import { computePlacement } from "../core/popover.js";
 import { registerPopup } from "./popup.js";
 
 let counter = 0;
+
+// What a press can move focus to on purpose: a control, or anything in the Tab order. A container that
+// takes focus only programmatically (<main tabindex=-1>, a list with tabindex -1) is not a control.
+const CONTROLS = ["button", "input", "select", "textarea", "a[href]", "summary", "[contenteditable]", "[tabindex]"];
+function landsOnControl(node) {
+  for (let n = node; n && typeof n.matches === "function"; n = n.parentNode) {
+    if (CONTROLS.some((selector) => n.matches(selector))) return n.getAttribute("tabindex") !== "-1" && !n.disabled;
+  }
+  return false;
+}
 
 // Above this many options, a field that asked for no search box gets one anyway.
 const SEARCH_THRESHOLD = 12;
@@ -168,14 +180,34 @@ export function createCommandPicker({ select, label = "Choose", placeholder = ""
   const element = el("div", { class: "cmdpick" }, [trigger, select]);
 
   // THE SHARED DISMISSAL CONTRACT (ui/popup.js). The trigger counts as inside, or clicking it would
-  // close and immediately re-open the panel.
+  // close and immediately re-open the panel — and so does the field's own label (A9), whose click is
+  // the trigger's click.
+  const ownLabel = (node) => !!(node && typeof node.closest === "function" && trigger.id && node.closest(`label[for="${trigger.id}"]`));
   const dismissal = registerPopup({
-    contains: (node) => element.contains(node) || panel.contains(node),
-    close: () => close({ restoreFocus: false }),
+    contains: (node) => element.contains(node) || panel.contains(node) || ownLabel(node),
+    close: (why) => dismiss(why),
     isOpen: () => open,
     ownerDocument: () => element.ownerDocument,
     anchor: () => element,
   });
+
+  // A9 — A PRESS OUTSIDE NEVER LEAVES FOCUS ON THE PAGE. A press on another control moves focus there,
+  // as before. A press on something that cannot take focus (a dialog title, the backdrop, text inside
+  // <main tabindex=-1>) would drop it to <body>, outside any dialog, so focus goes back to the trigger —
+  // after the press's own default action, and only if nothing real took focus meanwhile.
+  function dismiss(why) {
+    const doc = element.ownerDocument;
+    const heldFocus = !!(doc && panel.contains(doc.activeElement));
+    close({ restoreFocus: false });
+    const target = why && why.target;
+    if (!heldFocus || !target || landsOnControl(target)) return;
+    setTimeout(() => {
+      if (open || trigger.disabled || !doc.body || !doc.body.contains(trigger)) return;
+      const now = doc.activeElement;
+      if (now && now !== doc.body && now !== doc.documentElement && landsOnControl(now)) return;
+      trigger.focus({ preventScroll: true });
+    }, 0);
+  }
 
   // ---- what is on offer ---------------------------------------------------
 
