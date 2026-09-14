@@ -97,8 +97,13 @@ export function chooseByKeyboard(select, { type = null, keys = [] } = {}) {
   const open = panel(doc);
   if (type !== null) {
     const box = open.querySelector(".cmdpick__search");
-    box.value = type;
-    box.dispatchEvent(new DomEvent("input", { bubbles: true }));
+    if (box) {
+      box.value = type;
+      box.dispatchEvent(new DomEvent("input", { bubbles: true }));
+    } else {
+      // A short list has no search box (UX review U2): the same letters are type-ahead, as in a native list.
+      for (const ch of type) press(open.querySelector(".cmdpick__list"), ch);
+    }
   }
   for (const key of keys) press(open, key);
   press(open, "Enter");

@@ -644,6 +644,68 @@ describe("BT-004-05 THE KEYS A NATIVE SELECT HAS (a11y review finding 7, UX revi
   });
 });
 
+describe("BT-004-05 ON A TOUCH SCREEN NO KEYBOARD POPS UP UNASKED (UX review U2)", () => {
+  // A coarse pointer (a phone or tablet), as matchMedia("(pointer: coarse)") reports it.
+  const pointer = (coarse) => { document.defaultView = { innerWidth: 390, innerHeight: 844, matchMedia: (query) => ({ matches: coarse && query === "(pointer: coarse)" }) }; };
+  const keyOn = (node, key) => { const e = new DomEvent("keydown", { bubbles: true, key }); node.dispatchEvent(e); return e; };
+
+  test("with a coarse pointer a searched list opens with focus on the list, the search box still there", () => {
+    pointer(true);
+    const { picker } = mount({ search: true, value: "rent" });
+    open(picker);
+    const list = panel().querySelector(".cmdpick__list");
+    const box = panel().querySelector(".cmdpick__search");
+    assert.ok(box, "the search box is offered");
+    same(document.activeElement, list, "focus is on the list, so no on-screen keyboard until the box is tapped");
+    assert.equal(list.getAttribute("tabindex"), "-1", "the list can hold focus without becoming a tab stop");
+    assert.equal(labelOf(rows().find((r) => r.id === list.getAttribute("aria-activedescendant"))), "Rent and housing", "the active option is named on the list that holds focus");
+    assert.equal(box.hasAttribute("aria-activedescendant"), false, "and not on the box that does not");
+    keyOn(list, "ArrowDown");
+    assert.equal(labelOf(rows().find((r) => r.id === list.getAttribute("aria-activedescendant"))), "Travel", "the arrows work from the list");
+  });
+
+  test("typing while the list holds focus goes to the search box (a keyboard attached to a tablet)", () => {
+    pointer(true);
+    const { picker } = mount({ search: true });
+    open(picker);
+    const list = panel().querySelector(".cmdpick__list");
+    const box = panel().querySelector(".cmdpick__search");
+    const e = keyOn(list, "t");
+    assert.equal(e.defaultPrevented, true);
+    same(document.activeElement, box);
+    assert.equal(box.value, "t");
+    assert.deepEqual(rows().map(labelOf), ["Rent and housing", "Travel"], "filtered by what was typed");
+    assert.ok(box.getAttribute("aria-activedescendant"), "the active option now named on the box");
+    assert.equal(list.hasAttribute("aria-activedescendant"), false);
+  });
+
+  test("tapping the search box moves the active-option reference onto it", () => {
+    pointer(true);
+    const { picker } = mount({ search: true });
+    open(picker);
+    const box = panel().querySelector(".cmdpick__search");
+    box.focus();
+    box.dispatchEvent(new DomEvent("focus", {}));
+    assert.ok(box.getAttribute("aria-activedescendant"));
+    assert.equal(panel().querySelector(".cmdpick__list").hasAttribute("aria-activedescendant"), false);
+  });
+
+  test("with a fine pointer a searched list opens on its search box, as before", () => {
+    pointer(false);
+    const { picker } = mount({ search: true });
+    open(picker);
+    same(document.activeElement, panel().querySelector(".cmdpick__search"));
+  });
+
+  test("a letter on the closed trigger still starts the search, even on a touch screen (it was typed)", () => {
+    pointer(true);
+    const { picker } = mount({ search: true });
+    keyOn(trigger(picker), "h");
+    same(document.activeElement, panel().querySelector(".cmdpick__search"));
+    assert.equal(panel().querySelector(".cmdpick__search").value, "h");
+  });
+});
+
 describe("BT-004-05 RESULTS ARE ANNOUNCED (a11y review finding 3, WCAG 4.1.3)", () => {
   const status = () => panel().querySelector(".cmdpick__status");
 

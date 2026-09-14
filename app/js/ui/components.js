@@ -48,8 +48,9 @@ export function select(options, value, attrs = {}) {
 
 // The same select, with TaskTracker's command picker over it (BT-004-05). It returns the SELECT, so
 // the view keeps reading and setting it exactly as before; place it with `field()` or
-// `controlElement()`. `picker` takes the adapter's options: `search: false` for a short fixed list,
-// `colorOf`/`badgeOf` for things that have a colour or an icon.
+// `controlElement()`. `picker` takes the adapter's options: a search box appears on its own above twelve
+// options (`search: true` always asks for one; UX review U2), `placeholder` for a natural empty-field
+// text (U6), `colorOf`/`badgeOf` for things that have a colour or an icon.
 export function pickerSelect(options, value, attrs = {}, picker = {}) {
   const node = select(options, value, attrs);
   enhanceSelect(node, picker);

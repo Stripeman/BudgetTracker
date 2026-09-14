@@ -53,6 +53,12 @@
 //   A11 A panel that would be too short to read on either side spans the viewport (popover.js rule 6).
 //   A12 While open, the panel follows its trigger on scroll, resize and visual-viewport resize, and
 //       closes (focus back on the trigger) when the trigger scrolls out of sight.
+//   A13 The trigger is a select-only combobox: named by its field, its value spoken, how to use it,
+//       required, invalid and the error text carried from the select.
+//   A14 The keys a native select has: arrows and letters on the closed trigger, PageUp/PageDown, Space,
+//       multi-letter type-ahead; Home/End in the search box stay with the text.
+//   A15 A search box only above twelve options (unless a caller asks for one), decided at each open;
+//       on a coarse pointer a searched list opens with focus on the list, so no keyboard pops up unasked.
 import { el, clear } from "./dom.js";
 import { computePlacement } from "../core/popover.js";
 import { registerPopup } from "./popup.js";
@@ -147,11 +153,19 @@ export function createCommandPicker({ select, label = "Choose", placeholder = ""
 
   // A MAGNIFIER PROMISES SEARCH; a chevron promises a list.
   function hintGlyph() {
-    return wantSearch !== false || countOptions() > SEARCH_THRESHOLD ? "⌕" : "▾";
+    return wantsSearch() ? "⌕" : "▾";
   }
 
-  // Decided once, at construction, so a panel never gains or loses a row under somebody's cursor.
-  const searchable = wantSearch !== false || countOptions() > SEARCH_THRESHOLD;
+  // A15 — A SEARCH BOX ONLY WHERE IT HELPS (UX review U2). `search: true` always offers one (the header
+  // workspace picker, whose create action starts from what was typed). Otherwise (`false`, or "auto",
+  // the adapter's default) the box appears only above SEARCH_THRESHOLD options, so a short data list —
+  // three accounts — opens like a native list, with type-ahead and no on-screen keyboard. TaskTracker
+  // decides once, at construction; here it is decided at each OPEN, because a list may be filled after
+  // it is built, and never while a panel is showing, so nothing moves under somebody's cursor.
+  function wantsSearch() {
+    return wantSearch === true || countOptions() > SEARCH_THRESHOLD;
+  }
+  let searchable = wantsSearch();
 
   const search = el("input", {
     type: "text",
@@ -167,15 +181,25 @@ export function createCommandPicker({ select, label = "Choose", placeholder = ""
     placeholder: `Search ${label.toLowerCase()}…`,
   });
 
-  // The list needs a keyboard home when there is no search box to hold focus.
+  // The list can hold focus: where there is no search box, and on a touch screen, where focusing the
+  // search box would raise the on-screen keyboard unasked (A15). tabindex -1: never a Tab stop.
   const list = el("div", {
     class: "cmdpick__list",
     id: listId,
     role: "listbox",
     "aria-label": label,
-    ...(searchable ? {} : { tabindex: "-1" }),
+    tabindex: "-1",
   });
-  const keyHolder = searchable ? search : list;
+  // What holds focus while the list is browsed, and so carries aria-activedescendant (A2): the search
+  // box, or the list itself. Decided at each open, and moves to the search box when that is focused.
+  let holder = searchable ? search : list;
+  const searchRow = el("div", { class: "cmdpick__searchrow" }, [
+    el("span", { class: "cmdpick__icon", "aria-hidden": "true", text: "⌕" }),
+    search,
+    el("kbd", { class: "cmdpick__kbd", "aria-hidden": "true", text: "esc" }),
+  ]);
+  // The "esc close" hint is shown where there is no search row carrying its own "esc".
+  const escHint = el("span", { hidden: searchable }, [el("kbd", { class: "cmdpick__kbd", text: "esc" }), el("span", { text: " close" })]);
 
   // A3 — pinned under the results, outside the listbox.
   const createLabel = el("span", { class: "cmdpick__createlabel" });
@@ -189,23 +213,26 @@ export function createCommandPicker({ select, label = "Choose", placeholder = ""
   const status = el("div", { class: "cmdpick__status sr-only", role: "status", "aria-live": "polite", "aria-atomic": "true" });
 
   const panel = el("div", { class: ["cmdpick__panel", searchable ? "" : "cmdpick__panel--nosearch"], id: panelId, role: "dialog", "aria-label": label }, [
-    searchable
-      ? el("div", { class: "cmdpick__searchrow" }, [
-          el("span", { class: "cmdpick__icon", "aria-hidden": "true", text: "⌕" }),
-          search,
-          el("kbd", { class: "cmdpick__kbd", "aria-hidden": "true", text: "esc" }),
-        ])
-      : null,
+    searchable ? searchRow : null,
     list,
     createButton,
     // The hints are for sighted keyboard users; the roles already tell a screen reader the keys.
     el("div", { class: "cmdpick__foot", "aria-hidden": "true" }, [
       el("span", {}, [el("kbd", { class: "cmdpick__kbd", text: "↑↓" }), el("span", { text: " move" })]),
       el("span", {}, [el("kbd", { class: "cmdpick__kbd", text: "↵" }), el("span", { text: " choose" })]),
-      searchable ? null : el("span", {}, [el("kbd", { class: "cmdpick__kbd", text: "esc" }), el("span", { text: " close" })]),
-    ].filter(Boolean)),
+      escHint,
+    ]),
     status,
   ].filter(Boolean));
+
+  // A15 — the panel laid out for the list it is about to show: with its search row, or without.
+  function applySearch() {
+    searchable = wantsSearch();
+    panel.classList.toggle("cmdpick__panel--nosearch", !searchable);
+    if (searchable && searchRow.parentNode !== panel) panel.insertBefore(searchRow, list);
+    if (!searchable && searchRow.parentNode === panel) panel.removeChild(searchRow);
+    escHint.hidden = searchable;
+  }
   panel.setAttribute("hidden", "");
 
   const element = el("div", { class: "cmdpick" }, [trigger, select, how]);
@@ -270,8 +297,11 @@ export function createCommandPicker({ select, label = "Choose", placeholder = ""
     // A13 — the field names the combobox: its visible <label for>, or `label` when there is none.
     if (labelVisible) trigger.removeAttribute("aria-label");
     else trigger.setAttribute("aria-label", label);
-    // A6 — a list without a search box is not described as searchable.
-    how.textContent = searchable ? "Search and choose." : "Choose.";
+    // A6 — a list without a search box is not described as searchable. A15 — judged by what the list
+    // holds now, so the closed trigger always says what opening it will offer.
+    how.textContent = wantsSearch() ? "Search and choose." : "Choose.";
+    const hint = trigger.querySelector(".cmdpick__hint");
+    if (hint) hint.textContent = hintGlyph();
     describeFromSelect();
   }
 
@@ -385,9 +415,11 @@ export function createCommandPicker({ select, label = "Choose", placeholder = ""
     rows.forEach((row, index) => row.classList.toggle("cmdpick__opt--active", index === active && !row.classList.contains("cmdpick__opt--off")));
     const current = rows[active];
     if (current && scroll && typeof current.scrollIntoView === "function") current.scrollIntoView({ block: "nearest" });
-    // A2 — the id of the row, on the element that holds focus.
-    if (current && !current.classList.contains("cmdpick__opt--off")) keyHolder.setAttribute("aria-activedescendant", current.id);
-    else keyHolder.removeAttribute("aria-activedescendant");
+    // A2 — the id of the row, on the element that holds focus (the search box or, A15, the list), and
+    // on nothing else.
+    for (const other of [search, list]) if (other !== holder) other.removeAttribute("aria-activedescendant");
+    if (current && !current.classList.contains("cmdpick__opt--off")) holder.setAttribute("aria-activedescendant", current.id);
+    else holder.removeAttribute("aria-activedescendant");
   }
 
   function pick(value) {
@@ -424,6 +456,10 @@ export function createCommandPicker({ select, label = "Choose", placeholder = ""
     const doc = element.ownerDocument;
     if (!doc || !doc.body || !doc.body.contains(trigger)) return;
     open = true;
+    // A15 — with or without a search box, decided now; and on a touch screen the list, not the search
+    // box, takes focus, so the on-screen keyboard appears only when the person asks for it.
+    applySearch();
+    holder = searchable && !coarsePointer() ? search : list;
     // A8 — INSIDE A MODAL DIALOG, THE PANEL LIVES IN THE DIALOG. `aria-modal` tells assistive technology
     // that nothing outside the dialog exists, so a panel on the body could be unreachable there
     // (VoiceOver/Safari). It stays `position: fixed`, so where it sits in the tree does not move it.
@@ -442,7 +478,7 @@ export function createCommandPicker({ select, label = "Choose", placeholder = ""
     if (!found.length) announceSoon();
     place();
     follow();
-    keyHolder.focus();
+    holder.focus();
     dismissal.opened();
   }
 
@@ -621,15 +657,18 @@ export function createCommandPicker({ select, label = "Choose", placeholder = ""
     // The panel floats on the body, outside any dialog, so a dialog's focus trap never sees it; this
     // is what keeps the dialog's Tab order going. Inside the panel, Tab moves as usual.
     if (event.key === "Tab") {
-      const last = createButton || keyHolder;
-      if ((event.shiftKey && event.target === keyHolder) || (!event.shiftKey && event.target === last)) close();
+      // The panel's first stop is its search box when it has one; its last is the create action, or
+      // whatever holds focus (the list is never a Tab stop of its own, A15).
+      const first = searchable ? search : list;
+      const last = createButton || holder;
+      if ((event.shiftKey && event.target === first) || (!event.shiftKey && event.target === last)) close();
       return;
     }
     // A3 — the create button's own keys are its own: Enter and Space activate it natively.
     if (createButton && event.target === createButton) {
       if (event.key === "ArrowUp") {
         event.preventDefault();
-        keyHolder.focus();
+        holder.focus();
       }
       return;
     }
@@ -660,12 +699,29 @@ export function createCommandPicker({ select, label = "Choose", placeholder = ""
       event.preventDefault();
       if (typed) typeAheadKey(" ");
       else if (found[active] && !found[active].disabled) pick(found[active].value);
-    } else if (!inSearch && !searchable && isTypeAhead(event)) {
-      // WHAT A NATIVE SELECT DOES: letters MOVE to the next option starting with them.
+    } else if (!inSearch && isTypeAhead(event)) {
       event.preventDefault();
-      typeAheadKey(event.key);
+      // A15 — in a searched list whose list holds focus (a touch screen with a keyboard attached),
+      // typing is the start of a search. Otherwise, WHAT A NATIVE SELECT DOES: letters MOVE to the next
+      // option starting with them.
+      if (searchable) startSearch(search.value + event.key);
+      else typeAheadKey(event.key);
     }
   });
+
+  // A15 — tapping the search box makes it the element that holds focus, so the active option is named
+  // on it from then on.
+  search.addEventListener("focus", () => {
+    if (!open || holder === search) return;
+    holder = search;
+    markActive({ scroll: false });
+  });
+
+  // A15 — a phone or tablet: its primary pointer is coarse.
+  function coarsePointer() {
+    const view = element.ownerDocument && element.ownerDocument.defaultView;
+    return !!(view && typeof view.matchMedia === "function" && view.matchMedia("(pointer: coarse)").matches);
+  }
 
   // A14 — a page from `from`, never past either end; an unavailable row is stepped over in the same
   // direction.
@@ -734,6 +790,8 @@ export function createCommandPicker({ select, label = "Choose", placeholder = ""
 
   // A14 — a letter typed on the closed trigger is the start of the search.
   function startSearch(text) {
+    // The box holds focus from now on (A15), so the active option is named on it.
+    holder = search;
     search.value = text;
     search.focus();
     onSearchInput();

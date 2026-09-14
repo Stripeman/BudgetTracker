@@ -131,7 +131,7 @@ describe("BT-004-05 accounts: Add account and Who can see this", () => {
     const dialog = dom.body.querySelector(".modal");
     assert.deepEqual(nativeDropdowns(dialog), []);
     const member = pickerNamed(dialog, "Member");
-    assert.equal(spoken(member), "Member: Bob Fictional. Search and choose.");
+    assert.equal(spoken(member), "Member: Bob Fictional. Choose.");
     chooseByKeyboard(member, { type: "carol" });
     buttonNamed(dialog, "Share").click();
     await tick();
@@ -255,10 +255,10 @@ describe("BT-004-05 My settings: display preferences", () => {
     view.update(state);
     assert.deepEqual(nativeDropdowns(view.element), []);
     assert.deepEqual(pickerLabels(view.element), ["Display currency", "Date format", "Number format", "Default workspace"]);
-    assert.equal(spoken(pickerNamed(view.element, "Display currency")), "Display currency: Account currency. Search and choose.");
+    assert.equal(spoken(pickerNamed(view.element, "Display currency")), "Display currency: Account currency. Choose.");
     assert.equal(spoken(pickerNamed(view.element, "Date format")), "Date format: 2026-09-13. Choose.");
     assert.equal(spoken(pickerNamed(view.element, "Number format")), "Number format: 1,234.56. Choose.");
-    assert.equal(spoken(pickerNamed(view.element, "Default workspace")), "Default workspace: First available. Search and choose.");
+    assert.equal(spoken(pickerNamed(view.element, "Default workspace")), "Default workspace: First available. Choose.");
     const dateFormat = pickerNamed(view.element, "Date format");
     triggerFor(dateFormat).click();
     panelKey("ArrowDown");
@@ -266,7 +266,9 @@ describe("BT-004-05 My settings: display preferences", () => {
     assert.deepEqual(saved, [], "browsing and Escape save nothing");
     chooseByKeyboard(dateFormat, { keys: ["ArrowDown"] });
     assert.deepEqual(saved, [{ dateFormat: "dmy" }]);
-    chooseByKeyboard(pickerNamed(view.element, "Default workspace"), { type: "trip" });
+    // Three workspaces: no search box since UX review U2, so the start of the name is typed, as in a
+    // native list — the space inside "fictional t" is part of the type-ahead, not a choice.
+    chooseByKeyboard(pickerNamed(view.element, "Default workspace"), { type: "fictional t" });
     assert.deepEqual(saved, [{ dateFormat: "dmy" }, { defaultWorkspaceId: "ws_trip" }]);
   });
 

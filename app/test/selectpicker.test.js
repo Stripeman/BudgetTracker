@@ -160,7 +160,7 @@ describe("BT-004-05 the field label names the trigger", () => {
     const label = node.querySelector("label");
     assert.equal(label.getAttribute("for"), triggerOf(select).id);
     assert.equal(triggerOf(select).hasAttribute("aria-label"), false, "the visible label is the name (a11y review finding 6)");
-    assert.equal(spokenOf(triggerOf(select)), "Budget period: Weekly. Search and choose.");
+    assert.equal(spokenOf(triggerOf(select)), "Budget period: Weekly. Choose.", "three periods: no search box (UX review U2)");
   });
 
   test("the field's help text describes the trigger", () => {
@@ -171,7 +171,7 @@ describe("BT-004-05 the field label names the trigger", () => {
   });
 
   test("the panel, its list and its search box are named after the field", () => {
-    const { select } = mounted(PERIODS, "monthly", {}, {}, "Currency");
+    const { select } = mounted(PERIODS, "monthly", {}, { search: true }, "Currency");
     triggerOf(select).click();
     assert.equal(panel().getAttribute("aria-label"), "Currency");
     assert.equal(panel().querySelector(".cmdpick__list").getAttribute("aria-label"), "Currency");
@@ -231,7 +231,9 @@ describe("BT-004-05 change semantics the views rely on", () => {
 });
 
 describe("BT-004-05 inside a modal dialog", () => {
-  function inModal(picker = {}) {
+  // These dialog tests are about the searched variant unless they say otherwise (`search: false`); a
+  // three-option list has no search box by default since UX review U2.
+  function inModal(picker = { search: true }) {
     const select = pickerSelect(PERIODS, "monthly", {}, picker);
     const modal = openModal({ title: "Add budget", body: [field("Period", select)] });
     return { select, modal };
@@ -280,7 +282,7 @@ describe("BT-004-05 inside a modal dialog", () => {
   });
 
   test("Tab from the search box moves on to a pinned create action inside the panel", () => {
-    const select = pickerSelect(PERIODS, "monthly", {}, { create: { label: "New period", onPick() {} } });
+    const select = pickerSelect(PERIODS, "monthly", {}, { search: true, create: { label: "New period", onPick() {} } });
     dom.body.appendChild(field("Period", select));
     triggerOf(select).click();
     press(panel().querySelector(".cmdpick__search"), "Tab");
@@ -318,7 +320,7 @@ describe("BT-004-05 inside a modal dialog", () => {
   });
 
   test("the dialog's Tab trap leaves Tab inside an open panel to the panel, even when the picker is the dialog's last control", () => {
-    const select = pickerSelect(PERIODS, "monthly");
+    const select = pickerSelect(PERIODS, "monthly", {}, { search: true });
     openModal({ title: "Choose a period", body: [field("Period", select)] });
     triggerOf(select).click();
     const e = keyThrough(panel().querySelector(".cmdpick__search"), "Tab");
@@ -341,6 +343,48 @@ describe("BT-004-05 inside a modal dialog", () => {
     dom.body.removeChild(node);
     document.dispatchEvent(new DomEvent("mousedown", { bubbles: true, target: dom.body }));
     none(panel());
+  });
+});
+
+describe("BT-004-05 a data list offers a search box only when it is long (UX review U2)", () => {
+  const numbered = (n) => Array.from({ length: n }, (_, i) => ({ value: `v${i}`, label: `Option ${String(i + 1).padStart(2, "0")}` }));
+
+  test("twelve or fewer options: no search box, the list takes the keyboard, described as Choose.", () => {
+    const { select } = mounted(numbered(12), "v0");
+    assert.equal(triggerOf(select).querySelector(".cmdpick__hint").textContent, "▾", "a chevron promises a list");
+    assert.equal(spokenOf(triggerOf(select)), "Period: Option 01. Choose.");
+    triggerOf(select).click();
+    none(panel().querySelector(".cmdpick__search"), "no box, so no on-screen keyboard");
+    assert.ok(panel().classList.contains("cmdpick__panel--nosearch"));
+    same(document.activeElement, panel().querySelector(".cmdpick__list"));
+  });
+
+  test("thirteen or more options: the search box, focused, described as Search and choose.", () => {
+    const { select } = mounted(numbered(13), "v0");
+    assert.equal(triggerOf(select).querySelector(".cmdpick__hint").textContent, "⌕");
+    assert.equal(spokenOf(triggerOf(select)), "Period: Option 01. Search and choose.");
+    triggerOf(select).click();
+    same(document.activeElement, panel().querySelector(".cmdpick__search"));
+    assert.equal(panel().classList.contains("cmdpick__panel--nosearch"), false);
+  });
+
+  test("decided again at each open: a list filled after it was built gets the box once it is long, and loses it when short again", () => {
+    const { select } = mounted([], "");
+    select.replaceChildren(...numbered(13).map((o) => option(o.value, o.label)));
+    assert.equal(spokenOf(triggerOf(select)), "Period: Choose period…. Search and choose.", "the closed trigger already says so");
+    triggerOf(select).click();
+    assert.ok(panel().querySelector(".cmdpick__search"), "long now: the box");
+    press(panel().querySelector(".cmdpick__search"), "Escape");
+    select.replaceChildren(option("a", "Alpha"), option("b", "Beta"));
+    triggerOf(select).click();
+    none(panel().querySelector(".cmdpick__search"), "short again: no box");
+    same(document.activeElement, panel().querySelector(".cmdpick__list"));
+  });
+
+  test("a field may still ask for the box on a short list (search: true), as the header workspace picker does", () => {
+    const { select } = mounted(PERIODS, "monthly", {}, { search: true });
+    triggerOf(select).click();
+    same(document.activeElement, panel().querySelector(".cmdpick__search"));
   });
 });
 

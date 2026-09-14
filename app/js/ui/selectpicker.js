@@ -58,7 +58,10 @@ export function controlElement(control) {
  * @param {Function} [options.describeOf]  value → the row's spoken name when the label is not all of it
  * @param {object} [options.create]        a pinned create action ({ label, onPick(term) })
  */
-export function enhanceSelect(select, { label = null, search = true, placeholder = "", colorOf = null, badgeOf = null, describeOf = null, create = null } = {}) {
+// `search` defaults to "auto": a search box only above the command picker's threshold of twelve options,
+// so a short data list opens like a native list with no on-screen keyboard (UX review U2). `true`
+// always offers one.
+export function enhanceSelect(select, { label = null, search = "auto", placeholder = "", colorOf = null, badgeOf = null, describeOf = null, create = null } = {}) {
   if (!select || select.tagName !== "SELECT") throw new Error("enhanceSelect needs a select element.");
   const existing = handles.get(select);
   if (existing) return existing;

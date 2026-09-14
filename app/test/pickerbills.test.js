@@ -77,12 +77,12 @@ describe("BT-004-05 bills: the bill editor", () => {
     assert.deepEqual(pickerLabels(root), ["Type", "Direction", "Account", "To account", "Amount is", "Repeats", "Unit", "Category", "Responsible person"]);
     assert.equal(spoken(pickerNamed(root, "Type")), "Type: Rent or mortgage. Choose.");
     assert.equal(spoken(pickerNamed(root, "Direction")), "Direction: Money out. Choose.");
-    assert.equal(spoken(pickerNamed(root, "Account")), "Account: Fictional joint (EUR). Search and choose.");
+    assert.equal(spoken(pickerNamed(root, "Account")), "Account: Fictional joint (EUR). Choose.");
     assert.equal(spoken(pickerNamed(root, "Amount is")), "Amount is: Always the same. Choose.");
     assert.equal(spoken(pickerNamed(root, "Repeats")), "Repeats: Monthly. Choose.");
     assert.equal(spoken(pickerNamed(root, "Unit")), "Unit: months. Choose.");
-    assert.equal(spoken(pickerNamed(root, "Category")), "Category: Uncategorized. Search and choose.");
-    assert.equal(spoken(pickerNamed(root, "Responsible person")), "Responsible person: Nobody in particular. Search and choose.");
+    assert.equal(spoken(pickerNamed(root, "Category")), "Category: Uncategorized. Choose.");
+    assert.equal(spoken(pickerNamed(root, "Responsible person")), "Responsible person: Nobody in particular. Choose.");
     await tick();
     assert.deepEqual(offeredOptions(pickerNamed(root, "Responsible person")), ["Nobody in particular", "Bob Fictional (workspace member)", "Dana Fictional (contact)"], "the people loaded after the dialog opened are offered");
     triggerFor(pickerNamed(root, "Type")).click();
