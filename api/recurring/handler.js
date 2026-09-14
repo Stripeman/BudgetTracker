@@ -93,6 +93,17 @@ function history(r, by, at, changed, changes = []) {
   r.history = [...(r.history || []), { revision: r.revision, at, by, fields: changed, ...(changes.length ? { changes } : {}) }];
 }
 
+// A transfer bill moves money INTO its destination account as well, so every change to it needs the
+// change right on BOTH accounts, like editing a transfer entry does (security review of eefd115, M-1).
+// Neither a workspace role nor a workspace setting ever reaches another member's private account; the
+// owner of a private destination keeps full control.
+function mayChangeBill(doc, principal, a, r, capability, now) {
+  if (!canChangeRecord(doc, principal, a, r, capability, now)) return false;
+  if (r.kind !== 'transfer' || !r.toAccountId) return true;
+  const dest = (doc.accounts || []).find((x) => x.id === r.toAccountId);
+  return !!dest && canChangeRecord(doc, principal, dest, r, capability, now);
+}
+
 function locate(doc, principal, id, now) {
   const r = (doc.recurring || []).find((x) => x.id === id && !x.deletedAt);
   const a = r && (doc.accounts || []).find((x) => x.id === r.accountId);
@@ -156,8 +167,8 @@ function view(doc, r, principal, user, today, now, recorded) {
     recordedCount: [...recorded.keys()].filter((k) => k.startsWith(prefix)).length,
     history: (r.history || []).slice(-20).map((h) => ({ at: h.at, by: names.get(h.by) || 'Former member', fields: h.fields, changes: h.changes || [] })),
     revision: r.revision,
-    canEdit: a ? canChangeRecord(doc, principal, a, r, 'edit', now) : false,
-    canDelete: a ? canChangeRecord(doc, principal, a, r, 'delete', now) : false,
+    canEdit: a ? mayChangeBill(doc, principal, a, r, 'edit', now) : false,
+    canDelete: a ? mayChangeBill(doc, principal, a, r, 'delete', now) : false,
     canRecord: !inactiveReason && !!a && can(doc, principal, a, 'create', now) && (!dest || can(doc, principal, dest, 'create', now)),
   };
 }
@@ -365,7 +376,7 @@ function change(action) {
       const nowIso = ctx.nowIso();
       const today = nowIso.slice(0, 10);
       const { r, a } = locate(doc, ctx.principal, requireId(body.recurringId, 'recurringId'), now);
-      if (!canChangeRecord(doc, ctx.principal, a, r, 'edit', now)) throw forbidden('You cannot change this bill.');
+      if (!mayChangeBill(doc, ctx.principal, a, r, 'edit', now)) throw forbidden('You cannot change this bill.');
       const recorded = bills.recordedSet(doc);
       let changed = null;
       if (action === 'skip') {
@@ -420,7 +431,7 @@ async function patch(ctx, req) {
     const now = ctx.now();
     const nowIso = ctx.nowIso();
     const { r, a } = locate(doc, ctx.principal, requireId(body.recurringId, 'recurringId'), now);
-    if (!canChangeRecord(doc, ctx.principal, a, r, 'edit', now)) throw forbidden('You cannot change this bill.');
+    if (!mayChangeBill(doc, ctx.principal, a, r, 'edit', now)) throw forbidden('You cannot change this bill.');
     if (!Number.isSafeInteger(body.revision)) throw badRequest('revision is required so a stale edit cannot overwrite a newer one.', 'missing_revision');
     if (body.revision !== r.revision) throw conflict('This bill changed since you loaded it. Reload to see the latest version.', 'stale_revision');
     const changed = [];
@@ -482,7 +493,7 @@ async function remove(ctx, req) {
     const now = ctx.now();
     const nowIso = ctx.nowIso();
     const { r, a } = locate(doc, ctx.principal, requireId(body.recurringId, 'recurringId'), now);
-    if (!canChangeRecord(doc, ctx.principal, a, r, 'delete', now)) throw forbidden('You cannot remove this bill.');
+    if (!mayChangeBill(doc, ctx.principal, a, r, 'delete', now)) throw forbidden('You cannot remove this bill.');
     if (body.revision !== r.revision) throw conflict('This bill changed since you loaded it.', 'stale_revision');
     r.deletedAt = nowIso;
     r.revision += 1;
