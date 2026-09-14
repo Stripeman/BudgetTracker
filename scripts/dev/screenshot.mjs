@@ -11,6 +11,7 @@ import { spawn } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { stopEdge } from "./harness/edge.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 const args = Object.fromEntries(process.argv.slice(2).reduce((acc, v, i, all) => (v.startsWith("--") ? [...acc, [v.slice(2), all[i + 1]]] : acc), []));
@@ -30,12 +31,15 @@ fs.mkdirSync(OUT, { recursive: true });
 const profile = path.join(ROOT, ".local", `edge-profile-${Date.now()}`);
 const edge = spawn(EDGE, ["--headless=new", `--remote-debugging-port=${PORT}`, "--remote-debugging-address=127.0.0.1", `--user-data-dir=${profile}`, "--no-first-run", "--disable-extensions", "--window-size=1280,900", "about:blank"], { stdio: "ignore" });
 
+// The page to drive and the browser endpoint (for Browser.close at cleanup).
+let browserWs = null;
 async function cdpTarget() {
   for (let i = 0; i < 50; i += 1) {
     try {
       const list = await (await fetch(`http://127.0.0.1:${PORT}/json/list`)).json();
+      const version = await (await fetch(`http://127.0.0.1:${PORT}/json/version`)).json();
       const page = list.find((t) => t.type === "page");
-      if (page) return page.webSocketDebuggerUrl;
+      if (page) { browserWs = version.webSocketDebuggerUrl || null; return page.webSocketDebuggerUrl; }
     } catch { /* not up yet */ }
     await sleep(200);
   }
@@ -302,7 +306,9 @@ try {
   console.log(JSON.stringify({ shots, problems: [...new Set(problems)].slice(0, 20) }, null, 2));
   cdp.close();
 } finally {
-  edge.kill();
-  await sleep(500);
-  fs.rmSync(profile, { recursive: true, force: true, maxRetries: 5 });
+  // edge.kill() alone left Edge running with its profile locked on Windows (tooling debt): close it
+  // through CDP, then stop only the processes holding this run's own profile, then remove the profile
+  // (scripts/dev/harness/edge.mjs).
+  const cleanup = await stopEdge({ child: edge, profile, browserWs, label: "screenshot edge" });
+  if (cleanup.survivors.length || !cleanup.profileRemoved) console.error(`cleanup incomplete: ${JSON.stringify(cleanup)}`);
 }
