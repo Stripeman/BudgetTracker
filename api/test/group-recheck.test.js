@@ -738,6 +738,45 @@ describe('F2 (financial recheck of 47617b5): a part left on an account that is n
   });
 });
 
+describe('L3 (financial recheck of 47617b5): the backup check is as tolerant as reads and refuses only broken structure', () => {
+  const docName = (f) => `workspaces/${f.ws.id}/workspace.json`;
+  const edit = async (h, f, change) => { const { value: doc } = await h.storage.getJson(docName(f)); change(doc); await h.storage.putJson(docName(f), doc); };
+  const backup = (h, f) => h.call('backups', 'POST', { as: 'alice', query: f.q, body: {} });
+
+  test('values a newer version could have stored read as their defaults, ordinary writes go on, and backups still succeed', async () => {
+    const h = harness();
+    const f = await fixture(h);
+    ok(await setSettings(h, f, 'alice', { ownedEntries: 'manual' }));
+    // As if written by a later version and then rolled back past it: a value this version does not know
+    // for a known setting, an unknown option, an unknown key, and an override with an unknown value.
+    await edit(h, f, (doc) => {
+      Object.assign(doc.groupSettings.values, { anyoneConfirms: 'sometimes', settleDisputes: 'a-future-option', aFutureSetting: 7 });
+      doc.groupSettings.perMember = { confirmOverrides: { [f.mid('Bob')]: { value: 'maybe', at: '2026-09-14T09:00:00.000Z', by: 'google:g-alice', period: 0 } } };
+    });
+    const gs = (await view(h, f)).groupSettings;
+    assert.deepEqual(gs.settings.filter((s) => ['anyoneConfirms', 'ownedEntries', 'settleDisputes'].includes(s.key)).map((s) => s.value), [true, 'manual', 'receiver']);
+    assert.equal(gs.members.find((m) => m.name === 'Bob Fictional').override, 'inherit');
+    ok(await setSettings(h, f, FRANK, { ownedEntries: 'shared-only' }), 200);
+    assert.equal((await backup(h, f)).status, 201, 'backups do not stop after a rollback');
+  });
+
+  test('broken structure is still refused: an object where a single value belongs, values that are a list, an override that is not an object, a history that is not a list', async () => {
+    for (const [label, change] of [
+      ['object as a value', (doc) => { doc.groupSettings.values.anyoneConfirms = { nested: true }; }],
+      ['values as a list', (doc) => { doc.groupSettings.values = ['on']; }],
+      ['override not an object', (doc) => { doc.groupSettings.perMember = { confirmOverrides: { mem_fictional01: 'no' } }; }],
+      ['history not a list', (doc) => { doc.groupSettings.history = {}; }],
+    ]) {
+      const h = harness();
+      const f = await fixture(h);
+      ok(await setSettings(h, f, 'alice', { ownedEntries: 'manual' }));
+      await edit(h, f, change);
+      const res = await backup(h, f);
+      assert.deepEqual([res.status, res.body.error && res.body.error.code], [422, 'backup_invalid'], label);
+    }
+  });
+});
+
 describe('L3 (security recheck of 47617b5): a transfer names the other account only to someone who may see it', () => {
   test('on the shared side of Bob\'s transfer to his private wallet, Alice, Carol, Eve and Frank get no account id; Bob does, and so does Eve once he lets her see the wallet', async () => {
     const h = harness();

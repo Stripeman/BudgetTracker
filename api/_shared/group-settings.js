@@ -219,14 +219,20 @@ function problem(doc) {
   if (gs === undefined) return null;
   if (!isPlainObject(gs)) return 'group settings';
   if (gs.values !== undefined && !isPlainObject(gs.values)) return 'group settings';
-  for (const [k, v] of Object.entries(gs.values || {})) if (own(SETTINGS, k) && !valid(k, v)) return 'group settings';
+  // As tolerant as reads (financial recheck of 47617b5, L3): a value this version does not know, left
+  // by a later version after a rollback, reads as the default and must not stop backups. Only broken
+  // structure is refused: every value is a single value, never an object or a list.
+  const scalar = (v) => v === null || typeof v === 'boolean' || typeof v === 'string' || (typeof v === 'number' && Number.isFinite(v));
+  for (const v of Object.values(gs.values || {})) if (!scalar(v)) return 'group settings';
   if (gs.perMember !== undefined) {
     if (!isPlainObject(gs.perMember)) return 'group settings';
     for (const [k, map] of Object.entries(gs.perMember)) {
       if (!own(PER_MEMBER, k)) continue;
       if (!isPlainObject(map)) return 'group settings';
+      // An override is an object with a text value (an unknown one reads as "Use the group setting") and
+      // a whole, non-negative membership period.
       for (const o of Object.values(map)) {
-        if (!isPlainObject(o) || !PER_MEMBER[k].options.some((x) => x.value === o.value) || !Number.isSafeInteger(o.period) || o.period < 0) return 'group settings';
+        if (!isPlainObject(o) || typeof o.value !== 'string' || !Number.isSafeInteger(o.period) || o.period < 0) return 'group settings';
       }
     }
   }
