@@ -13,6 +13,8 @@ import { colourEntries } from "../../core/categories.js";
 import { messageFor } from "../../core/errors.js";
 import { createIconPicker } from "../iconpicker.js";
 import { withIcon } from "../icons.js";
+import { stagingState, stagingAnchor, setAnchorHref, openStagingEditor, openPersonalStagingEditor, STAGING_ADD_TEXT } from "../staginglink.js";
+import { stagingHref, stagingHost } from "../../core/links.js";
 
 const MAX_ICON_BYTES = 8 * 1024;
 
@@ -82,6 +84,74 @@ export function createView(ctx) {
     el("div", { class: "row" }, [saveName]),
     nameStatus,
   ]);
+  // The staging link (BT-011-06): the same preference and the same editor as the account menu, so it
+  // is findable here with the other personal settings. Built once and refreshed in place.
+  const stagingLink = stagingAnchor({ className: "staging__link" });
+  const stagingHostText = el("span", { class: "muted small staging__host" });
+  const stagingNone = el("p", { class: "muted small staging__none" });
+  const stagingSource = el("span");
+  let stagingSourceShown = "";
+  const stagingEdit = button("Edit staging link", () => openPersonalStagingEditor({ store }), { small: true });
+  const stagingReset = button("Use inherited", () => save({ stagingUrl: null }), { small: true, variant: "ghost", attrs: { "aria-label": "Use the inherited staging link" } });
+  // Site administrators only: the address everyone inherits. It never reaches visitors who are not
+  // signed in (api/_shared/site.js publicView).
+  let siteStaging = { loaded: false, loading: false, value: null, error: "" };
+  const siteStagingText = el("span", { class: "small staging__host" });
+  const siteStagingEdit = button("Edit site staging link", () => openSiteStagingEditor(), { small: true });
+  const siteStagingRow = el("div", { class: "stack staging__site" }, [
+    el("h3", { class: "staging__heading", text: "Site default (site administrators)" }),
+    el("p", { class: "field__help", text: "Everyone who has not set their own staging link gets this one. Visitors who are not signed in never see it." }),
+    el("div", { class: "row" }, [siteStagingText, siteStagingEdit]),
+  ]);
+  siteStagingRow.hidden = true;
+  const stagingCard = el("section", { class: "card", "aria-labelledby": "set-staging" }, [
+    el("h2", { class: "card__title", id: "set-staging", text: "Staging link" }),
+    el("p", { class: "field__help", text: "Your staging (preview) site. It opens in a new tab from the account menu. Only https addresses are accepted." }),
+    el("div", { class: "staging__current" }, [stagingLink, stagingHostText, stagingNone]),
+    el("div", { class: "row" }, [stagingSource, stagingEdit, stagingReset]),
+    siteStagingRow,
+  ]);
+  async function loadSiteStaging() {
+    siteStaging = { ...siteStaging, loading: true };
+    try {
+      const data = await ctx.api.siteSettings();
+      const defaults = (data && data.settings && data.settings.defaults) || {};
+      siteStaging = { loaded: true, loading: false, value: stagingHref(defaults.stagingUrl), error: "" };
+    } catch (err) { siteStaging = { loaded: true, loading: false, value: null, error: messageFor(err) }; }
+    siteStagingText.textContent = siteStaging.error || (siteStaging.value ? stagingHost(siteStaging.value) : "None set");
+    siteStagingEdit.textContent = siteStaging.value ? "Edit site staging link" : "Add site staging link…";
+  }
+  function openSiteStagingEditor() {
+    openStagingEditor({
+      title: "Site staging link", label: "Staging site address for everyone", current: siteStaging.value || "", canRemove: !!siteStaging.value,
+      help: "Everyone who has not set their own staging link gets this one. Visitors who are not signed in never see it.",
+      save: async (value) => {
+        try { await ctx.api.request("site-settings", { method: "PUT", body: { defaults: { stagingUrl: value } } }); return { ok: true }; }
+        catch (error) { return { ok: false, error }; }
+      },
+      onSaved: async () => { await loadSiteStaging(); await store.actions.refreshPreferences(); },
+    });
+  }
+  function renderStaging(state) {
+    const s = stagingState(state);
+    const resetHadFocus = document.activeElement === stagingReset;
+    setAnchorHref(stagingLink, s.href);
+    stagingLink.hidden = !s.href;
+    stagingHostText.textContent = s.href ? stagingHost(s.href) : "";
+    stagingHostText.hidden = !s.href;
+    stagingNone.textContent = s.locked ? "The site has not set a staging link." : "No staging link yet.";
+    stagingNone.hidden = !!s.href;
+    if (stagingSourceShown !== s.source) { stagingSourceShown = s.source; mount(stagingSource, sourceBadge(s.source)); }
+    stagingEdit.textContent = s.href ? "Edit staging link" : STAGING_ADD_TEXT;
+    stagingEdit.hidden = s.locked;
+    stagingReset.hidden = !s.personal;
+    // "Use inherited" leaves once used; focus moves to the editor button instead of the page.
+    if (resetHadFocus && stagingReset.hidden) stagingEdit.focus();
+    const siteAdmin = !!(state.auth && state.auth.user && state.auth.user.siteAdmin);
+    siteStagingRow.hidden = !siteAdmin;
+    if (siteAdmin && !siteStaging.loaded && !siteStaging.loading) void loadSiteStaging();
+  }
+
   const element = el("section", {}, [
     pageHead("My settings"),
     el("p", { class: "muted small", text: "“Inherited” values follow the site default until you change them. “Customized” values are your own choice; use “Use inherited” to return to the default. “Locked by site” values are set by the site administrator." }),
@@ -89,6 +159,7 @@ export function createView(ctx) {
       nameCard,
       el("section", { class: "card", "aria-labelledby": "set-appearance" }, [el("h2", { class: "card__title", id: "set-appearance", text: "Appearance" }), appearanceSource, dayNight.element, paletteField]),
       el("section", { class: "card", "aria-labelledby": "set-display" }, [el("h2", { class: "card__title", id: "set-display", text: "Display and privacy" }), prefBox, status]),
+      stagingCard,
       el("section", { class: "card", "aria-labelledby": "set-contacts" }, [el("h2", { class: "card__title", id: "set-contacts", text: "Private contacts" }), el("p", { class: "field__help", text: "Only you can see these. Use them on your private records; use workspace contacts for shared ones." }), contactsBox]),
       colourCard,
       catalogCard,
@@ -288,6 +359,7 @@ export function createView(ctx) {
     }
     const prefs = state.preferences;
     if (!prefs) return;
+    renderStaging(state);
     colourCard.hidden = !state.selectedWorkspaceId;
     renderColours(state);
     const siteAdmin = !!(state.auth && state.auth.user && state.auth.user.siteAdmin);
