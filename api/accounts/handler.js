@@ -130,8 +130,7 @@ async function patch(ctx, req) {
     const before = { openingBalanceMinor: account.openingBalanceMinor, openingDate: account.openingDate };
     const beforeAll = snap(account);
     const reason = fields.text(body.reason, { field: 'Reason', max: 200 });
-    if ((body.openingBalance !== undefined || body.openingDate !== undefined)
-        && (doc.transactions || []).some((t) => t.accountId === account.id && !t.deletedAt && t.status === 'reconciled')) {
+    if ((body.openingBalance !== undefined || body.openingDate !== undefined) && ledger.hasReconciledEntries(doc, account.id)) {
       throw conflict('This account has reconciled entries. Opening balance and date are locked to keep reconciled statements correct.', 'reconciled_locked');
     }
     const changed = [];

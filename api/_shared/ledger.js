@@ -137,6 +137,28 @@ function maskedNumber(value) {
   return value;
 }
 
+// True once the account has a reconciled entry: BT-006 locks opening balance/date at that point so
+// a reconciled statement never drifts. Shared by the edit route and the account view (so the UI can
+// disable those fields up front, not only after a failed save).
+function hasReconciledEntries(doc, accountId) {
+  return (doc.transactions || []).some((t) => t.accountId === accountId && !t.deletedAt && t.status === 'reconciled');
+}
+
+// Terms are stored in minor units (creditLimitMinor, minimumPaymentMinor, principalMinor,
+// paymentMinor) because that is what the ledger sums. For display and editing they are converted
+// to decimal strings alongside the minor fields — additive, so nothing that reads the minor fields
+// breaks — using the same field names `validateTerms` accepts back (creditLimit, minimumPayment,
+// principal, payment).
+function termsView(terms, currency) {
+  if (!terms) return {};
+  const out = { ...terms };
+  if (terms.creditLimitMinor != null) out.creditLimit = money.toDecimal(terms.creditLimitMinor, currency);
+  if (terms.minimumPaymentMinor != null) out.minimumPayment = money.toDecimal(terms.minimumPaymentMinor, currency);
+  if (terms.principalMinor != null) out.principal = money.toDecimal(terms.principalMinor, currency);
+  if (terms.paymentMinor != null) out.payment = money.toDecimal(terms.paymentMinor, currency);
+  return out;
+}
+
 // Added exactly with money.sum (BigInt), so a partial total never loses a minor unit whatever the
 // order of the entries (FIN-R15).
 function balanceOf(doc, account) {
@@ -196,7 +218,10 @@ function accountView(doc, principal, account, now) {
     out.openingBalanceMinor = account.openingBalanceMinor;
     out.balanceMinor = balanceOf(doc, account);
     out.balance = money.toDecimal(out.balanceMinor, account.currency);
-    out.terms = account.terms || {};
+    out.terms = termsView(account.terms || {}, account.currency);
+    // Whether opening balance/date are locked (BT-006): shown up front so an edit dialog can
+    // disable those fields instead of only failing after Save.
+    out.reconciledLocked = hasReconciledEntries(doc, account.id);
   }
   return out;
 }
@@ -385,4 +410,5 @@ module.exports = {
   assertMemberQuota, memberBytes, memberCharge, quotaLimit, quotaExceeded,
   ACCOUNT_TYPES, LIABILITY_TYPES, TX_KINDS, OUTFLOW, INFLOW, TX_STATUSES, NEVER_POSITIVE_OPENING, validateTerms, maskedNumber,
   balanceOf, accountView, hasEntries, accessOf, signedAmount, validateSplits, transactionView, visiblePayees, classify, openingBalance, assertLedgerInRange,
+  hasReconciledEntries, termsView,
 };

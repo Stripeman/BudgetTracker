@@ -27,7 +27,7 @@
 }
 .field__input:hover { border-color: var(--control-border-hover); }
 .field__input:focus { border-color: var(--control-border-active); outline: none; box-shadow: 0 0 0 3px var(--accent-soft); }
-.field__input:disabled { background: var(--surface-sunken); color: var(--text-subtle); cursor: not-allowed; }
+.field__input:disabled, .field__input:read-only { background: var(--surface-sunken); color: var(--text-subtle); cursor: not-allowed; }
 textarea.field__input { min-height: 5rem; resize: vertical; }
 .field--inline { display: flex; flex-direction: row; align-items: center; gap: var(--space-2); }
 .field input[type="checkbox"] { align-self: flex-start; width: 1.1rem; height: 1.1rem; margin: var(--space-1) 0; }
