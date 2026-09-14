@@ -390,6 +390,8 @@ describe('S4 residual: a create-new restore carries nobody else\'s identity on a
     const e = await addExpense(h, f, 'alice', { description: 'Fictional picnic', amount: '20.00', payers: [{ ref: f.refs.alice }], split: equal(f.refs.alice, f.refs.dana) });
     ok(await G(h, f, FRANK, 'PATCH', { body: { expenseId: e.id, revision: e.revision, description: 'Fictional picnic (park)', reason: 'Clearer' } }));
     ok(await setSettings(h, f, FRANK, { anyoneConfirms: false }, 'Strict for now'));
+    // Per-person rights are keyed by member id: Bob's and Eve's must not come along either.
+    ok(await setSettings(h, f, FRANK, { confirmOverrides: { [f.mid('Bob')]: 'yes', [f.mid('Eve')]: 'no' } }, 'Per person'));
     // Bob records the group on his private wallet.
     ok(await act(h, f, 'bob', 'ledger', { currency: 'EUR', accountId: wallet.id }));
     h.clock.advance(60000);
@@ -421,6 +423,119 @@ describe('S4 residual: a create-new restore carries nobody else\'s identity on a
     assert.equal(edit.status, 403);
     const hist = ok(await h.call('transactions', 'GET', { as: 'alice', query: { ...nq, action: 'history', transactionId: seen.id } }));
     assert.equal(hist.createdBy, 'Former member');
+  });
+});
+
+describe('B per person: "Can confirm payments" for each member (Terry, 2026-09-14)', () => {
+  const setPerson = (h, f, w, overrides, reason) => setSettings(h, f, w, { confirmOverrides: overrides }, reason);
+
+  test('group on, Bob set to No: Bob confirms only payments made to him; Eve, following the group, confirms her own', async () => {
+    const h = harness();
+    const f = await fixture(h);
+    const { alice, bob, eve } = f.refs;
+    ok(await setPerson(h, f, 'alice', { [f.mid('Bob')]: 'no' }));
+    const own = await settle(h, f, 'bob', { from: bob, to: alice, amount: '10.00' });
+    assert.equal((await confirm(h, f, 'bob', own)).status, 403, 'not his own payment');
+    const others = await settle(h, f, 'eve', { from: eve, to: alice, amount: '4.00' });
+    assert.equal((await confirm(h, f, 'bob', others)).status, 403, 'nor someone else\'s');
+    const toBob = await settle(h, f, 'eve', { from: eve, to: bob, amount: '3.00' });
+    assert.equal(ok(await confirm(h, f, 'bob', toBob)).settlement.confirmation.relation, 'receiver', 'a payment made to him');
+    const eves = await settle(h, f, 'eve', { from: eve, to: alice, amount: '2.00' });
+    assert.equal(ok(await confirm(h, f, 'eve', eves)).settlement.confirmation.relation, 'payer', 'Eve follows the group setting (on)');
+    assert.equal((await view(h, f, 'bob')).settlements.find((s) => s.id === own.id).canConfirm, false);
+  });
+
+  test('group off, Bob set to Yes: Bob confirms his own payment and one to a contact; Eve, following the group, cannot', async () => {
+    const h = harness();
+    const f = await fixture(h);
+    const { alice, bob, eve, dana } = f.refs;
+    ok(await setSettings(h, f, 'alice', { anyoneConfirms: false }));
+    ok(await setPerson(h, f, FRANK, { [f.mid('Bob')]: 'yes' }));
+    const own = await settle(h, f, 'bob', { from: bob, to: alice, amount: '10.00' });
+    assert.deepEqual(ok(await confirm(h, f, 'bob', own)).settlement.confirmation, { by: 'Bob Fictional', relation: 'payer' });
+    const contact = await settle(h, f, 'eve', { from: eve, to: dana, amount: '6.00' });
+    assert.deepEqual(ok(await confirm(h, f, 'bob', contact)).settlement.confirmation, { by: 'Bob Fictional', relation: 'other' });
+    const eves = await settle(h, f, 'eve', { from: eve, to: alice, amount: '2.00' });
+    assert.equal((await confirm(h, f, 'eve', eves)).status, 403);
+  });
+
+  test('without an override a member follows the group setting both ways, and "Use the group setting" returns to it', async () => {
+    const h = harness();
+    const f = await fixture(h);
+    const { alice, bob } = f.refs;
+    const bobConfirmsOwn = async () => (await confirm(h, f, 'bob', await settle(h, f, 'bob', { from: bob, to: alice, amount: '1.00' }))).status;
+    assert.equal(await bobConfirmsOwn(), 200, 'group on');
+    ok(await setSettings(h, f, 'alice', { anyoneConfirms: false }));
+    assert.equal(await bobConfirmsOwn(), 403, 'group off');
+    ok(await setPerson(h, f, 'alice', { [f.mid('Bob')]: 'yes' }));
+    assert.equal(await bobConfirmsOwn(), 200, 'Bob set to Yes');
+    ok(await setPerson(h, f, 'alice', { [f.mid('Bob')]: 'inherit' }));
+    assert.equal(await bobConfirmsOwn(), 403, 'back to the group setting (off)');
+  });
+
+  test('a member demoted to viewer confirms only payments made to them, whatever the override', async () => {
+    const h = harness();
+    const f = await fixture(h);
+    const { alice, bob, eve } = f.refs;
+    ok(await setPerson(h, f, 'alice', { [f.mid('Bob')]: 'yes' }));
+    ok(await h.call('members', 'PATCH', { as: 'alice', query: f.q, body: { memberId: f.mid('Bob'), role: 'viewer' } }));
+    const others = await settle(h, f, 'eve', { from: eve, to: alice, amount: '4.00' });
+    assert.equal((await confirm(h, f, 'bob', others)).status, 403);
+    const toBob = await settle(h, f, 'eve', { from: eve, to: bob, amount: '3.00' });
+    assert.equal(ok(await confirm(h, f, 'bob', toBob)).settlement.status, 'confirmed');
+  });
+
+  test('a removed member\'s override is ignored, cannot be set, and does not come back when they rejoin', async () => {
+    const h = harness();
+    const f = await fixture(h);
+    const eveId = f.mid('Eve');
+    ok(await setSettings(h, f, 'alice', { anyoneConfirms: false }));
+    ok(await setPerson(h, f, 'alice', { [eveId]: 'yes' }));
+    ok(await h.call('members', 'DELETE', { as: 'alice', query: f.q, body: { memberId: eveId, reason: 'Moved away' } }));
+    const refused = await setPerson(h, f, 'alice', { [eveId]: 'no' });
+    assert.equal(refused.status, 400);
+    assert.equal(refused.body.error.code, 'invalid_setting');
+    assert.equal((await view(h, f)).groupSettings.members.some((m) => m.memberId === eveId), false, 'not listed while removed');
+    // Eve rejoins: the same member record starts a new membership period, and nothing from the earlier one comes back.
+    const inv = ok(await h.call('invitations', 'POST', { as: 'alice', query: f.q, body: { email: USERS.eve.email, role: 'member' } }), 201);
+    ok(await h.call('invitations', 'POST', { as: 'eve', query: { action: 'accept' }, body: { workspaceId: f.ws.id, token: inv.token } }));
+    const eves = await settle(h, f, 'eve', { from: f.refs.eve, to: f.refs.alice, amount: '2.00' });
+    assert.equal((await confirm(h, f, 'eve', eves)).status, 403, 'the old Yes no longer applies; the group setting (off) does');
+    assert.deepEqual((await view(h, f)).groupSettings.members.find((m) => m.memberId === eveId), { memberId: eveId, name: 'Eve Outsider', role: 'member', override: 'inherit', effective: false });
+  });
+
+  test('the model itself reads a removed member\'s override as "Use the group setting", and an active one\'s as set', () => {
+    const settings = require('../_shared/group-settings');
+    const m = { id: 'mem_fictional01', role: 'member', status: 'removed', history: [] };
+    const doc = { members: [m], groupSettings: { values: { anyoneConfirms: false }, perMember: { confirmOverrides: { [m.id]: { value: 'yes', at: '2026-09-14T08:00:00.000Z', by: 'google:g-alice', period: 0 } } } } };
+    assert.deepEqual([settings.overrideOf(doc, 'confirmOverrides', m), settings.confirmsAny(doc, m)], ['inherit', false], 'removed: the group setting (off)');
+    m.status = 'active';
+    assert.deepEqual([settings.overrideOf(doc, 'confirmOverrides', m), settings.confirmsAny(doc, m)], ['yes', true], 'active, same membership period: Yes');
+  });
+
+  test('owners and managers see everyone\'s setting and effective right; others see only their own; changes are validated and kept in the history', async () => {
+    const h = harness();
+    const f = await fixture(h);
+    ok(await setPerson(h, f, FRANK, { [f.mid('Bob')]: 'no' }, 'Keeps his own accounts'));
+    const managerView = (await view(h, f, 'alice')).groupSettings;
+    // Group on: everyone who can add follows it and may confirm any payment; Bob is set to No; Carol is a viewer.
+    assert.deepEqual(managerView.members.map((m) => [m.name, m.role, m.override, m.effective]), [
+      ['Alice Fictional', 'owner', 'inherit', true], ['Bob Fictional', 'member', 'no', false], ['Carol Fictional', 'viewer', 'inherit', false],
+      ['Frank Fictional', 'manager', 'inherit', true], ['Eve Outsider', 'member', 'inherit', true],
+    ]);
+    assert.deepEqual((await view(h, f, 'bob')).groupSettings.mine, { override: 'no', effective: false });
+    assert.deepEqual((await view(h, f, 'eve')).groupSettings.mine, { override: 'inherit', effective: true });
+    for (const w of ['bob', 'carol', 'eve']) assert.equal((await view(h, f, w)).groupSettings.members, undefined, `${w} sees nobody else's right`);
+    // The history of per-person rights is for owners and managers, and for the person concerned.
+    const personEntries = async (w) => (await view(h, f, w)).groupSettings.history.filter((x) => x.key === 'confirmOverrides').map((x) => x.member);
+    assert.deepEqual([await personEntries('bob'), await personEntries('eve'), await personEntries('carol')], [['Bob Fictional'], [], []]);
+    assert.equal((await setPerson(h, f, 'bob', { [f.mid('Eve')]: 'no' })).status, 403, 'members cannot change it');
+    for (const [label, overrides] of [['unknown member', { mem_nosuch0000000: 'no' }], ['unknown value', { [f.mid('Bob')]: 'maybe' }], ['not an object', 'no']]) {
+      const res = await setPerson(h, f, 'alice', overrides);
+      assert.equal(res.status, 400, label);
+    }
+    const last = managerView.history[managerView.history.length - 1];
+    assert.deepEqual([last.by, last.key, last.member, last.from, last.to, last.reason], ['Frank Fictional', 'confirmOverrides', 'Bob Fictional', 'inherit', 'no', 'Keeps his own accounts']);
   });
 });
 

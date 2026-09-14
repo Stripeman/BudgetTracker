@@ -387,7 +387,8 @@ function plan({ current, archived, mode, principal, member, nowIso, newWorkspace
       groupSettlements: forgetOthers(arc.groupSettlements.map(scrub)),
       groupLedgers: (archived.groupLedgers || []).filter((l) => l.subject === principal.subject && keepAccounts.has(l.accountId)).map((l) => ({ ...l })),
       // The group's settings come along with the group; who changed them is mapped like everything else.
-      ...(archived.groupSettings ? { groupSettings: forgetOthers(archived.groupSettings) } : {}),
+      // Per-person overrides of anyone else are left behind; they are keyed by member id (S4).
+      ...(archived.groupSettings ? { groupSettings: forgetOthers(require('./group-settings').forNewWorkspace(archived.groupSettings, memberId)) } : {}),
     };
     if ([...groups.memberIds(next)].some((id) => id !== memberId)) blockers.push(GROUP_MEMBERS_BLOCKER);
   } else {

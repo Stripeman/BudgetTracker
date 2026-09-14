@@ -151,6 +151,37 @@ describe("Group settings card and who confirmed (Terry, 2026-09-14)", () => {
     assert.deepEqual(calls.map((c) => [c.action, c.body]), [["settings", { changes: { anyoneConfirms: false } }]]);
   });
 
+  test("owners and managers set each person's right to confirm payments; saving sends only what changed", async () => {
+    const { ctx, state, calls } = ctxWith(STRANDED);
+    state.group.data.groupSettings = { ...SETTINGS, members: [
+      { memberId: "mem_bob", name: "Bob Fictional", role: "member", override: "inherit", effective: true },
+      { memberId: "mem_carol", name: "Carol Fictional", role: "viewer", override: "no", effective: false },
+    ] };
+    const v = createGroupView(ctx);
+    v.update(state);
+    const card = cardOf(v.element);
+    assert.match(card.textContent, /Can confirm payments/);
+    const pickerFor = (name) => card.querySelectorAll("select").find((s) => s.getAttribute("aria-label") === `Can confirm payments: ${name}`);
+    const bob = pickerFor("Bob Fictional");
+    assert.deepEqual(bob.querySelectorAll("option").map((o) => o.textContent), ["Use the group setting", "Yes", "No"]);
+    assert.deepEqual([bob.value, pickerFor("Carol Fictional").value], ["inherit", "no"]);
+    bob.value = "no";
+    buttonNamed(card, "Save settings").click();
+    await tick();
+    assert.deepEqual(calls.map((c) => [c.action, c.body]), [["settings", { changes: { confirmOverrides: { mem_bob: "no" } } }]]);
+  });
+
+  test("someone who is not a manager is told their own right to confirm payments", () => {
+    for (const [mine, text] of [[{ override: "no", effective: false }, /You can confirm payments made to you\./], [{ override: "inherit", effective: true }, /You can confirm any reported payment in this group\./]]) {
+      const { ctx, state } = ctxWith(STRANDED);
+      state.group.data.groupSettings = { ...SETTINGS, mine };
+      state.group.data.permissions = { ...state.group.data.permissions, canManage: false, role: "member" };
+      const v = createGroupView(ctx);
+      v.update(state);
+      assert.match(v.element.textContent, text);
+    }
+  });
+
   test("members and viewers do not see the card", () => {
     const { ctx, state } = ctxWith(STRANDED);
     state.group.data.groupSettings = SETTINGS;

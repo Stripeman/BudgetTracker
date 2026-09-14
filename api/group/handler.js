@@ -410,7 +410,8 @@ function settlementView(ctx, doc, member, s) {
     // Confirming follows the group setting "Anyone in the group can confirm payments": any member who can
     // add to the group, or a viewer for a payment made to them (S7); when it is off, the payer never
     // confirms (S5). Once confirmed, only the receiving member or a manager or owner may withdraw it (S6).
-    canConfirm: live && s.status !== 'confirmed' && (s.to === me || (groupSettings.get(doc, 'anyoneConfirms') ? writer(member) : s.from !== me && toContact && open && isManager(member))),
+    // Per person (Terry, 2026-09-14): an owner's or manager's override for this member, otherwise the group setting.
+    canConfirm: live && s.status !== 'confirmed' && (s.to === me || (groupSettings.confirmsAny(doc, member) ? writer(member) : s.from !== me && toContact && open && isManager(member))),
     canDispute: live && s.status === 'reported' && s.to === me,
     canVoid: open && (s.status === 'confirmed' ? (s.to === me || isManager(member)) : (s.createdBy === member.subject || isManager(member))),
   };
@@ -456,7 +457,7 @@ async function list(ctx, req) {
     body: {
       currency: reportingCurrency(doc), kind: doc.kind,
       // The group's settings from the one list, with who changed what (Terry, 2026-09-14).
-      groupSettings: groupSettings.view(doc, (s) => nameOf(doc, s)),
+      groupSettings: groupSettings.view(doc, (s) => nameOf(doc, s), member, isManager(member)),
       permissions: { role: member.role, canAdd: writer(member), canManage: isManager(member), selfRef: selfRef(member) },
       participants: parts,
       expenses: [...(doc.groupExpenses || [])].sort(newestFirst).map((e) => expenseView(ctx, doc, member, e)),
@@ -590,11 +591,12 @@ function settlementChange(kind) {
       if (s.to !== me) requireWriter(member);
       const nowIso = ctx.nowIso();
       if (kind === 'confirm') {
-        // The group setting "Anyone in the group can confirm payments" (Terry, 2026-09-14; on by
-        // default): any member who can add to the group confirms any reported payment, their own
-        // included, and a viewer one made to them. When it is off: never the person who paid (security
+        // "Can confirm payments" (Terry, 2026-09-14): the owner's or manager's override for this person
+        // if set, otherwise the group setting "Anyone in the group can confirm payments" (on by
+        // default). When it applies, the person confirms any reported payment, their own included; a
+        // viewer never gets more than one made to them. Otherwise: never the person who paid (security
         // review S5); the receiving member, or a manager or owner for a contact.
-        const anyone = groupSettings.get(doc, 'anyoneConfirms');
+        const anyone = groupSettings.confirmsAny(doc, member);
         if (!anyone) {
           if (s.from === me) throw forbidden('You paid this, so someone else must confirm that it arrived.');
           const allowed = s.to === me || (s.to.startsWith('contact:') && isManager(member));
@@ -763,7 +765,7 @@ async function settingsAction(ctx, req) {
     const at = ctx.nowIso();
     const changed = groupSettings.apply(doc, changes, { by: member.subject, at, reason });
     if (changed.length) audit.record(doc, { actor: member.subject, action: 'group.settings.update', targetType: 'workspace', targetId: doc.id, at, fields: changed });
-    return { groupSettings: groupSettings.view(doc, (s) => nameOf(doc, s)) };
+    return { groupSettings: groupSettings.view(doc, (s) => nameOf(doc, s), member, true) };
   });
   return { body: result };
 }

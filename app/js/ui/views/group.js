@@ -80,6 +80,8 @@ export function createView(ctx) {
   // The group's settings (Terry, 2026-09-14), shown to owners and managers.
   const settingsBox = el("div");
   const settingsCard = el("section", { class: "card", "aria-labelledby": "grp-settings", hidden: true }, [titled("grp-settings", "filter", "Shared expenses settings"), settingsBox]);
+  // Each person's own right to confirm payments, from the server (Terry, 2026-09-14).
+  const myRight = el("p", { class: "muted small", hidden: true });
   let mode = "suggested";
   const element = el("section", {}, [
     el("div", { class: "page-head" }, [el("h1", { text: "Shared expenses" }), actions]),
@@ -90,7 +92,7 @@ export function createView(ctx) {
       el("section", { class: "card", "aria-labelledby": "grp-balances" }, [titled("grp-balances", "scale", "Balances"), balancesBox]),
       el("section", { class: "card", "aria-labelledby": "grp-settle" }, [titled("grp-settle", "users", "Settle up"), settleBox]),
       el("section", { class: "card", "aria-labelledby": "grp-expenses" }, [titled("grp-expenses", "receipt", "Expenses"), expensesBox]),
-      el("section", { class: "card", "aria-labelledby": "grp-payments" }, [titled("grp-payments", "coins", "Payments"), paymentsBox]),
+      el("section", { class: "card", "aria-labelledby": "grp-payments" }, [titled("grp-payments", "coins", "Payments"), myRight, paymentsBox]),
       settingsCard,
     ]),
   ]);
@@ -130,6 +132,10 @@ export function createView(ctx) {
     // The group's settings, for owners and managers (the server decides who may change them).
     settingsCard.hidden = !(data.permissions.canManage && data.groupSettings);
     if (!settingsCard.hidden) renderSettings(data.groupSettings);
+    const mine = data.groupSettings && data.groupSettings.mine;
+    myRight.hidden = !mine;
+    myRight.textContent = !mine ? "" : mine.effective ? "You can confirm any reported payment in this group."
+      : data.permissions.canManage ? "You can confirm payments made to you, and payments to contacts." : "You can confirm payments made to you.";
   }
 
   // Every setting from the server's one list (Terry, 2026-09-14): a checkbox for on/off, a choice for the
@@ -159,8 +165,28 @@ export function createView(ctx) {
         el("p", { class: "field__help", text: s.explanation }),
       ]) };
     });
+    // "Can confirm payments" for each person (owners and managers only; the server sends the list only to them).
+    const perPerson = (gs.perMember || []).find((p) => p.key === "confirmOverrides") || { label: "Can confirm payments",
+      options: [{ value: "inherit", label: "Use the group setting" }, { value: "yes", label: "Yes" }, { value: "no", label: "No" }] };
+    const people = (gs.members || []).map((m) => {
+      const pick = pickerSelect(perPerson.options, m.override, { id: uid("gper"), "aria-label": `${perPerson.label}: ${m.name}` }, { search: false });
+      const now = m.role === "viewer" ? "Only payments made to them (a viewer)" : m.effective ? "Can confirm any payment now" : "Only payments made to them now";
+      return { m, pick, node: el("div", { class: "field" }, [
+        el("label", { class: "field__label", for: pick.id, text: m.name }),
+        pick,
+        el("p", { class: "field__help", text: now }),
+      ]) };
+    });
+    const peopleBox = people.length ? el("fieldset", { class: "plain-fieldset field--wide" }, [
+      el("legend", { class: "field__label", text: perPerson.label }),
+      el("p", { class: "field__help", text: "Each person follows the group setting above unless you choose Yes or No for them. Yes lets them confirm any reported payment, their own included; No lets them confirm only payments made to them. A viewer can only ever confirm payments made to them." }),
+      el("div", { class: "form-grid" }, people.map((p) => p.node)),
+    ]) : null;
+    const optionLabel = (value) => { const o = perPerson.options.find((x) => x.value === value); return o ? o.label : String(value); };
     const save = button("Save settings", async () => {
       const changes = Object.fromEntries(controls.filter((c) => c.read() !== c.s.value).map((c) => [c.s.key, c.read()]));
+      const overrides = Object.fromEntries(people.filter((p) => p.pick.value !== p.m.override).map((p) => [p.m.memberId, p.pick.value]));
+      if (Object.keys(overrides).length) changes.confirmOverrides = overrides;
       if (!Object.keys(changes).length) { announce("Nothing changed."); return; }
       const out = await ctx.store.actions.write((ws) => ctx.api.groupAction(ws, "settings", { changes }), ["group"]);
       announce(out.ok ? "Settings saved. Everyone in the group now works this way." : messageFor(out.error));
@@ -169,11 +195,11 @@ export function createView(ctx) {
       el("summary", { text: `Changes (${gs.history.length})` }),
       el("ul", { class: "history-list" }, gs.history.slice().reverse().map((h) => el("li", {}, [
         el("div", { class: "muted small", text: `${stampOf(h.at)} · ${h.by}` }),
-        el("div", { text: `${h.label}: ${shown(h.key, h.from)} → ${shown(h.key, h.to)}` }),
+        el("div", { text: h.member ? `${h.label} for ${h.member}: ${optionLabel(h.from)} → ${optionLabel(h.to)}` : `${h.label}: ${shown(h.key, h.from)} → ${shown(h.key, h.to)}` }),
         h.reason ? el("div", { class: "muted small", text: `Reason: ${h.reason}` }) : null,
       ]))),
     ]) : null;
-    mount(settingsBox, ...controls.map((c) => c.node), el("div", { class: "row" }, [save]), history);
+    mount(settingsBox, ...controls.map((c) => c.node), peopleBox, el("div", { class: "row" }, [save]), history);
   }
 
   // One table per currency shown (the reporting currency, then any other with an open balance).
