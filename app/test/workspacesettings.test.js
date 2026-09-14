@@ -8,6 +8,7 @@ import { installDom } from "./domdouble.js";
 import { nativeDropdowns, pickerLabels, pickerNamed, chooseOption, offeredOptions, triggerFor, spokenOf } from "./pickerassert.js";
 import { createView as createWorkspace, settingText } from "../js/ui/views/workspace.js";
 import { createView as createPlanning, defaultBudgetStart, backdateProblem } from "../js/ui/views/planning.js";
+import { openBillEditor } from "../js/ui/views/bills.js";
 
 let dom;
 beforeEach(() => { dom = installDom(); });
@@ -159,6 +160,26 @@ describe("Workspace settings card", () => {
     assert.ok(days >= 0 && days <= 6, `${start} is the latest Sunday on or before ${today}`);
     chooseOption(pickerNamed(root, "Period"), "Monthly");
     assert.equal(root.querySelector('input[type="date"]').value, `${today.slice(0, 8)}01`, "a monthly budget is offered the first of the month");
+  });
+
+  test("(j) Add bill starts with the workspace's due-soon days (3 when it has none); editing keeps the bill's own", () => {
+    const ready = (data) => ({ workspaceId: "ws_1", status: "ready", error: null, data });
+    const stateWith = (settingValues) => ({
+      selectedWorkspaceId: "ws_1", preferences: null,
+      workspaces: [{ id: "ws_1", name: "Fictional household", role: "owner", kind: "household", ...(settingValues ? { settingValues } : {}) }],
+      accounts: ready({ accounts: [{ id: "acc_joint", name: "Fictional joint", currency: "EUR", access: "shared", status: "open", capabilities: ["create"], icon: "bank" }] }),
+      categories: ready({ categories: [] }), payees: ready({ payees: [] }), bills: ready({ recurring: [], summary: { overdue: 0, dueSoon: 0, next30Days: [] } }),
+    });
+    const reminderIn = (settingValues, bill) => {
+      const state = stateWith(settingValues);
+      const ctx = { store: { getState: () => state, actions: { write: async () => ({ ok: true }) } }, api: { people: async () => ({ options: [] }) } };
+      openBillEditor(ctx, bill);
+      const modals = dom.body.querySelectorAll(".modal");
+      return modals[modals.length - 1].querySelector('input[type="number"][max="60"]').value;
+    };
+    assert.equal(reminderIn({ billReminderDays: 10 }), "10");
+    assert.equal(reminderIn({ billReminderDays: 0 }), "0");
+    assert.equal(reminderIn(null), "3");
   });
 
   test("settingText writes each kind of value in words", () => {

@@ -34,6 +34,7 @@ const ledger = require('../_shared/ledger');
 const bills = require('../_shared/bills');
 const merchants = require('../_shared/merchants');
 const icons = require('../_shared/icons');
+const workspaceSettings = require('../_shared/workspace-settings');
 
 const CREATE_KEYS = ['name', 'billType', 'kind', 'accountId', 'toAccountId', 'amount', 'amountType', 'schedule', 'categoryId', 'payeeId', 'responsibleRef', 'reminderDays', 'notes', 'tripId', 'trackFrom', 'icon'];
 const PATCH_KEYS = ['recurringId', 'revision', 'effectiveFrom', 'amount', 'amountType', 'categoryId', 'payeeId', 'responsibleRef', 'name', 'billType', 'notes', 'reminderDays', 'endDate', 'icon'];
@@ -103,6 +104,9 @@ function locate(doc, principal, id, now) {
 // Overdue means owed and tracked: an occurrence before the bill's tracking start was never owed
 // here, so it keeps its own date when recorded (financial retest FIN-U1).
 const isOverdue = (r, occurrence, today) => occurrence < today && occurrence >= bills.trackStart(r);
+// The date a payment is recorded with when none is entered: its own date, or for an overdue payment
+// today (FIN-T3) unless the workspace setting "Date used when recording a late bill" says its due date.
+const recordDate = (doc, r, occurrence, today) => (isOverdue(r, occurrence, today) && workspaceSettings.get(doc, 'overdueRecordDate') === 'today' ? today : occurrence);
 
 function requireOccurrence(r, value) {
   const occurrence = fields.date(value, 'Occurrence', { required: true });
@@ -214,7 +218,7 @@ async function draft(ctx, req) {
     body: {
       saved: false,
       draft: {
-        recurringId: r.id, name: r.name, occurrence, date: isOverdue(r, occurrence, today) ? today : occurrence, status, overdue: status === 'due' && isOverdue(r, occurrence, today),
+        recurringId: r.id, name: r.name, occurrence, date: recordDate(doc, r, occurrence, today), status, overdue: status === 'due' && isOverdue(r, occurrence, today),
         kind: r.kind, accountId: r.accountId, toAccountId: r.toAccountId || null, currency: r.currency,
         amount: money.toDecimal(t.amountMinor, r.currency), amountType: t.amountType, amountIsEstimate: t.amountType === 'variable',
         categoryId: t.categoryId, payeeId: t.payeeId || null, payeeName: payee ? payee.name : '', responsible: people.labelFor(t.responsibleRef, { doc, user }),
@@ -240,7 +244,8 @@ async function create(ctx, req) {
     const r = {
       id: newId('rec'), name: fields.text(body.name, { field: 'Name', max: 80, required: true }), billType, kind,
       accountId: a.id, toAccountId: null, currency: a.currency, schedule: sched,
-      reminderDays: reminderDays(body.reminderDays, 3), notes: fields.text(body.notes, { field: 'Notes', max: 2000, multiline: true }),
+      // The workspace's default (workspace settings, Terry 2026-09-14; 3 unless changed); a value sent wins.
+      reminderDays: reminderDays(body.reminderDays, workspaceSettings.get(doc, 'billReminderDays')), notes: fields.text(body.notes, { field: 'Notes', max: 2000, multiline: true }),
       tripId: tripFor(doc, body.tripId), trackFrom: fields.date(body.trackFrom, 'Track from') || today,
       icon: body.icon === undefined ? null : icons.validateChoice(catalog, body.icon),
       versions: [], skips: [], pauses: [], resumes: [], createdBy: member.subject, createdAt: nowIso, revision: 1, deletedAt: null, history: [],
@@ -299,8 +304,9 @@ async function record(ctx, req) {
     const magnitude = body.amount === undefined ? terms.amountMinor : positive(body.amount, r.currency);
     const base = {
       // An overdue occurrence is paid today unless told otherwise, so it moves from owed to spent in
-      // the same budget period and what is available does not jump (financial retest FIN-T3).
-      date: fields.date(body.date, 'Date') || (isOverdue(r, occurrence, nowIso.slice(0, 10)) ? nowIso.slice(0, 10) : occurrence), postedDate: null,
+      // the same budget period and what is available does not jump (financial retest FIN-T3). A
+      // workspace may choose its due date instead (workspace settings); an entered date always wins.
+      date: fields.date(body.date, 'Date') || recordDate(doc, r, occurrence, nowIso.slice(0, 10)), postedDate: null,
       status: fields.oneOf(body.status, ['pending', 'cleared'], 'Status', 'pending'),
       notes: fields.text(body.notes, { field: 'Notes', max: 5000, multiline: true }),
       createdBy: member.subject, createdAt: nowIso, revision: 1, deletedAt: null, original: null,

@@ -48,6 +48,18 @@ const SETTINGS = freezeAll({
     options: [opt('confirm', 'Only after confirming'), opt('never', 'Never')],
     explanation: 'Whether a change to a budget\'s plan may reach back into periods that have already finished. With "Only after confirming" the person changing it must tick a box to say it is intended. With "Never" a change always starts in the current period or later, so finished periods keep the plan they had.',
   },
+  // (j) Bill defaults. Each bill's own reminder still wins; an entered date always wins.
+  billReminderDays: {
+    group: 'Bills', type: 'integer', default: 3, min: 0, max: 60, changedBy: 'manager',
+    label: 'Show new bills as due soon (days before)',
+    explanation: 'How many days before a payment is due a new bill appears under Due soon. Each bill can still have its own number, which wins, and bills that already exist keep theirs.',
+  },
+  overdueRecordDate: {
+    group: 'Bills', type: 'choice', default: 'today', changedBy: 'manager',
+    label: 'Date used when recording a late bill',
+    options: [opt('today', 'Today'), opt('due', 'Its due date')],
+    explanation: 'The date a late bill payment is recorded with unless you enter another one. "Today" counts it in the budget period in which it was paid; "Its due date" counts it where it was owed.',
+  },
 });
 const KEYS = Object.freeze(Object.keys(SETTINGS));
 const own = (o, k) => !!o && Object.prototype.hasOwnProperty.call(o, k);

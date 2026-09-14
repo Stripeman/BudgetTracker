@@ -171,6 +171,45 @@ describe('(i) Budget period, week start and changes to past periods', () => {
   });
 });
 
+// ---- (j) bill defaults ----------------------------------------------------------------------------
+// A monthly bill from 2026-09-01, tracked from then: on 2026-09-13 its 09-01 payment is overdue.
+const newBill = async (h, f, extra = {}) => ok(await h.call('recurring', 'POST', { as: 'alice', query: f.q, body: {
+  name: 'Fictional rent', accountId: f.joint.id, amount: '950.00', schedule: { freq: 'monthly', interval: 1, startDate: '2026-09-01' }, trackFrom: '2026-09-01', ...extra,
+} }), 201).recurring;
+const recordBill = async (h, f, bill, extra = {}) => ok(await h.call('recurring', 'POST', { as: 'alice', query: { ...f.q, action: 'record' }, body: { recurringId: bill.id, occurrence: '2026-09-01', ...extra } }), 201).transactions[0];
+const draftDate = async (h, f, bill) => ok(await h.call('recurring', 'GET', { as: 'alice', query: { ...f.q, action: 'draft', recurringId: bill.id, occurrence: '2026-09-01' } })).draft.date;
+
+describe('(j) Bill defaults: due-soon days and the date of a late payment', () => {
+  test('by default a new bill shows as due soon 3 days ahead and a late payment is recorded today, as before', async () => {
+    const { h, f } = await setup();
+    const bill = await newBill(h, f);
+    assert.equal(bill.reminderDays, 3);
+    assert.equal(await draftDate(h, f, bill), '2026-09-13');
+    assert.equal((await recordBill(h, f, bill)).date, '2026-09-13');
+  });
+
+  test('the workspace\'s due-soon days are the default for new bills; a bill\'s own value wins; existing bills keep theirs', async () => {
+    const { h, f, id } = await setup();
+    const before = await newBill(h, f);
+    ok(await patchSettings(h, 'alice', id, { billReminderDays: 10 }));
+    assert.equal((await newBill(h, f, { name: 'Fictional water' })).reminderDays, 10);
+    assert.equal((await newBill(h, f, { name: 'Fictional power', reminderDays: 0 })).reminderDays, 0, 'the bill\'s own value wins');
+    const listed = ok(await h.call('recurring', 'GET', { as: 'alice', query: f.q })).recurring.find((r) => r.id === before.id);
+    assert.equal(listed.reminderDays, 3, 'the earlier bill is unchanged');
+    for (const bad of [61, -1, 2.5, '5']) assert.equal((await patchSettings(h, 'alice', id, { billReminderDays: bad })).body.error.code, 'invalid_setting', String(bad));
+  });
+
+  test('"Its due date": a late payment is recorded on its due date unless another date is entered', async () => {
+    const { h, f, id } = await setup();
+    ok(await patchSettings(h, 'alice', id, { overdueRecordDate: 'due' }));
+    const bill = await newBill(h, f);
+    assert.equal(await draftDate(h, f, bill), '2026-09-01');
+    assert.equal((await recordBill(h, f, bill)).date, '2026-09-01');
+    const other = await newBill(h, f, { name: 'Fictional water' });
+    assert.equal((await recordBill(h, f, other, { date: '2026-09-10' })).date, '2026-09-10', 'an entered date wins');
+  });
+});
+
 describe('Workspace settings: older documents, backups and restores', () => {
   test('a document without the settings reads the defaults; a stored "custom" budget period reads as monthly and still backs up', async () => {
     const { h, id } = await setup();
