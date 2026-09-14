@@ -242,11 +242,18 @@ export async function run(h, t) {
   await b.bob.goto("transactions");
   const rows = await b.bob.evaluate(`(() => [...document.querySelectorAll('tbody tr')].filter((r) => r.innerText.includes('Owed to others')).map((r) => ({
     buttons: [...r.querySelectorAll('button')].map((x) => x.textContent.trim()),
+    enabled: [...r.querySelectorAll('button')].filter((x) => !x.disabled).map((x) => x.textContent.trim()),
+    moveTip: (() => { const m = [...r.querySelectorAll('button')].find((x) => x.textContent.trim() === 'Move to another account'); const tip = m && m.closest('.tip'); return tip ? tip.getAttribute('data-tip') : null; })(),
     marks: [...r.querySelectorAll('svg[data-icon]')].map((s) => s.getAttribute('data-icon')).filter((i) => ['no-money-moved', 'money-in', 'money-out'].includes(i)),
     amount: ((r.querySelector('td[data-label="Amount"]') || {}).innerText || '').replace(/\\s+/g, ' ').trim(),
     size: (() => { const s = r.querySelector('svg[data-icon="no-money-moved"]'); if (!s) return null; const q = s.getBoundingClientRect(); return [Math.round(q.width), Math.round(q.height)]; })(),
   })))()`);
-  t.check("N2: Bob's owed entry offers Edit, but no Reverse or Delete", { expected: [["Edit"]], actual: rows.map((r) => r.buttons) });
+  // BT-006-05: an entry recorded from Shared expenses also offers "Move to another account" now, but
+  // disabled and explained (N2 applies to a move too — change it in Shared expenses), never enabled.
+  t.check("N2: Bob's owed entry offers only Edit as a working action; Move to another account is present but disabled and explains why (N2), never Reverse or Delete", {
+    expected: { buttons: [["Edit", "Move to another account"]], enabled: [["Edit"]], tipMentionsShared: true },
+    actual: { buttons: rows.map((r) => r.buttons), enabled: rows.map((r) => r.enabled), tipMentionsShared: rows.every((r) => /Shared expenses/.test(r.moveTip || "")) },
+  });
   // L4 (Terry's arrow rule): his share of the dinner Alice paid shows the |==| mark and "Paid by someone
   // else"; each repayment he really made keeps one money-out arrow.
   // The list shows each row's account, amount and (for kinds other than a plain expense) its kind label.

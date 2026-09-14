@@ -90,7 +90,7 @@ The dev server binds 127.0.0.1 only and uses file storage under the ignored `.lo
 
 ```powershell
 npm run e2e                             # every scenario
-npm run e2e -- --only privacy,shared    # privacy, shared (or group), concurrency, guards, dropdown, staging, recheck, settings
+npm run e2e -- --only privacy,shared    # privacy, shared (or group), concurrency, guards, dropdown, staging, recheck, settings, move
 npm run e2e -- --list                   # what each scenario checks
 npm run e2e -- --keep-data              # keep .local/e2e/<run>/data for inspection
 ```

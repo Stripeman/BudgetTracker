@@ -22,6 +22,7 @@ import { newIdempotencyKey } from "../../core/api.js";
 import { messageFor } from "../../core/errors.js";
 import { evaluateAmount, isPlainAmount } from "../../core/calc.js";
 import { formatDate, formatAmount, todayIso, KIND_LABELS, MERCHANT_TYPE_LABELS } from "../../core/format.js";
+import { parseAmount, formatMinor } from "../../core/split.js";
 import { icon, withIcon, defaultIconFor } from "../icons.js";
 import { amountWithDirection, transferLabel, amountText } from "../components.js";
 import { directionOf } from "../icons.js";
@@ -65,6 +66,57 @@ export function linkedDeleteNote(t) {
   if (t.reversedBy) return "Its reversal is deleted with it, so the two keep cancelling out.";
   if (t.links && t.links.reverses) return "The entry it reverses is deleted with it, so the two keep cancelling out.";
   return null;
+}
+
+// MOVE TO ANOTHER ACCOUNT (BT-006-05; Terry, 2026-09-14: "i should be able to move a transaction from
+// one account to the next if i accidentally choose the wrong account in the first place"). Eligible
+// destinations: same currency as the entry, open, where the caller may add entries, and not the
+// entry's current account. The server enforces every one of these rules again.
+export function moveDestinations(allAccounts, t) {
+  return (allAccounts || []).filter((a) => !a.deletedAt && a.status !== "closed" && a.id !== t.accountId && a.currency === t.currency && (a.capabilities || []).includes("create"));
+}
+
+// A clear note only when visibility (or a private account's owner) actually changes, in Terry's
+// requested wording.
+export function moveVisibilityNote(from, to) {
+  if (!from || !to) return null;
+  if (from.visibility === "shared" && to.visibility === "private") {
+    return to.ownedBySelf
+      ? "Moving to your private account makes this entry visible only to you (and anyone you grant access to)."
+      : `Moving to ${to.ownerName || "another member"}'s private account makes this entry visible only to them.`;
+  }
+  if (to.visibility === "shared" && from.visibility === "private") {
+    return "Moving to a shared account makes this entry visible to everyone who can see that account.";
+  }
+  if (from.visibility === "private" && to.visibility === "private" && Boolean(from.ownedBySelf) !== Boolean(to.ownedBySelf)) {
+    return to.ownedBySelf
+      ? "Moving to your own private account makes this entry visible only to you."
+      : `Moving to ${to.ownerName || "another member"}'s private account makes this entry visible only to them.`;
+  }
+  return null;
+}
+
+// A signed decimal string as minor units (money.parseDecimal's client mirror, split.js only parses
+// positive amounts); null when it cannot be parsed exactly. Never binary floating point.
+function signedMinor(text, currency) {
+  const s = String(text ?? "").trim();
+  const neg = s.startsWith("-");
+  const abs = parseAmount(neg ? s.slice(1) : s, currency);
+  return abs === null ? null : (neg ? -abs : abs);
+}
+
+// A plain, hand-checkable summary of the two balances a move changes ("Account A goes from X to Y;
+// Account B from P to Q"): exact decimal-string arithmetic, computed from what is already on the page.
+// The server recomputes and is authoritative; a value this cannot parse is simply left out.
+export function moveImpactText(from, to, t, prefs) {
+  if (!from || !to) return "";
+  const effective = (prefs && prefs.effective) || {};
+  const entry = signedMinor(t.amount, t.currency);
+  const before = signedMinor(from.balance, from.currency);
+  const destBefore = signedMinor(to.balance, to.currency);
+  const fmt = (minor, currency) => formatAmount(formatMinor(minor, currency), currency, { numberFormat: effective.numberFormat });
+  if (entry === null || before === null || destBefore === null) return `${from.name} to ${to.name}.`;
+  return `${from.name} goes from ${fmt(before, from.currency)} to ${fmt(before - entry, from.currency)}; ${to.name} from ${fmt(destBefore, to.currency)} to ${fmt(destBefore + entry, to.currency)}.`;
 }
 
 // True when at least one visible account accepts new entries from this person (UX-001).
@@ -176,7 +228,8 @@ export function createView(ctx) {
     if (s) { mount(tableBox, s); return; }
     // Merchant and account icons come from the records themselves (BT-011-05).
     const merchantIcons = new Map(((sliceFor(state, "payees").data || {}).payees || []).map((p) => [p.id, p.icon || "store"]));
-    const accountsById = new Map(((sliceFor(state, "accounts").data || {}).accounts || []).map((a) => [a.id, a]));
+    const allAccounts = ((sliceFor(state, "accounts").data || {}).accounts || []);
+    const accountsById = new Map(allAccounts.map((a) => [a.id, a]));
     const accountIcons = new Map([...accountsById].map(([id, a]) => [id, a.icon]));
     const merchantCell = (t) => {
       if (t.payeeName) return withIcon(merchantIcons.get(t.payeeId) || "store", t.payeeName);
@@ -199,6 +252,9 @@ export function createView(ctx) {
       ].flat()),
       el("td", { "data-label": "" }, [el("div", { class: "row-actions" }, [
         t.canEdit ? button("Edit", () => openQuickEntry(ctx, { transaction: t }), { small: true, attrs: { "aria-label": `Edit ${t.payeeName || "entry"} on ${t.date}` } }) : null,
+        // Moving picks the wrong-account entry up and re-points it (BT-006-05); an entry the server
+        // would refuse still shows why, as text, not only by leaving the action off (Terry's rule).
+        moveAction(ctx, t, allAccounts),
         // Corrections never overwrite history (BT-001-05): a reversal cancels an entry, even a
         // reconciled one, and every change is listed under History.
         // Entries recorded from Shared expenses are reversed or removed only from there (N2).
@@ -219,8 +275,12 @@ export function createView(ctx) {
 const CHANGE_LABELS = {
   amountMinor: "Amount", kind: "Type", date: "Date", postedDate: "Posted date", categoryId: "Category", splits: "Split lines",
   payeeId: "Merchant", responsibleRef: "Responsible person", original: "Exchange details", status: "Status", tags: "Tags", notes: "Notes",
-  deleted: "Deleted", reversedBy: "Reversed",
+  deleted: "Deleted", reversedBy: "Reversed", accountId: "Account", counterpartAccountId: "Other account",
 };
+// accountId/counterpartAccountId changes (BT-006-05) carry fromName/toName instead of ids the viewer
+// may not have; a masked side (another member's private account) reads as "another account", never
+// blank, so a move is still legible without disclosing what it cannot show.
+const ACCOUNT_CHANGE_FIELDS = new Set(["accountId", "counterpartAccountId"]);
 const stampOf = (iso) => String(iso || "").replace("T", " ").slice(0, 16);
 
 // Deleting takes an entry out of balances and lists; it is never erased, and the reason is kept.
@@ -289,6 +349,72 @@ function openReverse(ctx, t) {
   });
 }
 
+// The row action for "Move to another account" (BT-006-05): enabled when the server says so, a
+// disabled item WITH TEXT (a hover tooltip and a screen-reader description, not colour alone) when the
+// person could otherwise change the entry but this one move rule refuses it, and nothing at all when
+// they have no edit right here (matching Edit/Delete, which already say nothing in that case).
+function moveAction(ctx, t, allAccounts) {
+  const label = `Move ${t.payeeName || "entry"} on ${t.date} to another account`;
+  if (t.canMove) return button("Move to another account", () => openMove(ctx, t, allAccounts), { small: true, attrs: { "aria-label": label } });
+  if (!t.canEdit || !t.moveBlockedReason) return null;
+  const hintId = `${t.id}-move-hint`;
+  return el("span", { class: "tip", "data-tip": t.moveBlockedReason }, [
+    button("Move to another account", () => {}, { small: true, attrs: { disabled: true, "aria-label": label, "aria-describedby": hintId } }),
+    el("span", { class: "sr-only", id: hintId, text: t.moveBlockedReason }),
+  ]);
+}
+
+// "Move to another account": the standard dialog pattern — a command-picker of eligible destinations
+// (same currency, open, where the caller may add entries, excluding this account), the reason
+// pre-filled "Wrong account", a plain impact summary and a note when the move would change who can see
+// the entry.
+function openMove(ctx, t, allAccounts) {
+  const fromAccount = allAccounts.find((a) => a.id === t.accountId);
+  const destinations = moveDestinations(allAccounts, t);
+  const prefs = ctx.store.getState().preferences;
+  const picker = pickerSelect(destinations.map((a) => ({ value: a.id, label: `${a.name} (${a.currency})` })), "", {}, { badgeOf: iconBadges(allAccounts), placeholder: "Choose an account…" });
+  const reason = input({ maxlength: "200", autocomplete: "off" });
+  reason.value = "Wrong account";
+  const impact = el("p", { class: "field__help", "aria-live": "polite" });
+  const note = el("p", { class: "field__help" });
+  const refresh = () => {
+    const dest = allAccounts.find((a) => a.id === picker.value);
+    impact.textContent = dest ? moveImpactText(fromAccount, dest, t, prefs) : "";
+    const n = dest ? moveVisibilityNote(fromAccount, dest) : null;
+    mount(note, n ? el("strong", { text: n }) : null);
+  };
+  const confirm = el("button", { type: "button", class: "btn btn--primary", text: "Move entry", disabled: !destinations.length });
+  const modal = openModal({
+    title: `Move ${t.payeeName || "this entry"} to another account?`,
+    body: destinations.length ? [
+      field("Move to", picker),
+      impact,
+      note,
+      field("Reason", reason, { help: "Required. It is kept with the entry's history on both accounts." }),
+    ] : [el("p", { text: `There is no other open account in ${t.currency} where you may add entries.` })],
+    actions: [button("Cancel", () => modal.close()), confirm],
+  });
+  picker.addEventListener("change", refresh);
+  refresh();
+  confirm.addEventListener("click", async () => {
+    modal.setError("");
+    if (!picker.value) { modal.setError("Choose an account to move this entry to."); return; }
+    if (!reason.value.trim()) {
+      reason.setAttribute("aria-invalid", "true");
+      reason.setAttribute("aria-errormessage", modal.errorId);
+      modal.setError("Give a reason for this move.");
+      reason.focus();
+      return;
+    }
+    modal.setBusy(true);
+    const out = await ctx.store.actions.write((ws) => ctx.api.moveTransaction(ws, { transactionId: t.id, revision: t.revision, toAccountId: picker.value, reason: reason.value.trim() }));
+    modal.setBusy(false);
+    if (!out.ok) { modal.setError(out.error); return; }
+    announce("Entry moved. Both accounts show it in their history.");
+    modal.close();
+  });
+}
+
 // Every change to an entry: who, when, what changed from what to what, and why.
 async function openHistory(ctx, t) {
   const state = ctx.store.getState();
@@ -314,7 +440,12 @@ async function openHistory(ctx, t) {
       el("p", { class: "muted small", text: `Added ${stampOf(h.createdAt)} by ${h.createdBy}.` }),
       el("ul", { class: "history-list" }, h.amendments.slice().reverse().map((a) => el("li", {}, [
         el("div", { class: "muted small", text: `${stampOf(a.at)} · ${a.by}` }),
-        el("div", { text: a.changes.map((c) => `${CHANGE_LABELS[c.field] || c.field}: ${show(c.field, c.from)} → ${show(c.field, c.to)}`).join("; ") }),
+        el("div", { text: a.changes.map((c) => {
+          const isAccount = ACCOUNT_CHANGE_FIELDS.has(c.field);
+          const from = isAccount ? (c.fromName || "another account") : show(c.field, c.from);
+          const to = isAccount ? (c.toName || "another account") : show(c.field, c.to);
+          return `${CHANGE_LABELS[c.field] || c.field}: ${from} → ${to}`;
+        }).join("; ") }),
         a.reason ? el("div", { class: "muted small", text: `Reason: ${a.reason}` }) : null,
       ]))));
   } catch (err) {

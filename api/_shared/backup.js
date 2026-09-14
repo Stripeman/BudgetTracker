@@ -329,7 +329,14 @@ function plan({ current, archived, mode, principal, member, nowIso, newWorkspace
       if (links.groupSettlementId && !carriedGroup.has(links.groupSettlementId)) delete links.groupSettlementId;
       return { ...t, links };
     };
-    const txns = arc.transactions.map(withoutLostGroupLinks).map((t) => {
+    // An entry moved between accounts keeps the move in its amendments (BT-006-05). An account that does
+    // not come along is named there by id only, and it may be another member's private account, so the
+    // copy keeps "moved from/to an account" without that id (as for transfer counterparts, L2 below).
+    const ACCOUNT_REFS = new Set(['accountId', 'counterpartAccountId']);
+    const keptRef = (id) => (typeof id === 'string' && keepAccounts.has(id) ? id : null);
+    const withoutLostAccountRefs = (t) => (!Array.isArray(t.amendments) || !t.amendments.some((a) => (a.changes || []).some((c) => ACCOUNT_REFS.has(c.field))) ? t
+      : { ...t, amendments: t.amendments.map((a) => ({ ...a, changes: (a.changes || []).map((c) => (ACCOUNT_REFS.has(c.field) ? { ...c, from: keptRef(c.from), to: keptRef(c.to) } : c)) })) });
+    const txns = arc.transactions.map(withoutLostGroupLinks).map(withoutLostAccountRefs).map((t) => {
       if (!t.transferId) return t;
       const counterpartIncluded = keepAccounts.has(t.counterpartAccountId);
       // The other side stays behind, and so does its id: it may be another member's private account

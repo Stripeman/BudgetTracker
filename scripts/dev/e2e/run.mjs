@@ -25,9 +25,10 @@ import * as recheck from "./recheck.mjs";
 import * as settings from "./settings.mjs";
 import * as remove from "./remove.mjs";
 import * as deleteworkspace from "./deleteworkspace.mjs";
+import * as move from "./move.mjs";
 
-const SCENARIOS = [privacy, shared, concurrency, guards, dropdown, staging, recheck, settings, remove, deleteworkspace];
-const ALIASES = { group: "shared", "shared-expenses": "shared", picker: "dropdown", dropdowns: "dropdown", "route-guards": "guards", "staging-link": "staging", "workspace-settings": "settings", "remove-account": "remove", "delete-workspace": "deleteworkspace", archive: "deleteworkspace" };
+const SCENARIOS = [privacy, shared, concurrency, guards, dropdown, staging, recheck, settings, remove, deleteworkspace, move];
+const ALIASES = { group: "shared", "shared-expenses": "shared", picker: "dropdown", dropdowns: "dropdown", "route-guards": "guards", "staging-link": "staging", "workspace-settings": "settings", "remove-account": "remove", "delete-workspace": "deleteworkspace", archive: "deleteworkspace", "move-entry": "move", "move-account": "move" };
 const rel = (p) => path.relative(ROOT, p).replace(/\\/g, "/");
 
 let args;
