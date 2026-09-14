@@ -10,7 +10,8 @@ const store = require('../_shared/store');
 const site = require('../_shared/site');
 const fields = require('../_shared/fields');
 const { newId } = require('../_shared/ids');
-const { appInfo } = require('../_shared/version');
+const { appInfo, localDevelopment } = require('../_shared/version');
+const prefs = require('../preferences/handler');
 
 const EDITABLE = ['branding', 'defaults', 'locked', 'modules', 'publicSharingEnabled', 'invitationPolicy', 'uploadLimitBytes', 'exchangeRateProvider', 'announcement', 'maintenanceMessage', 'backupPolicy'];
 const LOCKABLE = ['themeMode', 'themePalette', 'editorToolbar', 'balanceMasking', 'dateFormat', 'locale', 'stagingUrl'];
@@ -21,12 +22,18 @@ async function get(ctx) {
   const { site: doc, etag } = await site.readSite(ctx.storage);
   const app = appInfo(ctx.env);
   if (ctx.principal && ctx.siteAdmin) return { body: { settings: { ...doc, audit: undefined }, etag, admin: true, app } };
-  return { body: { settings: site.publicView(doc, !!ctx.principal), app } };
+  // Signed-in people see the staging-link default only as active members of a workspace (security
+  // review of d363eff, finding 1); visitors who are not signed in never see it (publicView).
+  const visible = ctx.principal ? await prefs._siteFor(ctx, doc) : doc;
+  return { body: { settings: site.publicView(visible, !!ctx.principal), app } };
 }
 
-function clean(body, current) {
+// `changes` lists before and after values for settings that are not financial and are worth seeing
+// in the audit in full: the staging-link default (finding 3).
+function clean(body, current, { localHttp = false } = {}) {
   const next = { ...current };
   const changed = [];
+  const changes = [];
   if (body.branding !== undefined) { fields.onlyKeys(body.branding || {}, ['name']); next.branding = { name: fields.text(body.branding.name, { field: 'Site name', max: 60, required: true }) }; changed.push('branding'); }
   if (body.defaults !== undefined) {
     const d = fields.onlyKeys(body.defaults || {}, ['themeMode', 'themePalette', 'editorToolbar', 'dateFormat', 'locale', 'stagingUrl']);
@@ -39,8 +46,10 @@ function clean(body, current) {
     };
     // The staging link everyone inherits (BT-011-06): kept when another default changes, validated
     // like the personal one, and removed (not stored as null) when cleared.
-    const stagingUrl = d.stagingUrl === undefined ? current.defaults.stagingUrl : d.stagingUrl === null ? undefined : fields.webAddress(d.stagingUrl, 'Staging link');
+    const stagingUrl = d.stagingUrl === undefined ? current.defaults.stagingUrl : d.stagingUrl === null ? undefined : fields.webAddress(d.stagingUrl, 'Staging link', { localHttp });
     if (stagingUrl) next.defaults.stagingUrl = stagingUrl;
+    const before = current.defaults.stagingUrl || null;
+    if ((stagingUrl || null) !== before) changes.push({ field: 'defaults.stagingUrl', before, after: stagingUrl || null });
     changed.push('defaults');
   }
   if (body.locked !== undefined) {
@@ -78,7 +87,7 @@ function clean(body, current) {
     next.backupPolicy = { onDemand: fields.bool(b.onDemand, 'On-demand backups', current.backupPolicy.onDemand), beforeDestructive: true, retentionDays };
     changed.push('backupPolicy');
   }
-  return { next, changed };
+  return { next, changed, changes };
 }
 
 async function put(ctx, req) {
@@ -90,9 +99,9 @@ async function put(ctx, req) {
     const stored = readDocument('site', value);
     const current = { ...structuredClone(site.DEFAULT_SITE), ...(stored || {}) };
     current.defaults = { ...site.DEFAULT_SITE.defaults, ...((stored && stored.defaults) || {}) };
-    const { next, changed } = clean(body, current);
+    const { next, changed, changes } = clean(body, current, { localHttp: localDevelopment(ctx.env || {}) });
     if (!changed.length) { saved = current; return undefined; }
-    next.audit = [...((stored && stored.audit) || []), { id: newId('aud'), at: ctx.nowIso(), actor: ctx.principal.subject, action: 'site.update', fields: changed }]; // never truncated (BT-001-05)
+    next.audit = [...((stored && stored.audit) || []), { id: newId('aud'), at: ctx.nowIso(), actor: ctx.principal.subject, action: 'site.update', fields: changed, ...(changes.length ? { changes } : {}) }]; // never truncated (BT-001-05)
     saved = site.stampSite(next);
     return saved;
   }, { expectedEtag: header(req, 'if-match') || undefined });

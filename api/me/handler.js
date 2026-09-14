@@ -22,14 +22,18 @@ async function get(ctx) {
   }
   const { site: siteDoc } = await site.readSite(ctx.storage);
   const stored = user.preferences || {};
+  // The site's staging-link default reaches only site administrators and active members of at least
+  // one workspace (security review of d363eff, finding 1). `workspaces` holds exactly the workspaces
+  // where this person is an active member.
+  const visible = ctx.siteAdmin || workspaces.length ? siteDoc : site.withoutStagingDefault(siteDoc);
   return {
     body: {
       // `subject` is the caller's own provider subject, shown so an operator can list it in
       // BT_SITE_ADMINS (the edge siteadmin role matches subjects only).
       user: { name: user.name || '', email: user.email, subject: ctx.principal.subject, siteAdmin: ctx.siteAdmin },
       workspaces,
-      preferences: { stored, ...prefs._resolve(stored, siteDoc) },
-      site: site.publicView(siteDoc, true),
+      preferences: { stored, ...prefs._resolve(stored, visible) },
+      site: site.publicView(visible, true),
       app: appInfo(ctx.env),
     },
   };

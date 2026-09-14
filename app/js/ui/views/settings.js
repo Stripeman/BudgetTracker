@@ -13,7 +13,7 @@ import { colourEntries } from "../../core/categories.js";
 import { messageFor } from "../../core/errors.js";
 import { createIconPicker } from "../iconpicker.js";
 import { withIcon } from "../icons.js";
-import { stagingState, stagingAnchor, setAnchorHref, openStagingEditor, openPersonalStagingEditor, STAGING_ADD_TEXT } from "../staginglink.js";
+import { stagingState, stagingAnchor, setAnchorHref, openStagingEditor, openPersonalStagingEditor, isLocal, STAGING_ADD_TEXT } from "../staginglink.js";
 import { stagingHref, stagingHost } from "../../core/links.js";
 
 const MAX_ICON_BYTES = 8 * 1024;
@@ -93,37 +93,65 @@ export function createView(ctx) {
   let stagingSourceShown = "";
   const stagingEdit = button("Edit staging link", () => openPersonalStagingEditor({ store }), { small: true });
   const stagingReset = button("Use inherited", () => save({ stagingUrl: null }), { small: true, variant: "ghost", attrs: { "aria-label": "Use the inherited staging link" } });
-  // Site administrators only: the address everyone inherits. It never reaches visitors who are not
-  // signed in (api/_shared/site.js publicView).
-  let siteStaging = { loaded: false, loading: false, value: null, error: "" };
+  // Under a site lock one's own saved address no longer applies, but it can still be cleared
+  // (security review of d363eff, finding 2).
+  const stagingClear = button("Clear my saved address", () => save({ stagingUrl: null }), { small: true, variant: "ghost" });
+  const localNow = () => isLocal(store.getState());
+  // Site administrators only: the address everyone inherits, and the lock. The default reaches only
+  // site administrators and active workspace members, never visitors who are not signed in.
+  let siteStaging = { loaded: false, loading: false, value: null, error: "", locked: [] };
   const siteStagingText = el("span", { class: "small staging__host" });
   const siteStagingEdit = button("Edit site staging link", () => openSiteStagingEditor(), { small: true });
+  const siteLockBox = el("input", { type: "checkbox" });
+  // Locking with no site link leaves everyone without one: said before it is done (review 2).
+  const siteLockWarning = el("p", { class: "field__help staging__warning", role: "status" });
+  siteLockWarning.hidden = true;
+  siteLockBox.addEventListener("change", async () => {
+    const others = siteStaging.locked.filter((k) => k !== "stagingUrl");
+    const locked = siteLockBox.checked ? [...others, "stagingUrl"] : others;
+    try {
+      await ctx.api.request("site-settings", { method: "PUT", body: { locked } });
+      announce(siteLockBox.checked ? "The staging link is locked for everyone." : "The staging link is no longer locked.");
+      await loadSiteStaging();
+      await store.actions.refreshPreferences();
+    } catch (err) {
+      siteLockBox.checked = !siteLockBox.checked;
+      siteLockWarning.textContent = messageFor(err);
+      siteLockWarning.hidden = false;
+    }
+  });
   const siteStagingRow = el("div", { class: "stack staging__site" }, [
     el("h3", { class: "staging__heading", text: "Site default (site administrators)" }),
-    el("p", { class: "field__help", text: "Everyone who has not set their own staging link gets this one. Visitors who are not signed in never see it." }),
+    el("p", { class: "field__help", text: "Everyone who has not set their own staging link gets this one. Only site administrators and members of a workspace receive it; visitors who are not signed in never do." }),
     el("div", { class: "row" }, [siteStagingText, siteStagingEdit]),
+    el("label", { class: "field--inline field__label staging__lock" }, [siteLockBox, "Lock: everyone uses the site's staging link"]),
+    siteLockWarning,
   ]);
   siteStagingRow.hidden = true;
   const stagingCard = el("section", { class: "card", "aria-labelledby": "set-staging" }, [
     el("h2", { class: "card__title", id: "set-staging", text: "Staging link" }),
-    el("p", { class: "field__help", text: "Your staging (preview) site. It opens in a new tab from the account menu. Only https addresses are accepted." }),
+    el("p", { class: "field__help", text: "Your staging (preview) site. It opens in a new tab from the account menu. Only https addresses are accepted, and http to 127.0.0.1 or localhost while running locally." }),
     el("div", { class: "staging__current" }, [stagingLink, stagingHostText, stagingNone]),
-    el("div", { class: "row" }, [stagingSource, stagingEdit, stagingReset]),
+    el("div", { class: "row" }, [stagingSource, stagingEdit, stagingReset, stagingClear]),
     siteStagingRow,
   ]);
   async function loadSiteStaging() {
     siteStaging = { ...siteStaging, loading: true };
     try {
       const data = await ctx.api.siteSettings();
-      const defaults = (data && data.settings && data.settings.defaults) || {};
-      siteStaging = { loaded: true, loading: false, value: stagingHref(defaults.stagingUrl), error: "" };
-    } catch (err) { siteStaging = { loaded: true, loading: false, value: null, error: messageFor(err) }; }
+      const settings = (data && data.settings) || {};
+      const defaults = settings.defaults || {};
+      siteStaging = { loaded: true, loading: false, value: stagingHref(defaults.stagingUrl, { local: localNow() }), error: "", locked: Array.isArray(settings.locked) ? settings.locked : [] };
+    } catch (err) { siteStaging = { ...siteStaging, loaded: true, loading: false, value: null, error: messageFor(err) }; }
     siteStagingText.textContent = siteStaging.error || (siteStaging.value ? stagingHost(siteStaging.value) : "None set");
     siteStagingEdit.textContent = siteStaging.value ? "Edit site staging link" : "Add site staging link…";
+    siteLockBox.checked = siteStaging.locked.includes("stagingUrl");
+    siteLockWarning.textContent = "No site staging link is set, so locking it leaves everyone without a staging link.";
+    siteLockWarning.hidden = !!siteStaging.value;
   }
   function openSiteStagingEditor() {
     openStagingEditor({
-      title: "Site staging link", label: "Staging site address for everyone", current: siteStaging.value || "", canRemove: !!siteStaging.value,
+      title: "Site staging link", label: "Staging site address for everyone", current: siteStaging.value || "", canRemove: !!siteStaging.value, local: localNow(),
       help: "Everyone who has not set their own staging link gets this one. Visitors who are not signed in never see it.",
       save: async (value) => {
         try { await ctx.api.request("site-settings", { method: "PUT", body: { defaults: { stagingUrl: value } } }); return { ok: true }; }
@@ -134,19 +162,21 @@ export function createView(ctx) {
   }
   function renderStaging(state) {
     const s = stagingState(state);
-    const resetHadFocus = document.activeElement === stagingReset;
+    const resetHadFocus = document.activeElement === stagingReset || document.activeElement === stagingClear;
     setAnchorHref(stagingLink, s.href);
     stagingLink.hidden = !s.href;
     stagingHostText.textContent = s.href ? stagingHost(s.href) : "";
     stagingHostText.hidden = !s.href;
-    stagingNone.textContent = s.locked ? "The site has not set a staging link." : "No staging link yet.";
+    stagingNone.textContent = s.locked ? "Set by the site: none" : "No staging link yet.";
     stagingNone.hidden = !!s.href;
     if (stagingSourceShown !== s.source) { stagingSourceShown = s.source; mount(stagingSource, sourceBadge(s.source)); }
     stagingEdit.textContent = s.href ? "Edit staging link" : STAGING_ADD_TEXT;
     stagingEdit.hidden = s.locked;
     stagingReset.hidden = !s.personal;
-    // "Use inherited" leaves once used; focus moves to the editor button instead of the page.
-    if (resetHadFocus && stagingReset.hidden) stagingEdit.focus();
+    stagingClear.hidden = !(s.locked && s.storedOwn);
+    // "Use inherited" and "Clear my saved address" leave once used; focus moves to the editor button
+    // instead of the page.
+    if (resetHadFocus && stagingReset.hidden && stagingClear.hidden && !stagingEdit.hidden) stagingEdit.focus();
     const siteAdmin = !!(state.auth && state.auth.user && state.auth.user.siteAdmin);
     siteStagingRow.hidden = !siteAdmin;
     if (siteAdmin && !siteStaging.loaded && !siteStaging.loading) void loadSiteStaging();

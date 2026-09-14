@@ -24,4 +24,13 @@ function appInfo(env, stamped = STAMPED) {
   return { name: 'BudgetTracker', version, channel, environment, commit: stamped || setting };
 }
 
-module.exports = { appInfo, version };
+// Whether this API runs in the LOCAL development environment: BT_ENVIRONMENT=local, the dev server's
+// BT_LOCAL_DEV=1, and none of the markers Azure sets on a deployed app (the markers that
+// api/_shared/runtime.js also refuses local storage on). Decided on the server only. Used to accept
+// http staging links to loopback hosts (BT-011-06, Terry 2026-09-14); preview and production are
+// never local.
+function localDevelopment(env = {}) {
+  return env.BT_ENVIRONMENT === 'local' && env.BT_LOCAL_DEV === '1' && !env.WEBSITE_SITE_NAME && !env.WEBSITE_INSTANCE_ID;
+}
+
+module.exports = { appInfo, version, localDevelopment };
