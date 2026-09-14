@@ -165,7 +165,7 @@ export async function run(h, t) {
   const before = await confirmButtons(b.bob, "Confirm You paid Alice Fictional");
 
   // ---- B: Alice turns the group setting off; Bob's Confirm disappears and the API refuses him -------
-  await b.alice.click({ label: "Anyone in the group can confirm payments", scope: SETTINGS });
+  await b.alice.choose("Anyone in the group can confirm payments", "Off", { scope: SETTINGS });
   await saveSettings(b.alice);
   await fresh(b.bob, "group");
   const after = await confirmButtons(b.bob, "Confirm You paid Alice Fictional");
@@ -181,7 +181,7 @@ export async function run(h, t) {
   const kindsDefault = await typeChoices(b.alice);
   await b.alice.click({ role: "button", name: "Cancel", scope: ".modal" });
   await b.alice.goto("group");
-  await b.alice.click({ label: "Also allow entering them by hand", scope: SETTINGS });
+  await b.alice.choose("Owed-to-others and repayment entries", "Also allow entering them by hand", { scope: SETTINGS });
   await saveSettings(b.alice);
   await fresh(b.alice, "transactions");
   await b.alice.click({ role: "button", name: "Add expense", scope: ".page-head" });
@@ -260,7 +260,7 @@ export async function run(h, t) {
   await fresh(b.bob, "group");
   const bobCouldEdit = await ferryEdit(b.bob);
   await fresh(b.alice, "group");
-  await b.alice.click({ label: "Any member who can add expenses", scope: SETTINGS });
+  await b.alice.choose("Who may correct or void a shared expense", "Any member who can add expenses", { scope: SETTINGS });
   await saveSettings(b.alice);
   await fresh(b.bob, "group");
   const bobCanEdit = await ferryEdit(b.bob);
