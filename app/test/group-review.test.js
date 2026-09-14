@@ -208,13 +208,36 @@ describe("Group settings card and who confirmed (Terry, 2026-09-14)", () => {
     }
   });
 
-  test("members and viewers do not see the card", () => {
+  test("members and viewers see the card read-only, like the workspace settings card: values in words, the history, no controls (UX review of eefd115, decision 11)", () => {
+    for (const role of ["member", "viewer"]) {
+      const { ctx, state } = ctxWith(STRANDED);
+      state.group.data.groupSettings = SETTINGS;
+      state.group.data.permissions = { ...state.group.data.permissions, canManage: false, canAdd: role !== "viewer", role };
+      const v = createGroupView(ctx);
+      v.update(state);
+      const card = cardOf(v.element);
+      assert.equal(card.hidden, false, role);
+      assert.equal(card.querySelectorAll("select").length + card.querySelectorAll("input").length, 0, role);
+      assert.equal(buttonNamed(card, "Save settings"), undefined, role);
+      assert.deepEqual(card.querySelectorAll("dd.settings-dl__value").map((d) => d.textContent), ["On", "Created by Shared expenses only"], role);
+      assert.match(card.textContent, /Owners and managers change them; you can see how it is set up and every change below\./, role);
+      assert.match(card.textContent, /Anyone in the group can confirm payments: Off → On/, role);
+      assert.match(card.textContent, /Reason: Family group/, role);
+    }
+  });
+
+  test("the two cards save the same way: the Save label, reason field and saved line are the workspace card's", async () => {
     const { ctx, state } = ctxWith(STRANDED);
     state.group.data.groupSettings = SETTINGS;
-    state.group.data.permissions = { ...state.group.data.permissions, canManage: false, role: "member" };
     const v = createGroupView(ctx);
     v.update(state);
-    assert.equal(cardOf(v.element).hidden, true);
+    const card = cardOf(v.element);
+    assert.ok(card.querySelectorAll("label").some((l) => l.textContent === "Reason for the change (optional)"));
+    assert.ok(buttonNamed(card, "Undo changes"));
+    card.querySelectorAll("select").find((s) => s.querySelectorAll("option").map((o) => o.textContent).join() === "On,Off").value = "false";
+    buttonNamed(card, "Save settings").click();
+    await tick(); await tick();
+    assert.equal(cardOf(v.element).querySelector('[role="status"]').textContent, "Settings saved. Everyone in the group now works this way.");
   });
 
   test("a payment confirmed over its receiver's dispute says so and who did it (financial recheck F1)", () => {

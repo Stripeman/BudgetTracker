@@ -4,7 +4,7 @@
 // what changed. Someone who may not change a setting sees its value as text. Fictional data only.
 import { test, describe, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
-import { installDom } from "./domdouble.js";
+import { installDom, DomEvent } from "./domdouble.js";
 import { nativeDropdowns, pickerLabels, pickerNamed, chooseOption, offeredOptions, triggerFor, spokenOf } from "./pickerassert.js";
 import { createView as createWorkspace, settingText } from "../js/ui/views/workspace.js";
 import { createView as createPlanning, defaultBudgetStart, backdateProblem } from "../js/ui/views/planning.js";
@@ -22,21 +22,25 @@ const buttonNamed = (root, text) => root.querySelectorAll("button").find((b) => 
 const settingsCard = (root) => root.querySelectorAll("section").find((s) => s.getAttribute("aria-labelledby") === "ws-settings");
 
 // A fictional list as the server sends it (values and labels written out here, not taken from the server).
-const LIST = (canChange) => [
+const RESTORE_NOTE = "Members can't restore from the app yet; this applies to restores through the API.";
+const LIST = (canChange, { ownerKeys = canChange } = {}) => [
   { key: "budgetPeriod", group: "Budgets", type: "choice", label: "Budget period for new budgets", explanation: "The period a new budget starts with. Anyone adding a budget can still choose another.", value: "monthly", default: "monthly", changedBy: "manager", canChange,
     options: [{ value: "monthly", label: "Monthly" }, { value: "weekly", label: "Weekly" }, { value: "biweekly", label: "Every two weeks" }] },
   { key: "weekStart", group: "Budgets", type: "choice", label: "Weeks start on", explanation: "A new weekly budget starts on this day of the week.", value: 1, default: 1, changedBy: "manager", canChange,
     options: [{ value: 1, label: "Monday" }, { value: 0, label: "Sunday" }, { value: 6, label: "Saturday" }] },
-  { key: "billReminderDays", group: "Bills", type: "integer", label: "Show new bills as due soon (days before)", explanation: "How many days before a payment is due a new bill appears under Due soon.", value: 3, default: 3, min: 0, max: 60, changedBy: "manager", canChange },
-  { key: "sharedExpenses", group: "Shared expenses", type: "boolean", label: "Shared expenses", explanation: "Split costs with the people in this workspace and see who owes whom.", value: true, default: true, changedBy: "manager", canChange },
-  { key: "memberRestoreModes", group: "Restores by members", type: "set", label: "Kinds of restore members may use", explanation: "Which kinds of restore a member may use.", value: ["create-new", "merge"], default: ["create-new", "merge"], changedBy: "owner", canChange,
-    options: [{ value: "create-new", label: "Create a new workspace from a backup" }, { value: "merge", label: "Merge — add missing records" }, { value: "replace", label: "Replace — roll records back to the backup" }] },
+  { key: "billReminderDays", group: "Bills", type: "integer", label: "Days before the due date a new bill shows as Due soon", explanation: "New bills show under Due soon this many days before each payment. Each bill can still have its own number.", value: 3, default: 3, min: 0, max: 60, unit: "days", changedBy: "manager", canChange },
+  { key: "sharedExpenses", group: "Shared expenses", type: "boolean", label: "Use Shared expenses in this workspace", explanation: "Split costs with the people in this workspace and see who owes whom.", value: true, default: true, changedBy: "manager", canChange },
+  { key: "memberRestoresPerDay", group: "Restores by members", type: "integer", label: "How often a member may restore their own records", explanation: "How many restores each member may make in a day.", value: 3, default: 3, min: 0, max: 3, changedBy: "owner", canChange: ownerKeys,
+    options: [{ value: 0, label: "Not allowed" }, { value: 1, label: "Once a day" }, { value: 2, label: "Up to 2 a day" }, { value: 3, label: "Up to 3 a day" }], groupNote: RESTORE_NOTE },
+  { key: "memberRestoreModes", group: "Restores by members", type: "set", label: "Kinds of restore members may use", explanation: "Which kinds of restore a member may use.", value: ["create-new", "merge", "restore-deleted"], default: ["create-new", "merge", "restore-deleted"], changedBy: "owner", canChange: ownerKeys,
+    options: [{ value: "create-new", label: "Create a new workspace from a backup" }, { value: "merge", label: "Merge — add missing records" }, { value: "restore-deleted", label: "Merge that also brings back deleted entries" }, { value: "replace", label: "Replace — roll records back to the backup" }],
+    requires: { "restore-deleted": "merge" }, requiresMessage: "“Merge that also brings back deleted entries” needs “Merge” ticked as well." },
 ];
 
-function page({ role = "owner", canChange = true, history = [] } = {}) {
+function page({ role = "owner", canChange = true, ownerKeys, history = [], settingsHistory = [], refuse = null } = {}) {
   const calls = { patches: [], refreshed: 0 };
   const ready = (data) => ({ workspaceId: "ws_1", status: "ready", error: null, data });
-  let list = LIST(canChange);
+  let list = LIST(canChange, { ownerKeys: ownerKeys === undefined ? canChange : ownerKeys });
   const state = {
     selectedWorkspaceId: "ws_1", preferences: null,
     workspaces: [{ id: "ws_1", name: "Fictional household", role }],
@@ -48,15 +52,21 @@ function page({ role = "owner", canChange = true, history = [] } = {}) {
     request: async (name, opts = {}) => {
       if (name === "workspaces" && opts.method === "PATCH") {
         calls.patches.push(opts.body);
+        // The server's refusal, as the API client reports it (kind, code, message, details).
+        if (refuse) throw Object.assign(new Error(refuse.message), { kind: "client", status: 400, code: "invalid_setting", details: { setting: refuse.setting } });
         list = list.map((s) => (Object.prototype.hasOwnProperty.call(opts.body.settings, s.key) ? { ...s, value: opts.body.settings[s.key] } : s));
         return { workspace: {} };
       }
-      if (name === "workspaces") return { workspace: { history, lifecycle: [], settingsList: list } };
+      if (name === "workspaces") return { workspace: { history, lifecycle: [], settingsList: list, settingsHistory } };
       if (name === "members") return { former: [] };
       return {};
     },
   };
-  const store = { getState: () => state, actions: { write: async (fn) => { await fn("ws_1"); return { ok: true }; }, refreshWorkspaces: async () => { calls.refreshed += 1; return { ok: true }; } } };
+  // Like the real store: a failed write is reported, not thrown.
+  const store = { getState: () => state, actions: {
+    write: async (fn) => { try { await fn("ws_1"); return { ok: true }; } catch (error) { return { ok: false, error }; } },
+    refreshWorkspaces: async () => { calls.refreshed += 1; return { ok: true }; },
+  } };
   return { ctx: { api, store }, state, calls };
 }
 
@@ -68,61 +78,184 @@ async function open(options) {
   for (let i = 0; i < 5; i += 1) await tick();
   return { view, calls, card: settingsCard(view.element) };
 }
+const settle = async () => { for (let i = 0; i < 6; i += 1) await tick(); };
+const groupToggle = (card, name) => card.querySelectorAll("button.settings-group__toggle").find((b) => b.textContent === name);
+const bodyOf = (card, name) => card.querySelector(`#${groupToggle(card, name).getAttribute("aria-controls")}`);
+const numberField = (card) => card.querySelector('input[type="number"]');
+const fire = (node, type) => node.dispatchEvent(new DomEvent(type, { bubbles: true }));
+const tickBox = (box, checked) => { box.checked = checked; fire(box, "change"); };
+const boxLabelled = (card, text) => { const l = card.querySelectorAll("label").find((x) => x.textContent === text); return card.querySelector(`#${l.getAttribute("for")}`); };
 
-describe("Workspace settings card", () => {
-  test("every setting from the list is a labelled command picker with its explanation; a list of kinds is checkboxes; no native dropdown", async () => {
+describe("Settings card (shared by the workspace and group settings; UX review of eefd115)", () => {
+  afterEach(() => { delete globalThis.localStorage; });
+
+  test("controls: pickers for choices and on/off, a number field with its unit, checkboxes for kinds; no native dropdown; owner-only ones marked", async () => {
     const { card } = await open();
-    assert.ok(card, "the card is on the Workspace page");
     assert.equal(card.querySelector("h2").textContent, "Workspace settings");
     assert.deepEqual(nativeDropdowns(card), []);
-    assert.deepEqual(pickerLabels(card), ["Budget period for new budgets", "Weeks start on", "Show new bills as due soon (days before)", "Shared expenses"]);
-    assert.deepEqual(offeredOptions(pickerNamed(card, "Budget period for new budgets")), ["Monthly", "Weekly", "Every two weeks"]);
-    assert.deepEqual(offeredOptions(pickerNamed(card, "Shared expenses")), ["On", "Off"]);
-    assert.equal(offeredOptions(pickerNamed(card, "Show new bills as due soon (days before)")).length, 61, "0 to 60 days");
+    assert.deepEqual(pickerLabels(card), ["Budget period for new budgets", "Weeks start on", "Use Shared expenses in this workspace", "How often a member may restore their own records"]);
+    assert.deepEqual(offeredOptions(pickerNamed(card, "How often a member may restore their own records")), ["Not allowed", "Once a day", "Up to 2 a day", "Up to 3 a day"]);
+    assert.deepEqual(offeredOptions(pickerNamed(card, "Use Shared expenses in this workspace")), ["On", "Off"]);
+    const days = numberField(card);
+    assert.deepEqual([days.getAttribute("min"), days.getAttribute("max"), days.getAttribute("step"), days.value], ["0", "60", "1", "3"]);
+    const label = card.querySelectorAll("label").find((l) => l.getAttribute("for") === days.id);
+    assert.equal(label.textContent, "Days before the due date a new bill shows as Due soon");
+    const unit = card.querySelector(".input-with-unit__unit");
+    assert.deepEqual([unit.textContent, unit.getAttribute("aria-hidden")], ["days", "true"]);
     assert.match(spokenOf(triggerFor(pickerNamed(card, "Weeks start on"))), /^Weeks start on: Monday/);
-    assert.match(card.textContent, /A new weekly budget starts on this day of the week\./);
-    const boxes = card.querySelectorAll('input[type="checkbox"]');
-    assert.deepEqual(boxes.map((b) => b.checked), [true, true, false]);
-    assert.deepEqual(card.querySelectorAll("h3").map((h) => h.textContent), ["Budgets", "Bills", "Shared expenses", "Restores by members"]);
+    assert.equal(card.querySelectorAll(".badge--source").filter((b) => b.textContent === "Owners only").length, 2, "only the two owner-only settings");
+    assert.match(card.textContent, new RegExp(RESTORE_NOTE.replace(/[.']/g, ".")));
   });
 
-  test("Save sends only what changed, typed as the server expects, with the reason; the app's workspace list is re-read", async () => {
+  test("groups collapse under smaller in-card headings: the first open, the others closed, each person's choice remembered in this browser", async () => {
+    const store = {};
+    globalThis.localStorage = { getItem: (k) => (k in store ? store[k] : null), setItem: (k, v) => { store[k] = String(v); } };
+    const { card } = await open();
+    assert.deepEqual(card.querySelectorAll("h3").map((h) => [h.getAttribute("class"), h.textContent]),
+      [["settings-group__title", "Budgets"], ["settings-group__title", "Bills"], ["settings-group__title", "Shared expenses"], ["settings-group__title", "Restores by members"]]);
+    assert.deepEqual(["Budgets", "Bills"].map((n) => [groupToggle(card, n).getAttribute("aria-expanded"), bodyOf(card, n).hidden]), [["true", false], ["false", true]]);
+    groupToggle(card, "Bills").click();
+    assert.deepEqual([groupToggle(card, "Bills").getAttribute("aria-expanded"), bodyOf(card, "Bills").hidden], ["true", false]);
+    assert.deepEqual(JSON.parse(store["bt.settingsGroups.workspace"]), { Bills: true });
+    dom.teardown(); dom = installDom();
+    const again = (await open()).card;
+    assert.equal(groupToggle(again, "Bills").getAttribute("aria-expanded"), "true", "remembered");
+    // A browser that refuses storage still shows the card, first group open.
+    globalThis.localStorage = { getItem: () => { throw new Error("denied"); }, setItem: () => { throw new Error("denied"); } };
+    dom.teardown(); dom = installDom();
+    const third = (await open()).card;
+    assert.equal(groupToggle(third, "Budgets").getAttribute("aria-expanded"), "true");
+    groupToggle(third, "Bills").click();
+    assert.equal(groupToggle(third, "Bills").getAttribute("aria-expanded"), "true");
+  });
+
+  test("each explanation shows its first sentence; the rest is behind “More about this” (aria-expanded)", async () => {
+    const { card } = await open();
+    const more = card.querySelectorAll("button.linklike").find((b) => b.getAttribute("aria-label") === "More about this: Budget period for new budgets");
+    const rest = card.querySelector(`#${more.getAttribute("aria-controls")}`);
+    assert.deepEqual([more.textContent, more.getAttribute("aria-expanded"), rest.hidden, rest.textContent], ["More about this", "false", true, "Anyone adding a budget can still choose another."]);
+    more.click();
+    assert.deepEqual([more.getAttribute("aria-expanded"), rest.hidden, more.textContent], ["true", false, "Less about this"]);
+    assert.ok(!card.querySelectorAll("button.linklike").some((b) => (b.getAttribute("aria-label") || "").endsWith("Weeks start on")), "one sentence, no button");
+  });
+
+  test("Save sends only what changed, typed, with the reason; says so, keeps focus on Save, re-reads the app's workspace list", async () => {
     const { card, calls, view } = await open();
     chooseOption(pickerNamed(card, "Weeks start on"), "Sunday");
-    chooseOption(pickerNamed(card, "Show new bills as due soon (days before)"), "10");
-    chooseOption(pickerNamed(card, "Shared expenses"), "Off");
-    card.querySelectorAll('input[type="checkbox"]')[2].checked = true;
+    chooseOption(pickerNamed(card, "Use Shared expenses in this workspace"), "Off");
+    chooseOption(pickerNamed(card, "How often a member may restore their own records"), "Once a day");
+    numberField(card).value = "10"; fire(numberField(card), "input");
+    tickBox(boxLabelled(card, "Replace — roll records back to the backup"), true);
     card.querySelector('input[placeholder="Optional"]').value = "Fictional reason";
-    buttonNamed(card, "Save workspace settings").click();
-    for (let i = 0; i < 5; i += 1) await tick();
-    assert.deepEqual(calls.patches, [{ settings: { weekStart: 0, billReminderDays: 10, sharedExpenses: false, memberRestoreModes: ["create-new", "merge", "replace"] }, reason: "Fictional reason" }]);
+    buttonNamed(card, "Save settings").click();
+    await settle();
+    assert.deepEqual(calls.patches, [{ settings: { weekStart: 0, billReminderDays: 10, sharedExpenses: false, memberRestoresPerDay: 1, memberRestoreModes: ["create-new", "merge", "restore-deleted", "replace"] }, reason: "Fictional reason" }]);
     assert.equal(calls.refreshed, 1);
     const again = settingsCard(view.element);
-    assert.match(again.textContent, /Saved\. Everyone in the workspace now works this way\./);
-    assert.ok(document.activeElement === buttonNamed(again, "Save workspace settings"), "focus is back on Save after the card is redrawn");
+    assert.equal(again.querySelector('[role="status"]').textContent, "Settings saved. Everyone in the workspace now works this way.");
+    assert.equal(again.querySelector(".settings-bar__unsaved").hidden, true);
+    assert.ok(document.activeElement === buttonNamed(again, "Save settings"), "focus is back on Save after the card is redrawn");
+    assert.equal(numberField(again).value, "10", "drawn from what is saved now");
+  });
+
+  test("an edit shows “You have unsaved changes”; Undo changes puts every value back", async () => {
+    const { card, calls } = await open();
+    const unsaved = card.querySelector(".settings-bar__unsaved");
+    const undo = buttonNamed(card, "Undo changes");
+    assert.deepEqual([unsaved.hidden, undo.disabled], [true, true]);
+    chooseOption(pickerNamed(card, "Budget period for new budgets"), "Weekly");
+    numberField(card).value = "7"; fire(numberField(card), "input");
+    assert.deepEqual([unsaved.hidden, unsaved.textContent, undo.disabled], [false, "You have unsaved changes.", false]);
+    undo.click();
+    assert.equal(pickerNamed(card, "Budget period for new budgets").value, "monthly");
+    assert.equal(numberField(card).value, "3");
+    assert.deepEqual([unsaved.hidden, undo.disabled, card.querySelector('[role="status"]').textContent], [true, true, "Changes undone."]);
+    assert.ok(document.activeElement === buttonNamed(card, "Save settings"), "focus moves to Save, not lost with the disabled Undo");
+    assert.deepEqual(calls.patches, []);
   });
 
   test("Save with nothing changed sends nothing and says so", async () => {
     const { card, calls } = await open();
-    buttonNamed(card, "Save workspace settings").click();
+    buttonNamed(card, "Save settings").click();
     await tick();
     assert.deepEqual(calls.patches, []);
-    assert.match(card.textContent, /Nothing changed\./);
+    assert.equal(card.querySelector('[role="status"]').textContent, "Nothing changed.");
   });
 
-  test("someone who may not change the settings sees each value in words and who changes it, with no controls", async () => {
-    const { card } = await open({ role: "member", canChange: false });
-    assert.equal(card.querySelectorAll("select").length, 0);
-    assert.equal(card.querySelectorAll("input").length, 0);
-    assert.equal(buttonNamed(card, "Save workspace settings"), undefined);
-    for (const text of ["Monthly", "Monday", "On", "Create a new workspace from a backup, Merge — add missing records", "Owners and managers change this.", "Only owners change this."]) assert.ok(card.textContent.includes(text), text);
+  test("a refusal is shown in the error style; the setting is marked invalid, points at the message, and its group opens", async () => {
+    const message = "“Days before the due date a new bill shows as Due soon”: enter a whole number from 0 to 60.";
+    const { card } = await open({ refuse: { setting: "billReminderDays", message } });
+    numberField(card).value = "59"; fire(numberField(card), "input");
+    buttonNamed(card, "Save settings").click();
+    await settle();
+    const error = card.querySelector(".error-text");
+    assert.deepEqual([error.hidden, error.getAttribute("role"), error.textContent], [false, "alert", message]);
+    const days = numberField(card);
+    assert.equal(days.getAttribute("aria-invalid"), "true");
+    assert.ok(days.getAttribute("aria-describedby").split(" ").includes(error.id), "points at the message");
+    assert.equal(bodyOf(card, "Bills").hidden, false, "the group is opened");
+    assert.equal(card.querySelector('[role="status"]').textContent, "", "not shown as help text");
+    fire(days, "input");
+    assert.equal(days.getAttribute("aria-invalid"), null, "editing it clears the mark");
+  });
+
+  test("a number outside 0–60 or not whole is refused in the card, before anything is sent", async () => {
+    const { card, calls } = await open();
+    for (const bad of ["61", "2.5", "abc", ""]) {
+      numberField(card).value = bad; fire(numberField(card), "input");
+      buttonNamed(card, "Save settings").click();
+      await tick();
+      assert.equal(card.querySelector(".error-text").textContent, "“Days before the due date a new bill shows as Due soon”: enter a whole number from 0 to 60.", bad);
+    }
+    assert.deepEqual(calls.patches, []);
+  });
+
+  test("“Merge that also brings back deleted entries” is unticked and unavailable while “Merge” is off", async () => {
+    const { card, calls } = await open();
+    const merge = boxLabelled(card, "Merge — add missing records");
+    const deleted = boxLabelled(card, "Merge that also brings back deleted entries");
+    assert.deepEqual([deleted.checked, deleted.disabled], [true, false]);
+    tickBox(merge, false);
+    assert.deepEqual([deleted.checked, deleted.disabled], [false, true]);
+    tickBox(merge, true);
+    assert.deepEqual([deleted.checked, deleted.disabled], [false, false]);
+    tickBox(deleted, true);
+    buttonNamed(card, "Save settings").click();
+    await settle();
+    assert.deepEqual(calls.patches, [], "back where it started: nothing changed");
+  });
+
+  test("read-only: a label–value list, who changes settings said once, owner-only marked, and the history with who, when and why", async () => {
+    const settingsHistory = [{ at: "2026-09-14T10:00:00Z", by: "Alice Fictional", reason: "Sunday people", changes: [{ field: "settings.weekStart", from: 1, to: 0 }] }];
+    const { card } = await open({ role: "viewer", canChange: false, settingsHistory });
+    assert.equal(card.querySelectorAll("select").length + card.querySelectorAll("input").length, 0);
+    assert.equal(buttonNamed(card, "Save settings"), undefined);
+    const dts = card.querySelectorAll("dt").map((d) => d.textContent);
+    const dds = card.querySelectorAll("dd.settings-dl__value").map((d) => d.textContent);
+    assert.deepEqual(dts, ["Budget period for new budgets", "Weeks start on", "Days before the due date a new bill shows as Due soon", "Use Shared expenses in this workspace",
+      "How often a member may restore their own recordsOwners only", "Kinds of restore members may useOwners only"]);
+    assert.deepEqual(dds, ["Monthly", "Monday", "3 days", "On", "Up to 3 a day", "Create a new workspace from a backup, Merge — add missing records, Merge that also brings back deleted entries"]);
+    const text = card.textContent;
+    assert.equal(text.split("Owners and managers change them").length - 1, 1, "said once");
+    assert.doesNotMatch(text, /Owners and managers change this\./);
+    assert.match(text, /Changes \(1\)/);
+    assert.match(text, /2026-09-14 10:00 · Alice Fictional/);
+    assert.match(text, /Weeks start on: Monday → Sunday/);
+    assert.match(text, /Reason: Sunday people/);
+  });
+
+  test("a manager changes the manager settings and reads the owner-only ones", async () => {
+    const { card } = await open({ role: "manager", canChange: true, ownerKeys: false });
+    assert.deepEqual(pickerLabels(card), ["Budget period for new budgets", "Weeks start on", "Use Shared expenses in this workspace"]);
+    assert.deepEqual(card.querySelectorAll("dt").map((d) => d.textContent), ["How often a member may restore their own recordsOwners only", "Kinds of restore members may useOwners only"]);
+    assert.ok(buttonNamed(card, "Save settings"));
   });
 
   test("Workspace changes name each setting and its values in words", async () => {
     const history = [{ at: "2026-09-14T10:00:00Z", by: "Alice Fictional", reason: "New rhythm", changes: [{ field: "settings.budgetPeriod", from: "monthly", to: "weekly" }, { field: "settings.sharedExpenses", from: true, to: false }, { field: "name", from: "A", to: "B" }] }];
     const { view } = await open({ history });
     const box = view.element.querySelectorAll("section").find((s) => s.getAttribute("aria-labelledby") === "ws-history");
-    assert.match(box.textContent, /Budget period for new budgets Monthly → Weekly; Shared expenses On → Off; Name A → B — New rhythm/);
+    assert.match(box.textContent, /Budget period for new budgets Monthly → Weekly; Use Shared expenses in this workspace On → Off; Name A → B — New rhythm/);
   });
 
   test("(i) a new budget's start: the first of the month, or the latest week-start day on or before today", () => {
@@ -287,9 +420,11 @@ describe("Workspace settings card", () => {
   });
 
   test("settingText writes each kind of value in words", () => {
-    const [period, , days, shared, modes] = LIST(true);
+    const [period, , days, shared, perDay, modes] = LIST(true);
     assert.equal(settingText(period, "biweekly"), "Every two weeks");
-    assert.equal(settingText(days, 0), "0");
+    assert.equal(settingText(days, 0), "0 days", "a number with its unit");
+    assert.equal(settingText(perDay, 1), "Once a day", "a small number in words");
+    assert.equal(settingText({ type: "integer" }, 7), "7");
     assert.equal(settingText(shared, false), "Off");
     assert.equal(settingText(modes, []), "None");
     assert.equal(settingText(period, "custom"), "custom");

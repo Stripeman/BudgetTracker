@@ -535,6 +535,9 @@ describe('UX review: errors name the setting, plain wording, option labels, a un
       [[0, 'Not allowed'], [1, 'Once a day'], [2, 'Up to 2 a day'], [3, 'Up to 3 a day']]]);
     assert.match(perDay.explanation, /Each restore first saves a safety copy of the workspace, which is why 3 a day is the most\./);
     assert.equal(perDay.groupNote, "Members can't restore from the app yet; this applies to restores through the API.");
+    // The app unticks a kind that needs another, and refuses with the server's own words.
+    const modes = settingOf(ws, 'memberRestoreModes');
+    assert.deepEqual([modes.requires, modes.requiresMessage], [{ 'restore-deleted': 'merge' }, '“Merge that also brings back deleted entries” needs “Merge” ticked as well.']);
     // Every explanation opens with a sentence that stands on its own (the card shows it first).
     for (const s of ws.settingsList) assert.match(s.explanation, /^[^.]{12,}\./, s.key);
   });

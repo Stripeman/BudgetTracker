@@ -227,6 +227,8 @@ function view(doc, member, site) {
       ...(s.optionLabels ? { options: Object.entries(s.optionLabels).map(([value, label]) => ({ value: Number(value), label })) } : {}),
       ...(s.type === 'integer' ? { min: s.min, max: s.max } : {}),
       ...(s.unit ? { unit: s.unit } : {}),
+      // A kind that needs another (the app unticks it while that one is off), with the refusal's words.
+      ...(s.requires ? { requires: { ...s.requires }, requiresMessage: s.requiresMessage } : {}),
       ...(s.groupNote ? { groupNote: s.groupNote } : {}),
       ...(k === 'sharedExpenses' && !siteAllowsSharedExpenses(site) ? { offForSite: true } : {}),
     };
