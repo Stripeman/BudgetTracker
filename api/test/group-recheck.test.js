@@ -302,6 +302,71 @@ describe('B: "Anyone in the group can confirm payments"', () => {
   });
 });
 
+describe('E: parallel requests end with one winner and a refusal or a replay, never a double record', () => {
+  const post = (h, f, w, { action, body, key }) => h.call('group', 'POST', { ...who(w), query: { ...f.q, ...(action ? { action } : {}) }, body, headers: key ? { 'idempotency-key': key } : {} });
+  test('two confirmations of one payment at once: one confirms it, the other is refused; the history holds one confirmation', async () => {
+    const h = harness();
+    const f = await fixture(h);
+    const s = await settle(h, f, 'bob', { from: f.refs.bob, to: f.refs.alice, amount: '25.00' });
+    const results = await Promise.all([confirm(h, f, 'alice', s), confirm(h, f, 'alice', s)]);
+    assert.deepEqual(results.map((r) => r.status).sort(), [200, 409]);
+    assert.ok(['already_confirmed', 'stale_revision'].includes(results.find((r) => r.status === 409).body.error.code));
+    const hist = ok(await G(h, f, 'alice', 'GET', { query: { action: 'history', settlementId: s.id } })).history;
+    assert.equal(hist.filter((x) => x.event === 'confirmed').length, 1);
+  });
+
+  test('two expense creates with one idempotency key make one expense; different keys make separate expenses', async () => {
+    const h = harness();
+    const f = await fixture(h);
+    const body = { description: 'Fictional ferry', amount: '44.00', payers: [{ ref: f.refs.alice }], split: equal(f.refs.alice, f.refs.bob) };
+    const same = `k-${'fe'.repeat(16)}`;
+    const [r1, r2] = await Promise.all([post(h, f, 'alice', { body, key: same }), post(h, f, 'alice', { body, key: same })]);
+    assert.deepEqual([r1.status, r2.status], [201, 201]);
+    assert.equal(r1.body.expense.id, r2.body.expense.id, 'the same expense');
+    assert.equal((await view(h, f)).expenses.length, 1);
+    const [r3, r4] = await Promise.all([post(h, f, 'alice', { body, key: `k-${'ab'.repeat(16)}` }), post(h, f, 'alice', { body, key: `k-${'cd'.repeat(16)}` })]);
+    assert.notEqual(r3.body.expense.id, r4.body.expense.id);
+    assert.equal((await view(h, f)).expenses.length, 3, 'two distinct requests are two expenses');
+    // A payment reported twice at once with one key is one payment.
+    const pay = { from: f.refs.bob, to: f.refs.alice, amount: '22.00' };
+    const k = `k-${'pa'.repeat(16)}`;
+    const [p1, p2] = await Promise.all([post(h, f, 'bob', { action: 'settle', body: pay, key: k }), post(h, f, 'bob', { action: 'settle', body: pay, key: k })]);
+    assert.equal(p1.body.settlement.id, p2.body.settlement.id);
+    assert.equal((await view(h, f)).settlements.length, 1);
+  });
+
+  test('two corrections of one expense at the same revision: one wins, the other is refused as stale', async () => {
+    const h = harness();
+    const f = await fixture(h);
+    const e = await addExpense(h, f, 'alice', { description: 'Fictional lunch', amount: '20.00', payers: [{ ref: f.refs.alice }], split: equal(f.refs.alice, f.refs.bob) });
+    const edit = (w, description) => G(h, f, w, 'PATCH', { body: { expenseId: e.id, revision: e.revision, description, reason: 'Wording' } });
+    const results = await Promise.all([edit('alice', 'Fictional lunch A'), edit(FRANK, 'Fictional lunch B')]);
+    assert.deepEqual(results.map((r) => r.status).sort(), [200, 409]);
+    assert.equal(results.find((r) => r.status === 409).body.error.code, 'stale_revision');
+    const now = (await view(h, f)).expenses[0];
+    assert.equal(now.revision, 2, 'exactly one correction');
+    assert.equal(now.description, results.find((r) => r.status === 200).body.expense.description);
+  });
+});
+
+describe('E: no route other than Shared expenses sets shared-expense links', () => {
+  test('bills refuse client-supplied links on create, record and edit; a recorded occurrence links only to its bill', async () => {
+    const h = harness();
+    const f = await fixture(h, { kind: 'household' });
+    const joint = await account(h, f, 'alice', { name: 'Joint', type: 'checking', currency: 'EUR', visibility: 'shared', openingBalance: '1000.00' });
+    const e = await addExpense(h, f, 'alice', { description: 'Fictional dinner', amount: '40.00', payers: [{ ref: f.refs.alice }], split: equal(f.refs.alice, f.refs.bob) });
+    const forged = { groupExpenseId: e.id };
+    const bill = { name: 'Fictional internet', billType: 'utilities', accountId: joint.id, amount: '30.00', schedule: { freq: 'monthly', startDate: '2026-09-01' } };
+    assert.equal((await h.call('recurring', 'POST', { as: 'alice', query: f.q, body: { ...bill, links: forged } })).status, 400, 'create');
+    const r = ok(await h.call('recurring', 'POST', { as: 'alice', query: f.q, body: bill }), 201).recurring;
+    assert.equal((await h.call('recurring', 'POST', { as: 'alice', query: { ...f.q, action: 'record' }, body: { recurringId: r.id, occurrence: '2026-09-01', links: forged } })).status, 400, 'record');
+    assert.equal((await h.call('recurring', 'PATCH', { as: 'alice', query: f.q, body: { recurringId: r.id, revision: r.revision, links: forged } })).status, 400, 'edit');
+    const recorded = ok(await h.call('recurring', 'POST', { as: 'alice', query: { ...f.q, action: 'record' }, body: { recurringId: r.id, occurrence: '2026-09-01' } }), 201);
+    const entry = (await entriesOf(h, f, 'alice', joint.id)).find((t) => t.links && t.links.recurringId === r.id);
+    assert.deepEqual(Object.keys(entry.links).sort(), ['occurrence', 'recurringId'], JSON.stringify(recorded));
+  });
+});
+
 describe('S4 residual: a create-new restore carries nobody else\'s identity on any record', () => {
   test('other members\' subjects, member ids and private account ids appear nowhere in the new workspace, and grant nothing if they join it', async () => {
     const h = harness();
