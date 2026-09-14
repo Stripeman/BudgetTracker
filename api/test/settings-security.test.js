@@ -178,3 +178,29 @@ describe('L-3: the entries list offers Edit and Delete on a transfer only when b
     assert.deepEqual([alices.canEdit, alices.canDelete], [true, true], 'Alice keeps both');
   });
 });
+
+// ---- I-2: a member's recovery points follow the owners' restore setting --------------------------------
+// Each merge or replace by a member first reserves a recovery point, and a failed attempt still counts.
+// The cap was a fixed 6 a day (twice the ceiling of 3); it now follows the owners' number: twice it.
+describe('I-2: a member\'s recovery points a day are twice the restores the owners allow', () => {
+  test('with one restore a day, the third attempt whose recovery point cannot be written is refused as over the limit', async () => {
+    const base = createMemoryStorage();
+    let outage = false;
+    // Archives are written with putBytes; the backup index goes through putJson and keeps working.
+    const backupStorage = { ...base, async putBytes(name, bytes, cond) { if (outage) throw new Error('fictional outage'); return base.putBytes(name, bytes, cond); } };
+    const h = harness({ backupStorage });
+    const f = await household(h);
+    ok(await setSettings(h, 'alice', f.ws.id, { memberRestoresPerDay: 1 }));
+    h.clock.advance(60000);
+    const archiveId = ok(await h.call('backups', 'POST', { as: 'alice', query: f.q, body: {} }), 201).archive.archiveId;
+    ok(await h.call('transactions', 'POST', { as: 'bob', query: f.q, body: { accountId: f.bobCard.id, kind: 'expense', amount: '4.00', date: '2026-09-12' } }), 201);
+    outage = true;
+    const statuses = [];
+    for (let i = 0; i < 3; i += 1) {
+      const pv = ok(await h.call('restore', 'POST', { as: 'bob', query: { action: 'preview' }, body: { workspaceId: f.ws.id, archiveId, mode: 'replace' } }));
+      const res = await h.call('restore', 'POST', { as: 'bob', query: { action: 'execute' }, body: { workspaceId: f.ws.id, archiveId, mode: 'replace', confirm: 'REPLACE', expectedEtag: pv.expectedEtag } });
+      statuses.push([res.status, res.body.error && res.body.error.code]);
+    }
+    assert.deepEqual(statuses, [[500, 'server_error'], [500, 'server_error'], [429, 'restore_limit']]);
+  });
+});

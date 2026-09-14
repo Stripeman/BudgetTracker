@@ -65,8 +65,10 @@ async function reserve(ctx, wsId, { subject, kind, byOwner = false, perPerson, p
     return { ...value, reservations: [...(value.reservations || []), { by: subject, kind, byOwner, at: new Date(nowMs).toISOString() }] };
   });
 }
-const reserveRecoveryPoint = (ctx, wsId, subject) => reserve(ctx, wsId, {
-  subject, kind: 'recovery-point', perPerson: MEMBER_RECOVERY_POINTS_PER_DAY, code: 'restore_limit',
+// `perPerson` follows the owners' "How often a member may restore their own records" (twice that number,
+// security review of eefd115, I-2); never more than the fixed ceiling.
+const reserveRecoveryPoint = (ctx, wsId, subject, perPerson = MEMBER_RECOVERY_POINTS_PER_DAY) => reserve(ctx, wsId, {
+  subject, kind: 'recovery-point', perPerson: Math.min(perPerson, MEMBER_RECOVERY_POINTS_PER_DAY), code: 'restore_limit',
   message: 'You have tried to restore too many times today in this workspace. Try again tomorrow or ask an owner.',
 });
 
