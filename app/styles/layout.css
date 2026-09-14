@@ -75,6 +75,12 @@ ul.stack, ol.stack { list-style: none; margin: 0; padding: 0; }
 .staging__host { overflow-wrap: anywhere; }
 .staging__site { gap: var(--space-2); margin-top: var(--space-3); padding-top: var(--space-3); border-top: 1px solid var(--border); }
 .staging__heading { margin: 0; font-size: var(--text-sm); }
+/* Under a site lock "Set by the site" replaces Edit, in the muted colour; with no address it stands
+   alone with a menu item's padding (review of d363eff, finding 2). */
+.menu__locked { flex: 0 0 auto; margin-right: var(--space-3); font-size: var(--text-xs); color: var(--text-muted); }
+.menu__locked--alone { flex: 1 1 auto; margin: 0; padding: var(--space-2) var(--space-3); font-size: var(--text-sm); }
+.staging__lock { margin-top: var(--space-1); }
+.staging__warning { margin: 0; padding-left: var(--space-2); border-left: 3px solid var(--color-warning); }
 
 @media (max-width: 40rem) {
   .app__main { padding: var(--space-4) var(--space-3) var(--space-8); }
