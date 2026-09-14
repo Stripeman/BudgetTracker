@@ -38,7 +38,8 @@ export function entryAmount(t, prefs) {
   return el("span", { class: "amount-dir" }, [
     el("span", { class: "dir" }, [icon("no-money-moved")]),
     amountText(t.amount, t.currency, prefs),
-    el("span", { class: "muted small", text: " No money moved" }),
+    // A share someone else paid says so (financial recheck L4); an amount owed says no money moved.
+    el("span", { class: "muted small", text: t.paidBySomeoneElse ? " Paid by someone else" : " No money moved" }),
   ]);
 }
 

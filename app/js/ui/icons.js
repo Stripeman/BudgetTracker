@@ -189,7 +189,8 @@ export function withIcon(id, content, { className = "" } = {}) {
 // for a shared expense (`payable`), or its reversal, moved no money, so it gets the no-money-moved
 // mark (two lines, no heads) instead of an arrow, beside the words "No money moved" (BT-009 recheck N3).
 export function directionOf(t) {
-  if (t.kind === "payable") return "no-money-moved";
+  // No money moved: an amount owed, or a share someone else paid (BT-009 recheck N3 and L4).
+  if (t.kind === "payable" || t.paidBySomeoneElse) return "no-money-moved";
   if ((t.links && t.links.reverses) || t.kind === "refund") return "reversal";
   const minor = t.amountMinor !== undefined ? t.amountMinor : Number(String(t.amount || "0").replace(/[^0-9.-]/g, ""));
   return minor >= 0 ? "money-in" : "money-out";

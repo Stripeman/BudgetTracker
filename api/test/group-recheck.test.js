@@ -777,6 +777,50 @@ describe('L3 (financial recheck of 47617b5): the backup check is as tolerant as 
   });
 });
 
+describe('L4 (financial recheck of 47617b5): a share someone else paid is marked as such, never as money out', () => {
+  test('Bob\'s share of a dinner Alice paid, and the spending half of a hand-entered pair, are paid by someone else; Alice\'s own share and a part-payer\'s share are not', async () => {
+    const h = harness();
+    const f = await fixture(h);
+    const { alice, bob } = f.refs;
+    const bobCash = await account(h, f, 'bob', { name: 'Bob Cash', type: 'cash', currency: 'EUR', openingBalance: '500.00' });
+    const aliceCash = await account(h, f, 'alice', { name: 'Alice Cash', type: 'cash', currency: 'EUR', openingBalance: '500.00' });
+    ok(await act(h, f, 'bob', 'ledger', { currency: 'EUR', accountId: bobCash.id }));
+    ok(await act(h, f, 'alice', 'ledger', { currency: 'EUR', accountId: aliceCash.id }));
+    // 160.00 paid by Alice, shared by Alice and Bob: Bob's share 80.00 is spending with 80.00 owed and no
+    // money moved; Alice's share 80.00 left her account with the rest (she lent 80.00).
+    await addExpense(h, f, 'alice', { description: 'Fictional dinner', amount: '160.00', payers: [{ ref: alice }], split: equal(alice, bob) });
+    ok(await act(h, f, 'bob', 'ledger', { currency: 'EUR' }));
+    const flags = async (w, accountId) => (await entriesOf(h, f, w, accountId)).map((t) => [t.kind, t.amount, t.paidBySomeoneElse]);
+    assert.deepEqual((await flags('bob', bobCash.id)).sort(), [['expense', '-80.00', true], ['payable', '80.00', false]]);
+    assert.deepEqual((await flags('alice', aliceCash.id)).sort(), [['advance', '-80.00', false], ['expense', '-80.00', false]]);
+    // 60.00 paid 40.00 by Alice and 20.00 by Bob, shared equally (30.00 each): Bob's share 30.00 is partly
+    // his own cash (20.00 left his account), so it keeps its money arrow: owed only 10.00.
+    await addExpense(h, f, 'alice', { description: 'Fictional lunch', amount: '60.00', payers: [{ ref: alice, amount: '40.00' }, { ref: bob, amount: '20.00' }], split: equal(alice, bob) });
+    ok(await act(h, f, 'bob', 'ledger', { currency: 'EUR' }));
+    const lunch = (await flags('bob', bobCash.id)).filter(([k, a]) => (k === 'expense' && a === '-30.00') || (k === 'payable' && a === '10.00'));
+    assert.deepEqual(lunch.sort(), [['expense', '-30.00', false], ['payable', '10.00', false]]);
+    // A 60.00 brunch paid by Alice, shared equally: Bob's 30.00 is paid by someone else. Corrected to
+    // 40.00 by Alice and 20.00 by Bob: his current share is partly his own cash (owed only 10.00), so it
+    // keeps its arrow; his reversed original and its reversal stay marked (each matched in its own state).
+    const brunch = await addExpense(h, f, 'alice', { description: 'Fictional brunch', amount: '60.00', payers: [{ ref: alice }], split: equal(alice, bob) });
+    ok(await act(h, f, 'bob', 'ledger', { currency: 'EUR' }));
+    ok(await G(h, f, 'alice', 'PATCH', { body: { expenseId: brunch.id, revision: brunch.revision, amount: '60.00', payers: [{ ref: alice, amount: '40.00' }, { ref: bob, amount: '20.00' }], split: equal(alice, bob), reason: 'Bob paid part' } }));
+    ok(await act(h, f, 'bob', 'ledger', { currency: 'EUR' }));
+    const brunchShares = (await entriesOf(h, f, 'bob', bobCash.id)).filter((t) => t.kind === 'expense' && t.links.groupExpenseId === brunch.id)
+      .map((t) => [t.amount, !!t.reversedBy, !!t.links.reverses, t.paidBySomeoneElse]);
+    assert.deepEqual(brunchShares.sort(), [['-30.00', false, false, false], ['-30.00', true, false, true], ['30.00', false, true, true]]);
+    // A hand-entered amount owed of 12.00 (hand entry allowed): its spending half is paid by someone else.
+    ok(await setSettings(h, f, 'alice', { ownedEntries: 'manual' }));
+    const plain = await account(h, f, 'alice', { name: 'Alice Pocket', type: 'cash', currency: 'EUR', openingBalance: '50.00' });
+    const pair = ok(await txPost(h, f, 'alice', { accountId: plain.id, kind: 'payable', amount: '12.00', notes: 'Bob paid for my ticket' }), 201).transactions;
+    assert.deepEqual(pair.map((t) => [t.kind, t.paidBySomeoneElse]).sort(), [['expense', true], ['payable', false]]);
+    // Its reversal: the reversed share is still marked, and so is the reversing entry.
+    const [share] = pair.filter((t) => t.kind === 'expense');
+    ok(await h.call('transactions', 'POST', { as: 'alice', query: { ...f.q, action: 'reverse' }, body: { transactionId: share.id, reason: 'Entered twice' } }), 201);
+    assert.deepEqual((await flags('alice', plain.id)).filter(([k]) => k === 'expense').map(([, a, p]) => [a, p]).sort(), [['-12.00', true], ['12.00', true]]);
+  });
+});
+
 describe('L3 (security recheck of 47617b5): a transfer names the other account only to someone who may see it', () => {
   test('on the shared side of Bob\'s transfer to his private wallet, Alice, Carol, Eve and Frank get no account id; Bob does, and so does Eve once he lets her see the wallet', async () => {
     const h = harness();
