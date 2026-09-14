@@ -1,6 +1,8 @@
 'use strict';
 // /api/accounts?workspaceId=
-//   GET                         accounts the caller may see (balances only with view-balances)
+//   GET                         accounts the caller may see (balances only with view-balances; `hasEntries`
+//                               only with view-transactions); `removedCount` = removed accounts they may
+//                               bring back; `includeDeleted=1` lists those too
 //   POST   {...}                create; shared accounts need manager+, private any active member
 //   PATCH  { accountId, revision, reason?, ... }   edit settings (private owner, or manager+ for shared)
 //   POST   ?action=close  { accountId, revision, reason, closedOn? }   no new entries; history stays
@@ -65,9 +67,13 @@ async function list(ctx, req) {
     t.all = money.sum([t.all, a.balanceMinor]);
     t[a.access] = money.sum([t[a.access], a.balanceMinor]);
   }
+  // How many removed accounts this person may bring back (BT-006-05), so the page can offer them
+  // without loading them; accounts they may not manage are never counted.
+  const removedCount = (doc.accounts || []).filter((a) => a.deletedAt && capabilitiesFor(doc, ctx.principal, a, now).size > 0 && mayManage(doc, a, member)).length;
   return {
     body: {
       accounts,
+      removedCount,
       totals: Object.entries(totals).map(([currency, t]) => ({
         currency, minor: t.all, amount: money.toDecimal(t.all, currency),
         breakdown: { own: money.toDecimal(t.own, currency), shared: money.toDecimal(t.shared, currency), granted: money.toDecimal(t.granted, currency) },
