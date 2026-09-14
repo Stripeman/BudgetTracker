@@ -91,6 +91,18 @@ describe('BT-001-05 account lifecycle', () => {
       body: { accountId: before.id, revision: before.revision, openingDate: '2026-02-01', maskedNumber: '7777', notes: 'Fictional note.', reason: 'Corrected details' },
     })).account;
     assert.deepEqual([edited.openingDate, edited.maskedNumber, edited.notes], ['2026-02-01', '7777', 'Fictional note.']);
+    const doc = await rawDoc(h, f.ws.id);
+    const stored = doc.accounts.find((a) => a.id === before.id);
+    const entry = stored.history.at(-1);
+    assert.deepEqual(entry.fields.sort(), ['maskedNumber', 'notes', 'openingDate']);
+    assert.deepEqual(entry.changes.find((c) => c.field === 'openingDate'), { field: 'openingDate', from: before.openingDate, to: '2026-02-01' });
+    assert.deepEqual(entry.changes.find((c) => c.field === 'maskedNumber'), { field: 'maskedNumber', from: '', to: '7777' });
+    assert.deepEqual(entry.changes.find((c) => c.field === 'notes'), { field: 'notes', from: '', to: 'Fictional note.' });
+    assert.equal(entry.reason, 'Corrected details');
+    assert.deepEqual(entry.before, { openingBalanceMinor: before.openingBalanceMinor, openingDate: before.openingDate });
+    assert.deepEqual(entry.after, { openingBalanceMinor: before.openingBalanceMinor, openingDate: '2026-02-01' });
+    assert.equal(doc.audit.at(-1).action, 'account.update');
+    assert.deepEqual(doc.audit.at(-1).fields.sort(), ['maskedNumber', 'notes', 'openingDate']);
     const t = ok(await h.call('transactions', 'POST', { as: 'alice', query: f.q, body: { accountId: before.id, kind: 'expense', amount: '5.00' } }), 201).transactions[0];
     ok(await h.call('transactions', 'PATCH', { as: 'alice', query: f.q, body: { transactionId: t.id, revision: 1, status: 'reconciled' } }));
     const locked = (await accountsOf(h, f.q, 'alice')).find((a) => a.id === before.id);
