@@ -117,5 +117,7 @@ export function createApiClient({ fetchImpl = globalThis.fetch.bind(globalThis),
     executeRestore: (body, key) => request("restore", { method: "POST", query: { action: "execute" }, body, idempotencyKey: key }),
     preferences: () => request("preferences"),
     savePreferences: (body) => request("preferences", { method: "PUT", body }),
+    // Site usage (BT-012-01): site administrators only. Never financial data.
+    analytics: () => request("analytics"),
   };
 }

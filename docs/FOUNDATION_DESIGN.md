@@ -159,6 +159,49 @@ All changes so far only add optional fields and collections to the version-1 wor
     - duplicate active links;
     - entries naming a missing expense or payment. Records set aside by a replace still count, because they are kept.
 
+### Site usage (BT-012-01, Terry 2026-09-14)
+
+- **A new document, not a new field on the workspace document.** `site/usage.json` (document type
+  `usage`, `schemaVersion` 1, alongside `workspace`/`user`/`site`/`backup` in `api/_shared/schema.js`)
+  is a denormalized, site-level aggregate — the same shape of decision as `site/settings.json`.
+  Building the Usage page from per-user documents would mean scanning every `users/{hash}.json` on
+  every dashboard load; one small counters document, updated on the touch itself, does not.
+- **The touch.** `usage.touch(ctx, principal)` runs once per boot, from `GET /api/me` (the natural
+  sign-in touchpoint: Static Web Apps keeps no server session, so "signed in" here means "made an
+  authenticated request", and `/api/me` is the one every client calls first). It is idempotent per
+  UTC calendar day — a returning person's later requests the same day write nothing — so the shared
+  document is touched at most once per person per day, not on every request, and is never a
+  contention point under ordinary load. Concurrent first-visits-of-the-day for the same person race
+  safely through the existing ETag-guarded `update()` retry loop (`api/_shared/storage.js`): the
+  loser re-reads after the winner's write and finds nothing left to record. A failure to record
+  (including a corrupt usage document) is caught and swallowed in `api/me/handler.js` — recording
+  usage must never be able to break sign-in or the boot payload.
+- **What is stored, and what never is.** Per person: a provider subject (already their own identity,
+  never anyone else's), `createdAt`, `lastActiveAt` and the UTC day of the last touch. Per day: a
+  sign-in count and a new-user count. Never an IP address, device information, or anything from a
+  workspace document.
+- **The privacy boundary this page draws.** AGENTS.md/SECURITY.md's hard invariant — site
+  administration never sees financial records — is preserved by construction: `/api/analytics`
+  (`api/analytics/handler.js`) never opens a workspace document for its content, only enumerates
+  workspace documents to read `kind` and `status` for a count-only breakdown (never a name, member
+  list or any financial field). The person list in the response carries only a subject and two
+  timestamps — no name or email — because no existing site-admin surface shows a site administrator
+  another person's name or email either, and this page does not start doing so. Every response is
+  covered by a test that asserts none of a set of financial field names (`accountId`, `amountMinor`,
+  `balance`, `transactions`, `merchants`, `budgets`, …) ever appears in it, run against a fixture
+  that has real financial data in storage (`api/test/analytics.test.js`).
+- **Route.** `GET /api/analytics` is site-admin only, checked twice: in the handler (never trusted
+  from a cached role, exactly like `api/site-settings`) and at the Static Web Apps edge
+  (`allowedRoles: ["siteadmin"]` in `staticwebapp.config.json`, the same pattern as the
+  `site-settings` PUT rule). The client hides the "Usage" entry for anyone who is not a site
+  administrator and fetches nothing if the route is opened directly. **It lives in the account
+  menu, not only the section nav** (`app/js/ui/shell.js`, beside "My settings"): a site
+  administrator is usually not a member of anything, so with no workspace the onboarding screen
+  shows and the section nav is never populated. The multi-user browser harness (BT-004-06) caught
+  this — the first version only added the section-nav entry, and a pure site administrator could
+  not reach the page at all — the same reason the icon catalogue already lives inside My settings
+  rather than its own section.
+
 Any change that renames, removes or reinterprets a field needs a real migration (in `api/_shared/schema.js`) and a `schemaVersion` bump before release.
 
 ## Permission model
