@@ -1,0 +1,65 @@
+.app { min-height: 100vh; display: flex; flex-direction: column; }
+
+.app__header {
+  position: sticky; top: 0; z-index: 20;
+  display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-3);
+  min-height: var(--header-height); padding: var(--space-2) var(--space-4);
+  background: var(--surface); border-bottom: 1px solid var(--border);
+}
+.app__brand { display: flex; align-items: center; gap: var(--space-2); font-weight: var(--weight-bold); color: var(--text); text-decoration: none; }
+.app__brand img { width: 1.5rem; height: 1.5rem; }
+.app__spacer { flex: 1; }
+
+/* The header's workspace picker (BT-004-04), TaskTracker's `.picker` layout (T: main fb24a41): a
+   small uppercase label beside the control, dropped on a phone where the trigger names itself. The
+   picker may shrink (min-width 0) so a long workspace name ellipsizes instead of widening the page. */
+.picker { display: flex; align-items: center; gap: var(--space-2); min-width: 0; }
+.picker__label { font-size: var(--text-xs); text-transform: uppercase; letter-spacing: 0.04em; color: var(--text-muted); white-space: nowrap; cursor: pointer; }
+.picker--workspace { flex: 0 1 18rem; }
+.picker--workspace .cmdpick { flex: 1 1 auto; }
+
+.app__nav {
+  display: flex; gap: var(--space-1); overflow-x: auto;
+  padding: 0 var(--space-4); background: var(--surface); border-bottom: 1px solid var(--border);
+}
+.app__nav a {
+  padding: var(--space-3) var(--space-3); color: var(--text-muted); text-decoration: none;
+  border-bottom: 2px solid transparent; white-space: nowrap; font-size: var(--text-sm); font-weight: var(--weight-medium);
+}
+.app__nav a:hover { color: var(--text); }
+/* The nav clips overflow, so its focus ring is drawn inside the link (A11Y-012). */
+.app__nav a:focus-visible { outline-offset: -3px; }
+.app__nav a[aria-current="page"] { color: var(--text); border-bottom-color: var(--accent); }
+
+.app__main { flex: 1; width: 100%; max-width: var(--content-max); margin: 0 auto; padding: var(--space-5) var(--space-4) var(--space-8); }
+.app__main:focus { outline: none; }
+
+.app__footer {
+  display: flex; flex-wrap: wrap; gap: var(--space-2); align-items: center; justify-content: space-between;
+  padding: var(--space-3) var(--space-4); color: var(--text-muted); font-size: var(--text-xs);
+  border-top: 1px solid var(--border); background: var(--surface);
+}
+
+.page-head { display: flex; flex-wrap: wrap; align-items: flex-end; justify-content: space-between; gap: var(--space-3); margin-bottom: var(--space-4); }
+.page-head h1 { margin: 0; }
+.page-head__actions { display: flex; flex-wrap: wrap; gap: var(--space-2); }
+
+.grid { display: grid; gap: var(--space-4); }
+.section-title { margin: var(--space-5) 0 var(--space-2); font-size: var(--text-lg); }
+/* min(…, 100%) keeps every grid within a 320px viewport without horizontal scrolling (A11Y-008). */
+.grid--cards { grid-template-columns: repeat(auto-fill, minmax(min(16rem, 100%), 1fr)); }
+.grid--two { grid-template-columns: repeat(auto-fit, minmax(min(20rem, 100%), 1fr)); }
+
+.stack { display: flex; flex-direction: column; gap: var(--space-3); }
+ul.stack, ol.stack { list-style: none; margin: 0; padding: 0; }
+.row { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); }
+
+@media (max-width: 40rem) {
+  .app__main { padding: var(--space-4) var(--space-3) var(--space-8); }
+  .app__header { padding: var(--space-2) var(--space-3); flex-wrap: nowrap; }
+  .picker__label { display: none; }
+  .app__brand span { display: none; }
+  /* Every section stays reachable: the nav wraps instead of hiding tabs off-screen (UX-004). */
+  .app__nav { flex-wrap: wrap; overflow-x: visible; padding: 0 var(--space-2); }
+  .app__nav a { padding: var(--space-2); }
+}

@@ -1,0 +1,57 @@
+# Dependencies and build output
+node_modules/
+dist/
+build/
+coverage/
+*.log
+
+# Credentials and local configuration
+.env
+.env.*
+!.env.example
+local.settings.json
+*.pem
+*.key
+*.pfx
+*.p12
+*credentials*.json
+*service-account*.json
+.azure/
+.secrets/
+
+# Private financial and runtime data
+/private-data/
+/data/
+/exports/
+/imports/
+/receipts/
+/attachments/
+/backups/
+/restore-staging/
+/.azurite/
+/.azurelite/
+/__blobstorage__/
+/__queuestorage__/
+__azurite_db_*.json
+*.db
+*.sqlite
+*.sqlite3
+
+# Editor and OS files
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Local reference and agent/session output (canonical requirements live in docs)
+/Budget_Tracker_Project_Instructions.docx
+/.agent-output/
+/.local/
+.claude/settings.local.json
+**/history.jsonl
+**/sessions/
+*.sarif
+*.zip
+*.bak
+*.tfstate*
+__pycache__/

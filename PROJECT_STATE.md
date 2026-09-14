@@ -1,0 +1,426 @@
+# BudgetTracker project state
+
+## Checkpoint
+
+- **Date and scope.** 2026-09-13, Claude takeover from Codex.
+- **Branch.** `feature/project-foundation`, tracking `origin/feature/project-foundation`.
+- **Origin.** https://github.com/Stripeman/BudgetTracker.git (public).
+- **Checkpoint commit.** The commit containing this file; resolve it with `git log -1 --format=%H`.
+- **PR #1.** Open and ready (feature/project-foundation → main), not merged; Terry granted a one-time authorization to merge it for the first Production release. Preview is deployed and verified (see Checkpoint N); Production storage and settings exist (2026-09-13) but no code has been deployed to Production yet.
+
+## Waiting on Terry (keep current; repeat open items in every status update)
+
+Terry asked (2026-09-14) for one list of what he still has to answer or do, so he never has to search the chat. Move an item to "Answered" with the date and his decision; never delete it.
+
+**Open questions**
+1. **Confirm-payments setting: per group or per expense?** Terry wrote "this should be a per shared expense configuration" for "Anyone in the group can confirm payments" (default on). It is being built per group (a group is a workspace). Say if he meant a separate choice on each expense. (asked 2026-09-14)
+
+**Actions for Terry (not questions)**
+- Save his display name in My settings on preview.
+- Finish the preview smoke test (B1), once the shared-expense fixes pass their rechecks; until then do not use "Also record my part on my own account" on preview.
+- Production release steps when everything passes (see "Exact next steps"): remove the merged agent worktrees or use a fresh clone, add the Production redirect URI, run the Production deploy, the B3 key drill and move the escrow file offline, decide the Production failure alert.
+- Optional: a non-admin GitHub identity for agents (branch protection is not enforced against his admin token).
+
+**Answered (kept for the record)**
+- 2026-09-14 — Payer confirming their own payment / single-owner contact payments (S5): a group setting "Anyone in the group can confirm payments", default ON, with an explanation; OFF keeps the strict rules.
+- 2026-09-14 — Hand entry of "Owed to others" and "Repayment" (R2/N1): a group setting, default "Created by Shared expenses only", with an explanation; when allowed, an owed-to-others entry is always paired with its share as spending.
+- 2026-09-14 — No-money-moved lines (N3): an icon of two parallel lines without heads (|==|) beside the words.
+- 2026-09-14 — Create-new restores keeping other members' identities (S4 residual): fix it across all carried records.
+- 2026-09-14 — Testing: verify in real browsers on localhost with several fake users and parallel requests (a multi-user harness is being built).
+- 2026-09-14 — Screenshots of another app: add only features that do not exist; presentation later.
+- 2026-09-14 — **Design principle: configurable over hard rules.** "The application shouldnt set hard rules that a person shouldnt otherwise be able to have as a configuration… the user should be able to decide about things that can be configurable." Workflow and policy choices become settings (site admin, workspace owners/managers, or each person) with today's behaviour as the default and a plain explanation; only the security and integrity gates stay fixed (private by default, server-side authorization, site admin never sees financial records, nothing deleted, atomic audit, integer money, no silent overwrite, restores never resurrect access). An inventory of hard-coded rules that could become settings is being compiled for Terry to choose from; the shared-expense settings are built as an extensible settings model.
+
+## Verified at takeover (2026-09-13)
+
+- **Git.** Local `HEAD` equalled `origin/feature/project-foundation` at `2360b79` after `git fetch`, and the tree was clean. `origin/main` is `a2d9c46`, unchanged. The only ignored untracked file is `Budget_Tracker_Project_Instructions.docx`, and it is preserved.
+- **Word brief.** SHA-256 `CE7EB5FE…317EC`, matching `docs/BRIEF_RECONCILIATION.md`. A fresh extraction gave 161 nonempty paragraphs, all present in `docs/PROJECT_BRIEF.md`, with no differences either way.
+- **Codex claims.** They matched the repository. Four Node tests passed. CI (`secret-scan`, `foundation-tests`) passed remotely on both the push and PR runs for `2360b79`.
+- **Correction to the Codex record.** Its TaskTracker inventory read the stale `Z:` checkout (beta.240). Current TaskTracker (`T:` `main` `a1ec150`, beta.416) **does** have the Tiptap editor and the moon/sun day/night Appearance control (Terry confirmed this with a screenshot). See `docs/TASKTRACKER_REUSE.md`.
+- **TaskTracker is in active use.** Another session is working on it; its `T:` working tree has 22 uncommitted files. Read committed `main` only, and never fetch, switch or write it.
+
+## Completed in this checkpoint
+
+1. **Repository controls** (BT-003-03), all through the GitHub API with Terry's token:
+   - `main` protection: PR required with 0 approvals, required checks `secret-scan` and `foundation-tests`, conversation resolution, `enforce_admins=true`, no force-push, no deletion.
+   - Dependabot vulnerability alerts and automated security fixes enabled.
+   - Verified by reading the settings back through the API.
+2. **Staged scan** (BT-003-04). `scripts/scan-staged.cjs`, `.githooks/pre-commit` and `test/scan-staged.test.cjs`. The local clone now has `core.hooksPath=.githooks`. gitleaks 8.30.1 was installed to the ignored `.local/bin` after a SHA-256 match with the release checksums.
+3. **Agents** (BT-003-02). The generator now emits nine roles as Codex TOML and Claude Markdown. It adds `regression-false-green-auditor` and `release-readiness-auditor`, both adapted from TaskTracker without its unsafe assumptions, and mirrors the skills to `.claude/skills/`.
+4. **Governance.** `CLAUDE.md` (full standard) and `AGENTS.md` (short contract) were rewritten consistently. They adapt TaskTracker patterns (source-of-truth order, requirement→test→implementation, truthful reporting, ETag concurrency, schema-version refusal, stale-response guards, explicit deployment targets) and record the BudgetTracker departures:
+   - no site-admin financial access
+   - atomic, not best-effort, audit
+   - recoverable deletion
+   - corrupt documents are refused
+   - no archived-grant resurrection
+5. **Independent review** of `lib/foundation.cjs`: verdict PARTIAL. The findings are recorded in `docs/FOUNDATION_DESIGN.md` and must be fixed in the production port.
+6. **Reuse inventory corrected** (BT-004-01), plus new child requirements BT-011-01 (day/night Appearance control, reuse required) and BT-011-02 (Tiptap editor).
+
+## Checkpoint B — BT-001 API foundation and BT-006 ledger core (2026-09-13)
+
+**Built.** An Azure Functions v3 API under `api/`, with 15 routes generated from `api/_shared/routes.js`:
+- me, workspaces, members, invitations, grants
+- accounts, transactions, payees, categories
+- contacts, people, preferences, audit
+- site-settings, roles
+
+**Design.** ADR-002 in `docs/FOUNDATION_DESIGN.md`:
+- single trusted identity adapter
+- CSRF header
+- corrupt-refusing storage (memory, file and blob backends)
+- one workspace per document with atomic ETag writes and idempotency keys
+- record revisions
+- a site-admin-free authorization model with expiring, revocable grants on private accounts
+- ISO 4217 integer money
+
+**Review findings applied.** Prototype findings 1 (membership required even for owners; ownership maps to a capability set; publish never granted) and 6 (null-prototype frozen principal; own-property checks; safe JSON parsing). Finding 4 applies to money: server-side precision table, `typeof` before regex, `-0` normalized, bounded magnitude.
+
+**Tooling.**
+- `staticwebapp.config.json`: Google only, rolesSource, fail-closed `/api/*`, strict CSP and security headers
+- root `package.json` scripts
+- `scripts/validate.cjs`
+- the CI `foundation-tests` job now runs `npm ci --prefix api`, `npm test` and `npm run validate`, with the job name unchanged
+- `@azure/storage-blob` 12.33.0: `npm audit` found 0 vulnerabilities
+
+**Results.**
+- `npm test`: 7/7 repository tests and 41/41 API tests, exit 0
+- `npm run validate`: ok (15 routes), exit 0
+
+**Mutation checks** (a scratchpad copy; the repository was never mutated):
+
+| Mutant | Result |
+|---|---|
+| workspace owner sees private accounts | killed (5 failures) |
+| grant expiry ignored | killed (1) |
+| membership skipped in authz | killed (4, after adding `authz.test.js`) |
+| own-property check removed | killed (1) |
+| explicit publish guard removed | survived as an equivalent mutant: publish is in no capability set |
+
+**Not verified.**
+- No real Azure Functions host, SWA or Google sign-in has been run. `func` and `swa` are not installed.
+- The blob adapter has not been exercised against Azure or Azurite.
+- No independent security or financial review of checkpoint B yet; schedule both at the end of the BT-002 milestone.
+
+## Checkpoint C — BT-002 encrypted backups and tested restores (2026-09-13)
+
+**Built.**
+- `api/_shared/archive.js`: archive format v1. The header (workspace, archive id, schema, time, key id, reason) is authenticated as AES-256-GCM AAD. Each workspace has its own HKDF-derived key. The workspace is checked before decryption. Keys come from `BT_BACKUP_KEYS` and `BT_BACKUP_ACTIVE_KEY` and can be rotated.
+- `api/_shared/backup.js`: financial invariants, a manifest, validation of the serialized bytes followed by a test decrypt, and caller-scoped restore planning for create-new, merge and replace.
+- Routes: `/api/backups` (list and create; owners and managers; never downloadable) and `/api/restore` (preview and execute).
+- A backup-storage dependency that must be separate from data storage.
+- The operator drill `scripts/recovery/drill.cjs`.
+- An executable `docs/RECOVERY_RUNBOOK.md`.
+
+**Review findings applied.** Prototype findings 2 (authenticated header and per-workspace keys), 3 (validate the bytes that are encrypted, then test-decrypt), 5 (summary-only preview), 7 (size limits and indexed checks) and 8 (generic errors).
+
+**Results.**
+- `npm test`: 7/7 repository tests and 55/55 API tests.
+- `npm run validate`: ok (17 routes).
+- Mutation checks in a scratchpad copy killed six mutants: resurrecting grants, skipping the workspace pre-check, a scope that ignores ownership, no recovery point, no preview-ETag check, and no final `ifMatch`. The last one is killed by the concurrent-edit race test.
+
+**Not operational (pending Staging).** Scheduled backups, immutable retention, Key Vault custody, monitoring and alerts, a measured RPO/RTO drill, and service-level disaster restore into live storage.
+
+## Milestone reviews and remediation (2026-09-13)
+
+Independent read-only reviews of `be22642`:
+- **Security:** PARTIAL. No path was found to another workspace's data or to another member's private records. Nine findings.
+- **Financial:** PARTIAL. The money arithmetic was verified with 20,000 random allocation cases and precision checks. Twelve findings, plus an informational note on allocation.
+
+All findings are fixed with regression tests in `api/test/remediation.test.js`, and they are recorded in `docs/REQUIREMENTS.md` as BT-001-04 and BT-006-02:
+- Security S1–S9: per-member quota plus headroom for administrative writes, restores limited to referenced attachments, count-free listings and previews, manager-only backup audit, grantee visibility, enforced site policies, subject-only roles endpoint, cross-scope transfer blocker, name-only payee references with no ownership transfer.
+- Financial F1–F12.
+- F13 (strict percentage allocation, fair residuals, multiple payers) is deferred to BT-009.
+
+Result: `npm test` 7/7 repository tests plus 75/75 API tests; `npm run validate` ok (17 routes).
+
+## Azure (Terry's decisions, 2026-09-13)
+
+**Terry's choices.**
+- One BudgetTracker Static Web App: TerryRemsiksSubscription, resource group `budget-tracker`, East US 2.
+- A preview environment is allowed. Production stays empty until he explicitly authorizes it.
+- `budget.remsik.org` is to be documented only.
+- Do not touch the other app's local ports (4280, 7071, 10000–10002).
+
+**Provisioned** with `scripts/deploy/provision.ps1` (explicit tenant check, idempotent, deletes nothing):
+- SWA `budget-tracker` (Standard)
+- Log Analytics `log-budget-tracker`
+- Application Insights `appi-budget-tracker`
+- preview storage `stbudgetpv01` (data) and `stbudgetbkpv01` (backup), both StorageV2 / LRS, TLS 1.2, HTTPS only, no public blob access, with versioning and soft delete
+
+Resource providers `Microsoft.OperationalInsights` and `Microsoft.Insights` were registered in the subscription as part of this. The IDs live only in the ignored `.local/deploy-target.json`. Design and procedures are in `docs/DEPLOYMENT.md`.
+
+**Not done.**
+- No application deployed and no app settings configured.
+- Production storage not created and DNS not changed.
+- Google OAuth client pending: Terry must create BudgetTracker's own client and set `GOOGLE_CLIENT_ID`/`GOOGLE_CLIENT_SECRET` himself (see `docs/DEPLOYMENT.md`). Until then, preview sign-in fails closed.
+
+## Checkpoint D — frontend shell, Appearance control, local runtime (2026-09-13)
+
+**Built.**
+- `index.html` and the four stylesheets: tokens ported from TaskTracker, with light-mode accent contrast overrides, plus base, layout and components (including the day/night block verbatim).
+- The day/night Appearance control: a faithful port of TaskTracker's `daynight.js` with a `locked` adaptation, mounted in the account menu and My settings.
+- `app/js/core` (api, errors, store, router, format, calc) and `app/js/ui` (dom port, theme port, shell, modal, components, views).
+- The loopback dev server `scripts/dev/server.mjs` on port 4380, never 4280/7071/10000–10002, using file storage in `.local/` with fictional sign-in; the fictional seed; the headless-Edge screenshot tool.
+- `validate.cjs` frontend checks.
+
+**Evidence.**
+- `npm test`: 7/7 repository, 75/75 API and 15/15 app tests. `npm run validate` ok.
+- Real HTTP against the dev server: `/api/me` returns 401 signed out and 200 as fictional Alice; a POST without the CSRF header returns 403; Alice (owner) does not see Bob's private card.
+- Headless Edge 153 screenshots (under the ignored `.local/shots`) for all views at desktop light, desktop dark and narrow width, plus the account menu and quick-entry suggestions. No console errors or exceptions when signed in; signed out, only the expected 401 from `/api/me`.
+- Fixed from the screenshots: list indentation, a `[hidden]` override, suggestion hint placement with `aria-describedby`, and checkbox layout.
+
+**Not verified.** Keyboard and screen-reader walkthroughs, and independent UX, usability and accessibility reviews. There is no deployed preview yet.
+
+## Preview deployment (2026-09-13, authorized by Terry: preview only)
+
+- **URL:** https://polite-plant-03bb7570f-preview.eastus2.3.azurestaticapps.net (named environment `preview` of SWA `budget-tracker`).
+- **How it was deployed:** `scripts/deploy/deploy.ps1 -Environment preview`. The full test and validate gate passed, and the artifact came from the allowlist. The token was read from Azure into memory only.
+- **Dirty-tree incident:** the first deploy was labelled `386543c` but included one uncommitted line (`platform.apiRuntime` in `staticwebapp.config.json`). The script now requires a clean tree for every environment, and preview is being redeployed from a clean commit. Check the latest deployed commit with `/api/me` (`app.commit`, once `BT_COMMIT` is set) or with the deployment record in this file.
+- **Settings:** set by `configure-settings.ps1` — storage and backup connection strings, the App Insights connection, a newly generated preview backup key, environment `preview`, and site admins by Terry's email. `GOOGLE_CLIENT_ID`/`GOOGLE_CLIENT_SECRET` were already present in the preview environment; they were not set by this session and their values were not read.
+- **Verified live:**
+  - `/` returns 200 with CSP, HSTS, `frame-ancestors 'none'` and no-referrer headers.
+  - `/version.json` reports 0.1.0-alpha.1.
+  - `/.auth/login/aad`, `github` and `twitter` return 404.
+  - Anonymous `/api/me` and anonymous POST return 401.
+  - Anonymous `/api/site-settings` returns 200 with no-store, so storage is reachable.
+- **Not verified:** Google sign-in on preview. It needs Terry's OAuth client to list the preview callback URI. No signed-in API calls or UI checks have been run on preview yet.
+- **Production:** not provisioned, not configured, not deployed. The `budget.remsik.org` DNS is unchanged.
+
+## UX/UI review of 386543c (independent, read-only)
+
+13 findings (UX-001 to UX-013), accepted. The high-severity ones:
+- viewers see Add actions they cannot use
+- a grantee cannot tell that a "Private" account is someone else's shared with them, and their net position includes it
+- at 390px the amount columns scroll off-screen and the filters fill the first screen
+
+The medium and low findings are numeric alignment, quick-entry field order and a sticky Save, stale suggestion hints, terminology, format preferences ignored, settings source labels, workspace-page states, onboarding for non-members, and menu ARIA roles. They will be remediated together with the accessibility review (pending) before the next UI checkpoint.
+
+## Clean preview redeploy and review remediation (2026-09-13)
+
+- **Clean redeploy:** preview was redeployed from `a3d8c16` with a clean tree; `/` returned 200 with CSP and anonymous `/api/me` returned 401. CI passed for `f9550f2`, `386543c` and `a3d8c16`. `deploy.ps1` now records `BT_COMMIT` after each successful deploy, and `/api/site-settings` exposes `app` (version, environment, commit) publicly for verification.
+- **Accessibility review of 386543c:** 19 findings (A11Y-001 to A11Y-019), 15 of them confirmed in headless Edge. The five Serious ones:
+  - a stale day/night switch
+  - selects committing on every arrow key
+  - the skip link navigating away
+  - contrast
+  - focus hidden under the header
+
+  All 19 are addressed (see BT-004-03). Note for Terry: A11Y-001 (the day/night control not redrawing when the device scheme changes while "Use device setting" is on) may also affect TaskTracker's original `daynight.js`. It has not been checked there, and TaskTracker was not touched.
+- **UX review:** all 13 findings are addressed.
+- **Evidence:**
+  - `npm test` passes: 8/8 repository, 78/78 API and 20/20 app tests. `npm run validate` is ok.
+  - Headless-Edge runs as Bob and Carol showed no exceptions or console errors, and the screenshots confirm the owner-aware badges, the breakdown (−203.90 + 4,472.67 + 8,500.00 = 12,768.77), dark-mode button contrast, narrow card rows, the reordered quick entry and the viewer message.
+  - The screenshot run also caught a frontend crash when the API lacked the new `breakdown` field. It was caused by a stale dev-server process, and the dashboard now tolerates the missing field.
+- **Local dev server:** restarted by stopping only its own verified PID. Ports 4280, 7071 and 10000 were untouched.
+
+## Checkpoint E — preview verified, retest, budgets/bills/forecast API, new requirements (2026-09-13)
+
+- **Preview verified at `4ef49b8`:** `/api/site-settings` reports `app.commit` 4ef49b84…, `environment` preview. Google sign-in on preview is still unverified (Terry's OAuth redirect URI).
+- **Independent retest of `4ef49b8`** (headless Edge, fictional users, every write blocked in the browser): 30 of 32 UX/accessibility findings PASS; A11Y-004 and A11Y-006 PARTIAL, plus four new small defects. Fixed after the retest:
+  - dark-mode accent text now uses its own `--accent-text` token (≥ 4.5:1 on raised surfaces), and the rose/indigo dark hovers were lightened;
+  - the skip link is inert behind dialogs;
+  - raw error words ("network") replaced by `messageFor` sentences in every view;
+  - masked amounts use the muted text colour.
+  Not yet re-verified in a browser.
+- **BT-008-01 budgets and forecast, BT-008-02 recurring costs and bills (API):** see the requirement register for scope. Bills are versioned (changes effective from a date, never rewriting recorded entries), with skips, pauses, reminders, overdue detection and a reviewable draft per occurrence. Budgets and bills are in backups and caller-scoped restores (owner: shared budgets and bills on shared accounts; member: own private).
+- **Terry's new mandatory requirements (2026-09-13)** are registered as BT-008-02, BT-001-05 (no destructive deletion, immutable history), BT-007-01 (managed merchants), BT-011-03 (TaskTracker theme picker) and BT-011-04 (colour-coded expense types). Azure hosting already follows his instruction (one dedicated SWA with a preview environment; no Staging app; DNS and Production untouched).
+- **Evidence:** `npm test` 8/8 repository, 105/105 API, 20/20 app; `npm run validate` ok (20 routes).
+
+## Checkpoint F — managed merchants and the non-destructive audit (2026-09-13)
+
+- **Committed before this:** `773c979` (budgets, bills, forecast API; retest fixes; new requirements). Pushed.
+- **BT-007-01 merchants:** built in the API and UI (see the register). Breaking API change, deliberate and traced: `transactions` and `recurring` no longer accept free-text `payeeName`; merchants are created on `/api/payees` (inline from quick entry) and linked by `payeeId`. `payees` has no DELETE; `?action=archive|reopen` instead. All fixtures, tests and the dev seed were updated.
+- **BT-001-05 audit:** `docs/reviews/2026-09-13-non-destructive-audit.md`. Remaining high items: history/audit caps (A1–A4), bill unskip/resume (A5–A6), restore replace (A7), transaction amendments (B1–B2), budget line versions (B13), the 12 MB cap (E1).
+- **TaskTracker theme picker archaeology (for BT-011-03):** `T:` `main` `a1ec150` `app/js/ui/themepicker.js` — a toggle button with a swatch and the current name, opening an in-flow `role=listbox` of option buttons with swatch circles (`.menu__swatch` via `--menu-swatch` CSSOM var, `.themepick*` CSS). It has no arrow/Escape/focus-return handling; BudgetTracker's port will add those as documented adaptations. TaskTracker has 21 palettes; BudgetTracker has 8 of them (same ids and swatches).
+- **Bills UI (BT-008-02):** new Bills tab — overdue / due soon / next-30-days cards, a "Needs attention" list with Review and record and Skip, all bills with schedule and next due, and dialogs for review-and-record (edit amount, date, merchant, category, notes for that payment only), skip, pause/resume, history (terms over time, skips with undo, pauses, changes) and the bill editor (term changes take effect from a chosen date; bills are ended, never deleted). Headless-Edge screenshots of Merchants, Bills and Transactions at desktop light/dark and narrow widths plus quick entry showed no console problems. Found and fixed from the screenshots: a stale dev-server process served the old payees handler (the Merchants tab appeared empty); the dev server was restarted by its own verified PID only, and the tab now treats a missing status as active.
+- **Committed:** `e34c1ca` (merchants, Bills tab, theme picker, audit doc). Pushed.
+- **Planning UI (BT-008-01):** new Planning tab — budgets (per-category planned, carried over, spent, still owed, available; decorative meters with every figure also as text; editor), cash flow (horizon, buffer, warnings naming the bills, expected/cautious/hopeful per account, assumptions) and what-if (one-off amount, changed or excluded bill; calculated on a copy, never saved, shown beside the baseline). The dashboard shows a Needs attention notice (overdue and due-soon bills, 30-day cash-flow warnings). Fixed from screenshots: liabilities no longer trigger below-zero warnings (tested); budget and merchant totals are neutral amounts, not the money-in colour.
+- **Unexplained local change:** `README.md` has an uncommitted one-word edit ("TaskTracker rich text editor" → "rich text editor") that this session did not make. It is left unstaged for Terry.
+- **Dev data:** the fictional seed now creates merchants, six bills (one overdue) and a shared budget. The previous fictional data was moved to `.local/dev-data-pre-merchants-20260913`, not deleted.
+- **Evidence:** `npm test` 8/8 repository, 116/116 API, 25/25 app; `npm run validate` ok (20 routes).
+
+## Checkpoint G — security review fixes, colour-coded categories, non-destructive fixes (2026-09-13)
+
+- **Committed before this:** `b62c790` (Planning tab). Pushed.
+- **Independent security review** of bills, budgets, forecast and merchants (`docs/reviews/2026-09-13-security-review-bills-merchants.md`): 1 High, 5 Medium, 5 Low, info; no cross-workspace or site-admin path to financial data. All fixed with regression tests in `api/test/security-b.test.js`: restores never leave dangling bill references and replace keeps directory records (SEC-B1, High); the forecast counts a bill only for viewers of its source account (B2); bill amount and count caps plus per-account/per-budget overflow containment (B3); schedules jump to the requested range and dates are limited to 1900–2200 (B4); the member quota counts merchants, bills and budgets (B5); one live recording per occurrence (B6); bills on deleted accounts are gone (B7); aliases only for fully visible merchants (B8); private budget counts stay in scope (B9); the merchant creator shortcut ends at first use (B10); sharing a merchant hides earlier history and account ids (B11); private transfer destinations are not identified and permission is checked before existence (B12).
+- **BT-011-04 colours:** see the register. Also: `api/_shared/colors.js`, categories handler, preference validator, `app/js/core/categories.js`, pickers in My settings and Workspace.
+- **BT-001-05 progress:** history/audit truncation removed; bill unskip/resume append-only; replace keeps categories and merchants. Committed as `ab27260`.
+- **Transaction amendments (after `ab27260`):** before/after values with author, time and reason for every entry change; reasons required for financial corrections, un-reconciling and deletions; reversals for reconciled entries (idempotent); history endpoint and UI (Reason field, delete dialog, Reverse, History, Reversed/Reversal badges). Breaking API change, traced: DELETE and financial PATCH now need `reason`; all tests updated. ADR-003 (partitioning) proposed. Browser verification of the new dialogs waits for the UX/accessibility reviewer to finish with the dev server. Committed as `af52dba`.
+- **Budget plan versions (audit B13)** and the governance update: CLAUDE.md, AGENTS.md, README.md and FOUNDATION_DESIGN.md (schema v1 additive changes) now state Terry's rules — no physical deletion, amendments, merchants by id, versioned bills, colours by id, the theme picker, and the single-SWA hosting constraints. The README commit includes the one-word edit that was already uncommitted in the working copy. Committed as `1de1b58`.
+- **Account lifecycle (audit B8, B9, D1):** close/reopen actions with revision and reason; closed accounts refuse new entries, transfers in, bills and bill payments but stay listed with their history; removal needs a reason; every account edit keeps before/after values. Breaking API change, traced: `PATCH accounts` no longer accepts `status`; `DELETE accounts` needs `reason`. UI: Close/Reopen on the Accounts page; closed accounts are not offered in quick entry or the bill editor. Committed as `a9e2b5b`.
+- **UX/accessibility review 2** (`docs/reviews/2026-09-13-ux-a11y-review-2.md`) of Bills, Planning, Merchants and the pickers: 1 Serious (focus lost after dialog actions), 11 Moderate/Minor accessibility and 17 usability findings; all fixed except UX2-008 (partial). Evidence: `app/test/modalfocus.test.js`; headless-Edge screenshots after the fixes.
+- **New requirement BT-011-05 (contextual icons, Terry 2026-09-13)** registered; TaskTracker icon archaeology in progress.
+- **Contact lifecycle (audit B12):** archive and restore (reason optional) instead of deletion; before/after history on shared and private contacts, private history visible only to its owner; archived contacts out of selectors and the default list (`includeArchived=1` shows them).
+- **Evidence:** `npm test` 8/8 repository, 134/134 API, 35/35 app; `npm run validate` ok (20 routes).
+
+## Checkpoint H — preview verified at 579568c, contextual icons (2026-09-13)
+
+- **Preview verified:** `deploy.ps1 -Environment preview` of `579568c` exited 0; `/api/site-settings` on the preview host reports `app.commit` `579568c534d7962fe8b47eb39fce4ca8ae68b770`, environment `preview`; the root serves the CSP; anonymous `/api/me` is 401.
+- **BT-011-05 contextual icons (Partial; see the register):** server catalogue `api/_shared/icons.js` (57 stable ids, defaults by type, choice validation, `site/icons.json` with switched-off built-ins and custom icons), validated upload `api/_shared/icon-svg.js` (shape data only, re-checked before serving), route `/api/icons` (21 routes); icon fields on categories (with `defaultIcon`), accounts, merchants, bills, budgets; workspace type icons; personal `categoryIcons`. Client registry `app/js/ui/icons.js` (TaskTracker `icon()` conventions, fallback instead of throw, custom shapes re-validated), icon picker on the theme-picker pattern (`app/js/ui/iconpicker.js`), icons across Dashboard, Transactions (direction icons), Bills, Planning, Accounts (new Edit dialog: name and icon), Merchants, the merchant picker, Workspace (category icons, Icons for types) and My settings (personal category icons; the site catalogue for site administrators, reachable without a workspace). Archaeology recorded in `docs/TASKTRACKER_REUSE.md`; schema additions in `docs/FOUNDATION_DESIGN.md`; rules in CLAUDE.md and AGENTS.md.
+- **Dev tooling:** `scripts/dev/screenshot.mjs` gained `--full 1` (whole page) and `--interact iconpick`.
+- **Evidence:** `npm test` 8/8 repository, 163/163 API, 47/47 app; `npm run validate` ok (21 routes); headless-Edge screenshots (light, dark, 390 px) of every view as Alice and of My settings as the site administrator, no console errors.
+- **Known limits:** native selects (category/account fields, filter options) cannot show icons; debt, trips, reports, exports and charts do not exist yet, so icons there wait for those features.
+- **Committed and pushed as `4bddb78`.** Then the independent security review (`docs/reviews/2026-09-13-security-review-icons.md`): no Critical/High/Medium. Fixed with tests: SEC-I1 prototype-named categories (own-property lookups in `icons.js` and `colors.js`, which also fixes a pre-existing 500 when creating a category named "constructor"), SEC-I2 retired icons no longer use up the working limit (offering one again counts; 500 stored in total), SEC-I3 type icons cleared synchronously on workspace switch, SEC-I5 stricter validator; SEC-I4 partly (6 MB catalogue cap, refused not trimmed). Open: SEC-I4 catalogue ETag/partitioning; SEC-I7 question for Terry — should personal display preferences (colours, icons) keep a change history under BT-001-05?
+- **Evidence after the fixes:** `npm test` 8/8 repository, 166/166 API, 48/48 app; `npm run validate` ok (21 routes).
+- **Preview verified at `f6e1cec`:** `deploy.ps1 -Environment preview` exited 0; `/api/site-settings` reported `f6e1cecba3cb90521a4334f7541d9ce5f14ef771` about 30 s after the static files updated (the API lags the static content briefly); anonymous `/api/icons` is 401; `app/js/ui/icons.js` is served. Signed-in checks on the preview still need the Google redirect URI (Terry).
+
+## Checkpoint I — restore replace never drops records (BT-001-05 A7, 2026-09-13)
+
+- **Behaviour:** a replace restore still makes the lists match the backup inside the caller's scope, but every current record it replaces with a different backup version, or that did not exist when the backup was made, is moved whole into the workspace's append-only `superseded` collection with `collection`, `reason` (`replaced-by-backup` / `not-in-backup`), `archiveId`, `at` and `by`. Identical records are untouched. Every replace or merge appends to `restores[]` with its recovery point and the number set aside. The preview reports `excluded.setAside` and says records are set aside and kept, not removed. No route exposes `superseded` yet; an authorized history view is a follow-up.
+- **Files:** `api/_shared/backup.js` (`plan`, `finalize`), `api/restore/handler.js`, `app/js/ui/views/workspace.js` (preview wording), `api/test/backup.test.js`, audit row A7, register BT-001-05, schema additions table.
+- **Evidence:** `npm test` 8/8 repository, 167/167 API, 48/48 app; `npm run validate` ok (21 routes).
+
+## Checkpoint J — lifecycle and history for bills, budgets, members and workspaces (BT-001-05, 2026-09-13)
+
+- **B14 bills:** detail edits (name, type, notes, due-soon window, end date, icon) keep before/after `changes` in the bill history; the Bills history dialog shows them.
+- **Budgets:** `DELETE` archives with an optional reason (history, `deletedBy`, `archiveReason`); `GET ?includeArchived=1` lists archived budgets; `POST ?action=restore` restores (revision-checked). Name and icon edits keep before/after with an optional reason.
+- **B15 members:** append-only member history of role changes, removals (optional reason), departures and rejoins (from the invitation accept); `GET members?includeFormer=1` for owners and managers lists former members with their history (403 for others).
+- **B16 workspaces:** name and settings edits keep before/after with an optional reason (an unchanged save records nothing); archive and restore append to `lifecycle` with who, when and reason; owners and managers see both on `GET ?id=`.
+- **B11** was already fixed by the category colour/icon work (audit row updated).
+- **Evidence:** `api/test/lifecycle-b.test.js` (4); `npm test` 8/8 repository, 171/171 API, 48/48 app; `npm run validate` ok (21 routes).
+- **Open:** UI for archived budgets, former members and workspace history; ADR-003; A8 ruling; preference history (awaiting Terry, SEC-I7).
+
+## Checkpoint K — icon UX/accessibility review fixed (BT-011-05, 2026-09-13)
+
+- Independent review `docs/reviews/2026-09-13-ux-a11y-review-icons.md`: UXI-1 (Serious: Escape in a picker inside a dialog closed the dialog) fixed — `escapeBelongsToControl()` in `app/js/ui/modal.js`, Escape on an open picker toggle — and verified with a real key press in Edge (`scripts/dev/screenshot.mjs --interact iconpickesc`). UXI-2 type-ahead and paging in the shared picker; UXI-3 compact grouped category rows on full-width cards with colour-tinted icon previews; UXI-4 refund/reversal text for screen readers (`amountWithDirection` moved to `components.js`); UXI-5 focus restore and a named fieldset in the site catalogue; UXI-6, UXI-8 (artwork and labels; Transport merchant default Train), UXI-9 fixed; UXI-7 and UXI-10 accepted with reasons; UXI-11 partly.
+- **Evidence:** `npm test` 8/8 repository, 171/171 API, 52/52 app; `npm run validate` ok (21 routes); full-page screenshots of Workspace, My settings and Dashboard.
+- **Preview verified at `bce2e1a`** (includes checkpoints I–K): `deploy.ps1 -Environment preview` exited 0; `/api/site-settings` reports `bce2e1a1e493634438cebd74fe0cbd4cc4bced32`; anonymous `/api/icons` is 401. Signed-in checks still wait for the preview Google redirect URI (Terry).
+
+## Checkpoint L — lifecycle UI (BT-001-05, 2026-09-13)
+
+- Planning: Archive on each editable budget (optional reason, confirmation that the plan and history stay) and an "Archived budgets" section that lists archived budgets with date and reason and restores them.
+- Workspace: "Former members" (membership history of each former member: role changes, removal or departure with reason, rejoins) and "Workspace changes" (name and settings before/after, archive and restore) for owners and managers; others see a short explanation. Activity labels for budget archive and restore.
+- **Evidence:** `npm test` 8/8 repository, 171/171 API, 52/52 app; `npm run validate` ok (21 routes); full-page screenshots of Planning and Workspace, no console errors.
+
+## Checkpoint M — restore history (BT-001-05 A7 follow-up, 2026-09-13)
+
+- `GET /api/backups?workspaceId=&action=history` for anyone who may restore (viewers, outsiders and site administrators get 404): the restore log and the records each replace set aside. A set-aside record is listed only if the caller could see it (entries and bills through their account, accounts by their access rule, merchants and budgets when shared or their own); only summaries are returned; a restore's count is shown only to the person who ran it. Workspace → Backups has "Restore history and records set aside", loaded when opened.
+- **Evidence:** new test in `api/test/backup.test.js` (owner, member, viewer, site administrator, outsider); `npm test` 8/8 repository, 172/172 API, 52/52 app; `npm run validate` ok (21 routes).
+- **Preview verified at `cb2f168`** (includes checkpoints L and M): `deploy.ps1 -Environment preview` exited 0; `/api/site-settings` reports `cb2f16884aaffb5b8ad8288cb72fd4e7ccba27e2`; anonymous `/api/icons` is 401.
+- **SEC-I4 (mostly fixed):** `GET /api/icons` returns `catalogEtag`; the store sends back the version it holds and reuses its copy when the answer is `catalog: null`, so switching workspaces no longer re-downloads the catalogue; administrators always get the full view. Open: partition the catalogue's audit/history. Evidence: new test in `api/test/icons.test.js`; `npm test` 8/8 repository, 173/173 API, 52/52 app; `npm run validate` ok (21 routes).
+- **Preview verified at `df61ec0`:** `deploy.ps1 -Environment preview` exited 0; `/api/site-settings` reports `df61ec024125b2fe0808d118564656c33021260f`.
+- **Terry's decisions (2026-09-13):** (1) money-direction arrows show only money in (↑) or out (↓), never both ways — transfer legs now use their own sign and read "Transfer to/from <account>" with that account's icon; (2) personal display preferences (colours, icons, settings) need no change history — SEC-I7, A9 and the preference part of B18 are resolved; (3) the preview's Google redirect URI has been added — verified anonymously: `/.auth/login/google` on the preview hands off to `accounts.google.com/o/oauth2/v2/auth` with `redirect_uri` `https://polite-plant-03bb7570f-preview.eastus2.3.azurestaticapps.net/.auth/login/google/callback` (a client must keep the SWA nonce cookie, or it loops on `/.auth/login/google`). Completing a sign-in needs Terry's own Google account.
+- **Transfer arrows (Terry's decision 1):** `directionOf` no longer returns the two-way icon; `transferLabel` in `app/js/ui/components.js` names the other account ("Transfer to/from …", "another account" when hidden) with its icon, in Transactions and on the Dashboard; tested (`app/test/icons.test.js`) and seen in headless Edge.
+- **BT-011-02 archaeology done:** `docs/reviews/2026-09-13-editor-archaeology.md` (stored format, rendering, hardening, CSP, vendoring and licences, validator conflict, recommended reduced schema and plan).
+- **Preview verified at `2ec9c10`:** `deploy.ps1 -Environment preview` exited 0; `/api/site-settings` reports `2ec9c105464abc3f9971b047a69b6c31d574448f` (in/out-only direction arrows live).
+- **BT-011-02 step 1 — server rich-text validator:** `api/_shared/richtext.js` (envelope `{format:"tiptap", v:1, doc}`; reduced closed schema: doc, paragraph, heading 1–3, bullet/ordered/task lists, blockquote, horizontal rule, hard break, text; marks bold, italic, underline, strike, link; per-node content model; declared attributes with closed values and canonical defaults; marks only on text, once each; non-empty text without control characters; links http/https/mailto stored exactly as cleaned, ≤ 2,048; ≤ 64 KiB, depth 12, 2,000 parts, the field's character limit; refuse, never strip; canonical rebuild; `plainText()` for search and limits) and `fields.richText()` (plain strings unchanged via `text()`, empty document stored as `''`). Not wired into any handler until the client can display documents. Evidence: `api/test/richtext.test.js` (9); `npm test` 8/8 repository, 182/182 API, 53/53 app; `npm run validate` ok (21 routes).
+- **New workspace… (Terry's question, 2026-09-13):** the API always supported several workspaces, but the UI offered creation only when a person had none. The account menu now has "New workspace…": a dialog with the same fields as the first-workspace page (shared `workspaceFields()` in `app/js/ui/views/landing.js`), defaulting to Personal, one idempotency key per opening, errors inside the dialog, and the new workspace becomes the current one. Evidence: `app/test/newworkspace.test.js` (2; the DOM double gained `contains()`); headless-Edge screenshots of the menu and dialog (`--interact newws`); `npm test` 8/8 repository, 182/182 API, 55/55 app; `npm run validate` ok (21 routes).
+- **Raw control characters:** five source files held raw control or invisible characters meant as escapes (three showed as binary in Git); now escapes, and `scripts/validate.cjs` rule 9 forbids them (committed `e52d266`).
+- **Local dev data note:** two large fictional entries dated 2026-09-13 in the local "Fictional Household" were added through the app as the dev user Alice at 15:43–15:44 UTC (ordinary use of the local server, not by an agent). Offer to Terry: move the dev data aside and reseed.
+- **Next increment started:** BT-011-02 Tiptap editor — TaskTracker `T:` `main` is still `a1ec150` (freshest; `Z:` `main` is `40ced2a`, 2026-08-26); read-only archaeology of its editor modules, vendoring and tests is in progress.
+
+## Checkpoint N — first Production release in progress (2026-09-13)
+
+- **Terry's instructions (2026-09-13):** "push to staging and then production". "Staging" means the existing **preview** environment (no separate staging; saved as a standing preference). Terry granted a **one-time** authorization to merge PR #1 (feature/project-foundation → main) for this release — not a standing permission — and authorized provisioning Production storage and settings, with the Production backup key saved under the ignored `.local/` for his offline escrow.
+- **Built since Checkpoint M:** "New workspace…" (`156b6e2`); BT-011-02 step 2 — vendored Tiptap bundle from exact pins with licence notices (33 packages, all MIT), `validate.cjs` rule 10 registering it (`8c1aa27`); the generator moved to `scripts/vendor-tiptap.mjs` because `.gitignore`'s `build/` rule had kept `scripts/build/` out of the commit and CI failed (`56497d8`); `scripts/scan-staged.cjs` allows an address only on a copyright line in a vendored bundle's opening comment (tested); no focus ring on page titles after refresh (Terry's report): focus moves to the heading only on in-app navigation, and programmatically focused headings show no ring.
+- **Release gates so far:** `npm test` 9/9 repository, 182/182 API, 57/57 app; `npm run validate` ok (21 routes); CI `foundation-tests` and `secret-scan` pass on `56497d8`; PR #1 marked ready (merge state clean). Independent release-readiness review of `56497d8` requested.
+- **Production steps:** (1) Terry runs `provision.ps1 -Environment production -AuthorizedProduction` (typed confirmation); (2) `configure-settings.ps1 -Environment production -AuthorizedProduction` with the key escrowed to `.local/`; (3) merge PR #1; (4) Terry runs `deploy.ps1 -Environment production -AuthorizedProduction` from `main` (typed confirmation); (5) verify separately. Terry sets the Production `GOOGLE_CLIENT_ID`/`GOOGLE_CLIENT_SECRET` and redirect URI; DNS unchanged; WORM retention on Production backups still needs his decision.
+
+- **Release-readiness review of `56497d8` (independent): NOT READY** for Production with real data. Code gates green. Blockers: B1 no signed-in check on any deployed environment (Terry's preview smoke test needed); B2 candidate not on preview — **resolved** (preview verified at `56497d8`, code identical to `bd80d3e`); B3 no tested backup-key escrow (read the key back to `.local/` and prove it with `scripts/recovery/drill.cjs` on a Production archive, then move it offline); B4 no automated backups — **accepted by Terry for launch** (on-demand backups plus the pre-restore recovery point; scheduled backups next); B5 no independent security/financial review of recent features — **Terry: run full reviews first** (both launched on `bd80d3e`); B6 no rollback procedure — **written** (`docs/DEPLOYMENT.md`, "Rollback and schema compatibility"). Deploy-time conditions noted: site admins must be listed by Google user id (the roles lookup matches subjects, not email) — add Terry's id from `/api/me` after first sign-in; decide shared Application Insights and OAuth client; add a Production failure alert; check Azure's Node runtime (config says node:20, which is past upstream end of life); open sign-up has no rate limiting.
+- **Terry's decisions (2026-09-13, second round):** full independent reviews before Production; accept on-demand backups for the first release.
+- **Independent reviews of `bd80d3e` (2026-09-13).** Security: no Critical/High; SEC-R1..R9 fixed with tests on this branch (restore size cap and set-aside records counted in member allowances; no-change restores refused and members limited to 3 restores a day; archive ids in restore history only for managers or the restorer and non-owner restores audited privately; replace keeps contacts; 20 active created workspaces per person; staged-scan banner exemption narrowed; vendored folder may hold only generated files and CI rebuilds the bundle byte-for-byte; rich text refuses invisible/bidi characters and links with credentials; hidden-character rule covers agent folders and hooks). SEC-R10 (site admins by email) is a configuration item: preview's `BT_SITE_ADMINS` still holds an email, so Production must use Terry's provider subject from `/api/me`. Financial: 3 High, 6 Medium, lows. FIN-R5 (replace dropped a record shared after the backup), FIN-R17 (blocker names the failing rule), FIN-R15 in backup balances and the FIN-R2 invariant (a reversal and its original share deletion state) fixed here; FIN-R1..R4, R6..R9, R11..R16 are being fixed by a separate implementation agent in an isolated worktree, to be merged and re-tested; FIN-R10 (two "current balance" definitions) deferred as known debt. Remaining rate-limiting gap recorded in `docs/DEPLOYMENT.md`.
+- **Financial fixes merged (2026-09-13).** The implementation agent's `6347007` (FIN-R1..R4, R6..R9, R11..R16, 23 API and 5 app regression tests, each mutation-checked) was merged as `baebb08`; `ff5d9c5` finishes FIN-R4 (the backup occurrence invariant uses `bills.recordingCounts`, so a reversed bill occurrence can be recorded again once; the temporary `recording_reversed` guard is gone). Gate at `ff5d9c5`: 10/10 repository, 216/216 API, 62/62 app, validate ok; CI green on `6962bfa` and `ff5d9c5` (including the Linux rebuild of the Tiptap bundle, byte-identical).
+- **Preview deployed at `ff5d9c5`** from a clean tree (deploy gate re-ran every test). Verified separately: `/api/site-settings` reports environment `preview`, commit `ff5d9c55dc21…`; anonymous `/api/icons` returns 401. Not yet verified: signed-in flows (B1, Terry's smoke test).
+- **Independent retests of `ff5d9c5` running** (security and financial). Production still waits for: the retests and any fixes, Terry's preview smoke test and his Google user id for `BT_SITE_ADMINS` (SEC-R10), Production provisioning by Terry, key escrow with a recovery drill (B3), then the PR #1 merge and Terry's Production deploy. The merged agent worktree `.claude/worktrees/agent-afa1b4843db192131` (branch `fix/financial-accuracy-review`) is untracked and can be removed; nothing in it is unmerged.
+- **Retests of `ff5d9c5` (2026-09-13).** Security: no Critical/High, privacy sound; SEC-R4/R6/R7 fixed, R1/R2/R3/R5/R8/R9 partial; new SEC-T1 (parallel restores each wrote a recovery point) and SEC-T2 (member delete/restore cycles grew the workspace past allowances) Medium, T3..T9 Low. Financial: NOT READY — FIN-R5 partial; new FIN-T1 High (replace-then-merge re-attached a reversal and could create money), FIN-T2 Medium (regression from the FIN-R15 backup change), FIN-T3/T4/T5 Medium, T6..T8 Low. **All fixed with tests** (BT-006-04; `api/test/security-retest.test.js`, `api/test/financial-retest.test.js`): gate 10/10 repository, 233/233 API, 62/62 app, validate ok. Preview was deployed at `1da7da6` and verified (`/api/site-settings` commit `1da7da67…`, environment preview; anonymous `/api/workspaces` 401); CI green.
+- **Final retests of `1da7da6` (2026-09-13).** Security: no Critical/High, privacy invariants hold, 8 of 9 SEC-T fixes verified; SEC-U1 Medium (contacts, contact edits and grants not counted) plus Lows U2..U6. Financial: **ready for real money for the features that exist**; all FIN-T fixes mutation-checked; Lows FIN-U1..U3. All fixed with tests except SEC-U4 (accepted Low; see BT-006-04). Gate: 10/10 repository, 239/239 API, 62/62 app, validate ok. Preview then deployed and verified at `e00790c` (CI green). **Security recheck of `e00790c`:** no Critical/High, privacy held on every path; SEC-U1/U3/U5/U6 fixed, U2 partial; new SEC-V1 Medium (a manager could use up the headroom with on-demand backups and freeze the owner out) plus Lows V2..V6 — all fixed with tests except **SEC-V3, which needs Terry's decision** (member allowances only grow and cannot be raised; roughly 2,400 entries a year for a very active member). Fixes committed as `3474418` (gate 10/10 repository, 245/245 API, 62/62 app, validate ok; CI green); preview deployed and verified at `3474418` (`/api/site-settings` commit `34744188…`, environment preview; anonymous `/api/workspaces` 401). Terry paused work after this deploy; a narrow recheck of the SEC-V fixes was restarted on resume. **Recheck of `3474418`:** SEC-V1 only partial — uncapped invitation acceptance could still freeze the owner out (Medium) — plus Lows L1..L7; all fixed with tests except L1 (accepted Low; see BT-006-04). **Terry decided (2026-09-13): owners set each member's storage allowance** (SEC-V3; implemented with choices of 1, 2, 4, 8 or 12 MB). Terry's Google subject was received and is kept only in the ignored `.local/deploy-target.json` (personal identifier, never in Git); preview `BT_SITE_ADMINS` now holds the subject instead of the email (SEC-R10). Terry's preview `/api/me` shows an empty display name (Google sent none or it was refused); cosmetic. **Security check of `41ec172`: gate passes** (invitation cap and L2..L7 verified; allowance-feature Lows LA1..LA4 fixed with tests, LA5 cosmetic and accepted). Preview anomaly on the `41ec172` deploy: the new frontend was served and `BT_COMMIT` was set, but the API kept reporting `3474418` for over ten minutes and the SWA CLI printed no final success line — redeploy and verify the API directly (and treat a missing CLI success line as a failed deploy). The LA fixes were committed as `841d151` (gate 10/10 repository, 257/257 API, 62/62 app, validate ok; CI green) and preview was redeployed: the SWA CLI printed its success line, the API reported `841d151` within 15 seconds, the new frontend was served and anonymous `/api/workspaces` returned 401 — the anomaly did not recur. Remaining before Production: Terry's preview smoke test (B1) and his Google user id for `BT_SITE_ADMINS` (SEC-R10), Production provisioning by Terry, backup-key escrow with a recovery drill (B3), then the PR #1 merge and Terry's Production deploy. Known debt: FIN-R10 (two "current balance" definitions), request rate limiting, dates are UTC ("today" for someone in CEST between 00:00 and 02:00 is the previous day).
+- **Clarifications (release readiness of `00aee87`).** "8 of 9 SEC-T fixes verified" means SEC-T2 was only partial; its remaining gap became SEC-U1, fixed in `e00790c` and verified. SEC-U2 ("U2 partial") is closed: its remaining gaps (display names and emails) were fixed as SEC-V2 in `3474418` and verified by the check of that commit, with the control-character part as L5/L6 in `41ec172`.
+- **Release readiness of `00aee87` (independent): ready after the listed steps.** Code gates green; hygiene clean (no provider subject or personal address in the tree or history). Findings acted on: D2 the reported commit came from a setting — now stamped into the artifact (`api/build.json`, `version.js`); B3 must follow the Production deploy (a Production archive is needed) and gate real data, not the deploy; D1 the Production deploy requires `git status --porcelain` empty and a local `main`, so the merged agent worktree `.claude/worktrees/` must be removed (or a fresh clone used) before Terry deploys.
+- **Terry's decisions (2026-09-13, third round):** Node 22; Production shares Application Insights and the Google OAuth client with preview for now; version-level WORM, 35 days, unlocked, on the Production backups container; the listed limits accepted for the first release (BT-003-05).
+- **Production infrastructure (2026-09-13).** Terry ran `provision.ps1 -Environment production -AuthorizedProduction`: `stbudgetprd01` (data) and `stbudgetbkprd01` (backups) created; verified read-only: StorageV2, Standard_LRS, TLS 1.2, HTTPS only, no public blob access, no cross-tenant replication, versioning, soft delete 14/35 days. `configure-settings.ps1 -Environment production -AuthorizedProduction` run by the agent: `BT_ENVIRONMENT=production`, `BT_SITE_ADMINS` equals Terry's subject, storage and backups point at the Production accounts, backup key `prd1` generated (never printed); Google settings were already present (shared client). Key escrowed with `escrow-keys.ps1` to the ignored `.local/escrow/` (key id `prd1`, fingerprint `690c7a6d38e4ac1c`); the drill on a Production archive and moving the file offline follow the Production deploy. `backups` container created with version-level immutability and a 35-day unlocked default policy (verified).
+- **Recheck of `841d151` (LA fixes): security gate PASS.** LR1 fixed with a test (`37ea7aa`); LR2 cosmetic and accepted (BT-006-04). CI green on `d0b08cc`.
+- **Terry's preview smoke test (B1, 2026-09-13/14), in progress on `539231c`.** The stale edit in a second tab was refused (as designed). Found and fixed (BT-002-04): "New workspace" was hard to find (now also beside the workspace picker); Restore was disabled without explanation (written hint and styled hover tooltip); a merge after deleting one entry and adding another reported no changes — correct, because nothing is ever deleted and merge adds only missing records, but unexplained — so the preview now reports differing records, keeps Restore unavailable when nothing would change, and merge offers "Also bring back entries deleted since this backup" (unticked by default). Own backups show as "You". Terry's display name is empty on preview; to check `/.auth/me` claim types. B1 continues on the next preview deploy.
+- **Terry's decision (2026-09-14): build shared expenses (BT-009) BEFORE the first Production release.** Trigger: he created a workspace of kind `group` and was told to add an account first ("if its a shared expense group.. so i really need an account?"). Increment 1, in progress by an implementation agent in a worktree: participants (members and workspace contacts), group expenses with multiple payers and equal/amount/percentage/share splits (deterministic rounding), void/edit with history, settlements (reported → confirmed, disputed), derived balances with pending amounts, suggested and direct settlements, and the brief's EUR 300 dinner rule as an optional same-workspace ledger link (own share as spending, the rest as an advance; repayment as a reimbursement). Pending increments are listed in BT-009 rows. Full security and financial reviews again before Production. Also in progress: TaskTracker's command picker for the workspace dropdown and other selects (Terry: "i want all my apps to have the same look and feel"). Meanwhile preview was verified at `b46baa5` (entries message fix: a new workspace without accounts now says "Add an account first" instead of calling its owner a viewer).
+- **Financial recheck of `00aee87`: ready for real money** for the features that exist; FIN-U1..U3 verified and mutation-checked; Lows FIN-W1..W3 accepted (BT-006-04). Both review gates now pass; what remains is Terry's preview smoke test and the release steps below.
+- **Process note (2026-09-13).** The `d0b08cc` preview deploy ran while tracked files were being edited for LR1. `deploy.ps1` checks for a clean tree only when it starts and then builds the artifact from disk, so that preview build may have included the uncommitted LR1 change under the `d0b08cc` label. It is superseded by the next preview deploy from a clean commit. **Never edit tracked files while a deploy runs.**
+
+## Checkpoint O — TaskTracker's command picker for the workspace dropdown (BT-004-04, 2026-09-14)
+
+- **Terry's request (2026-09-14):** "why dont we do like we do on the tasktracker.. im all for consistency" (the workspace dropdown with a pinned "+ New workspace"), widened to "use the same component. and any drop down that possible to use, can use that too" / "i want all my apps to have the same look and feel". Done in order: step 1 (the workspace picker) is committed on its own; step 2 (the other dropdowns) follows as separate commits.
+- **Where:** built on branch `feature/workspace-picker` in the agent worktree `.claude/worktrees/agent-a8b61420a3f6b4baf`; fast-forwarded into `feature/project-foundation` as `2ccc5a3` (2026-09-14), pushed, gate re-run on the merged tree (10/10, 266/266, 131/131, validate ok) and deployed to preview: the SWA CLI printed "Project deployed", `/api/site-settings` reported commit `2ccc5a3…`, and the picker files served by preview are byte-identical to the artifact.
+- **Source:** TaskTracker `T:` `main` `fb24a41`, read with `git show` only. Dependency mapping and deviations: `docs/TASKTRACKER_REUSE.md` ("Command picker and workspace picker").
+- **Built:** `app/js/core/popover.js` and `app/js/ui/popup.js` (ported unchanged), `app/js/ui/commandpicker.js` (ported with adaptations A1–A3: hidden select out of the tab order, combobox with an id-based active descendant, keyboard-operable pinned create button; a height cap only when the panel does not fit), `app/js/ui/workspacepicker.js` (O = owner, M = any other role, the exact role spelled out; no G/S; archived kept as "(archived)"; re-choosing the current workspace does nothing, as the old select), the CSS, and the shell: the header is built once and refreshed in place, choosing goes through `store.actions.selectWorkspace`, "+ New workspace" opens `openNewWorkspace({ store, name })` with the search text, the separate button from `7b6d1c2` is gone, and "New workspace…" stays in the account menu. `scripts/dev/screenshot.mjs` gained `--interact wspick|wspickdark|wspicknarrow|wspicksearch|wspickkeys`.
+- **Found and fixed during verification:** a one-row list showed a scrollbar (the rounded height cap; seen in headless Edge); choosing the current workspace again would have reset and reloaded every slice (caught reviewing the tests); the test double stopped bubbling when a handler removed its element, which made the Escape test unable to fail (it now fixes the propagation path first, as the DOM does); assertions that handed double nodes to `assert` hung instead of failing (now boolean identity checks).
+- **Evidence:** rebased onto `origin/feature/project-foundation` `39ed5e0` (upstream's three commits touched no file of this change except one separate line in this file); on the rebased tree `npm test` 10/10 repository, 266/266 API, 131/131 app (exit 0) and `npm run validate` ok, 21 routes (exit 0); 18 mutants in a scratchpad copy all killed by failing tests (owner letter, archived mark, announcement, spoken role, re-choose guard, the shell's selectWorkspace call, built-once header, name pre-fill, A1, A2, A3 twice, Escape propagation, select-on-move, search, height cap, outside press). Headless Edge 153 against a worktree dev server on 127.0.0.1:4381 (fictional seed): Alice (owner, O) and Bob (member, M) at desktop light, desktop dark and 390 px — panel inside the viewport, no horizontal overflow, no console problems; real key presses: Enter opens onto the search box, Escape closes with focus on the trigger, Tab reaches "+ New workspace", Enter opens the New workspace dialog with focus in its name field, Escape returns focus to the trigger.
+- **Not verified:** a real screen reader (NVDA/JAWS/Narrator), Windows High Contrast, touch devices, preview.
+- **Tooling debt:** on Windows `scripts/dev/screenshot.mjs` leaves its headless Edge running after `edge.kill()` (the debugging port stays taken); this session stopped only its own Edge processes, verified by their profile path under the worktree.
+
+## Checkpoint P — shared expenses without accounts (BT-009 increment 1, 2026-09-14)
+
+- **Built** by an implementation agent on `feature/shared-expenses` (worktree `.claude/worktrees/agent-adf107eba59d928e2`): `743c1a4` API, model, backup and restore, API tests; `c20a445` Shared expenses view, dashboard and empty states, app tests, fictional seed; `b340064` layout fixes and docs; `f3ce009` merge of `feature/project-foundation` at `2ccc5a3` (two append conflicts in `components.css` and `screenshot.mjs`, both sides kept; `shellworkspacepicker.test.js`'s fake store gained `refreshGroup`, no assertion changed). Key files: `api/_shared/groups.js`, `api/_shared/entries.js` (reversal helper shared with transactions), `api/group/handler.js`, `app/js/core/split.js`, `app/js/ui/views/group.js`. Design and rules: `docs/FOUNDATION_DESIGN.md`, BT-009 rows in `docs/REQUIREMENTS.md`.
+- **Rules in brief:** net = paid − share − received + paid out, confirmed payments only, nets per currency sum to zero; reported payments pending, disputed shown apart; suggestions count reported payments as made. The receiving member confirms or disputes (a manager or owner confirms payments to a contact); a payment recorded by its receiver starts confirmed; anything can be voided with a reason and stays listed. The optional own-account link (the brief's EUR 300 dinner rule) is visible to and written by its owner only; others' changes show "needs review". Reporting currency only in this increment. Shared expenses appear for group, trip and household workspaces.
+- **Merged** into `feature/project-foundation` by fast-forward (`f3ce009`), pushed. Gate on the merged tree: `npm test` 10/10 repository, 302/302 API, 141/141 app (exit 0); `npm run validate` ok, 22 routes (exit 0). Headless-Edge screenshots (Alice, household workspace, desktop light/dark, 390 px, Add expense dialog with the three-way rounding) with no console problems — after restarting the local dev server (PID 53160 → 87524, verified by command line): the old process predated the new `/api/group` route and answered 404, which first looked like a page error.
+- **Preview deployed at `f3ce009`** from a clean tree: "Project deployed" printed; `/api/site-settings` reports commit `f3ce0094…`, environment preview; anonymous `/api/group` 401; `views/group.js` byte-identical to the artifact.
+- **Independent reviews of `f3ce009` (2026-09-14).** Financial: **NOT READY** — group arithmetic, rounding, nets and the EUR 300 dinner are correct, but the optional own-account link is wrong in two High cases (two payers on one shared account corrupt its balance; debts cleared by netting stay "owed" and spending is understated) plus a Medium (changing the reporting currency strands open balances while the page says "settled up") and Lows (client-set `links.groupExpenseId`, a pending over-payment claim drives suggestions, the integrity check accepts splits the API refuses, "fewest payments" not minimal). Security: **FAIL, no Critical/High**, privacy and site-admin/owner boundaries held; Medium S1 (a restore brings back an ended personal link, and the next edit writes to the member's private account again), S2 (the "own account" link accepted shared accounts and other people's private accounts while saying "Only you see which account"), S3 (a member can forge a group link on an ordinary entry and lock the linker out); Lows S4–S8 (create-new copies other members' identifiers; a manager confirms a contact payment alone; one side voids a confirmed payment; payments to a viewer can never be confirmed; the integrity check ignores links).
+- **Decisions for the fixes (agent, 2026-09-14):** own-account entries are derived per person from the whole group — cash = the cash that person moved, spending = the sum of their shares of every expense whoever paid, outstanding = their group balance — with outgoing repayments recordable; links only to the caller's own private account and marked with their owner; group link keys server-only; restores never take links from an archive; create-new maps other members to "Former member"; the reporting currency cannot change while a group balance is open, and settlements are accepted and shown in any currency with an open balance; the payer never confirms their own payment and a reporter's confirmation is shown as such; after confirmation only the receiver or a manager voids ("confirmation withdrawn"); a viewer may confirm or dispute payments to themselves and manage their own link. Being implemented by an agent on `fix/bt009-review` (from `448da89`); then both reviewers recheck.
+- **Also in progress:** dropdown conversion (picker step 2) by an implementation agent in a worktree on `feature/picker-dropdowns` (shared adapter first, one view per commit, Shared expenses last). **Until the fixes land, do not use "Also record what I paid on my account" on preview.**
+- **Not verified:** UX, usability and accessibility reviews of Shared expenses; multiple payers and the direct view in a browser; a real screen reader. Known gaps (BT-009-11): someone who paid less than their share has only what they paid recorded as spending; an outgoing repayment cannot yet be recorded on one's own account; multi-currency groups, receipts, offline, imports, payment requests, split presets.
+
+## Checkpoint Q — recovery after an unexpected PC reboot; every dropdown on the command picker (2026-09-14)
+
+- **Recovered state (verified with Git, nothing reset, cleaned or recreated):** `feature/project-foundation` at `55b1ce4`, equal to origin after `git fetch`, only `.claude/worktrees/` untracked. Agent worktrees: `agent-a10427d47f45d3105` (`feature/picker-dropdowns`, 10 commits on `f3ce009`, clean) and `agent-a6d739a7c88fba6e7` (`fix/bt009-review`, 5 commits on `448da89` — `dcbd44e` finding 4/S3, `993b872` finding 6, `3048502` findings 5 and 7, `2e2a077` finding 8, `501f2ff` finding 3 — plus about 670 uncommitted lines in 12 files: the own-account rework and restore/permission fixes in progress). A patch of that uncommitted work and its status were saved to the ignored `.local/recovery/` before anything resumed. Older merged worktrees (`agent-a8b61420…`, `agent-adf107eb…`, `agent-afa1b484…`) and the placeholder `worktree-agent-*` branches are kept. Both agents were resumed from their saved transcripts in their existing worktrees.
+- **Dropdowns (BT-004-05) — done and merged.** The agent finished: the adapter `app/js/ui/selectpicker.js` and one commit per view, 12 commits in all (`0b0b8d1`…`6b37823`). 56 selects in 9 views now use the command picker (landing 2, Accounts 4, Merchants 5, My settings 4, Workspace 4, Transactions 10, Bills 11, Planning 8, Shared expenses 8); none left native besides the hidden selects inside the pickers themselves; the colour-aware theme/category pickers, the icon picker and the moon/sun control are unchanged. Categories, accounts, merchants and types now show their colour or icon in lists. Agent evidence: 60 new app tests, 106 of 107 mutants killed (the survivor is caught by the adapter's own test), 21 headless-Edge screenshots with no defects. Merged as `be25017`; gate on the merged tree 10/10 repository, 302/302 API, 201/201 app (exit 0), validate ok (22 routes); pushed. **Preview deployed at `be25017`:** "Project deployed" printed, `/api/site-settings` commit `be25017…` environment preview, `selectpicker.js` byte-identical to the artifact, anonymous `/api/workspaces` 401. Independent UX and accessibility reviews of the pickers are running.
+- **Shared-expense fixes (`fix/bt009-review`) — done and merged, rechecks running.** The resumed agent found its uncommitted work intact and finished: 10 commits on `448da89` (`dcbd44e` 4/S3, `993b872` 6, `3048502` 5+7, `2e2a077` 8, `501f2ff` 3, `f53dd6c` 1+2+S2 the per-person ledger model, `2136fe8` S1+S4 restores, `10c0a8d` S8, `9a771da` S5–S7, `1560587` docs incl. BT-009-12). Model (in `docs/FOUNDATION_DESIGN.md`): one link per person and currency in `doc.groupLedgers`, only to the caller's own private account; entries per expense = own share as `expense`, paid beyond it as `advance`, a share not paid as new kind `payable`; confirmed payments = `reimbursement` (receiver) and new kind `repayment` (payer); only entries the caller created are compared or reversed; advances − reimbursements − payables + repayments = the person's group net (the transactions summary reports it as `receivable`); additive, `schemaVersion` stays 1. Agent evidence: 40/40 mutants killed; hand-computed walkthrough (dinner 300 split 4 paid by Alice + taxi 100 split Alice/Bob paid by Bob, then 75/75/25 to Alice: both end with cash 375, spending 125, nothing owed). Merged as `e747d5e`: one conflict in `app/js/ui/views/group.js` resolved by hand (the fixes' own-account wording and layout with the command picker); `app/test/pickergroup.test.js` fixture account marked as the person's own private account and the new checkbox label, assertions unchanged. Gate on the merge: 10/10 repository, 335/335 API, 209/209 app (exit 0), validate ok (22 routes); staged scan clean (21 files); pushed. **Preview deployed at `e747d5e`:** "Project deployed", `/api/site-settings` commit `e747d5e…` environment preview, `views/group.js` byte-identical to the artifact, anonymous `/api/group` 401. Local dev server restarted on the merged code (PID 66460 → 49428, verified by command line). **Independent security and financial rechecks of `e747d5e` are running; until both pass, keep the preview warning: do not use "Also record my part on my own account".** Open question for Terry (from S5): in a group with a single owner, a payment the owner makes to a contact can never be confirmed — allow the owner to confirm it, given contacts cannot sign in?
+- **Rechecks of `e747d5e` (2026-09-14).** Security: **PASS WITH LOWS** — S1, S2, S3, S5–S8 fixed (probed: every non-own-private link refused; forged link keys 400; viewers act only on their own payments and link; no other member's account in 14 GET routes × 5 people); S4 partial (create-new still carries other people's subjects on non-group records such as transactions and bills — predates BT-009); new R1 Low (a group ledger link keeps writing after its account is shared) and R2 Info (the new kinds can be entered by hand). Financial: **NOT READY, one new Medium** — all 8 findings fixed and verified with 51 independent hand-computed checks (dinner and taxi netting, voids, corrections, partial payers, stop/relink, withdrawn confirmation, currency lock, fewest payments = 4 on the review's case); every consumer of `payable`/`repayment` correct; new N1 Medium ("Owed to others" can be chosen in quick entry and raises cash with no money received), N2 Low (group-created entries editable on Transactions), N3 Low (a payable shows a money-in arrow). **Being fixed** by the same implementation agent on `fix/bt009-recheck` (from `92b5a45`): payable and repayment become server-only kinds (refused on `/api/transactions`, left out of manual Kind choices), financial fields of group-created entries locked, no arrow for a payable ("No money moved"), sharing an account ends group ledger links to it and every sync requires the caller's own private account, create-new maps every other subject and member reference to "Former member" across all carried records. S5 single-owner contact payments left unchanged pending Terry. Then both reviewers recheck N1–N3, R1 and S4.
+- **UX review of the pickers at `be25017`: PASS WITH FINDINGS** (nothing lost from native selects). Medium: an open list does not follow scroll or resize; on touch every data list opens on its search box and raises the keyboard even for 3 items. Lows: closed-trigger keys, the icon picker's older trigger style beside the new ones, a search hint on locked fields, "Choose to account…" wording, a latent focus target after navigation. Decisions sent to the picker fix agent (`fix/picker-a11y`): reposition on scroll/resize/keyboard (close if the trigger leaves the viewport); search only above 12 items and, on a coarse pointer, open on the list; letters and ArrowUp open a closed trigger; the icon/theme picker triggers match the command-picker trigger's size and style inside form fields (behaviour unchanged); no hint on disabled triggers; natural placeholders; focus after navigation skips hidden selects.
+- **Command picker accessibility review of `be25017`:** partial, nothing critical — serious: at 400% zoom the list shows no option; moderate: an outside press drops focus out of the dialog, no announcement of results or "nothing matches", the panel sits outside the `aria-modal` dialog (VoiceOver risk, unverified); minor: the panel drifts on scroll, the trigger is a button rather than a combobox, some native keys missing. Being fixed by an implementation agent on `fix/picker-a11y` (from `e747d5e`); the UX review of the pickers is still running and its findings go to the same agent.
+- **Terry's feature check against a split-costs app (2026-09-14) and his rule:** "add the feature only if it dont exist… it can look different or be presented another way; we can work on look and feel after". Already present (no duplicates to be added): who paid (several payers), split equally/amounts/percentages/shares with per-person amounts, people without accounts (contacts), balances per person, who owes whom and how much (Settle up: fewest payments or keep who owes whom), settling each debt (the per-row "Record payment", then confirmation). Genuinely missing, to add after the fixes: expenses in another currency with a conversion rate in a group (BT-009-13); a receipt photo on an expense (BT-009-14, with receipts); a contact who later joins taking over their shared-expense history (BT-009-15 — verified absent: invitations know nothing of contacts, `api/_shared/people.js` resolves `contact:` and `member:` separately).
+
+## Checks run this checkpoint
+
+- `node --test test/*.test.cjs`: 7 passed, 0 failed (Node v22.23.1).
+- Scanner rules over all 49 tracked and untracked non-ignored files: 0 findings, after fixing 3 self-inflicted false positives in the scanner and its tests.
+- `gitleaks git` over the full history: no leaks, 10 commits. `gitleaks dir` flagged only gitleaks' own README example strings in the ignored `.local/bin`; those vendor docs were then deleted.
+- Python tomllib: all 9 TOMLs parse (8 read-only, 1 workspace-write).
+- The staged scan, commit and push result are recorded in the handoff message and PR, not here; confirm with `git log origin/feature/project-foundation -1`.
+
+## Unfinished work and blockers
+
+- **Application status.** The API (21 routes), the frontend shell and the preview deployment exist; no real financial data may be used until Terry authorizes Production. The feature modules listed as Planned or Partial in `docs/REQUIREMENTS.md` remain.
+- **Staging.** By Terry's instruction there is no separate Staging app yet; the design keeps it addable (named environments, per-environment settings and storage). Production storage, deployment and DNS need his explicit authorization.
+- **Agents use Terry's admin token**, so branch protection is not technically enforced against agents. A non-admin bot identity is recommended (Terry's action).
+- **Unverified rows in the reuse inventory.** The attachments, people picker, settings and local-runtime rows still need re-verification against `T:` `main`.
+- **Native Claude subagent loading** has not been validated. A fresh session is needed, because this one predates `.claude/agents`.
+
+## Planned design for the next increments (not yet implemented)
+
+- **Hosting.** Azure Static Web Apps with managed Azure Functions (v3, CommonJS), following the TaskTracker stack.
+- **Identity.** The SWA principal header is the only identity source, read by a single adapter. Only allowlisted providers are accepted (`google`). The subject is `provider:userId`, and the adapter returns frozen plain values.
+  - Local development uses a loopback-only dev server that injects a fictional principal. The API has no bypass, and the dev server refuses to run when Azure environment markers are present.
+- **Storage.** One storage interface with three implementations: memory (tests), a file store under the ignored `.local/data` (local dev), and Azure Blob (deployed).
+  - Corrupt JSON is refused.
+  - Each workspace is one JSON document containing members, grants, contacts, ledger and audit. This makes linked financial writes, audit and replace-restore atomic within a single ETag write, and makes the document the atomic unit.
+  - Known limit: document size. Record a threshold and a partitioning migration in an ADR before it is reached.
+  - Attachments are content-addressed blobs.
+- **Authorization.** Capabilities: view-balances, view-transactions, create, edit, delete, comment, download-receipts, export, invite, change-permissions, publish.
+  - Membership roles apply to shared resources only.
+  - Private accounts require the owner (who must be an active member) or an explicit, unexpired, unrevoked grant.
+  - Site admins get nothing financial.
+  - Non-members get not-found.
+  - Every derived surface filters through one `visibleAccounts` / `visibleTransactions` seam.
+- **Money.** Integer minor units, with a safe-integer bound, an ISO 4217 precision table and BigInt for conversions. Rates are decimal strings with stored source and date. Largest-remainder rounding is deterministic.
+- **Backups.** The AAD binds a header (workspaceId, schema, archiveId, createdAt, keyId). Validation runs on serialized bytes and is followed by a test decrypt. The preview is non-mutating and summary-only. Restore supports create-new, merge and replace; replace takes a pre-restore snapshot and swaps the document atomically, and archived grants are never restored.
+  - Scheduled backups: SWA managed functions cannot host timers. Planned: Azure Backup operational backup with blob versioning and soft delete (infrastructure), plus an HTTP backup endpoint for an external scheduler. Record this in an ADR.
+
+## Exact next steps
+
+Checkpoints B–N are done or in progress (see above). Keep the CI job names `secret-scan` and `foundation-tests`; branch protection requires them.
+
+**First Production release, in order** (owner in brackets):
+0. [agent] Act on the security and financial reviews of `f3ce009` (BT-009 and the picker); merge the dropdown conversion after its gate; UX/accessibility review of Shared expenses and the pickers; redeploy preview and verify; then a release-readiness audit of the final head. Terry: save his name in My settings on preview and try Shared expenses.
+1. [agent] Done at every preview deploy since `841d151`: verify `app.commit` equals the deployed commit and the CLI printed its success line.
+2. [Terry] **B1** signed-in smoke test on preview (workspace, account, transaction, a stale edit refused, backup, restore preview, merge restore; ideally a second fictional account to confirm private-account denial).
+3. [agent] Merge PR #1 (one-time authorization) once checks pass on the final head; record the merge SHA.
+4. [Terry] Remove the merged agent worktree (`git worktree remove .claude/worktrees/agent-afa1b4843db192131`) or use a fresh clone; switch to `main` tracking `origin/main`; `git status --porcelain` must be empty.
+5. [Terry] Add the Production redirect URI to the shared Google OAuth client; run `deploy.ps1 -Environment production -AuthorizedProduction` (typed confirmation). A missing "Project deployed" line means the deploy failed.
+6. [agent + Terry] Verify separately: `/version.json`, `/api/site-settings` (environment production, the merge commit), anonymous 401s, security headers, only Google sign-in, Terry gets the site-admin role, no preview data.
+7. [Terry, then agent] **B3** create a fictional workspace and a backup in Production; the agent downloads the archive into `.local/` and runs `scripts/recovery/drill.cjs` with the escrowed keys; record the result; Terry moves the escrow file offline.
+8. [Terry] A Production failure alert, or accept it as pending. Only then real data. DNS stays a separate authorization.
+
+**After the release, in order:**
+
+1. **BT-011-05 follow-up** — apply the independent security review of the icon catalogue and upload; a UX/accessibility pass over the icon picker and the Icons for types card in a real browser; redeploy preview and verify `app.commit`.
+2. **BT-001-05 remainder** — (restore history and lifecycle UI are done) remaining lifecycle states for budgets, members and workspaces; implement ADR-003; idempotency ruling (A8); backup retention/immutability (A11/A12, infrastructure, needs Terry).
+3. **BT-011-02 Tiptap editor** (archaeology of `T:` `main` first), then receipts/attachments, imports and reconciliation.
+4. **BT-009 shared expenses and settlement, BT-010 trips and currency** (icons for trips and trip accounts follow), debt planning, goals and alerts.
+5. **BT-012 reports and exports** (icons in reports, legends and exports follow), site settings UI, offline, rate limiting, scheduled backups and Key Vault, the remaining 13 TaskTracker palettes.
+6. **Needs Terry:** signed-in checks on the preview need Terry's own Google sign-in (the redirect URI is added); any Production, DNS or Staging decision.

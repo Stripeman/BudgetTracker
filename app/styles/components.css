@@ -1,0 +1,544 @@
+/* ---------- buttons ---------- */
+.btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: var(--space-2);
+  min-height: var(--control-height); padding: var(--control-padding-y) var(--space-4);
+  border: 1px solid var(--border-strong); border-radius: var(--control-radius);
+  background: var(--surface); color: var(--text); font-size: var(--control-font-size); font-weight: var(--weight-medium);
+  cursor: pointer; text-decoration: none; transition: background var(--transition), border-color var(--transition);
+}
+.btn:hover { background: var(--surface-sunken); }
+.btn--primary { background: var(--accent); border-color: var(--accent); color: var(--accent-contrast); }
+.btn--primary:hover { background: var(--accent-hover); border-color: var(--accent-hover); }
+.btn--danger { border-color: var(--color-danger); color: var(--color-danger-text); }
+.btn--ghost { border-color: transparent; background: transparent; }
+.btn--small { min-height: 1.75rem; padding: var(--space-1) var(--space-2); font-size: var(--text-xs); }
+.btn:disabled, .btn[aria-disabled="true"] { opacity: var(--control-disabled-opacity); cursor: not-allowed; }
+
+/* ---------- fields ---------- */
+.field { display: flex; flex-direction: column; gap: var(--space-1); min-width: 0; }
+.field__label { font-size: var(--text-sm); font-weight: var(--weight-medium); }
+.field__help { font-size: var(--text-xs); color: var(--text-muted); }
+.field__input {
+  min-height: var(--control-height); padding: var(--control-padding-y) var(--control-padding-x);
+  border: 1px solid var(--control-border); border-radius: var(--control-radius);
+  background: var(--control-surface); font-size: var(--control-font-size); width: 100%;
+}
+.field__input:hover { border-color: var(--control-border-hover); }
+.field__input:focus { border-color: var(--control-border-active); outline: none; box-shadow: 0 0 0 3px var(--accent-soft); }
+.field__input:disabled { background: var(--surface-sunken); color: var(--text-subtle); cursor: not-allowed; }
+textarea.field__input { min-height: 5rem; resize: vertical; }
+.field--inline { display: flex; flex-direction: row; align-items: center; gap: var(--space-2); }
+.field input[type="checkbox"] { align-self: flex-start; width: 1.1rem; height: 1.1rem; margin: var(--space-1) 0; }
+.form-grid { display: grid; gap: var(--space-3); grid-template-columns: repeat(auto-fit, minmax(min(12rem, 100%), 1fr)); }
+.form-grid .field--wide { grid-column: 1 / -1; }
+
+.suggestion {
+  display: inline-flex; align-items: center; gap: var(--space-1); font-size: var(--text-xs); color: var(--text-muted);
+}
+.suggestion__mark { color: var(--accent-text); font-weight: var(--weight-bold); }
+
+/* ---------- cards, tables, badges ---------- */
+.card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-lg); padding: var(--space-4); box-shadow: var(--shadow-sm); }
+.card__title { font-size: var(--text-sm); color: var(--text-muted); font-weight: var(--weight-medium); margin: 0 0 var(--space-2); }
+.card__value { font-size: var(--text-xl); font-weight: var(--weight-bold); font-variant-numeric: tabular-nums; }
+.card__meta { font-size: var(--text-xs); color: var(--text-muted); }
+
+.table-wrap { overflow-x: auto; border: 1px solid var(--border); border-radius: var(--radius-lg); background: var(--surface); }
+.table th, .table td { padding: var(--space-2) var(--space-3); text-align: left; border-bottom: 1px solid var(--border); font-size: var(--text-sm); vertical-align: top; }
+.table th { background: var(--surface-sunken); font-weight: var(--weight-medium); color: var(--text-muted); position: sticky; top: 0; }
+.table tbody tr:hover { background: var(--surface-sunken); }
+.table tr:last-child td, .table tr:last-child th { border-bottom: 0; }
+fieldset.budget-line { margin: 0; padding: var(--space-3); border: 1px solid var(--border); border-radius: var(--radius); }
+.num, .table .num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+
+/* Narrow screens: tables become labelled card rows so the amount is always visible (UX-004).
+   Each cell carries data-label; the label is drawn by CSS, never by inline style. */
+@media (max-width: 40rem) {
+  .table--cards thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+  .table--cards, .table--cards tbody, .table--cards tr, .table--cards td { display: block; width: 100%; }
+  .table--cards tr { padding: var(--space-3); border-bottom: 1px solid var(--border); }
+  .table--cards td { border: 0; padding: var(--space-1) 0; display: flex; justify-content: space-between; gap: var(--space-3); text-align: right; }
+  .table--cards td::before { content: attr(data-label); color: var(--text-muted); font-size: var(--text-xs); text-align: left; }
+  .table--cards td[data-label=""]::before { content: none; }
+  .table--cards td.num { font-size: var(--text-base); font-weight: var(--weight-medium); }
+}
+.money--in { color: var(--money-in); }
+.money--out { color: var(--money-out); }
+.money--alert { color: var(--color-danger-text); font-weight: var(--weight-medium); }
+/* Category colours (BT-011-04): a dot beside the name, never colour alone. */
+.catlabel { display: inline-flex; align-items: center; gap: var(--space-1); }
+.swatch-dot { flex: 0 0 auto; width: 0.7rem; height: 0.7rem; border-radius: 50%; background: var(--swatch, var(--text-subtle)); box-shadow: inset 0 0 0 1px rgb(0 0 0 / 0.25); }
+/* --text-muted, not --text-subtle: the dots must stay readable (retest defect 4). */
+/* Contextual icons (BT-011-05), TaskTracker's `.icon` conventions: currentColor strokes sized with
+   the text, so they follow every theme and palette; decoration beside a name, never alone. Icon
+   colours are text tokens (at least 4.5:1) or category colours (at least 3:1 on every surface). */
+.icon { flex: 0 0 auto; width: 1.15em; height: 1.15em; vertical-align: -0.2em; }
+.iconlabel { display: inline-flex; align-items: center; gap: var(--space-1); }
+.iconlabel > .icon { color: var(--text-muted); }
+.catlabel__icon { display: inline-flex; flex: 0 0 auto; color: var(--swatch, var(--text-muted)); }
+.themepick__glyph, .themepick__icon { display: inline-flex; flex: 0 0 auto; align-items: center; }
+/* A category's icon choices are previewed in the category colour (UXI-3). */
+.themepick__icon { color: var(--swatch, currentColor); }
+/* One compact row per category: name, colour and icon side by side when there is room (UXI-3). */
+.card--full { grid-column: 1 / -1; }
+.catrow { display: grid; gap: var(--space-2) var(--space-3); align-items: start; grid-template-columns: repeat(auto-fit, minmax(min(13rem, 100%), 1fr)); padding-block: var(--space-2); border-top: 1px solid var(--border); }
+.catrow__name { margin: 0; padding-top: var(--space-4); font-size: var(--text-base); }
+.catrow__meta, .catrow > .error-text { grid-column: 1 / -1; }
+.plain-fieldset { border: 0; margin: 0; padding: 0; min-width: 0; }
+.themepick__icon .icon { width: 1.25rem; height: 1.25rem; }
+.combo__option > .icon { margin-right: var(--space-1); color: var(--text-muted); }
+.amount-dir { display: inline-flex; align-items: center; gap: var(--space-1); justify-content: flex-end; }
+.dir { display: inline-flex; color: var(--text-muted); }
+.dir--money-in { color: var(--money-in); }
+.dir--money-out { color: var(--money-out); }
+.card__title .icon, .section-title .icon { margin-right: var(--space-1); color: var(--text-muted); }
+.icon-grid { display: grid; gap: var(--space-2); grid-template-columns: repeat(auto-fill, minmax(min(11rem, 100%), 1fr)); }
+.icon-grid--wide { grid-template-columns: repeat(auto-fill, minmax(min(15rem, 100%), 1fr)); }
+.money--masked { letter-spacing: 0.1em; color: var(--text-muted); }
+
+.badge {
+  display: inline-flex; align-items: center; gap: var(--space-1); padding: 0.1rem var(--space-2);
+  border-radius: var(--radius-pill); border: 1px solid var(--border-strong); font-size: var(--text-xs); color: var(--text-muted); white-space: nowrap;
+}
+.badge--private { border-color: var(--accent); color: var(--text); }
+.badge--shared { background: var(--accent-soft); border-color: transparent; color: var(--text); }
+.badge--env { text-transform: uppercase; letter-spacing: 0.04em; }
+.badge--source { font-size: 0.7rem; }
+
+/* ---------- states ---------- */
+.state { padding: var(--space-6) var(--space-4); text-align: center; color: var(--text-muted); border: 1px dashed var(--border-strong); border-radius: var(--radius-lg); }
+.state--error { border-style: solid; border-color: var(--color-danger); color: var(--color-danger-text); background: var(--surface); }
+.notice { padding: var(--space-3); border-radius: var(--radius); background: var(--surface-sunken); font-size: var(--text-sm); color: var(--text-muted); }
+.notice--warning { border-left: 3px solid var(--color-warning); }
+.error-text { color: var(--color-danger-text); font-size: var(--text-sm); }
+.muted { color: var(--text-muted); }
+.small { font-size: var(--text-sm); }
+
+/* ---------- menu (account) ---------- */
+.menu { position: relative; }
+.menu__panel {
+  position: absolute; right: 0; top: calc(100% + var(--space-2)); z-index: 40; min-width: 17rem;
+  background: var(--surface-raised); border: 1px solid var(--border); border-radius: var(--radius-lg); box-shadow: var(--shadow);
+  padding: var(--space-2) 0;
+}
+.menu__group { padding: var(--space-2) 0; border-bottom: 1px solid var(--border); }
+.menu__group:last-child { border-bottom: 0; }
+.menu__heading { margin: 0; padding: 0 var(--space-3) var(--space-1); font-size: var(--text-xs); font-weight: var(--weight-bold); color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.04em; }
+.menu__item { display: flex; width: 100%; align-items: center; gap: var(--space-2); padding: var(--space-2) var(--space-3); background: none; border: 0; text-align: left; cursor: pointer; font-size: var(--text-sm); color: var(--text); text-decoration: none; }
+.menu__item:hover { background: var(--surface-sunken); }
+.menu__identity { padding: var(--space-2) var(--space-3); font-size: var(--text-sm); }
+.menu__palette { padding: 0 var(--space-3) var(--space-2); }
+.avatar { width: 2rem; height: 2rem; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; background: var(--accent-soft); color: var(--text); font-weight: var(--weight-bold); font-size: var(--text-sm); border: 1px solid var(--border-strong); cursor: pointer; }
+
+/* ---------- modal ---------- */
+.modal-backdrop { position: fixed; inset: 0; z-index: 60; background: var(--overlay); display: flex; align-items: flex-start; justify-content: center; padding: var(--space-6) var(--space-3); overflow-y: auto; }
+.modal {
+  width: 100%; max-width: 40rem; max-height: calc(100vh - 2 * var(--space-4)); display: flex; flex-direction: column;
+  background: var(--surface-raised); border-radius: var(--radius-lg); box-shadow: var(--shadow); border: 1px solid var(--border);
+}
+.modal__body { overflow-y: auto; }
+/* The action bar stays visible while the body scrolls, so Save is never below the fold (UX-005). */
+.modal__foot { position: sticky; bottom: 0; background: var(--surface-raised); padding-top: var(--space-3); border-top: 1px solid var(--border); border-radius: 0 0 var(--radius-lg) var(--radius-lg); }
+.modal-backdrop { padding: var(--space-4) var(--space-3); }
+.more { grid-column: 1 / -1; }
+.more > summary { cursor: pointer; font-size: var(--text-sm); font-weight: var(--weight-medium); color: var(--accent-text); padding: var(--space-2) 0; }
+.more[open] > summary { margin-bottom: var(--space-2); }
+.modal__head { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); padding: var(--space-4) var(--space-4) 0; }
+.modal__head h2 { margin: 0; }
+.modal__body { padding: var(--space-4); }
+.modal__foot { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: var(--space-2); padding: 0 var(--space-4) var(--space-4); }
+.modal__close { width: 2rem; height: 2rem; border-radius: var(--radius); border: 0; background: transparent; cursor: pointer; font-size: var(--text-lg); color: var(--text-muted); }
+.modal__close:hover { background: var(--surface-sunken); color: var(--text); }
+.modal__error { margin: 0 var(--space-4) var(--space-3); padding: var(--space-3); border-radius: var(--radius); border: 1px solid var(--color-danger); color: var(--color-danger-text); font-size: var(--text-sm); }
+
+/* ---------- filters ---------- */
+.filters-box { margin-bottom: var(--space-3); background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-lg); }
+.filters-box > summary { cursor: pointer; padding: var(--space-3); font-weight: var(--weight-medium); font-size: var(--text-sm); }
+.filters { display: grid; gap: var(--space-2); grid-template-columns: repeat(auto-fit, minmax(min(9rem, 100%), 1fr)); padding: 0 var(--space-3) var(--space-3); }
+.table th[scope="row"] { font-weight: var(--weight-medium); color: var(--text); background: transparent; position: static; }
+.filters__actions { grid-column: 1 / -1; display: flex; justify-content: flex-end; }
+.row-actions { display: flex; flex-wrap: wrap; gap: var(--space-3); justify-content: flex-end; }
+
+/* ---------- theme picker (BT-011-03), ported from TaskTracker components.css (T: main a1ec150,
+   RF-20260904-14). A COLOUR CIRCLE BESIDE A PALETTE'S NAME: a ring rather than a bare disc so a
+   pale swatch still has an edge against the menu. ONE ROW THAT OPENS ON DEMAND, and the list
+   scrolls rather than growing the menu without limit. Adaptations: disabled state and a visible
+   focus outline for keyboard use. */
+.menu__swatch {
+  flex: 0 0 auto;
+  width: 0.85rem;
+  height: 0.85rem;
+  border-radius: 50%;
+  background: var(--menu-swatch, var(--accent));
+  box-shadow: inset 0 0 0 1px rgb(0 0 0 / 0.25);
+}
+.themepick { display: flex; flex-direction: column; gap: var(--space-1); width: 100%; }
+.themepick__toggle {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  width: 100%;
+  padding: var(--space-2);
+  background: none;
+  /* Adaptation: the control edge token gives the 3:1 boundary other inputs have (A11Y2-011). */
+  border: 1px solid var(--control-edge);
+  border-radius: var(--radius-sm);
+  color: var(--text);
+  cursor: pointer;
+  text-align: left;
+}
+.themepick__toggle:hover,
+.themepick__toggle:focus-visible { background: var(--surface-raised, var(--surface)); }
+.themepick__toggle:disabled { opacity: var(--control-disabled-opacity); cursor: not-allowed; }
+.themepick__name { flex: 1 1 auto; }
+.themepick__caret { flex: 0 0 auto; color: var(--text-muted); }
+.themepick__list {
+  display: flex;
+  flex-direction: column;
+  max-height: 14rem;
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+}
+.themepick__list[hidden] { display: none; }
+.themepick__option {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  width: 100%;
+  padding: var(--space-2);
+  background: none;
+  border: 0;
+  color: var(--text);
+  cursor: pointer;
+  text-align: left;
+}
+.themepick__option:hover,
+.themepick__option:focus-visible { background: var(--surface-raised, var(--surface)); }
+.themepick__option:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.themepick__option--current { font-weight: 600; }
+
+/* ---------- searchable merchant picker (combobox, BT-007-01) ----------
+   In normal flow under its input, like TaskTracker's theme picker, so a scrolling dialog never
+   clips it; the list scrolls rather than growing without limit. */
+.combo { display: flex; flex-direction: column; gap: 2px; }
+.combo__list {
+  margin: 0; padding: var(--space-1) 0; list-style: none; max-height: 14rem; overflow-y: auto;
+  background: var(--surface-raised); border: 1px solid var(--control-edge); border-radius: var(--radius-sm); box-shadow: var(--shadow-sm);
+}
+.combo__list[hidden] { display: none; }
+.combo__option { padding: var(--space-2) var(--space-3); cursor: pointer; font-size: var(--text-sm); }
+.combo__option:hover, .combo__option--active { background: var(--accent-soft); }
+.combo__option--active { outline: 2px solid var(--accent); outline-offset: -2px; }
+.combo__option[aria-selected="true"] { font-weight: var(--weight-bold); }
+.combo__option--create { border-top: 1px solid var(--border); color: var(--accent-text); font-weight: var(--weight-medium); }
+.combo__empty { padding: var(--space-2) var(--space-3); color: var(--text-muted); font-size: var(--text-sm); }
+.inline-create {
+  grid-column: 1 / -1; margin: 0; padding: var(--space-3); border: 1px solid var(--border-strong); border-radius: var(--radius);
+  display: grid; gap: var(--space-3); grid-template-columns: repeat(auto-fit, minmax(min(12rem, 100%), 1fr));
+}
+.inline-create legend { font-weight: var(--weight-medium); padding: 0 var(--space-1); }
+.inline-create__actions { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: var(--space-2); justify-content: flex-end; }
+.badge--closed { border-style: dashed; }
+.badge--overdue { border-color: var(--color-danger); color: var(--color-danger-text); }
+/* Budget meters are decorative: every figure is also written as text. The width comes from a
+   CSSOM custom property, never a style attribute (CSP). */
+.meter { height: 6px; margin-top: var(--space-1); background: var(--surface-sunken); border-radius: var(--radius-pill); overflow: hidden; min-width: 6rem; }
+.meter__fill { height: 100%; width: var(--fill, 0%); background: var(--accent); }
+.meter__fill--over { background: var(--color-danger); }
+.history-list { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--space-2); font-size: var(--text-sm); }
+.history-list li { border-left: 2px solid var(--border-strong); padding-left: var(--space-2); }
+.breakdown { list-style: none; margin: var(--space-2) 0 0; padding: 0; font-size: var(--text-xs); color: var(--text-muted); display: grid; gap: 2px; }
+.breakdown li { display: flex; justify-content: space-between; gap: var(--space-3); }
+.summary { display: flex; flex-wrap: wrap; gap: var(--space-4); margin-bottom: var(--space-3); font-size: var(--text-sm); }
+.summary strong { font-variant-numeric: tabular-nums; }
+
+/* ---------- landing ---------- */
+.landing { max-width: 34rem; margin: var(--space-8) auto; text-align: center; }
+.landing__title { font-size: var(--text-2xl); }
+.landing__points { text-align: left; margin: var(--space-4) auto; color: var(--text-muted); }
+
+/*
+  ---------- the day/night appearance control (BT-011-01) ----------
+  Ported verbatim from TaskTracker app/styles/components.css (T: main a1ec150). The sky gradients
+  are FIXED rather than palette-driven so day always reads as day. Motion is opt-out:
+  prefers-reduced-motion removes the travel and fades; the control still changes state.
+*/
+.daynight { display: flex; flex-direction: column; gap: var(--space-2); padding: var(--space-2) var(--space-3); }
+.daynight__row { display: flex; align-items: center; gap: var(--space-2); }
+.daynight__row--switch { justify-content: space-between; }
+.daynight__devicelabel { font-size: var(--text-sm); cursor: pointer; }
+.daynight__device { cursor: pointer; }
+.daynight__end { font-size: var(--text-xs); color: var(--text-muted); }
+
+.daynight__switch {
+  position: relative;
+  flex: none;
+  width: 4rem;
+  height: 1.75rem;
+  padding: 0;
+  border: 1px solid var(--border-strong, var(--border));
+  border-radius: 999px;
+  overflow: hidden;
+  cursor: pointer;
+  background: linear-gradient(180deg, #7fb8e6, #cfe6f7);
+  transition: background var(--transition);
+}
+.daynight--dark .daynight__switch { background: linear-gradient(180deg, #101a2e, #1e2a44); }
+.daynight__switch:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+.daynight__sky { position: absolute; inset: 0; width: 100%; height: 100%; }
+.daynight__star { fill: #ffffff; opacity: 0; transition: opacity var(--transition); }
+.daynight--dark .daynight__star { opacity: 0.85; }
+.daynight__cloud { fill: #ffffff; opacity: 0.85; transition: opacity var(--transition); }
+.daynight--dark .daynight__cloud { opacity: 0; }
+
+.daynight__knob {
+  position: absolute;
+  top: 50%;
+  left: 0.18rem;
+  width: 1.3rem;
+  height: 1.3rem;
+  margin-top: -0.65rem;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  background: #ffffff;
+  box-shadow: 0 1px 3px rgb(0 0 0 / 0.35);
+  transition: left var(--transition);
+}
+.daynight--dark .daynight__knob { left: calc(100% - 1.48rem); }
+
+.daynight__sun, .daynight__moon {
+  position: absolute;
+  width: 0.95rem;
+  height: 0.95rem;
+  transition: opacity var(--transition);
+}
+.daynight__sun { fill: #f5a623; stroke: #f5a623; stroke-width: 1.6; stroke-linecap: round; opacity: 1; }
+.daynight__moon { fill: #4a5875; opacity: 0; }
+.daynight--dark .daynight__sun { opacity: 0; }
+.daynight--dark .daynight__moon { opacity: 1; }
+
+.daynight--following .daynight__switch { opacity: 0.6; cursor: not-allowed; }
+/* BudgetTracker adaptation: a site-locked mode looks and behaves like "not yours to change". */
+.daynight--locked .daynight__switch, .daynight--locked .daynight__device, .daynight--locked .daynight__devicelabel { opacity: 0.6; cursor: not-allowed; }
+.daynight__note { margin: 0; font-size: var(--text-xs); color: var(--text-muted); line-height: 1.4; }
+.daynight__note:empty { display: none; }
+
+@media (prefers-reduced-motion: reduce) {
+  .daynight__switch,
+  .daynight__knob,
+  .daynight__sun,
+  .daynight__moon,
+  .daynight__star,
+  .daynight__cloud { transition: none; }
+}
+
+/* ---------- palette picker ---------- */
+.swatch { display: inline-block; width: 0.8rem; height: 0.8rem; border-radius: 50%; background: var(--swatch); border: 1px solid var(--border-strong); }
+
+/* A styled hint over a control that is unavailable yet, saying what to do first (Terry, 2026-09-13:
+   "a tool tip on hover, not the Windows alt text"). A disabled button receives no pointer events,
+   so the hint hangs off a wrapper; the same text is also written in the dialog for keyboard and
+   screen-reader users. Shown only while the wrapped control is disabled. */
+.tip { position: relative; display: inline-flex; }
+.tip > :disabled { pointer-events: none; }
+.tip:has(> :disabled):hover::after,
+.tip:has(> :disabled):focus-within::after {
+  content: attr(data-tip);
+  position: absolute;
+  bottom: calc(100% + 0.5rem);
+  right: 0;
+  z-index: 20;
+  width: max-content;
+  max-width: 17rem;
+  padding: 0.45rem 0.65rem;
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  background: var(--surface-raised);
+  color: var(--text);
+  font-size: var(--text-sm);
+  line-height: 1.35;
+  white-space: normal;
+  box-shadow: 0 6px 18px rgb(0 0 0 / 0.25);
+  pointer-events: none;
+}
+
+/* ---------- shared expenses (BT-009) ---------- */
+.split-list { display: grid; gap: var(--space-2); }
+.split-row { display: grid; grid-template-columns: auto minmax(6rem, 1fr) minmax(5rem, 8rem) minmax(6rem, auto); align-items: center; gap: var(--space-2); }
+.split-row input[type="checkbox"] { width: 1.1rem; height: 1.1rem; margin: 0; }
+.split-row__share { color: var(--text-muted); font-size: var(--text-sm); }
+.split-preview { margin-top: var(--space-2); }
+.split-problems { margin: var(--space-2) 0 0; padding-left: var(--space-4); }
+.split-problems:empty { display: none; }
+.seg { display: flex; flex-wrap: wrap; gap: var(--space-1); margin-bottom: var(--space-2); }
+.seg .btn[aria-pressed="true"] { background: var(--accent-soft); border-color: var(--accent); color: var(--text); font-weight: var(--weight-medium); }
+.row--void td, .row--void th { color: var(--text-muted); }
+.breakdown-details > summary { cursor: pointer; color: var(--accent-text); }
+@media (max-width: 40rem) {
+  .split-row { grid-template-columns: auto 1fr; }
+  .split-row > .field__input, .split-row > .split-row__share { grid-column: 2; }
+}
+
+/* ---------- command picker (BT-004-04), ported from TaskTracker components.css (T: main fb24a41).
+   A search-first palette over a native <select>. `.cmdpick__native` is the load-bearing rule: the
+   select stays in the DOCUMENT holding the value and is gone from SIGHT, hidden by clipping rather
+   than `display: none`. The panel is fixed and placed against the viewport by core/popover.js through
+   the --pop-* custom properties (set through the CSSOM, never a style attribute), so a scrolling
+   dialog cannot clip it. Adaptations: hint, footer and unavailable text use --text-muted rather than
+   --text-subtle (BudgetTracker's 4.5:1 rule), the active row has the combobox's outline as well as a
+   tint, and the panel sits above the modal backdrop (z-index 60). Step 2 (BT-004-05): the panel is at
+   least as wide as its trigger (--pop-min-width) and option names wrap rather than being cut off; a
+   disabled trigger inside a form field looks like a disabled input beside it. */
+.cmdpick { position: relative; display: block; min-width: 0; }
+/* Placed inline in a list row (a member's role or storage allowance) rather than in a field: wide
+   enough for its value, never squeezed to nothing by the row. */
+.row .cmdpick { flex: 0 1 auto; min-width: 8.5rem; }
+.cmdpick__native {
+  position: absolute;
+  width: 1px; height: 1px; min-height: 0;
+  padding: 0; margin: -1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+.cmdpick__trigger {
+  display: flex; align-items: center; gap: var(--space-2);
+  width: 100%;
+  min-height: var(--control-height);
+  padding: var(--control-padding-y) var(--control-padding-x);
+  font: inherit; font-size: var(--control-font-size);
+  text-align: left;
+  color: var(--text);
+  background: var(--control-surface);
+  border: 1px solid var(--control-border);
+  border-radius: var(--control-radius);
+  cursor: pointer;
+}
+.cmdpick__trigger:hover { border-color: var(--control-border-hover); }
+.cmdpick__trigger[aria-expanded="true"] { border-color: var(--control-border-active); }
+.cmdpick__trigger:disabled { cursor: not-allowed; opacity: var(--control-disabled-opacity); }
+.field .cmdpick__trigger:disabled { opacity: 1; background: var(--surface-sunken); color: var(--text-subtle); }
+.cmdpick__value { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cmdpick--empty .cmdpick__value { color: var(--text-muted); }
+.cmdpick__hint { flex: none; color: var(--text-muted); font-size: var(--text-xs); }
+/* A colour edge only for things that have a canonical colour (a category); never colour alone. */
+.cmdpick__swatch { display: none; }
+.cmdpick--swatched .cmdpick__swatch {
+  display: inline-block; flex: none;
+  width: 0.6rem; height: 0.6rem; border-radius: 50%;
+  background: var(--swatch, var(--accent));
+  box-shadow: inset 0 0 0 1px rgb(0 0 0 / 0.25);
+}
+.cmdpick--swatched .cmdpick__trigger { border-left: 3px solid var(--swatch, var(--accent)); }
+/* Where a caller's own mark (the workspace role badge) sits on the closed trigger. */
+.cmdpick__badge { display: inline-flex; align-items: center; flex: none; }
+.cmdpick__badge[hidden] { display: none; }
+.cmdpick__opt .people__badge { flex: none; }
+/* An account or merchant icon beside its name (BT-004-05), muted as in `.iconlabel`; a category's
+   icon keeps its own colour through `.catlabel__icon`. */
+.cmdpick__opt > .icon, .cmdpick__badge > .icon { color: var(--text-muted); }
+
+.cmdpick__panel {
+  position: fixed; z-index: 80;
+  top: var(--pop-top, 50%); left: var(--pop-left, 50%);
+  width: min(22rem, calc(100vw - 1rem));
+  min-width: min(var(--pop-min-width, 0px), calc(100vw - 1rem));
+  max-height: var(--pop-max-height, 70vh);
+  display: flex; flex-direction: column;
+  color: var(--text);
+  background: var(--surface-raised);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  overflow: hidden;
+}
+.cmdpick__panel[hidden] { display: none; }
+/* No search row: narrower, and the list takes the keyboard (it keeps the global focus ring). */
+.cmdpick__panel--nosearch { width: min(15rem, calc(100vw - 1rem)); }
+.cmdpick__panel--nosearch .cmdpick__list { padding-top: var(--space-2); }
+
+.cmdpick__searchrow {
+  display: flex; align-items: center; gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  border-bottom: 1px solid var(--border);
+}
+.cmdpick__icon { color: var(--text-muted); flex: none; }
+.cmdpick__search {
+  flex: 1; min-width: 0;
+  font: inherit; font-size: var(--text-sm);
+  color: var(--text); background: none; border: 0; padding: var(--space-1) 0;
+}
+.cmdpick__search::placeholder { color: var(--text-muted); }
+
+.cmdpick__list { flex: 1 1 auto; min-height: 0; max-height: 15rem; overflow-y: auto; padding: var(--space-1); }
+.cmdpick__none { margin: 0; padding: var(--space-3); font-size: var(--text-sm); color: var(--text-muted); }
+.cmdpick__opt {
+  display: flex; align-items: center; gap: var(--space-2);
+  padding: var(--space-2);
+  font-size: var(--text-sm);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+.cmdpick__opt--active { background: var(--accent-soft); outline: 2px solid var(--accent); outline-offset: -2px; }
+.cmdpick__opt--on { font-weight: var(--weight-bold); }
+.cmdpick__optlabel { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.cmdpick__tick { flex: none; color: var(--accent-text); }
+.cmdpick__dot { flex: none; width: 0.6rem; height: 0.6rem; border-radius: 50%; background: var(--swatch, var(--accent)); box-shadow: inset 0 0 0 1px rgb(0 0 0 / 0.25); }
+.cmdpick__opt--swatched { border-left: 3px solid var(--swatch, var(--accent)); }
+/* UNAVAILABLE, AND SAYING SO: shown with its reason, never a pointer or keyboard target. */
+.cmdpick__opt--off { cursor: not-allowed; color: var(--text-muted); }
+.cmdpick__opt--off:hover { background: none; }
+
+/* Pinned under the results, outside the scrolling listbox, so it is always in view. */
+.cmdpick__create {
+  display: flex; align-items: center; gap: var(--space-2); flex: none;
+  width: 100%; text-align: left;
+  font: inherit; font-size: var(--text-sm); font-weight: var(--weight-medium);
+  padding: var(--space-2) var(--space-3);
+  color: var(--accent-text); background: none;
+  border: 0; border-top: 1px solid var(--border); border-radius: 0;
+  cursor: pointer;
+}
+.cmdpick__create:hover { background: var(--surface-sunken); }
+.cmdpick__create:focus-visible { outline-offset: -2px; }
+.cmdpick__plus { flex: none; font-weight: var(--weight-bold); }
+.cmdpick__createlabel { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.cmdpick__foot {
+  display: flex; gap: var(--space-3); flex: none;
+  padding: var(--space-2) var(--space-3);
+  border-top: 1px solid var(--border);
+  font-size: var(--text-xs); color: var(--text-muted);
+}
+.cmdpick__kbd {
+  font-family: var(--font-mono); font-size: 0.7rem;
+  padding: 0 var(--space-1);
+  border: 1px solid var(--border-strong); border-bottom-width: 2px; border-radius: var(--radius-sm);
+  color: var(--text-muted);
+}
+
+/* THE WORKSPACE ROLE BADGE (BT-004-04), TaskTracker's outlined square (`people__badge`, kept verbatim
+   so a later port of its people picker shares it). A letter AND the exact role as the accessible name,
+   never colour alone. O is the palette's accent text colour; M is the same colour seven-tenths of the
+   way to the muted grey (TaskTracker's progression, with BudgetTracker's contrast-safe tokens). There
+   is no G or S: BudgetTracker has no guest workspaces and site administrators get no workspace access. */
+.people__badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 1.25rem;
+  height: 1.25rem;
+  padding-inline: 2px;
+  border-radius: var(--radius-sm);
+  border: 1px solid currentColor;
+  font-size: var(--text-xs);
+  font-weight: var(--weight-bold);
+  line-height: 1;
+}
+.workspaces__marker--o { color: var(--accent-text); }
+.workspaces__marker--m { color: color-mix(in srgb, var(--accent-text) 70%, var(--text-muted)); }

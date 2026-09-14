@@ -1,0 +1,41 @@
+name: Security foundation
+on:
+  pull_request:
+  push:
+    branches: ['feature/**']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  secret-scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: gitleaks/gitleaks-action@dcedce43c6f43de0b836d1fe38946645c9c638dc # v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITLEAKS_ENABLE_COMMENTS: 'false'
+          GITLEAKS_ENABLE_UPLOAD_ARTIFACT: 'false'
+          GITLEAKS_ENABLE_SUMMARY: 'false'
+  # Job name is a required status check on main; do not rename it.
+  foundation-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - run: npm ci --prefix api --no-audit --no-fund
+      - run: npm test
+      - run: npm run validate
+      # The vendored editor bundle must be byte-for-byte what its committed generator builds from the
+      # exact pins (security review SEC-R7). Scripts are skipped: esbuild ships its binary as an
+      # optional dependency, and nothing else here needs an install script.
+      - run: npm ci --ignore-scripts --no-audit --no-fund
+      - run: npm run vendor:tiptap
+      # Porcelain status also catches new, untracked files the generator might write (SEC-T9).
+      - run: |
+          git status --porcelain -- app/js/vendor
+          test -z "$(git status --porcelain -- app/js/vendor)"

@@ -1,0 +1,44 @@
+'use strict';
+// Operational site settings. These never contain financial data and grant no financial access.
+const { readDocument, stampDocument } = require('./schema');
+const { paths } = require('./store');
+
+const THEME_MODES = ['system', 'light', 'dark'];
+const PALETTES = ['midnight', 'slate', 'forest', 'solar', 'teal', 'rose', 'amber', 'indigo'];
+const EDITOR_TOOLBARS = ['simple', 'advanced', 'custom'];
+
+const DEFAULT_SITE = Object.freeze({
+  branding: { name: 'BudgetTracker' },
+  defaults: { themeMode: 'system', themePalette: 'midnight', editorToolbar: 'simple', dateFormat: 'iso', locale: 'en' },
+  locked: [],
+  modules: { sharedExpenses: true, trips: true, forecasting: true, imports: true },
+  publicSharingEnabled: false,
+  invitationPolicy: 'owners-and-managers',
+  uploadLimitBytes: 5 * 1024 * 1024,
+  exchangeRateProvider: 'manual',
+  announcement: { text: '', version: 0, active: false, audience: 'signed-in' },
+  maintenanceMessage: '',
+  backupPolicy: { onDemand: true, beforeDestructive: true, retentionDays: 35 },
+});
+
+async function readSite(storage) {
+  const { value, etag } = await storage.getJson(paths.site());
+  const doc = readDocument('site', value);
+  const merged = { ...structuredClone(DEFAULT_SITE), ...(doc || {}) };
+  merged.defaults = { ...DEFAULT_SITE.defaults, ...((doc && doc.defaults) || {}) };
+  return { site: merged, etag, exists: !!doc };
+}
+
+// What anyone may learn before signing in: branding, theme defaults and a public announcement.
+function publicView(site, signedIn) {
+  const a = site.announcement || {};
+  const showAnnouncement = a.active && a.text && (a.audience === 'everyone' || signedIn);
+  return {
+    branding: site.branding, defaults: site.defaults, locked: site.locked,
+    announcement: showAnnouncement ? { text: a.text, version: a.version } : null,
+    maintenanceMessage: site.maintenanceMessage || '', publicSharingEnabled: !!site.publicSharingEnabled,
+    modules: site.modules,
+  };
+}
+
+module.exports = { DEFAULT_SITE, THEME_MODES, PALETTES, EDITOR_TOOLBARS, readSite, publicView, stampSite: (d) => stampDocument('site', d) };
