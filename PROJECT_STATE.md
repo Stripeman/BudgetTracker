@@ -8,6 +8,28 @@
 - **Checkpoint commit.** The commit containing this file; resolve it with `git log -1 --format=%H`.
 - **PR #1.** Open and ready (feature/project-foundation → main), not merged; Terry granted a one-time authorization to merge it for the first Production release. Preview is deployed and verified (see Checkpoint N); Production storage and settings exist (2026-09-13) but no code has been deployed to Production yet.
 
+## Waiting on Terry (keep current; repeat open items in every status update)
+
+Terry asked (2026-09-14) for one list of what he still has to answer or do, so he never has to search the chat. Move an item to "Answered" with the date and his decision; never delete it.
+
+**Open questions**
+1. **Confirm-payments setting: per group or per expense?** Terry wrote "this should be a per shared expense configuration" for "Anyone in the group can confirm payments" (default on). It is being built per group (a group is a workspace). Say if he meant a separate choice on each expense. (asked 2026-09-14)
+
+**Actions for Terry (not questions)**
+- Save his display name in My settings on preview.
+- Finish the preview smoke test (B1), once the shared-expense fixes pass their rechecks; until then do not use "Also record my part on my own account" on preview.
+- Production release steps when everything passes (see "Exact next steps"): remove the merged agent worktrees or use a fresh clone, add the Production redirect URI, run the Production deploy, the B3 key drill and move the escrow file offline, decide the Production failure alert.
+- Optional: a non-admin GitHub identity for agents (branch protection is not enforced against his admin token).
+
+**Answered (kept for the record)**
+- 2026-09-14 — Payer confirming their own payment / single-owner contact payments (S5): a group setting "Anyone in the group can confirm payments", default ON, with an explanation; OFF keeps the strict rules.
+- 2026-09-14 — Hand entry of "Owed to others" and "Repayment" (R2/N1): a group setting, default "Created by Shared expenses only", with an explanation; when allowed, an owed-to-others entry is always paired with its share as spending.
+- 2026-09-14 — No-money-moved lines (N3): an icon of two parallel lines without heads (|==|) beside the words.
+- 2026-09-14 — Create-new restores keeping other members' identities (S4 residual): fix it across all carried records.
+- 2026-09-14 — Testing: verify in real browsers on localhost with several fake users and parallel requests (a multi-user harness is being built).
+- 2026-09-14 — Screenshots of another app: add only features that do not exist; presentation later.
+- 2026-09-14 — **Design principle: configurable over hard rules.** "The application shouldnt set hard rules that a person shouldnt otherwise be able to have as a configuration… the user should be able to decide about things that can be configurable." Workflow and policy choices become settings (site admin, workspace owners/managers, or each person) with today's behaviour as the default and a plain explanation; only the security and integrity gates stay fixed (private by default, server-side authorization, site admin never sees financial records, nothing deleted, atomic audit, integer money, no silent overwrite, restores never resurrect access). An inventory of hard-coded rules that could become settings is being compiled for Terry to choose from; the shared-expense settings are built as an extensible settings model.
+
 ## Verified at takeover (2026-09-13)
 
 - **Git.** Local `HEAD` equalled `origin/feature/project-foundation` at `2360b79` after `git fetch`, and the tree was clean. `origin/main` is `a2d9c46`, unchanged. The only ignored untracked file is `Budget_Tracker_Project_Instructions.docx`, and it is preserved.
