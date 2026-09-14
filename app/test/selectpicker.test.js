@@ -405,6 +405,26 @@ describe("BT-004-05 nothing is cut off (real layout is checked in a browser)", (
     assert.equal(panel().hasAttribute("style"), false);
   });
 
+  test("an icon or colour picker inside a form field looks like the command-picker trigger beside it (UX review U4)", () => {
+    const css = fs.readFileSync(fileURLToPath(new URL("../styles/components.css", import.meta.url)), "utf8");
+    const block = (selector) => {
+      const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      const m = new RegExp(`(?:^|\\})\\s*${escaped}\\s*\\{([^}]*)\\}`, "m").exec(css);
+      return m ? m[1] : "";
+    };
+    const field = block(".field .themepick__toggle");
+    const trigger = block(".cmdpick__trigger");
+    // The same tokens as the command-picker trigger, so a row of fields lines up (Add bill, Add account).
+    for (const token of ["min-height: var(--control-height)", "padding: var(--control-padding-y) var(--control-padding-x)", "font-size: var(--control-font-size)", "border: 1px solid var(--control-border)", "border-radius: var(--control-radius)", "background: var(--control-surface)"]) {
+      assert.ok(trigger.includes(token), `the command-picker trigger uses ${token}`);
+      assert.ok(field.includes(token), `an icon picker in a field uses ${token}`);
+    }
+    assert.match(block(".field .themepick__caret"), /font-size:\s*var\(--text-xs\)/, "the caret is the trigger's small ▾");
+    assert.match(block(".field .themepick__toggle .icon"), /width:\s*1\.15em/, "the icon is text-sized, as on the trigger");
+    // The icon picker's field label is a <p>: without this its control sits a paragraph margin lower.
+    assert.match(block(".field__label"), /margin:\s*0/, "field labels have no margin, whatever their element");
+  });
+
   test("a locked (disabled) trigger shows no search or list hint, since it cannot open (UX review U5)", () => {
     const css = fs.readFileSync(fileURLToPath(new URL("../styles/components.css", import.meta.url)), "utf8");
     // Hidden, not removed, so a locked field keeps the same width as its neighbours.

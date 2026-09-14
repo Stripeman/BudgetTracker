@@ -16,7 +16,9 @@
 
 /* ---------- fields ---------- */
 .field { display: flex; flex-direction: column; gap: var(--space-1); min-width: 0; }
-.field__label { font-size: var(--text-sm); font-weight: var(--weight-medium); }
+/* margin 0: the icon picker's field label is a <p>, whose default margin pushed its control 12 px below
+   the controls beside it (UX review U4, seen in headless Edge). */
+.field__label { font-size: var(--text-sm); font-weight: var(--weight-medium); margin: 0; }
 .field__help { font-size: var(--text-xs); color: var(--text-muted); }
 .field__input {
   min-height: var(--control-height); padding: var(--control-padding-y) var(--control-padding-x);
@@ -218,6 +220,23 @@ fieldset.budget-line { margin: 0; padding: var(--space-3); border: 1px solid var
 .themepick__option:focus-visible { background: var(--surface-raised, var(--surface)); }
 .themepick__option:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 .themepick__option--current { font-weight: 600; }
+/* Inside a form field, an icon or colour picker's toggle looks like the command-picker trigger beside
+   it (UX review U4): the same height, padding, text size, border, surface and small caret, so a row of
+   fields lines up. Look only: they remain their own controls with their own lists (BT-011-03/05). */
+.field .themepick__toggle {
+  min-height: var(--control-height);
+  padding: var(--control-padding-y) var(--control-padding-x);
+  font-size: var(--control-font-size);
+  border: 1px solid var(--control-border);
+  border-radius: var(--control-radius);
+  background: var(--control-surface);
+}
+.field .themepick__toggle:hover,
+.field .themepick__toggle:focus-visible { background: var(--control-surface); border-color: var(--control-border-hover); }
+.field .themepick__toggle[aria-expanded="true"] { border-color: var(--control-border-active); }
+.field .themepick__toggle:disabled { opacity: 1; background: var(--surface-sunken); color: var(--text-subtle); }
+.field .themepick__caret { font-size: var(--text-xs); }
+.field .themepick__toggle .icon { width: 1.15em; height: 1.15em; }
 
 /* ---------- searchable merchant picker (combobox, BT-007-01) ----------
    In normal flow under its input, like TaskTracker's theme picker, so a scrolling dialog never
