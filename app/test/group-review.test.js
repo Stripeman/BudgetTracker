@@ -143,9 +143,10 @@ describe("Group settings card and who confirmed (Terry, 2026-09-14)", () => {
     assert.equal(card.hidden, false);
     for (const text of [/Anyone in the group can confirm payments/, /When this is on, anyone in the group can mark a payment as confirmed\./, /Owed-to-others and repayment entries/,
       /Created by Shared expenses only/, /Also allow entering them by hand/, /Frank Fictional/, /Family group/]) assert.match(card.textContent, text);
-    const box = card.querySelector('input[type="checkbox"]');
-    assert.equal(box.checked, true);
-    box.checked = false;
+    // On/off is a picker, as in the workspace settings card (eefd115).
+    const onOff = card.querySelectorAll("select").find((s) => s.querySelectorAll("option").map((o) => o.textContent).join() === "On,Off");
+    assert.equal(onOff.value, "true");
+    onOff.value = "false";
     buttonNamed(card, "Save settings").click();
     await tick();
     assert.deepEqual(calls.map((c) => [c.action, c.body]), [["settings", { changes: { anyoneConfirms: false } }]]);
@@ -171,6 +172,31 @@ describe("Group settings card and who confirmed (Terry, 2026-09-14)", () => {
     assert.deepEqual(calls.map((c) => [c.action, c.body]), [["settings", { changes: { confirmOverrides: { mem_bob: "no" } } }]]);
   });
 
+  test("'Settings saved' is said only for what the server kept; anything it did not keep is named (security recheck M1)", async () => {
+    const members = [
+      { memberId: "mem_bob", name: "Bob Fictional", role: "member", override: "inherit", effective: true },
+      { memberId: "mem_eve", name: "Eve Outsider", role: "member", override: "inherit", effective: true },
+    ];
+    const said = () => (document.getElementById("a11y-live") || { textContent: "" }).textContent;
+    for (const [keptBob, expected] of [["no", /^Settings saved\./], ["inherit", /^Not everything was saved: Can confirm payments: Bob Fictional\./]]) {
+      const { ctx, state, calls } = ctxWith(STRANDED);
+      state.group.data.groupSettings = { ...SETTINGS, members };
+      // The server's answer: Eve's No is kept; Bob's is kept only in the first case.
+      ctx.api.groupAction = async (ws, action, body) => { calls.push({ action, body }); return { groupSettings: { ...SETTINGS, members: [{ ...members[0], override: keptBob }, { ...members[1], override: "no" }] } }; };
+      const v = createGroupView(ctx);
+      v.update(state);
+      const card = cardOf(v.element);
+      const picker = (name) => card.querySelectorAll("select").find((s) => s.getAttribute("aria-label") === `Can confirm payments: ${name}`);
+      picker("Bob Fictional").value = "no";
+      picker("Eve Outsider").value = "no";
+      buttonNamed(card, "Save settings").click();
+      await tick(); await tick();
+      assert.deepEqual(calls.map((c) => c.body), [{ changes: { confirmOverrides: { mem_bob: "no", mem_eve: "no" } } }], "both in one request");
+      assert.match(said(), expected);
+      v.element.remove && v.element.remove();
+    }
+  });
+
   test("someone who is not a manager is told their own right to confirm payments", () => {
     for (const [mine, text] of [[{ override: "no", effective: false }, /You can confirm payments made to you\./], [{ override: "inherit", effective: true }, /You can confirm any reported payment in this group\./]]) {
       const { ctx, state } = ctxWith(STRANDED);
@@ -191,6 +217,15 @@ describe("Group settings card and who confirmed (Terry, 2026-09-14)", () => {
     assert.equal(cardOf(v.element).hidden, true);
   });
 
+  test("a payment confirmed over its receiver's dispute says so and who did it (financial recheck F1)", () => {
+    const { ctx, state } = ctxWith(STRANDED, { settlements: [
+      payment({ confirmedOverDispute: true, disputeReason: "Never arrived", confirmation: { by: "Alice Fictional", relation: "receiver" } }),
+    ] });
+    const v = createGroupView(ctx);
+    v.update(state);
+    assert.match(v.element.textContent, /Confirmed over a dispute by Alice Fictional\./);
+  });
+
   test("a payment confirmed by the person who paid it, or by someone for its receiver, says who", () => {
     const { ctx, state } = ctxWith(STRANDED, { settlements: [
       payment({ confirmation: { by: "Bob Fictional", relation: "payer" } }),
@@ -200,6 +235,77 @@ describe("Group settings card and who confirmed (Terry, 2026-09-14)", () => {
     v.update(state);
     assert.match(v.element.textContent, /Confirmed by Bob Fictional, who paid it\./);
     assert.match(v.element.textContent, /Confirmed by Frank Fictional for Bob\./);
+  });
+});
+
+describe("Settings b and e: the group's defaults, each person's own, and the preferred balance view", () => {
+  const withSettings = (state, values) => {
+    state.group.data.groupSettings = { history: [], settings: Object.entries(values).map(([key, value]) => ({ key, type: "choice", label: key, explanation: "x", value, default: value, options: [] })) };
+  };
+  const boxes = (dialog) => dialog.querySelectorAll("input").filter((i) => i.getAttribute("class") === "split-row__box");
+  const methodOf = (dialog) => dialog.querySelectorAll("select").find((s) => s.querySelectorAll("option").some((o) => o.textContent === "By shares"));
+
+  test("a new expense starts from the group's defaults: nobody paid, only me sharing, split by shares", () => {
+    const { ctx, state } = ctxWith(STRANDED);
+    withSettings(state, { splitMethod: "shares", splitWho: "me", paidBy: "nobody" });
+    const dialog = openGroupExpense(ctx).element;
+    const [payAlice, payBob, shareAlice, shareBob] = boxes(dialog);
+    assert.deepEqual([payAlice.checked, payBob.checked, shareAlice.checked, shareBob.checked], [false, false, true, false]);
+    assert.equal(methodOf(dialog).value, "shares");
+  });
+
+  test("the person's own defaults take the place of the group's", () => {
+    const { ctx, state } = ctxWith(STRANDED);
+    withSettings(state, { splitMethod: "shares", splitWho: "me", paidBy: "nobody" });
+    state.preferences = { effective: { groupSplitMethod: "equal", groupSplitWho: "everyone", groupPaidBy: "me" } };
+    const dialog = openGroupExpense(ctx).element;
+    const [payAlice, payBob, shareAlice, shareBob] = boxes(dialog);
+    assert.deepEqual([payAlice.checked, payBob.checked, shareAlice.checked, shareBob.checked], [true, false, true, true]);
+    assert.equal(methodOf(dialog).value, "equal");
+  });
+
+  test("'Your own defaults' saves only what changed, as personal preferences", async () => {
+    const { ctx, state } = ctxWith(STRANDED);
+    const saved = [];
+    ctx.store.actions.savePreferences = async (patch) => { saved.push(patch); };
+    state.preferences = { effective: { groupSplitMethod: "shares" } };
+    const v = createGroupView(ctx);
+    v.update(state);
+    const card = v.element.querySelectorAll("section").find((s) => s.getAttribute("aria-labelledby") === "grp-mine");
+    assert.equal(card.hidden, false);
+    const selects = card.querySelectorAll("select");
+    assert.deepEqual(selects.map((s) => s.value), ["shares", "", "", ""]);
+    selects[0].value = "";
+    selects[1].value = "me";
+    selects[3].value = "direct";
+    buttonNamed(card, "Save my defaults").click();
+    await tick();
+    assert.deepEqual(saved, [{ groupSplitMethod: null, groupSplitWho: "me", groupBalanceView: "direct" }]);
+  });
+
+  test("someone who prefers 'Keep who owes whom' sees that view first", () => {
+    const { ctx, state } = ctxWith(STRANDED);
+    state.preferences = { effective: { groupBalanceView: "direct" } };
+    const v = createGroupView(ctx);
+    v.update(state);
+    assert.match(v.element.textContent, /Each person pays back the people who paid for them/);
+    assert.doesNotMatch(v.element.textContent, /The fewest payments that settle everyone/);
+  });
+});
+
+describe("F2: a part left on an account that is no longer one's own", () => {
+  test("the notice gives the server's reason and, with no account to record on, offers to choose one instead of updating", () => {
+    const expense = { id: "gex_1", description: "Fictional pizza", date: "2026-09-12", currency: "USD", amount: "40.00", amountMinor: 4000, payers: [], shares: [], split: { method: "equal", lines: [] },
+      voided: false, canEdit: false, canVoid: false, revision: 1, history: [],
+      myLedger: { accountId: null, accountName: null, accountUnavailable: false, needsReview: true, formerAccount: { reason: "shared", name: "Bob Wallet", left: false },
+        note: "Your part was recorded on Bob Wallet, which is now shared. Choose a private account of yours to record it there.", entries: [] } };
+    const { ctx, state } = ctxWith(STRANDED, { expenses: [expense] });
+    const v = createGroupView(ctx);
+    v.update(state);
+    const text = v.element.textContent;
+    assert.match(text, /Your part was recorded on Bob Wallet, which is now shared\./);
+    assert.ok(buttonNamed(v.element, "Choose my account"), "offers to choose an account");
+    assert.equal(buttonNamed(v.element, "Update my account"), undefined, "no update without an account");
   });
 });
 

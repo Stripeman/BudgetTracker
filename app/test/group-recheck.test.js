@@ -107,6 +107,18 @@ describe("N3: an amount owed shows the no-money-moved mark, never a money arrow"
     assert.equal(repaid.querySelector("svg").getAttribute("data-icon"), "money-out");
   });
 
+  test("a share someone else paid gets the no-money-moved mark and the words Paid by someone else; a share one paid oneself keeps its money-out arrow (financial recheck L4)", () => {
+    assert.equal(directionOf({ kind: "expense", amountMinor: -8000, paidBySomeoneElse: true }), "no-money-moved");
+    assert.equal(directionOf({ kind: "expense", amountMinor: 8000, paidBySomeoneElse: true, links: { reverses: "txn_z" } }), "no-money-moved");
+    assert.equal(directionOf({ kind: "expense", amountMinor: -8000, paidBySomeoneElse: false }), "money-out");
+    const share = entryAmount({ kind: "expense", amountMinor: -8000, amount: "-80.00", currency: "EUR", paidBySomeoneElse: true }, { effective: {} });
+    assert.deepEqual(share.querySelectorAll("svg").map((s) => s.getAttribute("data-icon")), ["no-money-moved"], "one mark, no arrow");
+    assert.match(share.textContent, /Paid by someone else/);
+    assert.doesNotMatch(share.textContent, /No money moved/);
+    const own = entryAmount({ kind: "expense", amountMinor: -8000, amount: "-80.00", currency: "EUR", paidBySomeoneElse: false }, { effective: {} });
+    assert.equal(own.querySelector("svg").getAttribute("data-icon"), "money-out");
+  });
+
   test("the Transactions list shows Bob's 80.00 owed with the no-money-moved mark and no money-in arrow", () => {
     const list = listOf([OWED]);
     assert.match(list.textContent, /EUR 80\.00\s*No money moved/);

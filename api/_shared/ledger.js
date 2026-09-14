@@ -9,7 +9,7 @@
 const { badRequest } = require('./http');
 const money = require('./money');
 const fields = require('./fields');
-const { capabilitiesFor } = require('./authz');
+const { capabilitiesFor, can } = require('./authz');
 const icons = require('./icons');
 
 const ACCOUNT_TYPES = Object.freeze(['checking', 'savings', 'cash', 'credit-card', 'loan', 'mortgage',
@@ -218,8 +218,43 @@ function validateSplits(splits, amountMinor, currency, doc) {
   return out;
 }
 
+// Share entries offset in full by an amount owed (financial recheck of 47617b5, L4; Terry's rule: arrows
+// only for money actually in or out): the share of a shared expense someone else paid, or the spending
+// half of a hand-entered pair. No money left the account for them, so they are shown with the
+// no-money-moved mark and "Paid by someone else". A share one paid oneself, even in part, keeps its
+// arrow. Matched per person, account and record (or pair), and per state (current, reversed, reversal).
+function paidElsewhereIndex(doc) {
+  const buckets = new Map();
+  const byId = new Map((doc.transactions || []).map((t) => [t.id, t]));
+  for (const t of doc.transactions || []) {
+    if (t.kind !== 'expense' && t.kind !== 'payable') continue;
+    const l = t.links || {};
+    // A reversal belongs with the entry it reverses (a reversal of a hand-entered pair does not carry
+    // the pair's id itself).
+    const src = (l.reverses && byId.get(l.reverses)) || t;
+    const groupExpenseId = l.groupExpenseId || (src.links || {}).groupExpenseId;
+    const record = src.owedPairId ? `pair|${src.owedPairId}` : groupExpenseId ? `group|${t.createdBy}|${t.accountId}|${groupExpenseId}` : null;
+    if (!record) continue;
+    const key = `${record}|${l.reverses ? 'reversal' : t.reversedBy ? 'reversed' : 'current'}|${t.deletedAt ? 'deleted' : ''}`;
+    const b = buckets.get(key) || { expenses: [], payables: [] };
+    (t.kind === 'expense' ? b.expenses : b.payables).push(t);
+    buckets.set(key, b);
+  }
+  const out = new Set();
+  for (const { expenses, payables } of buckets.values()) {
+    for (const e of expenses) if (payables.some((p) => p.amountMinor === -e.amountMinor)) out.add(e.id);
+  }
+  return out;
+}
+
 function transactionView(doc, t, principal, now, lookups) {
   const account = lookups.accounts.get(t.accountId);
+  // Computed once per set of lookups (one request), after the request's own changes.
+  const paidElsewhere = lookups.paidElsewhere || (lookups.paidElsewhere = paidElsewhereIndex(doc));
+  // The other account of a transfer is identified only to someone who may see it, as a bill's
+  // destination is (SEC-B12; security recheck of 47617b5, L3); the client then says "another account".
+  const other = t.counterpartAccountId ? (doc.accounts || []).find((a) => a.id === t.counterpartAccountId) : null;
+  const counterpartAccountId = other && can(doc, principal, other, 'view-balances', now) ? other.id : null;
   return {
     id: t.id, accountId: t.accountId, accountName: account ? account.name : '', kind: t.kind,
     amountMinor: t.amountMinor, amount: money.toDecimal(t.amountMinor, t.currency), currency: t.currency,
@@ -227,9 +262,11 @@ function transactionView(doc, t, principal, now, lookups) {
     payeeId: t.payeeId || null, payeeName: t.payeeId && lookups.payees.get(t.payeeId) ? lookups.payees.get(t.payeeId).name : '',
     categoryId: t.categoryId || null, splits: (t.splits || []).map((s) => ({ ...s, amount: money.toDecimal(s.amountMinor, t.currency) })),
     tags: t.tags || [], notes: t.notes || '', responsibleRef: t.responsibleRef || null,
-    transferId: t.transferId || null, counterpartAccountId: t.counterpartAccountId || null,
+    transferId: t.transferId || null, counterpartAccountId,
     // A hand-entered amount owed and its matching share, recorded and corrected together (BT-009).
     owedPairId: t.owedPairId || null,
+    // A share someone else paid: no money moved (L4).
+    paidBySomeoneElse: paidElsewhere.has(t.id),
     links: t.links || {}, createdAt: t.createdAt, updatedAt: t.updatedAt || null, revision: t.revision || 1,
     amendmentCount: (t.amendments || []).length, reversedBy: t.reversedBy || null,
     createdBySelf: t.createdBy === principal.subject, deletedAt: t.deletedAt || null,

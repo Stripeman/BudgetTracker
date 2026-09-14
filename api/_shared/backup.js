@@ -332,7 +332,9 @@ function plan({ current, archived, mode, principal, member, nowIso, newWorkspace
     const txns = arc.transactions.map(withoutLostGroupLinks).map((t) => {
       if (!t.transferId) return t;
       const counterpartIncluded = keepAccounts.has(t.counterpartAccountId);
-      return counterpartIncluded ? t : { ...t, counterpartExcluded: true };
+      // The other side stays behind, and so does its id: it may be another member's private account
+      // (security recheck of 47617b5, L2). The leg keeps its amount and is marked as one-sided.
+      return counterpartIncluded ? t : { ...t, counterpartExcluded: true, counterpartAccountId: null };
     });
     // Another member's identity never enters the new workspace (security review S4): on shared
     // expenses and payments every other subject becomes a former member (shown as "Former member"),

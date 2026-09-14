@@ -96,15 +96,44 @@ export async function run(h, t) {
     actual: { addExpense: carolAdd, status: (await api("carol").ok("group", { query: q })).settlements.find((s) => s.id === s2.id).status },
   });
 
+  // ---- F1: a disputed payment is settled by its receiver only (the default), even with anyone able to confirm
+  const sD = (await api("bob").ok("group", { method: "POST", query: { ...q, action: "settle" }, body: { from: B, to: A, amount: "9.00" } })).settlement;
+  await api("alice").ok("group", { method: "POST", query: { ...q, action: "dispute" }, body: { settlementId: sD.id, revision: sD.revision, reason: "E2E never arrived" } });
+  await Promise.all([fresh(b.alice, "group"), fresh(b.bob, "group")]);
+  const disputedRow = `[...document.querySelectorAll('${PAYMENTS} tr')].find((x) => x.innerText.includes('Disputed: E2E never arrived'))`;
+  const rowButtons = (s) => s.evaluate(`(() => { const r = ${disputedRow}; return r ? [...r.querySelectorAll('button')].map((x) => x.textContent.trim()) : null; })()`);
+  const bobRowButtons = await rowButtons(b.bob);
+  const aliceRowButtons = await rowButtons(b.alice);
+  const bobOverDispute = (await api("bob").request("group", { method: "POST", query: { ...q, action: "confirm" }, body: { settlementId: sD.id, revision: sD.revision + 1 } })).status;
+  // Alice confirms it over her own dispute, in her browser, with a real click in that row.
+  const confirmAt = await b.alice.evaluate(`(() => { const r = ${disputedRow}; const c = r && [...r.querySelectorAll('button')].find((x) => x.textContent.trim() === 'Confirm'); if (!c) return null; c.scrollIntoView({ block: 'center' }); const q = c.getBoundingClientRect(); return { x: q.left + q.width / 2, y: q.top + q.height / 2 }; })()`);
+  if (confirmAt) {
+    await b.alice.mouseClick(confirmAt.x, confirmAt.y);
+    await b.alice.waitFor("!!document.querySelector('.modal')", { what: "Alice's Confirm payment dialog for the disputed payment" });
+    await b.alice.click({ role: "button", name: "Confirm", scope: ".modal" });
+    await b.alice.waitFor("!document.querySelector('.modal')", { what: "Alice's dialog to close" });
+  }
+  await fresh(b.bob, "group");
+  t.check("F1: with anyone able to confirm, Bob's browser offers no Confirm on the payment Alice disputed and the API refuses him; Alice's does, and after she confirms it Bob reads 'Confirmed over a dispute by Alice Fictional.'", {
+    expected: { bobOffered: false, aliceOffered: true, bobDirect: 403, bobReads: true },
+    actual: { bobOffered: (bobRowButtons || []).includes("Confirm"), aliceOffered: (aliceRowButtons || []).includes("Confirm"), bobDirect: bobOverDispute, bobReads: (await b.bob.text(PAYMENTS)).includes("Confirmed over a dispute by Alice Fictional.") },
+  });
+
   // ---- B per person: the group setting is on; Alice sets Bob to No in her card ------------------
   // Bob loses Confirm on his own payment (the API refuses him too); Carol still confirms one made to her.
   const s3 = (await api("bob").ok("group", { method: "POST", query: { ...q, action: "settle" }, body: { from: B, to: A, amount: "10.00" } })).settlement;
   const s5 = (await api("bob").ok("group", { method: "POST", query: { ...q, action: "settle" }, body: { from: B, to: C, amount: "4.00" } })).settlement;
   await fresh(b.alice, "group");
   const listed = await b.alice.evaluate(`[...document.querySelectorAll('${SETTINGS} select')].map((x) => x.getAttribute('aria-label')).filter((l) => (l || '').startsWith('Can confirm payments: '))`);
+  // Two people in ONE Save (security recheck of 47617b5, M1): both must be kept, not only the last.
   await b.alice.choose(DISPLAY.bob, "No", { scope: SETTINGS });
+  await b.alice.choose(DISPLAY.carol, "No", { scope: SETTINGS });
   await saveSettings(b.alice);
-  const aliceCard = { bob: await personValue(b.alice, DISPLAY.bob), carol: await personValue(b.alice, DISPLAY.carol), text: await b.alice.text(SETTINGS) };
+  await fresh(b.alice, "group");
+  const aliceCard = {
+    bob: await personValue(b.alice, DISPLAY.bob), carol: await personValue(b.alice, DISPLAY.carol), text: await b.alice.text(SETTINGS),
+    history: await b.alice.evaluate(`(document.querySelector('${SETTINGS}').textContent.match(/Can confirm payments for (Bob|Carol) Fictional: Use the group setting → No/g) || []).length`),
+  };
   await fresh(b.bob, "group");
   const bobNo = {
     confirm: await confirmButtons(b.bob, "Confirm You paid Alice Fictional"),
@@ -118,9 +147,9 @@ export async function run(h, t) {
   await b.carol.click({ role: "button", name: "Confirm", scope: ".modal" });
   await b.carol.waitFor("!document.querySelector('.modal')", { what: "Carol's dialog to close again" });
   const carolGot = (await api("carol").ok("group", { query: q })).settlements.find((s) => s.id === s5.id);
-  t.check("B per person: Alice's card lists everyone with a picker; she sets Bob to No while the group setting is on", {
-    expected: { listed: [`Can confirm payments: ${DISPLAY.alice}`, `Can confirm payments: ${DISPLAY.bob}`, `Can confirm payments: ${DISPLAY.carol}`], bob: "no", carol: "inherit", bobHelp: true, carolHelp: true },
-    actual: { listed, bob: aliceCard.bob, carol: aliceCard.carol, bobHelp: aliceCard.text.includes("Only payments made to them now"), carolHelp: aliceCard.text.includes("Only payments made to them (a viewer)") },
+  t.check("B per person and M1: Alice's card lists everyone with a picker; she sets Bob and Carol to No in one Save while the group setting is on, and after a reload both show No, each once in the history", {
+    expected: { listed: [`Can confirm payments: ${DISPLAY.alice}`, `Can confirm payments: ${DISPLAY.bob}`, `Can confirm payments: ${DISPLAY.carol}`], bob: "no", carol: "no", bobHelp: true, carolHelp: true, history: 2 },
+    actual: { listed, bob: aliceCard.bob, carol: aliceCard.carol, bobHelp: aliceCard.text.includes("Only payments made to them now"), carolHelp: aliceCard.text.includes("Only payments made to them (a viewer)"), history: aliceCard.history },
   });
   t.check("B per person: in Bob's browser there is no Confirm on his own payment, he is told he confirms payments made to him, sees no settings card, and the API refuses him", {
     expected: { confirm: 0, says: true, card: false, direct: 403 }, actual: bobNo,
@@ -130,12 +159,13 @@ export async function run(h, t) {
   });
   // Back to "Use the group setting": Bob follows the group (on) again.
   await b.alice.choose(DISPLAY.bob, "Use the group setting", { scope: SETTINGS });
+  await b.alice.choose(DISPLAY.carol, "Use the group setting", { scope: SETTINGS });
   await saveSettings(b.alice);
   await fresh(b.bob, "group");
   const before = await confirmButtons(b.bob, "Confirm You paid Alice Fictional");
 
   // ---- B: Alice turns the group setting off; Bob's Confirm disappears and the API refuses him -------
-  await b.alice.click({ label: "Anyone in the group can confirm payments", scope: SETTINGS });
+  await b.alice.choose("Anyone in the group can confirm payments", "Off", { scope: SETTINGS });
   await saveSettings(b.alice);
   await fresh(b.bob, "group");
   const after = await confirmButtons(b.bob, "Confirm You paid Alice Fictional");
@@ -151,7 +181,7 @@ export async function run(h, t) {
   const kindsDefault = await typeChoices(b.alice);
   await b.alice.click({ role: "button", name: "Cancel", scope: ".modal" });
   await b.alice.goto("group");
-  await b.alice.click({ label: "Also allow entering them by hand", scope: SETTINGS });
+  await b.alice.choose("Owed-to-others and repayment entries", "Also allow entering them by hand", { scope: SETTINGS });
   await saveSettings(b.alice);
   await fresh(b.alice, "transactions");
   await b.alice.click({ role: "button", name: "Add expense", scope: ".page-head" });
@@ -177,6 +207,24 @@ export async function run(h, t) {
     size: (() => { const s = r.querySelector('svg[data-icon="no-money-moved"]'); if (!s) return null; const q = s.getBoundingClientRect(); return [Math.round(q.width), Math.round(q.height)]; })(),
   })))()`);
   t.check("N2: Bob's owed entry offers Edit, but no Reverse or Delete", { expected: [["Edit"]], actual: rows.map((r) => r.buttons) });
+  // L4 (Terry's arrow rule): his share of the dinner Alice paid shows the |==| mark and "Paid by someone
+  // else"; each repayment he really made keeps one money-out arrow.
+  // The list shows each row's account, amount and (for kinds other than a plain expense) its kind label.
+  const walletRows = await b.bob.evaluate(`(() => [...document.querySelectorAll('tbody tr')].filter((r) => ((r.querySelector('td[data-label="Account"]') || {}).innerText || '').includes('Bob Wallet')).map((r) => ({
+    amount: ((r.querySelector('td[data-label="Amount"]') || {}).innerText || '').replace(/\\s+/g, ' ').trim(),
+    kind: ((r.querySelector('td[data-label="Status"]') || {}).innerText || ''),
+    marks: [...r.querySelectorAll('svg[data-icon]')].map((s) => s.getAttribute('data-icon')).filter((i) => ['no-money-moved', 'money-in', 'money-out'].includes(i)),
+  })))()`);
+  const shareRows = walletRows.filter((r) => r.amount.includes("Paid by someone else"));
+  const repaidRows = walletRows.filter((r) => r.kind.includes("Repayment made"));
+  const outArrows = walletRows.filter((r) => r.marks.includes("money-out"));
+  t.check("L4: on Bob Wallet his 30.00 share of the dinner Alice paid shows the |==| mark with 'Paid by someone else' and no arrow; every money-out arrow there is a repayment he really made", {
+    expected: { share: [{ thirty: true, marks: ["no-money-moved"] }], arrowsAreRepayments: true, anyRepaid: true },
+    actual: {
+      share: shareRows.map((r) => ({ thirty: r.amount.includes("30.00"), marks: r.marks })),
+      arrowsAreRepayments: outArrows.length === repaidRows.length && repaidRows.every((r) => r.marks.join() === "money-out"), anyRepaid: repaidRows.length > 0,
+    },
+  });
   t.check("D: it shows the |==| mark (and no arrow) beside 'EUR 30.00 No money moved'", {
     expected: [{ marks: ["no-money-moved"], amount: "EUR 30.00 No money moved", visible: true }],
     actual: rows.map((r) => ({ marks: r.marks, amount: r.amount, visible: !!r.size && r.size[0] > 0 && r.size[1] > 0 })),
@@ -203,6 +251,60 @@ export async function run(h, t) {
   await fresh(b.alice, "group");
   t.note(`screenshot of Alice's settings card: ${await b.alice.shot("settings-card")}`);
 
+  // ---- Settings b, c and e across browsers (Terry, 2026-09-14: "build all 10") -----------------------
+  // (c) Alice lets any member who can add expenses correct them: Bob, who could not before, corrects the
+  // ferry Alice added, in his browser, with a reason.
+  const EXPENSES = '[aria-labelledby="grp-expenses"]';
+  const ferryId = afterB.expenses.find((x) => x.description === "E2E ferry").id;
+  const ferryEdit = (s) => s.evaluate(`(() => { const r = [...document.querySelectorAll('${EXPENSES} tr')].find((x) => x.innerText.includes('E2E ferry')); return !!r && [...r.querySelectorAll('button')].some((x) => x.textContent.trim() === 'Edit'); })()`);
+  await fresh(b.bob, "group");
+  const bobCouldEdit = await ferryEdit(b.bob);
+  await fresh(b.alice, "group");
+  await b.alice.choose("Who may correct or void a shared expense", "Any member who can add expenses", { scope: SETTINGS });
+  await saveSettings(b.alice);
+  await fresh(b.bob, "group");
+  const bobCanEdit = await ferryEdit(b.bob);
+  if (bobCanEdit) {
+    await b.bob.click({ role: "button", name: "Edit E2E ferry", scope: EXPENSES });
+    await b.bob.waitFor("!!document.querySelector('.modal')", { what: "Bob's correction dialog" });
+    await b.bob.fill({ label: "Description", scope: ".modal" }, "E2E ferry (Bob's correction)");
+    await b.bob.fill({ label: "Reason for this correction", scope: ".modal" }, "Right name");
+    await b.bob.click({ role: "button", name: "Save correction", scope: ".modal" });
+    await b.bob.waitFor("!document.querySelector('.modal')", { what: "Bob's correction dialog to close" });
+  }
+  const ferryNow = (await api("alice").ok("group", { query: q })).expenses.find((e) => e.id === ferryId);
+  t.check("Setting c: Bob has no Edit on the ferry Alice added until she chooses 'Any member who can add expenses' in her card; then he corrects it in his browser", {
+    expected: { before: false, after: true, description: "E2E ferry (Bob's correction)" }, actual: { before: bobCouldEdit, after: bobCanEdit, description: ferryNow ? ferryNow.description : null },
+  });
+
+  // (b) and (e) Bob's own defaults: only him sharing a new expense, and balances as "Keep who owes whom".
+  // Alice keeps the group's defaults: everyone shares, and the fewest payments.
+  const MINE = '[aria-labelledby="grp-mine"]';
+  await b.bob.choose("Who shares by default", "Only me", { scope: MINE });
+  await b.bob.choose("Balances shown as", "Keep who owes whom", { scope: MINE });
+  await b.bob.evaluate("(() => { const r = document.getElementById('a11y-live'); if (r) r.textContent = ''; })()");
+  await b.bob.click({ role: "button", name: "Save my defaults", scope: MINE });
+  await b.bob.waitFor("(() => { const r = document.getElementById('a11y-live'); return !!r && r.textContent.startsWith('Your defaults are saved'); })()", { what: "Bob's defaults to be saved" });
+  await Promise.all([fresh(b.bob, "group"), fresh(b.alice, "group")]);
+  // Who is ticked to share in a new expense: the split rows after the payer rows (one row per person each).
+  const tickedToShare = async (s) => {
+    await s.click({ role: "button", name: "Add expense", scope: ".page-head" });
+    await s.waitFor("!!document.querySelector('.modal')", { what: "the Add shared expense dialog" });
+    const names = await s.evaluate("(() => { const rows = [...document.querySelectorAll('.modal .split-row')]; return rows.slice(rows.length / 2).filter((r) => r.querySelector('input').checked).map((r) => r.querySelector('label').textContent); })()");
+    await s.press("Escape");
+    await s.waitFor("!document.querySelector('.modal')", { what: "the dialog to close" });
+    return names;
+  };
+  const bobTicked = await tickedToShare(b.bob);
+  const aliceTicked = await tickedToShare(b.alice);
+  t.check("Settings b and e: Bob's own defaults apply only to him: his new expense has only him sharing and his balances show who owes whom; Alice's has everyone and the fewest payments", {
+    expected: { bobTicked: ["Bob Fictional (you)"], aliceTicked: ["Alice Fictional (you)", "Bob Fictional", "Carol Fictional"], bobDirect: true, aliceFewest: true },
+    actual: {
+      bobTicked, aliceTicked,
+      bobDirect: (await b.bob.text("body")).includes("Each person pays back the people who paid for them"), aliceFewest: (await b.alice.text("body")).includes("The fewest payments that settle everyone."),
+    },
+  });
+
   // ---- R1: Bob shares his wallet; recording on it stops, and his browser shows nothing to update -----
   // The Accounts page offers no way to make an existing account shared (only per-member grants), so the
   // share itself is Bob's API request, as the server's confirmation flow expects; the evidence in his
@@ -219,9 +321,25 @@ export async function run(h, t) {
   await api("bob").ok("group", { method: "POST", query: { ...q, action: "ledger" }, body: { currency: "EUR" } });
   const bobGroup = await api("bob").ok("group", { query: q });
   await fresh(b.bob, "group");
-  t.check("R1: after Bob shares his wallet in his browser, Alice's taxi and Bob's update write nothing there and no link remains", {
-    expected: { share: 200, entriesAfter: beforeShare, link: undefined, notice: false },
-    actual: { share: shared, entriesAfter: await walletEntries(), link: bobGroup.myLedgers, notice: (await b.bob.text("body")).includes("Your account needs updating") },
+  const bobBody = await b.bob.text("body");
+  t.check("R1 and F2: after Bob shares his wallet, Alice's taxi and Bob's update write nothing there and no link remains; his browser says his part is on an account that is now shared and offers to choose another", {
+    expected: { share: 200, entriesAfter: beforeShare, link: undefined, notice: true, says: true, choose: true },
+    actual: {
+      share: shared, entriesAfter: await walletEntries(), link: bobGroup.myLedgers, notice: bobBody.includes("Your account needs updating"), says: bobBody.includes("which is now shared"),
+      choose: await b.bob.evaluate("[...document.querySelectorAll('button')].some((x) => x.textContent.trim() === 'Choose my account')"),
+    },
+  });
+  // F2: Bob chooses a new private account. His own entries on the shared wallet are reversed there (it is
+  // back to its 100.00 opening balance), his whole part is recorded on the new account, his page has
+  // nothing left to update, and that account's outstanding equals his balance in the group.
+  const spare = firstRecord(await api("bob").ok("accounts", { method: "POST", query: q, body: { name: "E2E Bob Spare", type: "cash", currency: "EUR", openingBalance: "50.00" } }));
+  await api("bob").ok("group", { method: "POST", query: { ...q, action: "ledger" }, body: { currency: "EUR", accountId: spare.id } });
+  await fresh(b.bob, "group");
+  const bobNet = (await api("bob").ok("group", { query: q })).balances.find((x) => x.currency === "EUR").rows.find((r) => r.ref === B).net;
+  const spareSummary = (await api("bob").ok("transactions", { query: { ...q, accountId: spare.id } })).summary.find((s) => s.currency === "EUR");
+  t.check("F2: once Bob chooses E2E Bob Spare his browser shows nothing to update, the shared wallet is back to 100.00, and the spare's outstanding equals his group balance", {
+    expected: { notice: false, wallet: "100.00", outstanding: bobNet },
+    actual: { notice: (await b.bob.text("body")).includes("Your account needs updating"), wallet: (await api("bob").ok("accounts", { query: q })).accounts.find((a) => a.id === wallet.id).balance, outstanding: spareSummary ? spareSummary.receivable : null },
   });
 
   // ---- E: parallel requests against the file-backed dev server ------------------------------------
@@ -248,6 +366,18 @@ export async function run(h, t) {
   const bobWallet = firstRecord(await api("bob").ok("accounts", { method: "POST", query: R.q, body: { name: "E2E Bob Wallet", type: "cash", currency: "EUR", openingBalance: "50.00" } }));
   const bobsEntry = firstRecord(await api("bob").ok("transactions", { method: "POST", query: R.q, body: { accountId: joint.id, kind: "expense", amount: "12.00", notes: "E2E milk" } }));
   await api("alice").ok("recurring", { method: "POST", query: R.q, body: { name: "E2E rent", billType: "housing", accountId: joint.id, amount: "800.00", schedule: { freq: "monthly", startDate: "2026-10-01" }, responsibleRef: R.ref("bob") } });
+  // L3 (security recheck of 47617b5): Bob moves 5.00 from the Joint to his private wallet. Alice sees the
+  // Joint's side as a transfer to "another account", and nothing in her page or her API answer names the
+  // wallet; Bob sees his wallet's name.
+  await api("bob").ok("transactions", { method: "POST", query: R.q, body: { accountId: joint.id, kind: "transfer", amount: "5.00", transfer: { toAccountId: bobWallet.id } } });
+  const aliceList = await api("alice").ok("transactions", { query: R.q });
+  await fresh(b.alice, "group"); await b.alice.useWorkspace(R.name); await b.alice.goto("transactions");
+  await fresh(b.bob, "group"); await b.bob.useWorkspace(R.name); await b.bob.goto("transactions");
+  const transferRow = (s) => s.evaluate(`(() => { const r = [...document.querySelectorAll('tbody tr')].find((x) => x.innerText.includes('Transfer to')); return r ? (r.innerText.match(/Transfer to [^\\n\\t]+/) || [''])[0].trim() : null; })()`);
+  t.check("L3: Alice's browser shows the Joint's side as 'Transfer to another account' and her page and API answer hold no id of Bob's wallet; Bob's shows his wallet", {
+    expected: { alice: "Transfer to another account", alicePage: false, aliceApi: false, bob: "Transfer to E2E Bob Wallet" },
+    actual: { alice: await transferRow(b.alice), alicePage: await b.alice.evaluate(`document.documentElement.outerHTML.includes(${JSON.stringify(bobWallet.id)})`), aliceApi: JSON.stringify(aliceList).includes(bobWallet.id), bob: await transferRow(b.bob) },
+  });
   // A per-person right for Bob is keyed by his member id: it must not come along either.
   await api("alice").ok("group", { method: "POST", query: { ...R.q, action: "settings" }, body: { changes: { confirmOverrides: { [R.memberOf("bob").id]: "no" } } } });
   const archiveId = (await api("alice").ok("backups", { method: "POST", query: R.q, body: {} })).archive.archiveId;
@@ -256,9 +386,12 @@ export async function run(h, t) {
   // The isolated server keeps its storage in <dataRoot>/dev-data (scripts/dev/dataroot.mjs).
   const file = [path.join(h.server.dataRoot, "dev-data", "workspaces", created.id, "workspace.json"), path.join(h.server.dataRoot, "workspaces", created.id, "workspace.json")].find((p) => fs.existsSync(p)) || "";
   const text = file ? fs.readFileSync(file, "utf8") : "";
-  t.check("S4: the new workspace's stored document holds no subject, member id or private account of Bob, and keeps Alice's own", {
-    expected: { read: true, bobSubject: false, bobMemberId: false, bobWallet: false, aliceSubject: true },
-    actual: { read: !!text, bobSubject: text.includes("google:dev-bob"), bobMemberId: text.includes(R.memberOf("bob").id), bobWallet: text.includes(bobWallet.id), aliceSubject: text.includes("google:dev-alice") },
+  // L2: every account id named in the new workspace is one of its own accounts.
+  const carried = text ? new Set(JSON.parse(text).accounts.map((a) => a.id)) : new Set();
+  const strayAccounts = [...new Set(text.match(/\bacc_[A-Za-z0-9]+/g) || [])].filter((id) => !carried.has(id));
+  t.check("S4 and L2: the new workspace's stored document holds no subject, member id or private account of Bob (not even on the Joint's side of his transfer), and keeps Alice's own", {
+    expected: { read: true, bobSubject: false, bobMemberId: false, bobWallet: false, strayAccounts: [], aliceSubject: true },
+    actual: { read: !!text, bobSubject: text.includes("google:dev-bob"), bobMemberId: text.includes(R.memberOf("bob").id), bobWallet: text.includes(bobWallet.id), strayAccounts, aliceSubject: text.includes("google:dev-alice") },
   });
   const inv = await api("alice").ok("invitations", { method: "POST", query: { workspaceId: created.id }, body: { email: "bob@example.com", role: "member" } });
   await api("bob").ok("invitations", { method: "POST", query: { action: "accept" }, body: { workspaceId: created.id, token: inv.token } });

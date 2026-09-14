@@ -18,13 +18,15 @@ import { formatAmount, formatDate, todayIso } from "../../core/format.js";
 import { previewSplit, precisionOf, formatMinor, parseAmount } from "../../core/split.js";
 import { icon, withIcon } from "../icons.js";
 import { messageFor } from "../../core/errors.js";
+// Values in words exactly as the workspace settings card shows them (eefd115).
+import { settingText } from "./workspace.js";
 
 export const METHOD_LABELS = Object.freeze({ equal: "Equally", amounts: "By amounts", percentages: "By percentages", shares: "By shares" });
 const VALUE_LABELS = { amounts: "Amount for", percentages: "Percent for", shares: "Shares for" };
 const VALUE_HINTS = { amounts: "0.00", percentages: "%", shares: "1" };
 const STATUS_LABELS = { reported: "Reported", confirmed: "Confirmed", disputed: "Disputed" };
 const EVENT_LABELS = { create: "Added", update: "Corrected", void: "Voided", reported: "Reported as paid", confirmed: "Confirmed as received", disputed: "Disputed",
-  "confirmed-by-reporter": "Confirmed by the person who reported it", withdrawn: "Confirmation withdrawn" };
+  "confirmed-by-reporter": "Confirmed by the person who reported it", withdrawn: "Confirmation withdrawn", "confirmed-over-dispute": "Confirmed over a dispute" };
 const FIELD_LABELS = { description: "Description", date: "Date", amountMinor: "Amount", categoryId: "Category", notes: "Notes", payers: "Paid by", split: "Split", shares: "Shares", status: "Status" };
 
 const titled = (id, iconId, text) => el("h2", { class: "card__title", id }, [withIcon(iconId, text)]);
@@ -35,6 +37,10 @@ const fmtFor = (state) => {
   return (decimal, currency) => formatAmount(decimal, currency, { numberFormat: effective.numberFormat });
 };
 const isZero = (decimal) => /^-?0(\.0+)?$/.test(String(decimal || "0"));
+// A group setting's value from the server's one list, and a person's own default over it (Terry's
+// settings b and e, 2026-09-14): the person's preference when set, otherwise the group's.
+const groupValue = (data, key, fallback) => { const s = ((data && data.groupSettings && data.groupSettings.settings) || []).find((x) => x.key === key); return s ? s.value : fallback; };
+const personalDefault = (state, key) => (((state && state.preferences) || {}).effective || {})[key] || null;
 const stampOf = (iso) => String(iso || "").replace("T", " ").slice(0, 16);
 // The arrow for the person looking: in (up) or out (down), never both ways (Terry, 2026-09-13).
 const arrow = (dir) => el("span", { class: `dir dir--${dir}` }, [icon(dir)]);
@@ -82,7 +88,10 @@ export function createView(ctx) {
   const settingsCard = el("section", { class: "card", "aria-labelledby": "grp-settings", hidden: true }, [titled("grp-settings", "filter", "Shared expenses settings"), settingsBox]);
   // Each person's own right to confirm payments, from the server (Terry, 2026-09-14).
   const myRight = el("p", { class: "muted small", hidden: true });
-  let mode = "suggested";
+  // Each person's own defaults for new expenses and their preferred balance view (settings b and e).
+  const mineBox = el("div");
+  const mineCard = el("section", { class: "card", "aria-labelledby": "grp-mine", hidden: true }, [titled("grp-mine", "user", "Your own defaults"), mineBox]);
+  let mode = personalDefault(ctx.store.getState(), "groupBalanceView") || "suggested";
   const element = el("section", {}, [
     el("div", { class: "page-head" }, [el("h1", { text: "Shared expenses" }), actions]),
     intro,
@@ -94,6 +103,7 @@ export function createView(ctx) {
       el("section", { class: "card", "aria-labelledby": "grp-expenses" }, [titled("grp-expenses", "receipt", "Expenses"), expensesBox]),
       el("section", { class: "card", "aria-labelledby": "grp-payments" }, [titled("grp-payments", "coins", "Payments"), myRight, paymentsBox]),
       settingsCard,
+      mineCard,
     ]),
   ]);
   void ctx.store.actions.refreshGroup();
@@ -119,8 +129,12 @@ export function createView(ctx) {
     mount(needs, review.length ? el("section", { class: "notice notice--warning", "aria-labelledby": "grp-review" }, [
       titled("grp-review", "alert", "Your account needs updating"),
       el("ul", { class: "stack" }, review.map(([type, r]) => el("li", { class: "row" }, [
-        el("span", { text: `${type === "expense" ? `“${r.description}”` : "A payment"} is not yet up to date on ${r.myLedger.accountName || "your account"}.` }),
-        button("Update my account", () => void syncMine(ctx, type, r), { small: true, attrs: { "aria-label": `Update my account for ${type === "expense" ? r.description : "this payment"}` } }),
+        // The server's reason when the part sits on a former account (financial recheck F2).
+        el("span", { text: `${type === "expense" ? `“${r.description}”` : "A payment"}: ${r.myLedger.note || `not yet up to date on ${r.myLedger.accountName || "your account"}.`}` }),
+        // With no account of their own to record on, the person chooses one; updating would do nothing.
+        r.myLedger.accountId
+          ? button("Update my account", () => void syncMine(ctx, type, r), { small: true, attrs: { "aria-label": `Update my account for ${type === "expense" ? r.description : "this payment"}` } })
+          : button("Choose my account", () => openLedgerChoice(ctx, type, r), { small: true, attrs: { "aria-label": `Choose my account for ${type === "expense" ? r.description : "this payment"}` } }),
       ]))),
     ]) : null);
 
@@ -132,6 +146,8 @@ export function createView(ctx) {
     // The group's settings, for owners and managers (the server decides who may change them).
     settingsCard.hidden = !(data.permissions.canManage && data.groupSettings);
     if (!settingsCard.hidden) renderSettings(data.groupSettings);
+    mineCard.hidden = !data.permissions.canAdd;
+    if (!mineCard.hidden) renderMine(state);
     const mine = data.groupSettings && data.groupSettings.mine;
     myRight.hidden = !mine;
     myRight.textContent = !mine ? "" : mine.effective ? "You can confirm any reported payment in this group."
@@ -141,30 +157,24 @@ export function createView(ctx) {
   // Every setting from the server's one list (Terry, 2026-09-14): a checkbox for on/off, a choice for the
   // others, each with its plain explanation. Save sends only what changed; who changed what is listed.
   function renderSettings(gs) {
-    const shown = (key, value) => {
-      const s = gs.settings.find((x) => x.key === key);
-      if (!s) return String(value);
-      if (s.type === "boolean") return value ? "on" : "off";
-      const o = (s.options || []).find((x) => x.value === value);
-      return o ? o.label : String(value);
-    };
+    // The same presentation as the workspace settings card (eefd115): the command picker for on/off and
+    // for choices, grouped under headings, each with its plain explanation, and values in words.
+    const shown = (key, value) => { const s = gs.settings.find((x) => x.key === key); return s ? settingText(s, value) : String(value); };
     const controls = gs.settings.map((s) => {
-      if (s.type === "boolean") {
-        const box = el("input", { type: "checkbox", id: uid("gset") });
-        box.checked = s.value === true;
-        return { s, read: () => box.checked, node: el("div", { class: "field field--wide" }, [
-          el("div", { class: "field--inline" }, [box, el("label", { for: box.id, text: s.label })]),
-          el("p", { class: "field__help", text: s.explanation }),
-        ]) };
-      }
-      const name = uid("gset");
-      const radios = (s.options || []).map((o) => { const r = el("input", { type: "radio", name, id: uid("gopt"), value: o.value }); r.checked = o.value === s.value; return [o, r]; });
-      return { s, read: () => { const hit = radios.find(([, r]) => r.checked); return hit ? hit[0].value : s.value; }, node: el("fieldset", { class: "plain-fieldset field--wide" }, [
-        el("legend", { class: "field__label", text: s.label }),
-        ...radios.map(([o, r]) => el("div", { class: "field--inline" }, [r, el("label", { for: r.id, text: o.label })])),
-        el("p", { class: "field__help", text: s.explanation }),
-      ]) };
+      const options = s.type === "boolean" ? [{ value: "true", label: "On" }, { value: "false", label: "Off" }] : (s.options || []).map((o) => ({ value: String(o.value), label: o.label }));
+      const pick = pickerSelect(options, String(s.value), {}, { search: false });
+      const read = () => (s.type === "boolean" ? pick.value === "true" : ((s.options || []).find((o) => String(o.value) === pick.value) || { value: s.value }).value);
+      return { s, read, node: field(s.label, pick, { help: s.explanation, wide: true }) };
     });
+    const grouped = [];
+    for (const c of controls) {
+      const name = c.s.group || "Shared expenses";
+      let g = grouped.find((x) => x.name === name);
+      if (!g) { g = { name, nodes: [] }; grouped.push(g); }
+      g.nodes.push(c.node);
+    }
+    const reason = input({ maxlength: "200", placeholder: "Optional", autocomplete: "off" });
+    const status = el("p", { class: "field__help", role: "status" });
     // "Can confirm payments" for each person (owners and managers only; the server sends the list only to them).
     const perPerson = (gs.perMember || []).find((p) => p.key === "confirmOverrides") || { label: "Can confirm payments",
       options: [{ value: "inherit", label: "Use the group setting" }, { value: "yes", label: "Yes" }, { value: "no", label: "No" }] };
@@ -184,9 +194,20 @@ export function createView(ctx) {
       const changes = Object.fromEntries(controls.filter((c) => c.read() !== c.s.value).map((c) => [c.s.key, c.read()]));
       const overrides = Object.fromEntries(people.filter((p) => p.pick.value !== p.m.override).map((p) => [p.m.memberId, p.pick.value]));
       if (Object.keys(overrides).length) changes.confirmOverrides = overrides;
-      if (!Object.keys(changes).length) { announce("Nothing changed."); return; }
-      const out = await ctx.store.actions.write((ws) => ctx.api.groupAction(ws, "settings", { changes }), ["group"]);
-      announce(out.ok ? "Settings saved. Everyone in the group now works this way." : messageFor(out.error));
+      if (!Object.keys(changes).length) { status.textContent = "Nothing changed."; announce("Nothing changed."); return; }
+      const body = { changes, ...(reason.value.trim() ? { reason: reason.value.trim() } : {}) };
+      const out = await ctx.store.actions.write((ws) => ctx.api.groupAction(ws, "settings", body), ["group"]);
+      if (!out.ok) { status.textContent = messageFor(out.error); announce(messageFor(out.error)); return; }
+      // Said only for what the server now holds (security recheck of 47617b5, M1): every value asked for
+      // is compared with the settings it returned.
+      const kept = (out.result && out.result.groupSettings) || null;
+      const missed = !kept ? [] : [
+        ...Object.entries(changes).filter(([k]) => k !== "confirmOverrides").filter(([k, v]) => { const s = (kept.settings || []).find((x) => x.key === k); return !s || s.value !== v; }).map(([k]) => (gs.settings.find((x) => x.key === k) || { label: k }).label),
+        ...Object.entries(overrides).filter(([id, v]) => { const m = (kept.members || []).find((x) => x.memberId === id); return !m || m.override !== v; }).map(([id]) => `${perPerson.label}: ${(people.find((p) => p.m.memberId === id) || { m: { name: id } }).m.name}`),
+      ];
+      const said = missed.length ? `Not everything was saved: ${missed.join("; ")}. The settings shown are what is saved now.` : "Settings saved. Everyone in the group now works this way.";
+      status.textContent = said;
+      announce(said);
     }, { variant: "primary" });
     const history = gs.history.length ? el("details", { class: "more" }, [
       el("summary", { text: `Changes (${gs.history.length})` }),
@@ -196,7 +217,35 @@ export function createView(ctx) {
         h.reason ? el("div", { class: "muted small", text: `Reason: ${h.reason}` }) : null,
       ]))),
     ]) : null;
-    mount(settingsBox, ...controls.map((c) => c.node), peopleBox, el("div", { class: "row" }, [save]), history);
+    mount(settingsBox,
+      ...grouped.flatMap((g) => [el("h3", { class: "section-title", text: g.name }), el("div", { class: "form-grid" }, g.nodes)]),
+      peopleBox,
+      el("div", { class: "form-grid" }, [field("Reason for the change (optional)", reason, { help: "Kept with the change in the history below.", wide: true })]),
+      el("div", { class: "row" }, [save]), status, history);
+  }
+
+  // The person's own defaults (settings b and e): personal preferences that apply only to them and
+  // override the group's defaults for new expenses; "Use the group's setting" clears one.
+  function renderMine(state) {
+    const eff = ((state.preferences || {}).effective) || {};
+    const theGroups = (list) => [{ value: "", label: "Use the group's setting" }, ...list];
+    const pickers = [
+      ["groupSplitMethod", "Default split", theGroups(Object.entries(METHOD_LABELS).map(([value, label]) => ({ value, label })))],
+      ["groupSplitWho", "Who shares by default", theGroups([{ value: "everyone", label: "Everyone in the group" }, { value: "me", label: "Only me" }])],
+      ["groupPaidBy", "Who paid by default", theGroups([{ value: "me", label: "Me" }, { value: "nobody", label: "Nobody until I choose" }])],
+      ["groupBalanceView", "Balances shown as", [{ value: "", label: "Fewest payments" }, { value: "direct", label: "Keep who owes whom" }]],
+    ].map(([key, label, options]) => ({ key, label, pick: pickerSelect(options, eff[key] || "", {}, { search: false }) }));
+    const save = button("Save my defaults", async () => {
+      const patch = Object.fromEntries(pickers.filter((p) => (p.pick.value || null) !== (eff[p.key] || null)).map((p) => [p.key, p.pick.value || null]));
+      if (!Object.keys(patch).length) { announce("Nothing changed."); return; }
+      if (Object.prototype.hasOwnProperty.call(patch, "groupBalanceView")) mode = patch.groupBalanceView || "suggested";
+      await ctx.store.actions.savePreferences(patch);
+      announce("Your defaults are saved. They apply only to you.");
+    });
+    mount(mineBox,
+      el("p", { class: "muted small", text: "These apply only to you, on every device, and take the place of the group's defaults when you add an expense." }),
+      el("div", { class: "form-grid" }, pickers.map((p) => field(p.label, p.pick))),
+      el("div", { class: "row" }, [save]));
   }
 
   // One table per currency shown (the reporting currency, then any other with an open balance).
@@ -304,7 +353,10 @@ export function createView(ctx) {
         // A confirmation withdrawn afterwards, and one given by the person who reported the payment, are
         // said as such (security review S5, S6).
         const detail = s.voided ? `${s.withdrawn ? "Confirmation withdrawn" : "Voided"}: ${s.voidReason}` : s.status === "reported" ? `Waiting for ${s.to === me ? "you" : nameOf(s.to)} to confirm it arrived.`
-          : s.status === "disputed" ? `Disputed: ${s.disputeReason}` : s.confirmedByReporter ? "Confirmed by the person who reported it."
+          : s.status === "disputed" ? `Disputed: ${s.disputeReason}`
+            // Confirmed over the receiver's dispute: always said (financial recheck F1).
+            : s.confirmedOverDispute ? `Confirmed over a dispute by ${s.confirmation ? s.confirmation.by : "someone"}.`
+            : s.confirmedByReporter ? "Confirmed by the person who reported it."
             // Who confirmed, when it was not the receiver (the group setting "Anyone in the group can confirm payments").
             : s.confirmation && s.confirmation.relation === "payer" ? `Confirmed by ${s.confirmation.by}, who paid it.`
               : s.confirmation && s.confirmation.relation === "other" ? `Confirmed by ${s.confirmation.by} for ${nameOf(s.to)}.` : null;
@@ -366,8 +418,13 @@ export function openGroupExpense(ctx, { expense = null } = {}) {
   const notes = el("textarea", { class: "field__input", maxlength: "2000", text: editing ? expense.notes : "" });
   const reason = input({ maxlength: "200", autocomplete: "off", placeholder: "Why is this being corrected?" });
 
+  // A new expense starts from the person's own defaults, otherwise the group's (setting b).
+  const defaultPaidBy = personalDefault(state, "groupPaidBy") || groupValue(data, "paidBy", "me");
+  const defaultWho = personalDefault(state, "groupSplitWho") || groupValue(data, "splitWho", "everyone");
+  const defaultMethod = personalDefault(state, "groupSplitMethod") || groupValue(data, "splitMethod", "equal");
+
   // Paid by.
-  const paid = new Map(editing ? expense.payers.map((p) => [p.ref, expense.payers.length > 1 ? p.amount : ""]) : [[me, ""]]);
+  const paid = new Map(editing ? expense.payers.map((p) => [p.ref, expense.payers.length > 1 ? p.amount : ""]) : defaultPaidBy === "nobody" ? [] : [[me, ""]]);
   const payerRows = people.map((p) => {
     const box = el("input", { type: "checkbox", id: uid("payer"), class: "split-row__box" });
     box.checked = paid.has(p.ref);
@@ -378,10 +435,10 @@ export function openGroupExpense(ctx, { expense = null } = {}) {
 
   // Shared by.
   const values = new Map(editing ? expense.split.lines.map((l) => [l.ref, l.value === null || l.value === undefined ? "" : String(l.value)]) : []);
-  const method = pickerSelect(Object.entries(METHOD_LABELS).map(([value, text]) => ({ value, label: text })), editing ? expense.split.method : "equal", {}, { search: false });
+  const method = pickerSelect(Object.entries(METHOD_LABELS).map(([value, text]) => ({ value, label: text })), editing ? expense.split.method : defaultMethod, {}, { search: false });
   const splitRows = people.map((p) => {
     const box = el("input", { type: "checkbox", id: uid("share"), class: "split-row__box" });
-    box.checked = editing ? values.has(p.ref) : !!p.active;
+    box.checked = editing ? values.has(p.ref) : defaultWho === "me" ? p.ref === me : !!p.active;
     const val = input({ inputmode: "decimal", autocomplete: "off", value: values.get(p.ref) || "" });
     const out = el("span", { class: "num split-row__share" });
     return { p, box, val, out, row: el("div", { class: "split-row" }, [box, el("label", { for: box.id, text: label(p) }), val, out]) };

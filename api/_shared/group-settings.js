@@ -29,8 +29,79 @@ const SETTINGS = Object.freeze({
     ]),
     explanation: 'These entries keep your own account in step with a shared group. \'Owed to others\' records your share of something someone else paid: it counts as your spending now and as money you owe, and no money leaves your account. \'Repayment\' records money you paid back to someone. Shared expenses creates both automatically when you record your part on your own account. Allow entering them by hand only if you settle shared costs outside Shared expenses.',
   }),
+  // (b) The default split for new expenses (Terry, 2026-09-14). The server applies them when a request
+  // leaves the payer or the split out; each person may keep their own as personal preferences.
+  splitMethod: Object.freeze({
+    type: 'choice', default: 'equal', label: 'Default split for new expenses',
+    options: Object.freeze([
+      Object.freeze({ value: 'equal', label: 'Equally' }), Object.freeze({ value: 'amounts', label: 'By amounts' }),
+      Object.freeze({ value: 'percentages', label: 'By percentages' }), Object.freeze({ value: 'shares', label: 'By shares' }),
+    ]),
+    explanation: 'New expenses start with this way of splitting, and each person can still choose another one or keep their own default.',
+  }),
+  splitWho: Object.freeze({
+    type: 'choice', default: 'everyone', label: 'Who shares a new expense by default',
+    options: Object.freeze([Object.freeze({ value: 'everyone', label: 'Everyone in the group' }), Object.freeze({ value: 'me', label: 'Only the person adding it' })]),
+    explanation: 'New expenses start with these people ticked, and anyone adding one can change who shares it before saving.',
+  }),
+  paidBy: Object.freeze({
+    type: 'choice', default: 'me', label: 'Who paid a new expense, by default',
+    options: Object.freeze([Object.freeze({ value: 'me', label: 'The person adding it' }), Object.freeze({ value: 'nobody', label: 'Nobody until someone is chosen' })]),
+    explanation: 'New expenses start with this payer, or with nobody so that whoever adds one must always say who paid.',
+  }),
+  // (c) Who may correct or void a shared expense. Viewers never may.
+  changeExpenses: Object.freeze({
+    type: 'choice', default: 'author-or-manager', label: 'Who may correct or void a shared expense',
+    options: Object.freeze([
+      Object.freeze({ value: 'author-or-manager', label: 'The person who added it, or a manager or owner' }),
+      Object.freeze({ value: 'any-writer', label: 'Any member who can add expenses' }),
+    ]),
+    explanation: 'Every correction and void keeps who made it, when and why, and viewers can never change an expense.',
+  }),
+  // (d) Payment rules. The payer confirms only as "Can confirm payments" allows; every action is attributed.
+  withdrawPayments: Object.freeze({
+    type: 'choice', default: 'receiver-or-manager', label: 'Who may withdraw a confirmed payment',
+    options: Object.freeze([
+      Object.freeze({ value: 'receiver-or-manager', label: 'The receiver, or a manager or owner' }),
+      Object.freeze({ value: 'receiver', label: 'The receiver only' }),
+      Object.freeze({ value: 'confirmers', label: 'Anyone who can confirm payments' }),
+    ]),
+    explanation: 'Withdrawing keeps the payment and its reason in the history, and for a contact a manager or owner acts as the receiver.',
+  }),
+  disputePayments: Object.freeze({
+    type: 'choice', default: 'receiver', label: 'Who may dispute a reported payment',
+    options: Object.freeze([Object.freeze({ value: 'receiver', label: 'The receiver' }), Object.freeze({ value: 'receiver-or-manager', label: 'The receiver, or a manager or owner' })]),
+    explanation: 'A disputed payment is not counted until it is sorted out, and the person who received it can always dispute it.',
+  }),
+  // Who may confirm a payment over its receiver's dispute (financial recheck of 47617b5, F1). Confirming
+  // under "Anyone in the group can confirm payments" moves a REPORTED payment only; a disputed one follows
+  // this rule, and a confirmation over a dispute is always marked in the view, history and audit.
+  settleDisputes: Object.freeze({
+    type: 'choice', default: 'receiver', label: 'Who can settle a disputed payment',
+    options: Object.freeze([
+      Object.freeze({ value: 'receiver', label: 'The person who received it (a manager or owner for a contact)' }),
+      Object.freeze({ value: 'receiver-or-manager', label: 'The person who received it, or a manager or owner' }),
+      Object.freeze({ value: 'confirmers', label: 'Anyone who can confirm payments' }),
+    ]),
+    explanation: 'A disputed payment counts in the balances only once someone allowed here confirms it, and that confirmation is always shown as made over the dispute.',
+  }),
+  receiverConfirms: Object.freeze({
+    type: 'boolean', default: true, label: 'A payment recorded by the person who received it counts as confirmed straight away',
+    explanation: 'When this is off, such a payment is only reported and still needs its own confirmation step.',
+  }),
+  // (e) The suggestion basis. Each person's preferred balance view is a personal preference.
+  countReported: Object.freeze({
+    type: 'boolean', default: true, label: 'Count \'I paid\' before it is confirmed when suggesting who pays whom',
+    explanation: 'When this is on, a reported payment counts as made up to what is owed so nobody is asked to pay twice, while balances always count confirmed payments only.',
+  }),
 });
 const KEYS = Object.freeze(Object.keys(SETTINGS));
+// The heading each setting is shown under, as the workspace settings card groups its own (eefd115).
+const GROUP_OF = Object.freeze({
+  anyoneConfirms: 'Confirming payments', settleDisputes: 'Confirming payments', ownedEntries: 'Entries on your own account',
+  splitMethod: 'New expenses', splitWho: 'New expenses', paidBy: 'New expenses', changeExpenses: 'Corrections',
+  withdrawPayments: 'Payments', disputePayments: 'Payments', receiverConfirms: 'Payments', countReported: 'Suggested payments',
+});
 const own = (o, k) => Object.prototype.hasOwnProperty.call(o, k);
 
 // PER-PERSON OVERRIDES of a group setting (Terry, 2026-09-14), set by owners and managers on each
@@ -139,12 +210,15 @@ function apply(doc, changes, { by, at, reason = '' }) {
   if (!changed.length && !personal.length) return [];
   const gs = isPlainObject(doc.groupSettings) ? doc.groupSettings : {};
   const perMember = isPlainObject(gs.perMember) ? { ...gs.perMember } : {};
+  // Every change of the request goes into ONE map per key, built from what is stored, so several people
+  // changed at once are all kept (security recheck of 47617b5, M1); the history below lists exactly these.
+  const maps = {};
   for (const { key, m, to } of personal) {
-    const map = { ...perMemberStored(doc, key) };
+    if (!maps[key]) maps[key] = { ...perMemberStored(doc, key) };
     // "Use the group setting" is kept as that value, so the record of the earlier choice stays readable.
-    map[m.id] = { value: to, at, by, period: periodOf(m) };
-    perMember[key] = map;
+    maps[key][m.id] = { value: to, at, by, period: periodOf(m) };
   }
+  Object.assign(perMember, maps);
   doc.groupSettings = {
     ...gs,
     values: { ...stored(doc), ...Object.fromEntries(changed.map((k) => [k, changes[k]])) },
@@ -168,7 +242,7 @@ function view(doc, nameOf, member, manages) {
   const label = (k) => (SETTINGS[k] ? SETTINGS[k].label : PER_MEMBER[k] ? PER_MEMBER[k].label : k);
   return {
     settings: KEYS.map((k) => ({
-      key: k, type: SETTINGS[k].type, label: SETTINGS[k].label, explanation: SETTINGS[k].explanation, value: v[k], default: SETTINGS[k].default,
+      key: k, group: GROUP_OF[k] || 'Shared expenses', type: SETTINGS[k].type, label: SETTINGS[k].label, explanation: SETTINGS[k].explanation, value: v[k], default: SETTINGS[k].default,
       ...(SETTINGS[k].options ? { options: SETTINGS[k].options.map((o) => ({ ...o })) } : {}),
     })),
     perMember: PER_MEMBER_KEYS.map((k) => ({ key: k, setting: PER_MEMBER[k].setting, label: PER_MEMBER[k].label, options: PER_MEMBER[k].options.map((o) => ({ ...o })) })),
@@ -204,14 +278,20 @@ function problem(doc) {
   if (gs === undefined) return null;
   if (!isPlainObject(gs)) return 'group settings';
   if (gs.values !== undefined && !isPlainObject(gs.values)) return 'group settings';
-  for (const [k, v] of Object.entries(gs.values || {})) if (own(SETTINGS, k) && !valid(k, v)) return 'group settings';
+  // As tolerant as reads (financial recheck of 47617b5, L3): a value this version does not know, left
+  // by a later version after a rollback, reads as the default and must not stop backups. Only broken
+  // structure is refused: every value is a single value, never an object or a list.
+  const scalar = (v) => v === null || typeof v === 'boolean' || typeof v === 'string' || (typeof v === 'number' && Number.isFinite(v));
+  for (const v of Object.values(gs.values || {})) if (!scalar(v)) return 'group settings';
   if (gs.perMember !== undefined) {
     if (!isPlainObject(gs.perMember)) return 'group settings';
     for (const [k, map] of Object.entries(gs.perMember)) {
       if (!own(PER_MEMBER, k)) continue;
       if (!isPlainObject(map)) return 'group settings';
+      // An override is an object with a text value (an unknown one reads as "Use the group setting") and
+      // a whole, non-negative membership period.
       for (const o of Object.values(map)) {
-        if (!isPlainObject(o) || !PER_MEMBER[k].options.some((x) => x.value === o.value) || !Number.isSafeInteger(o.period) || o.period < 0) return 'group settings';
+        if (!isPlainObject(o) || typeof o.value !== 'string' || !Number.isSafeInteger(o.period) || o.period < 0) return 'group settings';
       }
     }
   }
