@@ -185,6 +185,12 @@ function accountView(doc, principal, account, now) {
   };
   // Only to people who can see its entries: to anyone else even "nothing recorded" says too much.
   if (caps.has('view-transactions')) out.hasEntries = hasEntries(doc, account);
+  // Whether Shared expenses currently records this person's part here (financial recheck of 41494d1,
+  // FA-2): only to the account's own owner — nobody else may know which account, or even whether one,
+  // is linked (security review S2) — and only while the link is active, not merely once used.
+  if (out.ownedBySelf && caps.has('view-transactions')) {
+    out.groupLedgerLinked = (doc.groupLedgers || []).some((l) => l.accountId === account.id && l.subject === principal.subject && !l.endedAt);
+  }
   if (caps.has('view-balances')) {
     out.openingBalance = money.toDecimal(account.openingBalanceMinor, account.currency);
     out.openingBalanceMinor = account.openingBalanceMinor;

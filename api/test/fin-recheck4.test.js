@@ -204,3 +204,44 @@ describe('FA-1: a first link that would backdate confirmed cash entries needs co
     assert.equal(e.myLedger.accountId, wallet.id);
   });
 });
+
+describe('FA-2 (ties into BT-006-05): Remove says when an account is linked in Shared expenses', () => {
+  test('groupLedgerLinked is true only for the owner, only while the link is active, and false once stopped; nobody else ever sees it', async () => {
+    const h = harness();
+    const f = await fixture(h);
+    const { alice, bob } = f.refs;
+    const wallet = await account(h, f, 'bob', { name: 'Bob Wallet' });
+    const accountsOf = async (w) => ok(await h.call('accounts', 'GET', { ...who(w), query: f.q })).accounts;
+    // Before any link: not flagged, though the account already has an opening balance (BT-006-05's
+    // hasEntries covers more than a Shared-expenses link).
+    const before = (await accountsOf('bob')).find((a) => a.id === wallet.id);
+    assert.equal(before.groupLedgerLinked, false);
+    ok(await act(h, f, 'bob', 'ledger', { currency: 'EUR', accountId: wallet.id }));
+    const linked = (await accountsOf('bob')).find((a) => a.id === wallet.id);
+    assert.equal(linked.groupLedgerLinked, true);
+    // Alice (a manager elsewhere in this workspace) never learns that Bob's private account is linked.
+    assert.equal(ok(await h.call('accounts', 'GET', { as: 'alice', query: f.q })).accounts.some((a) => a.id === wallet.id), false, 'not even visible to her');
+    // Even someone Bob grants view-transactions on the SAME account sees its entries, but not this.
+    ok(await h.call('grants', 'POST', { as: 'bob', query: f.q, body: { accountId: wallet.id, memberId: f.mid('Alice'), capabilities: ['view-transactions'] } }), 201);
+    const granted = ok(await h.call('accounts', 'GET', { as: 'alice', query: f.q })).accounts.find((a) => a.id === wallet.id);
+    assert.deepEqual([granted.hasEntries, granted.groupLedgerLinked], [true, undefined], 'has entries is a general fact; groupLedgerLinked is private to the owner');
+    ok(await act(h, f, 'bob', 'ledger', { currency: 'EUR', accountId: null }));
+    const stopped = (await accountsOf('bob')).find((a) => a.id === wallet.id);
+    assert.equal(stopped.groupLedgerLinked, false, 'the link is ended, not merely dormant');
+  });
+
+  test('the Remove dialog data: an account with an active link is flagged; one that never linked, or whose link has ended, is not', async () => {
+    const h = harness();
+    const f = await fixture(h);
+    const linked = await account(h, f, 'bob', { name: 'Bob Wallet' });
+    const never = await account(h, f, 'bob', { name: 'Bob Spare' });
+    ok(await act(h, f, 'bob', 'ledger', { currency: 'EUR', accountId: linked.id }));
+    ok(await act(h, f, 'bob', 'ledger', { currency: 'EUR', accountId: null }));
+    const accountsOf = async () => ok(await h.call('accounts', 'GET', { as: 'bob', query: f.q })).accounts;
+    const list = await accountsOf();
+    assert.deepEqual([list.find((a) => a.id === linked.id).groupLedgerLinked, list.find((a) => a.id === never.id).groupLedgerLinked], [false, false]);
+    // Now genuinely active, on the spare account.
+    ok(await act(h, f, 'bob', 'ledger', { currency: 'EUR', accountId: never.id }));
+    assert.equal((await accountsOf()).find((a) => a.id === never.id).groupLedgerLinked, true);
+  });
+});
