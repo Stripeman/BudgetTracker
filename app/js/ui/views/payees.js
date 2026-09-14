@@ -4,12 +4,12 @@
 // merchant. Closed merchants stay listed (Show: Active / Closed / All) and keep their history.
 // Every change shows who made it, when, what changed and why.
 import { el, mount, announce } from "../dom.js";
-import { stateView, badge, button, amountText, field, input, select } from "../components.js";
+import { stateView, badge, button, amountText, field, input, pickerSelect, categoryBadges, iconBadges } from "../components.js";
 import { openModal } from "../modal.js";
 import { sliceFor } from "../../core/store.js";
 import { formatDate, todayIso, MERCHANT_TYPE_LABELS } from "../../core/format.js";
 import { normalize } from "../merchantpicker.js";
-import { withIcon, iconLabel, defaultIconFor } from "../icons.js";
+import { icon, withIcon, iconLabel, defaultIconFor } from "../icons.js";
 import { createIconPicker, iconChange } from "../iconpicker.js";
 
 const FIELD_LABELS = {
@@ -22,7 +22,8 @@ const stamp = (iso) => String(iso || "").replace("T", " ").slice(0, 16);
 
 export function createView(ctx) {
   const box = el("div");
-  const show = select([{ value: "active", label: "Active" }, { value: "closed", label: "Closed" }, { value: "all", label: "All" }], "active");
+  // The dropdowns are TaskTracker's command picker (BT-004-05).
+  const show = pickerSelect([{ value: "active", label: "Active" }, { value: "closed", label: "Closed" }, { value: "all", label: "All" }], "active", {}, { search: false });
   const search = input({ type: "search", placeholder: "Name or other name" });
   const add = el("div", { class: "page-head__actions" });
   const element = el("section", {}, [
@@ -137,10 +138,12 @@ export function openMerchantEditor(ctx, merchant = null) {
 
   const name = input({ maxlength: "80", value: m.name || "", required: true, autocomplete: "off" });
   const canShare = role !== "viewer";
-  const visibility = select([{ value: "private", label: "Private to me" }].concat(canShare ? [{ value: "shared", label: "Shared with the workspace" }] : []), editing ? m.visibility : (canShare ? "shared" : "private"));
+  const visibility = pickerSelect([{ value: "private", label: "Private to me" }].concat(canShare ? [{ value: "shared", label: "Shared with the workspace" }] : []), editing ? m.visibility : (canShare ? "shared" : "private"), {}, { search: false });
   const visibilityEditable = !editing || (m.visibility === "private" && m.ownedBySelf && canShare);
   if (!visibilityEditable) visibility.disabled = true;
-  const type = select(Object.entries(MERCHANT_TYPE_LABELS).map(([value, label]) => ({ value, label })), m.type || "other");
+  // Each type shows the icon a merchant of that type gets by default (BT-011-05); fourteen types are
+  // long enough that the picker offers its search box anyway.
+  const type = pickerSelect(Object.entries(MERCHANT_TYPE_LABELS).map(([value, label]) => ({ value, label })), m.type || "other", {}, { search: false, badgeOf: (v) => icon(defaultIconFor("merchant", v)) });
   // The icon (BT-011-05); "Default" follows the chosen type.
   const chosenIcon = editing && m.iconSource === "record" ? m.icon : null;
   const iconBox = el("div");
@@ -154,8 +157,9 @@ export function openMerchantEditor(ctx, merchant = null) {
   const address = el("textarea", { class: "field__input", maxlength: "300", text: c.address || "" });
   const customerNumber = input({ maxlength: "60", value: m.customerNumber || "", autocomplete: "off" });
   const openedOn = input({ type: "date", value: m.openedOn || "" });
-  const defaultCategory = select([{ value: "", label: "None" }].concat(categories.map((x) => ({ value: x.id, label: x.archived ? `${x.name} (archived)` : x.name }))), m.defaultCategoryId || "");
-  const defaultAccount = select([], "");
+  const defaultCategory = pickerSelect([{ value: "", label: "None" }].concat(categories.map((x) => ({ value: x.id, label: x.archived ? `${x.name} (archived)` : x.name }))), m.defaultCategoryId || "", {}, { badgeOf: categoryBadges(state) });
+  // Filled below by fillAccounts(); the picker follows the new options (BT-004-05).
+  const defaultAccount = pickerSelect([], "", {}, { badgeOf: iconBadges(accounts) });
   const fillAccounts = () => {
     // A shared merchant may default only to a shared account: its defaults are visible to everyone.
     const wanted = defaultAccount.value || m.defaultAccountId || "";

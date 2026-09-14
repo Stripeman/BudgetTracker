@@ -5,17 +5,28 @@ import { icon, directionOf, iconLabel, withIcon } from "./icons.js";
 import { messageFor } from "../core/errors.js";
 import { formatAmount, isNegative } from "../core/format.js";
 import { Status } from "../core/store.js";
+import { categoryIndex } from "../core/categories.js";
+import { enhanceSelect, pickerOf, controlElement } from "./selectpicker.js";
+
+export { controlElement };
 
 let fieldCounter = 0;
 export const uid = (prefix = "f") => `${prefix}-${++fieldCounter}`;
 
+// A select with a command picker over it (BT-004-05) is labelled THROUGH ITS TRIGGER: the label's
+// `for`, the spoken name and the help text all go to the button people use, and the field shows the
+// picker. The select itself stays inside, holding the value.
 export function field(label, control, { help, wide = false } = {}) {
-  if (!control.id) control.id = uid();
-  const helpId = help ? `${control.id}-help` : null;
+  const picked = pickerOf(control);
+  if (picked) picked.setLabel(label);
+  const target = picked ? picked.trigger : control;
+  if (!target.id) target.id = uid();
+  const helpId = help ? `${target.id}-help` : null;
+  // Set on the control; an enhanced select carries it over to its trigger.
   if (helpId) control.setAttribute("aria-describedby", helpId);
   return el("div", { class: ["field", wide ? "field--wide" : ""] }, [
-    el("label", { class: "field__label", for: control.id, text: label }),
-    control,
+    el("label", { class: "field__label", for: target.id, text: label }),
+    picked ? picked.element : control,
     help ? el("p", { class: "field__help", id: helpId, text: help }) : null,
   ]);
 }
@@ -33,6 +44,36 @@ export function select(options, value, attrs = {}) {
   }
   if (value !== undefined && value !== null) node.value = String(value);
   return node;
+}
+
+// The same select, with TaskTracker's command picker over it (BT-004-05). It returns the SELECT, so
+// the view keeps reading and setting it exactly as before; place it with `field()` or
+// `controlElement()`. `picker` takes the adapter's options: `search: false` for a short fixed list,
+// `colorOf`/`badgeOf` for things that have a colour or an icon.
+export function pickerSelect(options, value, attrs = {}, picker = {}) {
+  const node = select(options, value, attrs);
+  enhanceSelect(node, picker);
+  return node;
+}
+
+// Marks for picker rows and triggers (BT-004-05): the same marks the rest of the app draws beside
+// these names. A category shows its icon tinted with its colour, or its colour dot when it has no
+// icon (BT-011-04/05, as `categoryLabel`); an account or merchant shows its own icon. Each call
+// returns a NEW node (a row and the trigger cannot share one), decorative, because the name is always
+// beside it. An id the list does not know gets no mark.
+export function categoryBadges(state) {
+  const index = categoryIndex(state);
+  return (id) => {
+    const c = index.get(id);
+    if (!c) return null;
+    if (c.shownIcon) return el("span", { class: "catlabel__icon", "aria-hidden": "true", vars: { "--swatch": c.shownColor || null } }, [icon(c.shownIcon)]);
+    return c.shownColor ? el("span", { class: "swatch-dot", "aria-hidden": "true", vars: { "--swatch": c.shownColor } }) : null;
+  };
+}
+
+export function iconBadges(records, fallback = null) {
+  const byId = new Map((records || []).map((r) => [String(r.id), r.icon || fallback]));
+  return (id) => (byId.get(String(id)) ? icon(byId.get(String(id))) : null);
 }
 
 export function button(label, onClick, { variant = "", small = false, attrs = {} } = {}) {

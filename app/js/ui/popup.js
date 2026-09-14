@@ -30,6 +30,12 @@
 //
 // ONE LISTENER, whatever the population. It is attached when the first popup in a document
 // registers and removed when the last one goes.
+//
+// BUDGETTRACKER ADAPTATION (BT-004-05). A popup whose control left the page WHILE OPEN is closed as
+// its registration is pruned, instead of leaving its floating panel on the body with nothing to
+// dismiss it — the command picker's panel lives on the body, so a view that re-renders, or a dialog
+// that closes, would otherwise strand it. `closeDetachedPopups()` runs that sweep on demand; the
+// modal calls it as it closes.
 
 // Every live popup, in registration order. Small by construction.
 const popups = new Set();
@@ -85,6 +91,11 @@ export function _popupCount() {
   return popups.size;
 }
 
+// Closes and forgets every popup whose control has left its document (see the adaptation above).
+export function closeDetachedPopups() {
+  prune();
+}
+
 // DETACHED IS NOT THE SAME AS NEVER ATTACHED. A control registers while it is still being built —
 // the caller appends `element` afterwards — so "not in the document" is the normal state for a
 // moment, and dropping it then would unregister every popup at birth.
@@ -98,6 +109,10 @@ function prune() {
       continue;
     }
     if (!entry.wasAttached) continue;
+    // Its panel goes with it (adaptation above). close() neither moves focus nor writes a value.
+    try {
+      if (entry.isOpen()) entry.close();
+    } catch (e) { /* a control that is already torn down has nothing left to close */ }
     popups.delete(entry);
     detach(doc);
   }

@@ -2,12 +2,12 @@
 // "Who can see this" with explicit grants for private accounts (owner only). The server decides
 // everything; these controls only present what it allows.
 import { el, mount, announce } from "../dom.js";
-import { pageHead, stateView, money, accessBadge, button, field, input, select, badge } from "../components.js";
+import { pageHead, stateView, money, accessBadge, button, field, input, pickerSelect, badge } from "../components.js";
 import { openModal } from "../modal.js";
 import { sliceFor } from "../../core/store.js";
 import { newIdempotencyKey } from "../../core/api.js";
 import { ACCOUNT_TYPE_LABELS, todayIso } from "../../core/format.js";
-import { withIcon, defaultIconFor } from "../icons.js";
+import { icon, withIcon, defaultIconFor } from "../icons.js";
 import { createIconPicker, iconChange } from "../iconpicker.js";
 
 const CURRENCIES = ["EUR", "USD", "GBP", "CHF", "SEK", "NOK", "DKK", "PLN", "CZK", "HUF", "CAD", "AUD", "NZD", "JPY", "SGD", "HKD", "INR", "ZAR"];
@@ -119,15 +119,17 @@ function openEditAccount(ctx, account) {
 function openAddAccount(ctx) {
   const key = newIdempotencyKey();
   const name = input({ required: true, maxlength: "80" });
-  const type = select(Object.entries(ACCOUNT_TYPE_LABELS).map(([value, label]) => ({ value, label })), "checking");
+  // The dropdowns are TaskTracker's command picker (BT-004-05). Each type shows the icon an account
+  // of that type gets by default (BT-011-05), beside its name.
+  const type = pickerSelect(Object.entries(ACCOUNT_TYPE_LABELS).map(([value, label]) => ({ value, label })), "checking", {}, { search: false, badgeOf: (v) => icon(defaultIconFor("account", v)) });
   // The "Default" icon follows the chosen type (BT-011-05).
   const iconBox = el("div");
   let iconPick = null;
   const makeIconPicker = (value = null) => { iconPick = createIconPicker({ value, inherited: defaultIconFor("account", type.value), name: "New account" }); mount(iconBox, iconPick.element); };
   makeIconPicker();
   type.addEventListener("change", () => makeIconPicker(iconPick.getValue()));
-  const currency = select(CURRENCIES.map((c) => ({ value: c, label: c })), (ctx.store.getState().workspaces.find((w) => w.id === ctx.store.getState().selectedWorkspaceId) || {}).reportingCurrency || "EUR");
-  const visibility = select([{ value: "private", label: "Private — only you (you can share it later)" }, { value: "shared", label: "Shared — every workspace member per their role" }], "private");
+  const currency = pickerSelect(CURRENCIES.map((c) => ({ value: c, label: c })), (ctx.store.getState().workspaces.find((w) => w.id === ctx.store.getState().selectedWorkspaceId) || {}).reportingCurrency || "EUR");
+  const visibility = pickerSelect([{ value: "private", label: "Private — only you (you can share it later)" }, { value: "shared", label: "Shared — every workspace member per their role" }], "private", {}, { search: false });
   const opening = input({ inputmode: "decimal", placeholder: "0.00" });
   const openingDate = input({ type: "date", value: todayIso() });
   const institution = input({ maxlength: "80" });
@@ -181,7 +183,8 @@ async function openWhoCanSee(ctx, account) {
   async function renderGrants(data) {
     const members = ((ctx.store.getState().members.data || {}).members || []).filter((m) => !m.self);
     const active = data.grants.filter((g) => !g.revokedAt);
-    const memberSel = select(members.map((m) => ({ value: m.id, label: m.name })), (members[0] || {}).id);
+    // People are searched, as in TaskTracker's people pickers (BT-004-05).
+    const memberSel = pickerSelect(members.map((m) => ({ value: m.id, label: m.name })), (members[0] || {}).id);
     const boxes = GRANTABLE.map(([value, label]) => { const c = el("input", { type: "checkbox", value }); if (value === "view-balances" || value === "view-transactions") c.checked = true; return el("label", { class: "field--inline" }, [c, label]); });
     const expires = input({ type: "date" });
     const grant = button("Share", async () => {

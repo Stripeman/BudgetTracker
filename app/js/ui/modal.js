@@ -6,15 +6,19 @@
 import { el } from "./dom.js";
 import { messageFor } from "../core/errors.js";
 import { uid } from "./components.js";
+import { closeDetachedPopups } from "./popup.js";
 
 const FOCUSABLE = "button, [href], input, select, textarea, summary, [tabindex]";
 
-// Escape belongs to an open list inside the dialog first — the merchant combobox, or a theme,
-// colour or icon picker (its options or its toggle) — so the dialog, and what was typed, stays
-// open; the next Escape closes the dialog (UXI-1).
+// Escape belongs to an open list inside the dialog first — the merchant combobox, a command picker's
+// panel (BT-004-05; it floats on the body, and a list without a search box holds the keyboard itself),
+// or a theme, colour or icon picker (its options or its toggle) — so the dialog, and what was typed,
+// stays open; the next Escape closes the dialog (UXI-1).
 export function escapeBelongsToControl(target) {
   if (!target || !target.getAttribute) return false;
   if (target.getAttribute("role") === "combobox" && target.getAttribute("aria-expanded") === "true") return true;
+  // A command picker's panel is in the document only while it is open.
+  if (target.closest && target.closest(".cmdpick__panel")) return true;
   // The picker's toggle states whether its list is open (aria-expanded), in every DOM.
   const pick = target.closest ? target.closest(".themepick") : null;
   const toggle = pick ? pick.querySelector(".themepick__toggle") : null;
@@ -48,6 +52,8 @@ export function openModal({ title, body, actions = [], onClose = () => {} }) {
     if (closed) return;
     closed = true;
     if (backdrop.remove) backdrop.remove(); else if (backdrop.parentNode) backdrop.parentNode.removeChild(backdrop);
+    // A command picker opened from this dialog floats on the body; it closes with the dialog.
+    closeDetachedPopups();
     if (app) app.inert = wasInert;
     if (skip) skip.inert = skipWasInert;
     document.removeEventListener("keydown", onKey, true);

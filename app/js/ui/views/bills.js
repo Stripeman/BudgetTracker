@@ -5,14 +5,14 @@
 // real entry. Changes to a bill's terms take effect from a chosen date and never rewrite payments
 // already recorded; bills are ended, never deleted (BT-001-05). The server enforces every rule.
 import { el, mount, announce } from "../dom.js";
-import { stateView, money, button, field, input, select, badge } from "../components.js";
+import { stateView, money, button, field, input, pickerSelect, categoryBadges, iconBadges, badge } from "../components.js";
 import { openModal } from "../modal.js";
 import { createMerchantPicker } from "../merchantpicker.js";
 import { choosableMerchants, canAddEntries, addEntriesBlocked } from "./transactions.js";
 import { sliceFor } from "../../core/store.js";
 import { newIdempotencyKey } from "../../core/api.js";
 import { formatDate, formatAmount, todayIso, BILL_TYPE_LABELS } from "../../core/format.js";
-import { withIcon, defaultIconFor, iconLabel } from "../icons.js";
+import { icon, withIcon, defaultIconFor, iconLabel } from "../icons.js";
 import { createIconPicker, iconChange } from "../iconpicker.js";
 
 const PRESETS = [
@@ -224,10 +224,11 @@ async function openRecord(ctx, bill, occurrence) {
   amount.value = draft.amountIsEstimate ? "" : draft.amount;
   const date = input({ type: "date" });
   date.value = draft.date;
-  const category = select([{ value: "", label: "Uncategorized" }].concat(categories.map((c) => ({ value: c.id, label: c.archived ? `${c.name} (archived)` : c.name }))), draft.categoryId || "");
+  // The dropdowns are TaskTracker's command picker (BT-004-05).
+  const category = pickerSelect([{ value: "", label: "Uncategorized" }].concat(categories.map((c) => ({ value: c.id, label: c.archived ? `${c.name} (archived)` : c.name }))), draft.categoryId || "", {}, { badgeOf: categoryBadges(state) });
   const picker = createMerchantPicker({ merchants: choosableMerchants(merchants, account), current: draft.payeeId ? { id: draft.payeeId, name: draft.payeeName } : null });
   const notes = el("textarea", { class: "field__input", maxlength: "5000" });
-  const status = select([{ value: "pending", label: "Pending" }, { value: "cleared", label: "Cleared" }], "pending");
+  const status = pickerSelect([{ value: "pending", label: "Pending" }, { value: "cleared", label: "Cleared" }], "pending", {}, { search: false });
   // Income and transfers are described as what they are, not as payments (UX2-001).
   const income = bill.kind === "income";
   const words = income
@@ -405,31 +406,36 @@ export function openBillEditor(ctx, bill = null) {
 
   const name = input({ maxlength: "80", autocomplete: "off" });
   name.value = b.name || "";
-  const billType = select(Object.entries(BILL_TYPE_LABELS).map(([value, label]) => ({ value, label })), b.billType || "housing");
+  // The dropdowns are TaskTracker's command picker (BT-004-05); values the editor sets from code (the
+  // direction that follows the type, the people loaded below) show in them. Each bill type shows the
+  // icon a bill of that type gets by default (BT-011-05).
+  const billType = pickerSelect(Object.entries(BILL_TYPE_LABELS).map(([value, label]) => ({ value, label })), b.billType || "housing", {}, { search: false, badgeOf: (v) => icon(defaultIconFor("bill", v)) });
   // The icon (BT-011-05); "Default" follows the chosen type.
   const chosenIcon = editing && b.iconSource === "record" ? b.icon : null;
   const iconBox = el("div");
   let iconPick = null;
   const makeIconPicker = (value) => { iconPick = createIconPicker({ value, inherited: defaultIconFor("bill", billType.value), name: b.name || "New bill" }); mount(iconBox, iconPick.element); };
   makeIconPicker(chosenIcon);
-  const direction = select(DIRECTIONS, b.kind === "transfer" ? "transfer" : b.kind === "income" ? "income" : defaultDirection(b.billType || "housing"), { disabled: editing });
-  const account = select(accounts.map((a) => ({ value: a.id, label: `${a.name} (${a.currency})` })), b.accountId || (accounts[0] || {}).id, { disabled: editing });
-  const toAccount = select(accounts.map((a) => ({ value: a.id, label: `${a.name} (${a.currency})` })), b.toAccountId || "", { disabled: editing });
+  const direction = pickerSelect(DIRECTIONS, b.kind === "transfer" ? "transfer" : b.kind === "income" ? "income" : defaultDirection(b.billType || "housing"), { disabled: editing }, { search: false });
+  const accountMarks = iconBadges(allAccounts);
+  const account = pickerSelect(accounts.map((a) => ({ value: a.id, label: `${a.name} (${a.currency})` })), b.accountId || (accounts[0] || {}).id, { disabled: editing }, { badgeOf: accountMarks });
+  const toAccount = pickerSelect(accounts.map((a) => ({ value: a.id, label: `${a.name} (${a.currency})` })), b.toAccountId || "", { disabled: editing }, { badgeOf: accountMarks });
   const amount = input({ inputmode: "decimal", autocomplete: "off" });
   amount.value = b.amount || "";
-  const amountType = select([{ value: "fixed", label: "Always the same" }, { value: "variable", label: "Varies (estimate)" }], b.amountType || "fixed");
-  const preset = select(PRESETS, editing ? "custom" : "monthly", { disabled: editing });
+  const amountType = pickerSelect([{ value: "fixed", label: "Always the same" }, { value: "variable", label: "Varies (estimate)" }], b.amountType || "fixed", {}, { search: false });
+  const preset = pickerSelect(PRESETS, editing ? "custom" : "monthly", { disabled: editing }, { search: false });
   const interval = input({ type: "number", min: "1", max: "52", value: "1" });
-  const unit = select([{ value: "weekly", label: "weeks" }, { value: "monthly", label: "months" }, { value: "yearly", label: "years" }], "monthly");
+  const unit = pickerSelect([{ value: "weekly", label: "weeks" }, { value: "monthly", label: "months" }, { value: "yearly", label: "years" }], "monthly", {}, { search: false });
   const customBox = el("div", { class: "form-grid", hidden: true }, [field("Every", interval), field("Unit", unit)]);
   const startDate = input({ type: "date", disabled: editing });
   startDate.value = b.schedule ? b.schedule.startDate : todayIso();
   const endDate = input({ type: "date" });
   endDate.value = (b.schedule && b.schedule.endDate) || "";
-  const category = select([{ value: "", label: "Uncategorized" }].concat(categories.map((c) => ({ value: c.id, label: c.archived ? `${c.name} (archived)` : c.name }))), b.categoryId || "");
+  const category = pickerSelect([{ value: "", label: "Uncategorized" }].concat(categories.map((c) => ({ value: c.id, label: c.archived ? `${c.name} (archived)` : c.name }))), b.categoryId || "", {}, { badgeOf: categoryBadges(state) });
   const accountOf = (id) => allAccounts.find((a) => a.id === id) || null;
   const picker = createMerchantPicker({ merchants: choosableMerchants(merchants, accountOf(account.value)), current: b.payeeId ? { id: b.payeeId, name: b.payeeName } : null });
-  const responsible = select([{ value: "", label: "Nobody in particular" }], "");
+  // People are searched; the list is filled below, and the picker follows the new options.
+  const responsible = pickerSelect([{ value: "", label: "Nobody in particular" }], "");
   const reminder = input({ type: "number", min: "0", max: "60" });
   reminder.value = String(b.reminderDays === undefined ? 3 : b.reminderDays);
   const notes = el("textarea", { class: "field__input", maxlength: "2000", text: b.notes || "" });

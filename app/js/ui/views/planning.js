@@ -8,13 +8,13 @@
 // and names the bills that lead there. WHAT-IF applies changes to a copy in memory on the server
 // and never saves anything.
 import { el, mount, announce } from "../dom.js";
-import { stateView, money, amountText, button, field, input, select, badge, categoryLabel } from "../components.js";
+import { stateView, money, amountText, button, field, input, pickerSelect, categoryBadges, badge, categoryLabel } from "../components.js";
 import { categoryIndex } from "../../core/categories.js";
 import { openModal } from "../modal.js";
 import { sliceFor } from "../../core/store.js";
 import { formatDate, formatAmount, todayIso } from "../../core/format.js";
 import { messageFor } from "../../core/errors.js";
-import { withIcon } from "../icons.js";
+import { icon, withIcon } from "../icons.js";
 import { createIconPicker, iconChange } from "../iconpicker.js";
 
 // Account icons for the forecast tables (BT-011-05), from the accounts the viewer may see.
@@ -68,7 +68,8 @@ export function createView(ctx) {
     } catch (err) { mount(archivedList, el("p", { class: "error-text", role: "alert", text: messageFor(err) })); }
   };
   archivedBox.addEventListener("toggle", () => { if (archivedBox.open) void loadArchived(); });
-  const horizon = select(HORIZONS, "90");
+  // The dropdowns on this page are TaskTracker's command picker (BT-004-05).
+  const horizon = pickerSelect(HORIZONS, "90", {}, { search: false });
   const buffer = input({ inputmode: "decimal", placeholder: "Optional, e.g. 500.00" });
   const run = button("Update forecast", () => refresh());
   const element = el("section", {}, [
@@ -235,9 +236,10 @@ function openBudgetEditor(ctx, budget = null) {
   const name = input({ maxlength: "80", autocomplete: "off" });
   name.value = editing ? budget.name : "";
   const canShare = role === "owner" || role === "manager";
-  const scope = select([{ value: "private", label: "Private to me" }].concat(canShare ? [{ value: "shared", label: "Shared (shared accounts only)" }] : []), editing ? budget.scope : (canShare ? "shared" : "private"), { disabled: editing });
-  const currency = select((currencies.length ? currencies : ["EUR"]).map((c) => ({ value: c, label: c })), editing ? budget.currency : currencies[0] || "EUR", { disabled: editing });
-  const period = select(PERIODS, editing ? budget.period : "monthly");
+  const scope = pickerSelect([{ value: "private", label: "Private to me" }].concat(canShare ? [{ value: "shared", label: "Shared (shared accounts only)" }] : []), editing ? budget.scope : (canShare ? "shared" : "private"), { disabled: editing }, { search: false });
+  const currency = pickerSelect((currencies.length ? currencies : ["EUR"]).map((c) => ({ value: c, label: c })), editing ? budget.currency : currencies[0] || "EUR", { disabled: editing });
+  const period = pickerSelect(PERIODS, editing ? budget.period : "monthly", {}, { search: false });
+  const categoryMarks = categoryBadges(state);
   const start = input({ type: "date" });
   start.value = editing ? budget.startDate : `${todayIso().slice(0, 8)}01`;
   // Plan changes apply from a date; earlier periods keep the plan they had (BT-001-05).
@@ -255,7 +257,8 @@ function openBudgetEditor(ctx, budget = null) {
     rows.forEach((r, i) => { r.legend.textContent = `Line ${i + 1}`; r.remove.setAttribute("aria-label", `Remove line ${i + 1}`); });
   }
   function addRow(line = {}, { focus = false } = {}) {
-    const cat = select(categories.map((c) => ({ value: c.id, label: c.name })), line.categoryId || (categories[0] || {}).id);
+    // `cat.focus()` below lands on the picker's trigger.
+    const cat = pickerSelect(categories.map((c) => ({ value: c.id, label: c.name })), line.categoryId || (categories[0] || {}).id, {}, { badgeOf: categoryMarks });
     const amount = input({ inputmode: "decimal", placeholder: "0.00" });
     amount.value = line.amount || "";
     const rollover = el("input", { type: "checkbox" });
@@ -345,13 +348,15 @@ function createWhatIf(ctx, params) {
   const changes = [];
   const list = el("ul", { class: "stack" });
   const result = el("div");
-  const kind = select([
+  const kind = pickerSelect([
     { value: "one-off", label: "Add a one-off amount" },
     { value: "change-recurring", label: "Change a bill's amount" },
     { value: "exclude-recurring", label: "Leave out a bill" },
-  ], "one-off");
-  const account = select([], "");
-  const bill = select([], "");
+  ], "one-off", {}, { search: false });
+  // Filled by setChoices() below; the pickers follow the new options. The account's icon is read from
+  // the current list, which setChoices replaces.
+  const account = pickerSelect([], "", {}, { badgeOf: (id) => { const a = accounts.find((x) => x.id === id); return a && a.icon ? icon(a.icon) : null; } });
+  const bill = pickerSelect([], "");
   const date = input({ type: "date" });
   date.value = todayIso();
   const amount = input({ inputmode: "decimal", placeholder: "-250.00 or 100.00" });

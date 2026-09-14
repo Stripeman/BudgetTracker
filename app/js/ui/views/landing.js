@@ -1,5 +1,5 @@
 import { el, announce } from "../dom.js";
-import { field, input, select, button } from "../components.js";
+import { field, input, pickerSelect, button } from "../components.js";
 import { openModal } from "../modal.js";
 import { AUTH, newIdempotencyKey } from "../../core/api.js";
 import { messageFor } from "../../core/errors.js";
@@ -22,11 +22,12 @@ const CURRENCIES = ["EUR", "USD", "GBP", "CHF", "SEK", "NOK", "DKK", "PLN", "CZK
 const KINDS = [{ value: "personal", label: "Personal" }, { value: "household", label: "Household" }, { value: "group", label: "Shared-expense group" }, { value: "trip", label: "Trip" }];
 
 // The fields of a new workspace, shared by the first-workspace page and the "New workspace…"
-// dialog, so both ask the same questions the same way.
+// dialog, so both ask the same questions the same way. The dropdowns are TaskTracker's command
+// picker (BT-004-05): Kind is a short fixed list, so it has no search box; currencies are searched.
 function workspaceFields({ kind = "household", placeholder = "For example: Our household" } = {}) {
   const name = input({ required: true, maxlength: "80", placeholder });
-  const kindSelect = select(KINDS, kind);
-  const currency = select(CURRENCIES.map((c) => ({ value: c, label: c })), "EUR");
+  const kindSelect = pickerSelect(KINDS, kind, {}, { search: false });
+  const currency = pickerSelect(CURRENCIES.map((c) => ({ value: c, label: c })), "EUR");
   return {
     name,
     controls: [field("Name", name), field("Kind", kindSelect), field("Reporting currency", currency)],

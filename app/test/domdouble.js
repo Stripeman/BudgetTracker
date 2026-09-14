@@ -65,6 +65,11 @@ class Node {
   hasAttribute(name) { return this.attributes.has(name); }
   removeAttribute(name) { this.attributes.delete(name); if (name === "disabled") this.disabled = false; }
   appendChild(child) {
+    return this._insert(child);
+  }
+  // As in the DOM, append() and replaceChildren() do not go through the public appendChild(): a
+  // component that intercepts appendChild on one element must not see them as appends (BT-004-05).
+  _insert(child) {
     if (child.parentNode) child.parentNode.removeChild(child);
     child.parentNode = this;
     this.childNodes.push(child);
@@ -76,12 +81,12 @@ class Node {
     return child;
   }
   append(...nodes) {
-    for (const n of nodes) this.appendChild(typeof n === "string" ? this.ownerDocument.createTextNode(n) : n);
+    for (const n of nodes) this._insert(typeof n === "string" ? this.ownerDocument.createTextNode(n) : n);
   }
   replaceChildren(...nodes) {
     for (const c of this.childNodes) c.parentNode = null;
     this.childNodes = [];
-    for (const n of nodes) this.appendChild(n);
+    for (const n of nodes) this._insert(n);
   }
   // True for the node itself or any descendant, as in the DOM.
   contains(other) {

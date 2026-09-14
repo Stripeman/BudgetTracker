@@ -2,11 +2,12 @@
 // the built-in default), customized by you, or locked by the site. Appearance uses THE SAME
 // day/night control as the account menu — one control mounted twice, both writing through the same
 // theme controller and preference, and both redrawn when the theme changes (A11Y-001).
-// Selects save only on an explicit choice, never on each arrow key (A11Y-002).
+// Selects save only on an explicit choice, never on each arrow key (A11Y-002). They are TaskTracker's
+// command picker (BT-004-05), and a save that rebuilds the card keeps focus on the same preference.
 import { el, mount, announce } from "../dom.js";
 import { createDayNightControl } from "../daynight.js";
 import { createThemePicker } from "../themepicker.js";
-import { pageHead, field, select, sourceBadge, button, input, commitOnConfirm, badge, categoryLabel } from "../components.js";
+import { pageHead, field, pickerSelect, sourceBadge, button, input, commitOnConfirm, badge, categoryLabel } from "../components.js";
 import { sliceFor } from "../../core/store.js";
 import { colourEntries } from "../../core/categories.js";
 import { messageFor } from "../../core/errors.js";
@@ -102,7 +103,19 @@ export function createView(ctx) {
     return out;
   }
 
+  // Each preference's control in the card, by key, so focus can follow a rebuild.
+  let prefControls = {};
+  // The preference whose row holds focus: its row is the child of prefBox around the focused element.
+  function focusedPref() {
+    const active = document.activeElement;
+    if (!active || !prefBox.contains(active)) return null;
+    let node = active;
+    while (node && node.parentNode !== prefBox) node = node.parentNode;
+    return node && node.dataset ? node.dataset.pref || null : null;
+  }
+
   function prefControl(label, key, control, prefs, toValue = (v) => v || null) {
+    prefControls[key] = control;
     const locked = prefs.sources[key] === "locked";
     control.disabled = locked;
     if (control.type === "checkbox") control.addEventListener("change", () => save({ [key]: control.checked }));
@@ -111,7 +124,7 @@ export function createView(ctx) {
     const labelled = control.type === "checkbox"
       ? el("label", { class: "field--inline field__label" }, [control, label])
       : field(label, control);
-    return el("div", { class: "field" }, [labelled, el("div", { class: "row" }, [sourceBadge(prefs.sources[key]), reset])]);
+    return el("div", { class: "field", dataset: { pref: key } }, [labelled, el("div", { class: "row" }, [sourceBadge(prefs.sources[key]), reset])]);
   }
 
   async function loadContacts() {
@@ -291,15 +304,21 @@ export function createView(ctx) {
     if (signature === rendered) return;
     rendered = signature;
     const e = prefs.effective;
+    // A save rebuilds the card; the preference that had focus gets it back on its new control, rather
+    // than focus leaving the page with the old one (A11Y2-001's rule; BT-004-05).
+    const focusedKey = focusedPref();
+    prefControls = {};
     const masking = el("input", { type: "checkbox" });
     masking.checked = !!e.balanceMasking;
     mount(prefBox,
       prefControl("Hide balances on screen", "balanceMasking", masking, prefs),
-      prefControl("Display currency", "displayCurrency", select(CURRENCIES.map((c) => ({ value: c, label: c || "Account currency" })), e.displayCurrency || ""), prefs),
-      prefControl("Date format", "dateFormat", select([{ value: "iso", label: "2026-09-13" }, { value: "dmy", label: "13/09/2026" }, { value: "mdy", label: "09/13/2026" }], e.dateFormat), prefs),
-      prefControl("Number format", "numberFormat", select(["1,234.56", "1.234,56", "1 234,56"].map((v) => ({ value: v, label: v })), e.numberFormat), prefs),
-      prefControl("Default workspace", "defaultWorkspaceId", select([{ value: "", label: "First available" }].concat(state.workspaces.map((w) => ({ value: w.id, label: w.name }))), e.defaultWorkspaceId || ""), prefs),
+      prefControl("Display currency", "displayCurrency", pickerSelect(CURRENCIES.map((c) => ({ value: c, label: c || "Account currency" })), e.displayCurrency || ""), prefs),
+      prefControl("Date format", "dateFormat", pickerSelect([{ value: "iso", label: "2026-09-13" }, { value: "dmy", label: "13/09/2026" }, { value: "mdy", label: "09/13/2026" }], e.dateFormat, {}, { search: false }), prefs),
+      prefControl("Number format", "numberFormat", pickerSelect(["1,234.56", "1.234,56", "1 234,56"].map((v) => ({ value: v, label: v })), e.numberFormat, {}, { search: false }), prefs),
+      prefControl("Default workspace", "defaultWorkspaceId", pickerSelect([{ value: "", label: "First available" }].concat(state.workspaces.map((w) => ({ value: w.id, label: w.name }))), e.defaultWorkspaceId || ""), prefs),
     );
+    // An enhanced select's focus() lands on its trigger.
+    if (focusedKey && prefControls[focusedKey]) prefControls[focusedKey].focus();
   }
   return { element, update, destroy: unsubscribe };
 }

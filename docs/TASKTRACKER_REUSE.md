@@ -126,6 +126,40 @@ header's workspace dropdown with a pinned "+ New workspace".
   `relatedTarget`, platform `Event` objects, and document listeners that run only through
   `document.dispatchEvent` (so existing components that listen on the document behave as before).
 
+### Step 2 — every other dropdown (BT-004-05)
+
+Terry, 2026-09-14: *"use the same component. and any drop down that possible to use, can use that
+too"* and *"i want all my apps to have the same look and feel"*.
+
+- **TaskTracker's approach (`T:` `main` `fb24a41`):** opt-in field by field — `modal.js` wraps a
+  field's select with `createCommandPicker` when the field says `picker: "command"`, and
+  `addableselect.js` does the same for Project and Category. Its note: turning the palette on for every
+  select at once broke 227 tests in dialogs nobody had asked to change.
+- **BudgetTracker:** one adapter, `app/js/ui/selectpicker.js`, used through `components.js`
+  `pickerSelect()`; converted deliberately, one view per commit, each with tests that choose through
+  the picker and check what the view submits. BudgetTracker's views build selects directly and keep
+  talking to them (set `value`, replace options, disable, describe, mark invalid, focus), so the
+  adapter keeps the picker in step with all of that on the one select it wraps; TaskTracker's
+  palette re-reads only when told to (`refresh()`).
+- **Further command-picker adaptations** (`commandpicker.js`): A4 `setLabel()` so the field label names
+  the trigger, panel, list and search box; A5 native change semantics (no events on re-choosing;
+  `input` then `change`); A6 the panel is at least as wide as its trigger, an empty list says "Nothing
+  to choose from.", a list without search is spoken "Choose.", Tab or Shift+Tab at the panel's edge
+  closes it and continues from the trigger (the panel floats on the body, outside any dialog's focus
+  trap); A7 a public `close()`.
+- **`popup.js`:** a popup whose control left the page while open is closed as it is pruned
+  (`closeDetachedPopups()`), so a re-rendered view or a closed dialog never strands a panel.
+  **`modal.js`:** Escape inside an open panel belongs to the panel (a list without a search box holds
+  the keyboard itself), and closing a dialog closes a panel opened from it.
+- **CSS:** option names wrap instead of being cut off; a disabled trigger in a field looks like a
+  disabled input; pickers placed in a list row keep a usable width; account, merchant and type icons
+  are muted as in `.iconlabel`, category icons keep their colour.
+- **Kept as they are:** the colour-aware theme picker and the category-colour pickers (BT-011-03/04),
+  the icon picker (BT-011-05), the merchant combobox (BT-007-01) and the day/night control
+  (BT-011-01) — none of them is a select. No plain native select replaces any of them.
+- **Left native:** none. After step 2 the only select created outside the views is the header
+  workspace picker's, enhanced in step 1.
+
 ## Rich text editor (Tiptap) — BT-011-02
 
 Detailed archaeology, gaps and the reduced schema and plan: `docs/reviews/2026-09-13-editor-archaeology.md` (2026-09-13, `T:` `main` `a1ec150`). Key points: ProseMirror JSON in a versioned envelope, never HTML; rendering through `el()`; the vendored bundle needs a registered-bundle exemption in `scripts/validate.cjs`; keep the MIT notices (TaskTracker's build strips them); BudgetTracker's server validator must be stricter (content model, undeclared keys, text checks, canonical `href`, tight limits).
