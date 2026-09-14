@@ -113,6 +113,64 @@ describe('Workspace settings: one list, today\'s behaviour by default', () => {
   });
 });
 
+// ---- (i) budget defaults and backdating -----------------------------------------------------------
+// The harness clock starts on Sunday 2026-09-13: the latest Monday on or before it is 2026-09-07, the
+// latest Saturday 2026-09-12, and the current monthly period starts 2026-09-01.
+async function categoryId(h, q) {
+  return ok(await h.call('categories', 'GET', { as: 'alice', query: q })).categories.find((c) => c.name === 'Groceries').id;
+}
+const newBudget = async (h, q, body) => ok(await h.call('budgets', 'POST', { as: 'alice', query: q, body: { name: 'Fictional food', scope: 'shared', lines: [{ categoryId: await categoryId(h, q), amount: '400.00' }], ...body } }), 201).budget;
+
+describe('(i) Budget period, week start and changes to past periods', () => {
+  test('by default a new budget is monthly from the first of the month, as before', async () => {
+    const { h, f } = await setup();
+    const b = await newBudget(h, f.q, {});
+    assert.deepEqual([b.period, b.startDate], ['monthly', '2026-09-01']);
+  });
+
+  test('the workspace period and week start become the defaults for new budgets; what is sent wins; existing budgets keep their own', async () => {
+    const { h, f, id } = await setup();
+    const before = await newBudget(h, f.q, {});
+    ok(await patchSettings(h, 'alice', id, { budgetPeriod: 'weekly' }));
+    const weekly = await newBudget(h, f.q, {});
+    assert.deepEqual([weekly.period, weekly.startDate], ['weekly', '2026-09-07'], 'weeks start on Monday by default');
+    ok(await patchSettings(h, 'alice', id, { weekStart: 6, budgetPeriod: 'biweekly' }));
+    const biweekly = await newBudget(h, f.q, {});
+    assert.deepEqual([biweekly.period, biweekly.startDate], ['biweekly', '2026-09-12'], 'Saturday');
+    ok(await patchSettings(h, 'alice', id, { weekStart: 0, budgetPeriod: 'weekly' }));
+    assert.equal((await newBudget(h, f.q, {})).startDate, '2026-09-13', 'Sunday is today');
+    const chosen = await newBudget(h, f.q, { period: 'monthly', startDate: '2026-09-15' });
+    assert.deepEqual([chosen.period, chosen.startDate], ['monthly', '2026-09-15'], 'what is sent wins');
+    assert.deepEqual([(await newBudget(h, f.q, { period: 'monthly' })).startDate], ['2026-09-01'], 'a monthly budget still starts on the first');
+    const list = ok(await h.call('budgets', 'GET', { as: 'alice', query: f.q })).budgets;
+    const earlier = list.find((b) => b.id === before.id);
+    assert.deepEqual([earlier.period, earlier.startDate], ['monthly', '2026-09-01'], 'the earlier budget is unchanged');
+  });
+
+  test('"Only after confirming" (default) keeps today\'s rule; "Never" refuses any change that reaches finished periods, confirmed or not', async () => {
+    const { h, f, id } = await setup();
+    const cat = await categoryId(h, f.q);
+    const b = await newBudget(h, f.q, { startDate: '2026-08-01' });
+    const change = (budget, extra) => h.call('budgets', 'PATCH', { as: 'alice', query: f.q, body: { budgetId: budget.id, revision: budget.revision, lines: [{ categoryId: cat, amount: '450.00' }], ...extra } });
+    // Default: before the current period needs a confirmation, and with it the change is accepted.
+    assert.equal((await change(b, { effectiveFrom: '2026-08-15' })).body.error.code, 'backdate_unconfirmed');
+    const confirmed = ok(await change(b, { effectiveFrom: '2026-08-15', confirmBackdate: true })).budget;
+    assert.equal(confirmed.versions[confirmed.versions.length - 1].backdated, true);
+    ok(await patchSettings(h, 'alice', id, { budgetBackdating: 'never' }));
+    const refused = await change(confirmed, { effectiveFrom: '2026-08-20', confirmBackdate: true });
+    assert.equal(refused.status, 409);
+    assert.equal(refused.body.error.code, 'backdate_off');
+    assert.match(refused.body.error.message, /Start the change on 2026-09-01 or later/);
+    // A new period type whose first period starts before the change takes effect counts days twice: refused too.
+    const periodChange = await h.call('budgets', 'PATCH', { as: 'alice', query: f.q, body: { budgetId: b.id, revision: confirmed.revision, period: 'weekly', startDate: '2026-09-07', effectiveFrom: '2026-09-10', confirmBackdate: true } });
+    assert.equal(periodChange.body.error.code, 'backdate_off');
+    // A change in the current period is still fine.
+    const current = ok(await change(confirmed, { effectiveFrom: '2026-09-01' })).budget;
+    assert.equal(current.versions[current.versions.length - 1].backdated, false);
+    assert.equal(current.lines[0].amount, '450.00');
+  });
+});
+
 describe('Workspace settings: older documents, backups and restores', () => {
   test('a document without the settings reads the defaults; a stored "custom" budget period reads as monthly and still backs up', async () => {
     const { h, id } = await setup();

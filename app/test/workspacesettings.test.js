@@ -7,6 +7,7 @@ import assert from "node:assert/strict";
 import { installDom } from "./domdouble.js";
 import { nativeDropdowns, pickerLabels, pickerNamed, chooseOption, offeredOptions, triggerFor, spokenOf } from "./pickerassert.js";
 import { createView as createWorkspace, settingText } from "../js/ui/views/workspace.js";
+import { createView as createPlanning, defaultBudgetStart, backdateProblem } from "../js/ui/views/planning.js";
 
 let dom;
 beforeEach(() => { dom = installDom(); });
@@ -117,6 +118,47 @@ describe("Workspace settings card", () => {
     const { view } = await open({ history });
     const box = view.element.querySelectorAll("section").find((s) => s.getAttribute("aria-labelledby") === "ws-history");
     assert.match(box.textContent, /Budget period for new budgets Monthly → Weekly; Shared expenses On → Off; Name A → B — New rhythm/);
+  });
+
+  test("(i) a new budget's start: the first of the month, or the latest week-start day on or before today", () => {
+    // 2026-09-13 is a Sunday; 2026-09-16 a Wednesday.
+    assert.equal(defaultBudgetStart("monthly", 1, "2026-09-13"), "2026-09-01");
+    assert.equal(defaultBudgetStart("weekly", 1, "2026-09-13"), "2026-09-07");
+    assert.equal(defaultBudgetStart("weekly", 0, "2026-09-13"), "2026-09-13");
+    assert.equal(defaultBudgetStart("biweekly", 6, "2026-09-13"), "2026-09-12");
+    assert.equal(defaultBudgetStart("weekly", 1, "2026-09-16"), "2026-09-14");
+    assert.equal(defaultBudgetStart("weekly", 6, "2026-03-01"), "2026-02-28", "across a month end");
+  });
+
+  test("(i) with \"Never\", a date before the current period is refused even when confirmed; otherwise today's rule", () => {
+    assert.equal(backdateProblem("2026-09-01", "2026-09-01", false, { never: true }), null);
+    assert.match(backdateProblem("2026-08-15", "2026-09-01", true, { never: true }), /does not let budget changes apply to periods that have finished/);
+    assert.equal(backdateProblem("2026-08-15", "2026-09-01", true), null);
+    assert.match(backdateProblem("2026-08-15", "2026-09-01", false), /Tick “Also change finished periods”/);
+  });
+
+  test("(i) Add budget starts with the workspace's period, and its start is on the workspace's week start", async () => {
+    const ready = (data) => ({ workspaceId: "ws_1", status: "ready", error: null, data });
+    const state = {
+      selectedWorkspaceId: "ws_1", preferences: null,
+      workspaces: [{ id: "ws_1", name: "Fictional household", role: "owner", kind: "household", settingValues: { budgetPeriod: "weekly", weekStart: 0, budgetBackdating: "confirm" } }],
+      accounts: ready({ accounts: [] }), categories: ready({ categories: [{ id: "cat_food", name: "Groceries", color: "#16a34a", icon: null }] }),
+      budgets: ready({ budgets: [] }), forecast: ready({ forecast: { accounts: [], warnings: [], assumptions: [], horizonDays: 90 } }), bills: ready({ recurring: [] }),
+    };
+    const store = { getState: () => state, actions: { refreshForecast: async () => {}, refreshBudgets: async () => {}, refreshBills: async () => {}, write: async () => ({ ok: true }) } };
+    const view = createPlanning({ store, api: {} });
+    dom.body.appendChild(view.element);
+    view.update(state);
+    buttonNamed(view.element, "Add budget").click();
+    const root = dom.body.querySelector(".modal");
+    assert.match(spokenOf(triggerFor(pickerNamed(root, "Period"))), /^Period: Weekly/);
+    const start = root.querySelector('input[type="date"]').value;
+    const today = new Date().toISOString().slice(0, 10);
+    const days = (Date.parse(`${today}T00:00:00Z`) - Date.parse(`${start}T00:00:00Z`)) / 86400000;
+    assert.equal(new Date(`${start}T00:00:00Z`).getUTCDay(), 0, `${start} is a Sunday`);
+    assert.ok(days >= 0 && days <= 6, `${start} is the latest Sunday on or before ${today}`);
+    chooseOption(pickerNamed(root, "Period"), "Monthly");
+    assert.equal(root.querySelector('input[type="date"]').value, `${today.slice(0, 8)}01`, "a monthly budget is offered the first of the month");
   });
 
   test("settingText writes each kind of value in words", () => {

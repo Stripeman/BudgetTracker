@@ -16,6 +16,7 @@ const audit = require('../_shared/audit');
 const budgeting = require('../_shared/budgeting');
 const ledger = require('../_shared/ledger');
 const icons = require('../_shared/icons');
+const workspaceSettings = require('../_shared/workspace-settings');
 
 const PERIODS = ['monthly', 'weekly', 'biweekly'];
 // The icon catalogue is read only when an icon is being chosen (BT-011-05).
@@ -89,10 +90,14 @@ async function create(ctx, req) {
     const currency = body.currency || (doc.settings && doc.settings.reportingCurrency) || 'EUR';
     money.precisionOf(currency);
     const nowIso = ctx.nowIso();
+    // The workspace's budget period and week start are the defaults for a new budget (workspace
+    // settings, Terry 2026-09-14): monthly from the first of the month unless the workspace says
+    // otherwise; weekly and two-weekly from the latest week-start day. What is sent always wins.
+    const period = fields.oneOf(body.period, PERIODS, 'Period', workspaceSettings.get(doc, 'budgetPeriod'));
     const budget = {
       id: newId('bud'), name: fields.text(body.name, { field: 'Name', max: 80, required: true }), scope, currency,
-      period: fields.oneOf(body.period, PERIODS, 'Period', 'monthly'),
-      startDate: fields.date(body.startDate, 'Start date') || `${nowIso.slice(0, 7)}-01`,
+      period,
+      startDate: fields.date(body.startDate, 'Start date') || workspaceSettings.defaultBudgetStart(doc, period, nowIso.slice(0, 10)),
       lines: validLines(body.lines, currency, doc), ownerSubject: member.subject, createdBy: member.subject, createdAt: nowIso, revision: 1, deletedAt: null,
       icon: body.icon === undefined ? null : icons.validateChoice(catalog, body.icon),
     };
@@ -159,6 +164,13 @@ async function patch(ctx, req) {
       const firstNewStart = budgeting.periodFor(v, effectiveFrom).start;
       const newPeriods = v.period !== current.period || v.startDate !== current.startDate;
       v.backdated = effectiveFrom < currentStart || (newPeriods && firstNewStart < effectiveFrom);
+      // A workspace may rule such changes out altogether ("Budget changes may apply to past periods:
+      // Never"); confirming does not override it.
+      if (v.backdated && workspaceSettings.get(doc, 'budgetBackdating') === 'never') {
+        throw conflict(effectiveFrom < currentStart
+          ? `This workspace does not let budget changes apply to periods that have finished. Start the change on ${currentStart} or later.`
+          : `This workspace does not let budget changes apply to periods that have finished. With this period and start day, the period containing ${effectiveFrom} begins on ${firstNewStart}; start the change on a date where a new period begins, in the current period or later.`, 'backdate_off');
+      }
       if (v.backdated && fields.bool(body.confirmBackdate, 'Confirm backdate') !== true) {
         throw conflict(effectiveFrom < currentStart
           ? `This change would apply from before the current period (which started ${currentStart}) and change periods that have finished. Confirm that this is intended.`

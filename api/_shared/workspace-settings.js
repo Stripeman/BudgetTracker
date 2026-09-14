@@ -42,6 +42,12 @@ const SETTINGS = freezeAll({
     options: [opt(1, 'Monday'), opt(0, 'Sunday'), opt(6, 'Saturday')],
     explanation: 'A new weekly or two-weekly budget starts on this day of the week unless another start date is chosen. Monthly budgets start on the first of the month.',
   },
+  budgetBackdating: {
+    group: 'Budgets', type: 'choice', default: 'confirm', changedBy: 'manager',
+    label: 'Budget changes may apply to past periods',
+    options: [opt('confirm', 'Only after confirming'), opt('never', 'Never')],
+    explanation: 'Whether a change to a budget\'s plan may reach back into periods that have already finished. With "Only after confirming" the person changing it must tick a box to say it is intended. With "Never" a change always starts in the current period or later, so finished periods keep the plan they had.',
+  },
 });
 const KEYS = Object.freeze(Object.keys(SETTINGS));
 const own = (o, k) => !!o && Object.prototype.hasOwnProperty.call(o, k);

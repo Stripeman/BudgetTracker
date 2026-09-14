@@ -25,9 +25,22 @@ const PERIODS = [{ value: "monthly", label: "Monthly" }, { value: "biweekly", la
 
 // A plan change dated before the current period changes periods that have finished, so it needs an
 // explicit confirmation; the server refuses it otherwise (FIN-R14). Returns the message or null.
-export function backdateProblem(effectiveFrom, periodStart, confirmed) {
-  if (!effectiveFrom || !periodStart || effectiveFrom >= periodStart || confirmed) return null;
+export function backdateProblem(effectiveFrom, periodStart, confirmed, { never = false } = {}) {
+  if (!effectiveFrom || !periodStart || effectiveFrom >= periodStart) return null;
+  // The workspace setting "Budget changes may apply to past periods: Never" (the server refuses too).
+  if (never) return `This workspace does not let budget changes apply to periods that have finished. Choose ${formatDate(periodStart)} or later.`;
+  if (confirmed) return null;
   return "This date is before the current period, so it would change periods that have already finished. Tick “Also change finished periods” to confirm, or choose a later date.";
+}
+
+// The start a new budget is offered (workspace settings, Terry 2026-09-14), the same rule as the server:
+// the first of the month for a monthly budget; for a weekly or two-weekly one the latest day on or before
+// `today` that is the workspace's week start (0 Sunday, 1 Monday, 6 Saturday).
+export function defaultBudgetStart(period, weekStart, today) {
+  if (period === "monthly") return `${today.slice(0, 8)}01`;
+  const d = new Date(`${today}T00:00:00Z`);
+  d.setUTCDate(d.getUTCDate() - ((d.getUTCDay() - weekStart + 7) % 7));
+  return d.toISOString().slice(0, 10);
 }
 
 export function warningText(w, fmt, dateFormat) {
@@ -238,10 +251,19 @@ function openBudgetEditor(ctx, budget = null) {
   const canShare = role === "owner" || role === "manager";
   const scope = pickerSelect([{ value: "private", label: "Private to me" }].concat(canShare ? [{ value: "shared", label: "Shared (shared accounts only)" }] : []), editing ? budget.scope : (canShare ? "shared" : "private"), { disabled: editing }, { search: false });
   const currency = pickerSelect((currencies.length ? currencies : ["EUR"]).map((c) => ({ value: c, label: c })), editing ? budget.currency : currencies[0] || "EUR", { disabled: editing });
-  const period = pickerSelect(PERIODS, editing ? budget.period : "monthly", {}, { search: false });
+  // The workspace's settings give a new budget its period and start (Terry, 2026-09-14).
+  const wsValues = ((state.workspaces || []).find((w) => w.id === state.selectedWorkspaceId) || {}).settingValues || {};
+  const weekStart = [0, 1, 6].includes(wsValues.weekStart) ? wsValues.weekStart : 1;
+  const neverBackdate = wsValues.budgetBackdating === "never";
+  const period = pickerSelect(PERIODS, editing ? budget.period : (PERIODS.some((p) => p.value === wsValues.budgetPeriod) ? wsValues.budgetPeriod : "monthly"), {}, { search: false });
   const categoryMarks = categoryBadges(state);
   const start = input({ type: "date" });
-  start.value = editing ? budget.startDate : `${todayIso().slice(0, 8)}01`;
+  start.value = editing ? budget.startDate : defaultBudgetStart(period.value, weekStart, todayIso());
+  // A new budget's start follows its period until someone types a start of their own.
+  if (!editing) {
+    let offered = start.value;
+    period.addEventListener("change", () => { if (start.value === offered) { offered = defaultBudgetStart(period.value, weekStart, todayIso()); start.value = offered; } });
+  }
   // Plan changes apply from a date; earlier periods keep the plan they had (BT-001-05).
   const effectiveFrom = input({ type: "date" });
   effectiveFrom.value = editing ? budget.status.period.start : "";
@@ -288,8 +310,10 @@ function openBudgetEditor(ctx, budget = null) {
       el("div", { class: "form-grid" }, [field("Name", name), iconPick.element, field("Who it is for", scope, { help: "A shared budget counts shared accounts only, so members' private spending never appears in it." }), field("Currency", currency), field("Period", period), field("Starts on", start)]),
       el("h3", { text: "Categories" }), linesBox, addLine,
       editing ? el("div", { class: "form-grid" }, [
-        field("Plan changes apply from", effectiveFrom, { help: `Earlier periods keep the plan they had. A date before ${formatDate(budget.status.period.start)} changes periods that have finished and needs confirming.` }),
-        el("label", { class: "field--inline field__label" }, [confirmBackdate, "Also change finished periods"]),
+        field("Plan changes apply from", effectiveFrom, { help: neverBackdate
+          ? `Earlier periods keep the plan they had. This workspace does not let changes apply to periods that have finished, so choose ${formatDate(budget.status.period.start)} or later.`
+          : `Earlier periods keep the plan they had. A date before ${formatDate(budget.status.period.start)} changes periods that have finished and needs confirming.` }),
+        neverBackdate ? null : el("label", { class: "field--inline field__label" }, [confirmBackdate, "Also change finished periods"]),
         field("Reason for the change", reason),
       ]) : null,
     ],
@@ -321,7 +345,7 @@ function openBudgetEditor(ctx, budget = null) {
         || period.value !== budget.period || start.value !== budget.startDate;
       if (planChanged) {
         effectiveFrom.removeAttribute("aria-invalid");
-        const problem = backdateProblem(effectiveFrom.value, budget.status.period.start, confirmBackdate.checked);
+        const problem = backdateProblem(effectiveFrom.value, budget.status.period.start, confirmBackdate.checked, { never: neverBackdate });
         if (problem) { invalid(effectiveFrom, problem); return; }
         const backdated = !!effectiveFrom.value && effectiveFrom.value < budget.status.period.start;
         Object.assign(body, { lines, period: period.value, startDate: start.value, ...(effectiveFrom.value ? { effectiveFrom: effectiveFrom.value } : {}), ...(backdated || confirmBackdate.checked ? { confirmBackdate: true } : {}), ...(reason.value.trim() ? { reason: reason.value.trim() } : {}) });
