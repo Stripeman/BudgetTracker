@@ -412,21 +412,43 @@ describe("BT-004-04 THE PINNED CREATE ACTION (adaptation A3)", () => {
 });
 
 describe("BT-004-04 PLACEMENT (through custom properties; real layout is checked in a browser)", () => {
-  // The double has no layout, so every element is given a fixed rectangle: the panel's natural size
-  // and the trigger's position. Only the arithmetic and the CSS variables are asserted.
-  function withGeometry({ panelHeight, viewportHeight, anchorTop = 10 }) {
+  // The double has no layout, so every element is given a fixed rectangle: the panel's natural size,
+  // its list (the panel less its search row and hints, `chrome`), one option row, and the trigger's
+  // position. Only the arithmetic and the CSS variables are asserted.
+  function withGeometry({ panelHeight, viewportHeight, anchorTop = 10, chrome = 86, rowHeight = 36, viewportWidth = 390 }) {
     const create = document.createElement;
+    const box = (width, height) => ({ top: 0, left: 0, width, height, bottom: height, right: width });
     document.createElement = (tag) => {
       const node = create(tag);
       node.getBoundingClientRect = function () {
-        return this.classList.contains("cmdpick__panel")
-          ? { top: 0, left: 0, width: 352, height: panelHeight, bottom: panelHeight, right: 352 }
-          : { top: anchorTop, left: 40, width: 200, height: 36, bottom: anchorTop + 36, right: 240 };
+        if (this.classList.contains("cmdpick__panel")) return box(352, panelHeight);
+        if (this.classList.contains("cmdpick__list")) return box(352, panelHeight - chrome);
+        if (this.classList.contains("cmdpick__opt")) return box(340, rowHeight);
+        return { top: anchorTop, left: 40, width: 200, height: 36, bottom: anchorTop + 36, right: 240 };
       };
       return node;
     };
-    document.defaultView = { innerWidth: 390, innerHeight: viewportHeight };
+    document.defaultView = { innerWidth: viewportWidth, innerHeight: viewportHeight };
   }
+
+  test("AT 400 % ZOOM (320 × 256) the panel spans the viewport and keeps at least 2.5 rows readable (a11y review finding 1)", () => {
+    // Trigger 110–146; below = 256 - 146 - 12 = 98, above = 110 - 12 = 98. Useful minimum = search row
+    // 46 + 2.5 × 38 = 141, more than either side, so it spans: min(294, 256 - 16) = 240 high, top 8.
+    withGeometry({ panelHeight: 294, viewportHeight: 256, viewportWidth: 320, anchorTop: 110, chrome: 46, rowHeight: 38 });
+    const { picker } = mount();
+    open(picker);
+    assert.equal(panel().style.getPropertyValue("--pop-max-height"), "240px");
+    assert.equal(panel().style.getPropertyValue("--pop-top"), "8px");
+    assert.equal(panel().style.getPropertyValue("--pop-left"), "8px", "pulled inside the 320 px viewport");
+    assert.ok(240 - 46 >= 2.5 * 38, "the list keeps 194 px: five 38 px rows");
+  });
+
+  test("the key hints give their room to the list on short screens, and there is no hidden 70vh cap", () => {
+    const css = fs.readFileSync(fileURLToPath(new URL("../styles/components.css", import.meta.url)), "utf8");
+    assert.match(css, /@media\s*\(max-height:\s*30rem\)\s*\{\s*\.cmdpick__foot\s*\{\s*display:\s*none;?\s*\}/);
+    const rule = /\.cmdpick__panel\s*\{([^}]*)\}/.exec(css)[1];
+    assert.match(rule, /max-height:\s*var\(--pop-max-height,\s*none\)/);
+  });
 
   test("below the trigger, inside the viewport, with no height cap when it fits", () => {
     withGeometry({ panelHeight: 167.6, viewportHeight: 844 });

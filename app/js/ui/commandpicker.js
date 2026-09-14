@@ -410,6 +410,18 @@ export function createCommandPicker({ select, label = "Choose", placeholder = ""
     if (restoreFocus && doc && doc.body && doc.body.contains(trigger)) trigger.focus();
   }
 
+  // A11 — the least height worth showing: everything in the panel that is not the list (search row,
+  // create button, key hints) plus about two and a half rows, or the whole list when it is shorter.
+  function usefulHeight(panelHeight) {
+    if (typeof list.getBoundingClientRect !== "function") return 0;
+    const listHeight = list.getBoundingClientRect().height || 0;
+    const chrome = Math.max(0, (panelHeight || 0) - listHeight);
+    const content = typeof list.scrollHeight === "number" && list.scrollHeight > 0 ? list.scrollHeight : listHeight;
+    const row = list.querySelector(".cmdpick__opt");
+    const rowHeight = row && typeof row.getBoundingClientRect === "function" ? row.getBoundingClientRect().height || 0 : 0;
+    return Math.ceil(chrome + (rowHeight > 0 ? Math.min(content, rowHeight * 2.5) : content));
+  }
+
   // Placed against the viewport, outside whatever is scrolling. The position reaches CSS as two
   // custom properties through the CSSOM — never a style attribute (CSP).
   function place() {
@@ -425,6 +437,8 @@ export function createCommandPicker({ select, label = "Choose", placeholder = ""
       anchor: trigger.getBoundingClientRect(),
       panel: natural,
       viewport: { width: view.innerWidth, height: view.innerHeight },
+      // A11 — never a panel too short to read: below this it spans the viewport (popover.js rule 6).
+      minUseful: usefulHeight(natural.height),
     });
     if (!at) return;
     panel.style.setProperty("--pop-left", `${Math.round(at.left)}px`);

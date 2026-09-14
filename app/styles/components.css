@@ -448,7 +448,9 @@ fieldset.budget-line { margin: 0; padding: var(--space-3); border: 1px solid var
   top: var(--pop-top, 50%); left: var(--pop-left, 50%);
   width: min(22rem, calc(100vw - 1rem));
   min-width: min(var(--pop-min-width, 0px), calc(100vw - 1rem));
-  max-height: var(--pop-max-height, 70vh);
+  /* No hidden cap: place() sets --pop-max-height whenever the panel does not fit, and removes it when
+     it does (a11y review finding 1; TaskTracker's 70vh fallback also capped panels that fitted). */
+  max-height: var(--pop-max-height, none);
   display: flex; flex-direction: column;
   color: var(--text);
   background: var(--surface-raised);
@@ -517,6 +519,11 @@ fieldset.budget-line { margin: 0; padding: var(--space-3); border: 1px solid var
   padding: var(--space-2) var(--space-3);
   border-top: 1px solid var(--border);
   font-size: var(--text-xs); color: var(--text-muted);
+}
+/* On a short screen (400 % zoom is 256 CSS px high) the key hints give their room to the list
+   (a11y review finding 1). They are aria-hidden, so nothing is lost for a screen reader. */
+@media (max-height: 30rem) {
+  .cmdpick__foot { display: none; }
 }
 .cmdpick__kbd {
   font-family: var(--font-mono); font-size: 0.7rem;
