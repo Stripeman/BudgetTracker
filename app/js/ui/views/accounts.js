@@ -2,11 +2,12 @@
 // "Who can see this" with explicit grants for private accounts (owner only). The server decides
 // everything; these controls only present what it allows.
 import { el, mount, announce } from "../dom.js";
-import { pageHead, stateView, money, accessBadge, button, field, input, pickerSelect, badge } from "../components.js";
+import { pageHead, stateView, money, accessBadge, button, field, input, pickerSelect, badge, uid } from "../components.js";
 import { openModal } from "../modal.js";
 import { sliceFor } from "../../core/store.js";
 import { newIdempotencyKey } from "../../core/api.js";
-import { ACCOUNT_TYPE_LABELS, todayIso } from "../../core/format.js";
+import { messageFor } from "../../core/errors.js";
+import { ACCOUNT_TYPE_LABELS, todayIso, formatDate } from "../../core/format.js";
 import { icon, withIcon, defaultIconFor } from "../icons.js";
 import { createIconPicker, iconChange } from "../iconpicker.js";
 import { managesSharedLists } from "../../core/workspacesettings.js";
@@ -21,13 +22,98 @@ const canManage = (a, sharedLists) => a.ownedBySelf || (a.visibility === "shared
 
 export function createView(ctx) {
   const box = el("div");
-  const element = el("section", {}, [pageHead("Accounts", [button("Add account", () => openAddAccount(ctx), { variant: "primary" })]), box]);
+  // Removed accounts (BT-006-05): counted by the server, listed only when asked for, and forgotten
+  // when the workspace changes (a generation token discards an answer for an earlier request).
+  const removed = { open: false, list: null, error: null, gen: 0, ws: null };
+  const sectionId = uid("removed-accounts");
+  const toggle = button("", () => {
+    removed.open = !removed.open;
+    removed.error = null;
+    if (removed.open) loadRemoved(); else removed.gen += 1;
+    renderRemoved();
+  }, { small: true, attrs: { "aria-expanded": "false" } });
+  const toggleBox = el("div");
+  const listBox = el("div");
+  const element = el("section", {}, [pageHead("Accounts", [button("Add account", () => openAddAccount(ctx), { variant: "primary" })]), el("div", { class: "stack" }, [box, toggleBox, listBox])]);
+  let lastState = null;
+
+  async function loadRemoved() {
+    const ws = removed.ws;
+    const mine = ++removed.gen;
+    removed.list = null;
+    renderRemoved();
+    try {
+      const data = await ctx.api.accounts(ws, { includeDeleted: "1" });
+      if (mine !== removed.gen || ws !== removed.ws) return;
+      removed.list = (data.accounts || []).filter((a) => a.deletedAt);
+    } catch (err) {
+      if (mine !== removed.gen || ws !== removed.ws) return;
+      removed.list = [];
+      removed.error = `Removed accounts could not be loaded. ${messageFor(err)}`;
+    }
+    renderRemoved();
+  }
+
+  async function bringBack(account) {
+    removed.error = null;
+    const out = await ctx.store.actions.write((ws) => ctx.api.accountAction(ws, "restore", { accountId: account.id }), ["accounts", "transactions"]);
+    if (!out.ok) { removed.error = `${account.name} could not be brought back. ${typeof out.error === "string" ? out.error : messageFor(out.error)}`; renderRemoved(); return; }
+    announce(`${account.name} is back in your accounts, with its history.`);
+    toggle.focus();
+    await loadRemoved();
+  }
+
+  function renderRemoved() {
+    const state = lastState;
+    const count = state ? ((sliceFor(state, "accounts").data || {}).removedCount || 0) : 0;
+    if (!removed.open && !count) { mount(toggleBox); mount(listBox); return; }
+    toggle.textContent = removed.open ? "Hide removed accounts" : `Show removed accounts (${count})`;
+    toggle.setAttribute("aria-expanded", String(removed.open));
+    mount(toggleBox, toggle);
+    if (!removed.open) { toggle.removeAttribute("aria-controls"); mount(listBox); return; }
+    toggle.setAttribute("aria-controls", sectionId);
+    const prefs = state && state.preferences;
+    const dateFormat = prefs && prefs.effective && prefs.effective.dateFormat;
+    let body;
+    if (removed.list === null) body = el("p", { role: "status", text: "Loading…" });
+    else if (!removed.list.length) body = removed.error ? null : el("p", { class: "muted", text: "No removed accounts." });
+    else {
+      body = el("ul", { class: "stack" }, removed.list.map((a) => el("li", { class: "row" }, [
+        withIcon(a.icon, el("strong", { text: a.name })),
+        el("span", { class: "muted small", text: `${ACCOUNT_TYPE_LABELS[a.type] || a.type} · ${a.currency} · Removed ${formatDate(a.deletedAt, dateFormat)}` }),
+        button("Bring back", () => bringBack(a), { small: true, attrs: { "aria-label": `Bring back ${a.name}` } }),
+      ])));
+    }
+    mount(listBox, el("section", { id: sectionId, class: "card", "aria-labelledby": `${sectionId}-title` }, [
+      el("h2", { class: "card__title", id: `${sectionId}-title`, text: "Removed accounts" }),
+      el("p", { class: "muted small", text: "Removed accounts and their entries are kept, never erased. Bringing one back returns it to your lists and totals with its history." }),
+      removed.error ? el("p", { class: "state state--error", role: "alert", text: removed.error }) : null,
+      body,
+    ]));
+  }
+
+  // After a removal: the removed list is read again if it is open, and focus goes to its toggle
+  // (the row that held the Remove button is gone).
+  function afterRemove() {
+    if (removed.open) loadRemoved();
+    if (toggle.parentNode) toggle.focus();
+  }
+
   function update(state) {
+    lastState = state;
+    if (state.selectedWorkspaceId !== removed.ws) {
+      removed.ws = state.selectedWorkspaceId;
+      removed.open = false;
+      removed.list = null;
+      removed.error = null;
+      removed.gen += 1;
+    }
     const role = ((state.workspaces || []).find((w) => w.id === state.selectedWorkspaceId) || {}).role;
     const sharedLists = managesSharedLists(state);
     const prefs = state.preferences;
     const accounts = sliceFor(state, "accounts");
-    const s = stateView(accounts, { empty: "No accounts yet. Add a bank account, card, cash wallet or loan.", isEmpty: (d) => !d.accounts.length });
+    renderRemoved();
+    const s = stateView(accounts, { empty: "No accounts yet. Add a bank account, card, cash wallet or loan.", isEmpty: (d) => !d.accounts.filter((a) => !a.deletedAt).length });
     if (s) { mount(box, s); return; }
     mount(box, el("div", { class: "table-wrap" }, [el("table", { class: "table table--cards", "aria-label": "Accounts" }, [
       el("thead", {}, [el("tr", {}, ["Account", "Type", "Who can see it", "Balance", "Actions"].map((h) => el("th", { scope: "col", class: h === "Balance" ? "num" : "", text: h })))]),
@@ -43,11 +129,55 @@ export function createView(ctx) {
           button("Who can see this", () => openWhoCanSee(ctx, a), { small: true, attrs: { "aria-label": `Who can see ${a.name}` } }),
           canManage(a, sharedLists) ? button("Edit", () => openEditAccount(ctx, a), { small: true, attrs: { "aria-label": `Edit ${a.name}` } }) : null,
           canManage(a, sharedLists) ? button(a.status === "closed" ? "Reopen" : "Close", () => openLifecycle(ctx, a), { small: true, attrs: { "aria-label": `${a.status === "closed" ? "Reopen" : "Close"} ${a.name}` } }) : null,
+          canManage(a, sharedLists) ? button("Remove", () => openRemove(ctx, a, afterRemove), { small: true, attrs: { "aria-label": `Remove ${a.name}` } }) : null,
         ])]),
       ]))),
     ])]));
   }
   return { element, update };
+}
+
+// Removing (BT-006-05; Terry, 2026-09-14: "i just created the wrong one and now i cant remove it") is
+// never erasing (BT-001-05): the account leaves lists, pickers and totals, keeps its history and comes
+// back with Bring back. An account with nothing recorded against it gets a ready-made reason; one with
+// entries needs a reason and offers closing instead. The server decides who may; it requires a reason,
+// so an empty account whose reason was cleared is still sent with the ready-made one.
+const MISTAKE = "Created by mistake";
+const HAS_ENTRIES_TEXT = "This account has entries. Removing it takes it out of your account lists, pickers and totals, but nothing is erased: its entries are kept and can still be found under Transactions, and you can bring it back from Removed accounts. To stop using it but keep it visible, close it instead.";
+
+function openRemove(ctx, account, onRemoved = () => {}) {
+  // When the server did not say (it tells only people who can see the entries), the stricter dialog.
+  const empty = account.hasEntries === false;
+  const reason = input({ maxlength: "200", autocomplete: "off" });
+  reason.value = empty ? MISTAKE : "";
+  const confirm = button("Remove account", async () => {
+    modal.setError("");
+    reason.removeAttribute("aria-invalid");
+    const text = reason.value.trim() || (empty ? MISTAKE : "");
+    if (!text) {
+      reason.setAttribute("aria-invalid", "true");
+      reason.setAttribute("aria-errormessage", modal.errorId);
+      modal.setError("Give a reason for removing this account. It is kept with the account's history.");
+      reason.focus();
+      return;
+    }
+    modal.setBusy(true);
+    const out = await ctx.store.actions.write((ws) => ctx.api.removeAccount(ws, { accountId: account.id, reason: text }), ["accounts", "transactions"]);
+    modal.setBusy(false);
+    if (!out.ok) { modal.setError(out.error); return; }
+    announce(`${account.name} removed. You can bring it back from Removed accounts.`);
+    modal.close();
+    onRemoved();
+  }, { variant: "danger" });
+  const closeInstead = !empty && account.status !== "closed" ? button("Close instead", () => { modal.close(); openLifecycle(ctx, account); }) : null;
+  const modal = openModal({
+    title: `Remove ${account.name}?`,
+    body: [
+      el("p", { text: empty ? "This account has no entries. It will be removed from your lists. You can bring it back from Removed accounts." : HAS_ENTRIES_TEXT }),
+      el("div", { class: "form-grid" }, [field("Reason", reason, { wide: true, help: empty ? "Kept with the account's history. Change it if you like." : "Required. It is kept with the account's history." })]),
+    ],
+    actions: [button("Cancel", () => modal.close()), closeInstead, confirm].filter(Boolean),
+  });
 }
 
 // Closing keeps the account, its balance and its history; it only stops new entries and bills.

@@ -66,6 +66,8 @@ export function createApiClient({ fetchImpl = globalThis.fetch.bind(globalThis),
     createAccount: (id, body, key) => request("accounts", { method: "POST", query: ws(id), body, idempotencyKey: key }),
     updateAccount: (id, body) => request("accounts", { method: "PATCH", query: ws(id), body }),
     accountAction: (id, action, body) => request("accounts", { method: "POST", query: { ...ws(id), action }, body }),
+    // Removes from lists; never erased, reason required, brought back with accountAction "restore" (BT-006-05).
+    removeAccount: (id, body) => request("accounts", { method: "DELETE", query: ws(id), body }),
     transactions: (id, filters = {}) => request("transactions", { query: { ...ws(id), ...filters } }),
     createTransaction: (id, body, key) => request("transactions", { method: "POST", query: ws(id), body, idempotencyKey: key }),
     updateTransaction: (id, body) => request("transactions", { method: "PATCH", query: ws(id), body }),

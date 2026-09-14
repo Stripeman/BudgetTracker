@@ -156,6 +156,18 @@ function accessOf(account, principal) {
   return account.ownerSubject === principal.subject ? 'own' : 'granted';
 }
 
+// Whether anything was ever recorded against an account (BT-006-05): an entry (deleted or reversed ones
+// too, because they are kept), a bill from or into it, a grant given on it, or a Shared-expenses link
+// to it. An account with none of these was most likely created by mistake.
+function hasEntries(doc, account) {
+  const id = account.id;
+  if ((doc.transactions || []).some((t) => t.accountId === id || t.counterpartAccountId === id)) return true;
+  if ((doc.recurring || []).some((r) => r.accountId === id || r.toAccountId === id)) return true;
+  if ((doc.grants || []).some((g) => g.resourceId === id)) return true;
+  if ((doc.groupLedgers || []).some((l) => l.accountId === id)) return true;
+  return [...(doc.groupExpenses || []), ...(doc.groupSettlements || [])].some((rec) => (rec.ledgerLinks || []).some((l) => l.accountId === id));
+}
+
 function accountView(doc, principal, account, now) {
   const caps = capabilitiesFor(doc, principal, account, now);
   const access = accessOf(account, principal);
@@ -171,6 +183,8 @@ function accountView(doc, principal, account, now) {
     capabilities: [...caps].sort(), notes: account.notes || '', revision: account.revision || 1,
     ...icons.effective('account', account, doc),
   };
+  // Only to people who can see its entries: to anyone else even "nothing recorded" says too much.
+  if (caps.has('view-transactions')) out.hasEntries = hasEntries(doc, account);
   if (caps.has('view-balances')) {
     out.openingBalance = money.toDecimal(account.openingBalanceMinor, account.currency);
     out.openingBalanceMinor = account.openingBalanceMinor;
@@ -364,5 +378,5 @@ function memberBytes(doc, member) {
 module.exports = {
   assertMemberQuota, memberBytes, memberCharge, quotaLimit, quotaExceeded,
   ACCOUNT_TYPES, LIABILITY_TYPES, TX_KINDS, OUTFLOW, INFLOW, TX_STATUSES, NEVER_POSITIVE_OPENING, validateTerms, maskedNumber,
-  balanceOf, accountView, accessOf, signedAmount, validateSplits, transactionView, visiblePayees, classify, openingBalance, assertLedgerInRange,
+  balanceOf, accountView, hasEntries, accessOf, signedAmount, validateSplits, transactionView, visiblePayees, classify, openingBalance, assertLedgerInRange,
 };
