@@ -367,6 +367,11 @@ describe("BT-004-04 THE CLASSES IT EMITS ACTUALLY EXIST (TaskTracker shipped the
     assert.match(rule[1], /var\(--pop-top/);
     assert.match(rule[1], /var\(--pop-left/);
   });
+
+  test("the panel never transitions into place: with reduced motion it drew one frame at its 50 % fallback (found by npm run e2e)", () => {
+    const rule = /\.cmdpick__panel\s*\{([^}]*)\}/.exec(css);
+    assert.match(rule[1], /transition-property:\s*none/);
+  });
 });
 
 describe("BT-004-04 AN OPTION THAT CANNOT BE CHOSEN IS SHOWN, NOT HIDDEN", () => {

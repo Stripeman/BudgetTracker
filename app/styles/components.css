@@ -475,6 +475,11 @@ fieldset.budget-line { margin: 0; padding: var(--space-3); border: 1px solid var
   /* No hidden cap: place() sets --pop-max-height whenever the panel does not fit, and removes it when
      it does (a11y review finding 1; TaskTracker's 70vh fallback also capped panels that fitted). */
   max-height: var(--pop-max-height, none);
+  /* Placed at once, never moved by a transition. base.css's reduced-motion rule gives every element a
+     0.01 ms transition, which starts on the next frame: the panel, first styled at its 50 % fallback while
+     it is measured, was drawn for one frame in the middle of the screen and then jumped (found by
+     npm run e2e, which reads the panel right after it opens). */
+  transition-property: none;
   display: flex; flex-direction: column;
   color: var(--text);
   background: var(--surface-raised);
