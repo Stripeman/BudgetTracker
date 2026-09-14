@@ -33,7 +33,11 @@ const STATUS_LABELS = { pending: "Pending", cleared: "Cleared", reconciled: "Rec
 
 // A reversal and the entry it reverses keep their financial details for good (FIN-R1): only notes,
 // tags and status can change, so the edit form locks the rest and says why. The server enforces it.
+// An entry recorded from Shared expenses follows the shared expense: the server keeps its financial
+// details locked here (BT-009 recheck N2), and the form says where to change it.
+export const sharedLinked = (t) => !!(t.links && (t.links.groupExpenseId || t.links.groupSettlementId));
 export function reversalLock(t) {
+  if (sharedLinked(t)) return "This entry was recorded from Shared expenses, so its amount, date, type, category and merchant follow the shared expense. Change it in Shared expenses; notes, tags and status can be changed here.";
   if (t.reversedBy) return "This entry has been reversed, so its amount, date, type, category and merchant can no longer change. To correct it, add a new entry.";
   if (t.links && t.links.reverses) return "This is a reversal, so its amount, date, type, category and merchant always match the entry it reverses. To correct it, add a new entry.";
   return null;
@@ -180,9 +184,10 @@ export function createView(ctx) {
         t.canEdit ? button("Edit", () => openQuickEntry(ctx, { transaction: t }), { small: true, attrs: { "aria-label": `Edit ${t.payeeName || "entry"} on ${t.date}` } }) : null,
         // Corrections never overwrite history (BT-001-05): a reversal cancels an entry, even a
         // reconciled one, and every change is listed under History.
-        t.canEdit && !t.transferId && !t.reversedBy && !(t.links && t.links.reverses) ? button("Reverse", () => openReverse(ctx, t), { small: true, attrs: { "aria-label": `Reverse ${t.payeeName || "entry"} on ${t.date}` } }) : null,
+        // Entries recorded from Shared expenses are reversed or removed only from there (N2).
+        t.canEdit && !t.transferId && !t.reversedBy && !(t.links && t.links.reverses) && !sharedLinked(t) ? button("Reverse", () => openReverse(ctx, t), { small: true, attrs: { "aria-label": `Reverse ${t.payeeName || "entry"} on ${t.date}` } }) : null,
         t.amendmentCount ? button("History", () => void openHistory(ctx, t), { small: true, attrs: { "aria-label": `History of ${t.payeeName || "entry"} on ${t.date}` } }) : null,
-        t.canDelete && t.status !== "reconciled" ? button("Delete", () => openDelete(ctx, t), { small: true, variant: "danger", attrs: { "aria-label": `Delete ${t.payeeName || "entry"} on ${t.date}` } }) : null,
+        t.canDelete && t.status !== "reconciled" && !sharedLinked(t) ? button("Delete", () => openDelete(ctx, t), { small: true, variant: "danger", attrs: { "aria-label": `Delete ${t.payeeName || "entry"} on ${t.date}` } }) : null,
       ])]),
     ]));
     mount(tableBox, el("div", { class: "table-wrap" }, [el("table", { class: "table table--cards" }, [

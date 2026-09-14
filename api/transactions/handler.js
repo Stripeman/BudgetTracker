@@ -289,6 +289,13 @@ function checkRevision(t, revision) {
   if (revision !== t.revision) throw conflict('This entry changed since you loaded it. Reload to see the latest version.', 'stale_revision');
 }
 
+// Entries recorded from a shared expense or payment (server-set group links) follow that record: their
+// owner's update from Shared expenses reverses and replaces them. Changing their financial details,
+// reversing or deleting them here would leave them wrong until that update, so only notes, tags and
+// status change here (financial recheck N2).
+const sharedLinked = (t) => Boolean(t.links && (t.links.groupExpenseId || t.links.groupSettlementId));
+const sharedLocked = () => conflict('This entry was recorded from Shared expenses, so its amount, date, type, category and merchant follow the shared expense. Change it in Shared expenses; notes, tags and status can be changed here.', 'shared_expense_locked');
+
 async function patch(ctx, req) {
   const wsId = requireId(query(req, 'workspaceId'), 'workspaceId');
   const body = fields.onlyKeys(readBody(req), PATCH_KEYS);
@@ -302,6 +309,7 @@ async function patch(ctx, req) {
     if (!canChangeRecord(doc, ctx.principal, account, t, 'edit', now)) throw forbidden('You cannot edit this entry.');
     checkRevision(t, body.revision);
     const reason = fields.text(body.reason, { field: 'Reason', max: 200 });
+    if (sharedLinked(t) && LOCKED_WHEN_REVERSED.some((k) => body[k] !== undefined)) throw sharedLocked();
     if (inReversalPair(t) && LOCKED_WHEN_REVERSED.some((k) => body[k] !== undefined)) {
       throw conflict(t.reversedBy
         ? 'This entry has been reversed, so its amount, date, type, category and merchant can no longer change. Add a new entry with the correct details.'
@@ -427,6 +435,8 @@ function setDeleted(deleted) {
       if (deleted) checkRevision(t, body.revision);
       // Only entries not already in the target state change (they normally all are not).
       const legs = linkedEntries(doc, t).filter((x) => Boolean(x.deletedAt) !== deleted);
+      // Entries recorded from Shared expenses are removed only by their owner's update there (N2).
+      if (deleted && legs.some(sharedLinked)) throw sharedLocked();
       if (deleted && legs.some((x) => x.status === 'reconciled')) {
         throw conflict(legs.length > 1 && t.status !== 'reconciled'
           ? 'This entry is linked to a reconciled entry, so it cannot be deleted.'
@@ -487,6 +497,8 @@ async function reverse(ctx, req) {
     // A reversal is a new entry, and closed accounts take no new entries (financial retest FIN-T8).
     if (account.status === 'closed') throw conflict(`${account.name} is closed. Reopen it on the Accounts page to correct its entries.`, 'account_closed');
     if (t.transferId) throw badRequest('Reverse a transfer by recording a transfer back.', 'unsupported');
+    // Reversed only by their owner's update from Shared expenses (N2).
+    if (sharedLinked(t)) throw sharedLocked();
     if (t.links && t.links.reverses) throw conflict('A reversal cannot itself be reversed. Record a new entry instead.', 'is_reversal');
     if (t.reversedBy) throw conflict('This entry has already been reversed.', 'already_reversed');
     const reason = fields.text(body.reason, { field: 'Reason', max: 200 });

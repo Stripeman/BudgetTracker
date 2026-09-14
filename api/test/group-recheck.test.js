@@ -88,3 +88,61 @@ describe('N1: payable and repayment are recorded only from Shared expenses', () 
   });
 });
 
+describe('N2: entries recorded from Shared expenses are changed only there', () => {
+  // Bob records his part on his cash account (500.00). Alice pays a 160.00 dinner for Alice and Bob:
+  // Bob's 80.00 share is spending (`expense` −80.00) and owed (`payable` +80.00); no money moves.
+  async function bobsPart() {
+    const h = harness();
+    const f = await fixture(h);
+    const cash = await account(h, f, 'bob', { name: 'Bob Cash', type: 'cash', currency: 'EUR', openingBalance: '500.00' });
+    const cat = ok(await h.call('categories', 'GET', { as: 'alice', query: f.q })).categories.find((c) => c.type !== 'income' && !c.archived);
+    ok(await act(h, f, 'bob', 'ledger', { currency: 'EUR', accountId: cash.id }));
+    const e = await addExpense(h, f, 'alice', { description: 'Fictional dinner', amount: '160.00', categoryId: cat.id, payers: [{ ref: f.refs.alice }], split: equal(f.refs.alice, f.refs.bob) });
+    ok(await act(h, f, 'bob', 'ledger', { currency: 'EUR' }));
+    const list = await entriesOf(h, f, 'bob', cash.id);
+    return { h, f, cash, e, share: list.find((t) => t.kind === 'expense'), owed: list.find((t) => t.kind === 'payable') };
+  }
+  const bobsNumbers = async (x) => {
+    const s = await summaryOf(x.h, x.f, 'bob', x.cash.id);
+    return [await balanceOf(x.h, x.f, 'bob', x.cash.id), s.gross, s.payables, s.receivable];
+  };
+
+  test('amount, kind, dates, category, merchant and split lines are locked; notes, tags and status are not', async () => {
+    const x = await bobsPart();
+    assert.deepEqual(await bobsNumbers(x), ['500.00', '80.00', '80.00', '-80.00']);
+    for (const [label, t, body] of [
+      ['kind', x.owed, { kind: 'income' }],
+      ['amount', x.owed, { amount: '1.00' }],
+      ['date', x.share, { date: '2026-09-01' }],
+      ['posted date', x.share, { postedDate: '2026-09-02' }],
+      ['category', x.share, { categoryId: null }],
+      ['split lines', x.share, { splits: [{ amount: '80.00' }] }],
+    ]) {
+      const res = await txPatch(x.h, x.f, 'bob', t, body);
+      assert.equal(res.status, 409, label);
+      assert.equal(res.body.error.code, 'shared_expense_locked', label);
+      assert.match(res.body.error.message, /Shared expenses/, label);
+    }
+    // Unchanged: cash 500.00, spending 80.00, owed 80.00.
+    assert.deepEqual(await bobsNumbers(x), ['500.00', '80.00', '80.00', '-80.00']);
+    const edited = ok(await txPatch(x.h, x.f, 'bob', x.owed, { notes: 'Pay Alice on Friday', tags: ['dinner'], status: 'cleared' })).transactions[0];
+    assert.deepEqual([edited.notes, edited.tags, edited.status], ['Pay Alice on Friday', ['dinner'], 'cleared']);
+    assert.equal((await view(x.h, x.f, 'bob')).expenses[0].myLedger.needsReview, false, 'notes, tags and status need no update');
+  });
+
+  test('reversing or deleting them by hand is refused; the owner\'s own update still replaces them', async () => {
+    const x = await bobsPart();
+    const rev = await x.h.call('transactions', 'POST', { as: 'bob', query: { ...x.f.q, action: 'reverse' }, body: { transactionId: x.share.id, reason: 'Probe' } });
+    assert.equal(rev.status, 409);
+    assert.equal(rev.body.error.code, 'shared_expense_locked');
+    const del = await x.h.call('transactions', 'DELETE', { as: 'bob', query: x.f.q, body: { transactionId: x.owed.id, revision: x.owed.revision, reason: 'Probe' } });
+    assert.equal(del.status, 409);
+    assert.equal(del.body.error.code, 'shared_expense_locked');
+    assert.deepEqual(await bobsNumbers(x), ['500.00', '80.00', '80.00', '-80.00']);
+    // Alice corrects the dinner to 200.00: Bob's share becomes 100.00; his update replaces his entries.
+    ok(await G(x.h, x.f, 'alice', 'PATCH', { body: { expenseId: x.e.id, revision: x.e.revision, amount: '200.00', payers: [{ ref: x.f.refs.alice }], split: equal(x.f.refs.alice, x.f.refs.bob), reason: 'Tip added' } }));
+    ok(await act(x.h, x.f, 'bob', 'ledger', { currency: 'EUR' }));
+    assert.deepEqual(await bobsNumbers(x), ['500.00', '100.00', '100.00', '-100.00']);
+  });
+});
+
