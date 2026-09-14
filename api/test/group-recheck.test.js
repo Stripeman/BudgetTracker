@@ -377,6 +377,9 @@ describe('S4 residual: a create-new restore carries nobody else\'s identity on a
     // Bob's entry on the Joint, corrected by Frank (a manager).
     const [bobsEntry] = ok(await txPost(h, f, 'bob', { accountId: joint.id, kind: 'expense', amount: '12.00', notes: 'Fictional milk' }), 201).transactions;
     ok(await txPatch(h, f, FRANK, bobsEntry, { notes: 'Fictional oat milk' }));
+    // L2 (security recheck of 47617b5): Bob moves 50.00 from the Joint to his private wallet; the Joint's
+    // leg comes along, the wallet does not, so the leg must not keep the wallet's id.
+    const [jointLeg] = ok(await txPost(h, f, 'bob', { accountId: joint.id, kind: 'transfer', amount: '50.00', transfer: { toAccountId: wallet.id } }), 201).transactions;
     // A shared merchant Frank added and changed; a bill for which Bob is responsible; a shared budget.
     const bakery = ok(await h.call('payees', 'POST', { user: FRANK, query: q, body: { name: 'Fictional Bakery', visibility: 'shared' } }), 201).payee;
     ok(await h.call('payees', 'PATCH', { user: FRANK, query: q, body: { payeeId: bakery.id, revision: bakery.revision, icon: 'cart' } }));
@@ -412,6 +415,13 @@ describe('S4 residual: a create-new restore carries nobody else\'s identity on a
     // the shared expense and the setting.
     assert.ok(doc.transactions.some((t) => t.id === bobsEntry.id));
     assert.deepEqual([doc.payees.some((p) => p.id === bakery.id), doc.recurring.length, doc.budgets.length, doc.groupExpenses.length], [true, 1, 1, 1]);
+    // The Joint's leg of Bob's transfer: kept (−50.00), marked as having its other side left behind, and no account id for it.
+    const leg = doc.transactions.find((t) => t.id === jointLeg.id);
+    assert.deepEqual([leg.amountMinor, leg.counterpartExcluded, leg.counterpartAccountId], [-5000, true, null]);
+    // No account id that is not in the new workspace appears anywhere in it.
+    const carriedAccounts = new Set(doc.accounts.map((a) => a.id));
+    const accountIds = [...new Set(text.match(/\bacc_[A-Za-z0-9]+/g) || [])];
+    assert.deepEqual(accountIds.filter((id) => !carriedAccounts.has(id)), [], 'every account id named is a carried account');
     // If Bob joins the restored workspace, nothing of old counts as his: his old entry is not his, he
     // cannot edit it as a member, and its history shows a former member.
     const nq = { workspaceId: created.id };
