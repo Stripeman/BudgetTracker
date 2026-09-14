@@ -24,7 +24,7 @@ const VALUE_LABELS = { amounts: "Amount for", percentages: "Percent for", shares
 const VALUE_HINTS = { amounts: "0.00", percentages: "%", shares: "1" };
 const STATUS_LABELS = { reported: "Reported", confirmed: "Confirmed", disputed: "Disputed" };
 const EVENT_LABELS = { create: "Added", update: "Corrected", void: "Voided", reported: "Reported as paid", confirmed: "Confirmed as received", disputed: "Disputed",
-  "confirmed-by-reporter": "Confirmed by the person who reported it", withdrawn: "Confirmation withdrawn" };
+  "confirmed-by-reporter": "Confirmed by the person who reported it", withdrawn: "Confirmation withdrawn", "confirmed-over-dispute": "Confirmed over a dispute" };
 const FIELD_LABELS = { description: "Description", date: "Date", amountMinor: "Amount", categoryId: "Category", notes: "Notes", payers: "Paid by", split: "Split", shares: "Shares", status: "Status" };
 
 const titled = (id, iconId, text) => el("h2", { class: "card__title", id }, [withIcon(iconId, text)]);
@@ -312,7 +312,10 @@ export function createView(ctx) {
         // A confirmation withdrawn afterwards, and one given by the person who reported the payment, are
         // said as such (security review S5, S6).
         const detail = s.voided ? `${s.withdrawn ? "Confirmation withdrawn" : "Voided"}: ${s.voidReason}` : s.status === "reported" ? `Waiting for ${s.to === me ? "you" : nameOf(s.to)} to confirm it arrived.`
-          : s.status === "disputed" ? `Disputed: ${s.disputeReason}` : s.confirmedByReporter ? "Confirmed by the person who reported it."
+          : s.status === "disputed" ? `Disputed: ${s.disputeReason}`
+            // Confirmed over the receiver's dispute: always said (financial recheck F1).
+            : s.confirmedOverDispute ? `Confirmed over a dispute by ${s.confirmation ? s.confirmation.by : "someone"}.`
+            : s.confirmedByReporter ? "Confirmed by the person who reported it."
             // Who confirmed, when it was not the receiver (the group setting "Anyone in the group can confirm payments").
             : s.confirmation && s.confirmation.relation === "payer" ? `Confirmed by ${s.confirmation.by}, who paid it.`
               : s.confirmation && s.confirmation.relation === "other" ? `Confirmed by ${s.confirmation.by} for ${nameOf(s.to)}.` : null;

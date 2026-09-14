@@ -389,6 +389,24 @@ function expenseView(ctx, doc, member, e) {
   return out;
 }
 
+// Who may confirm a DISPUTED payment (group setting "settleDisputes", financial recheck F1): its receiver
+// (a manager or owner for a contact, who cannot sign in) by default; or also any manager or owner; or
+// anyone who can confirm payments. "Anyone in the group can confirm payments" alone never settles a
+// dispute. A viewer settles only a dispute over a payment made to them.
+function canSettleDispute(doc, s, member) {
+  const me = selfRef(member);
+  if (s.to === me) return true;
+  const forContact = s.to.startsWith('contact:') && isManager(member);
+  const rule = groupSettings.get(doc, 'settleDisputes');
+  if (rule === 'receiver-or-manager') return isManager(member);
+  if (rule === 'confirmers') return forContact || groupSettings.confirmsAny(doc, member);
+  return forContact;
+}
+const settleDisputeText = (doc) => ({
+  'receiver-or-manager': 'This payment is disputed, so only the person who received it, or a manager or owner, can confirm it.',
+  confirmers: 'This payment is disputed, so only someone who can confirm payments can confirm it.',
+}[groupSettings.get(doc, 'settleDisputes')] || 'This payment is disputed, so only the person who received it can confirm it (a manager or owner for a contact).');
+
 function settlementView(ctx, doc, member, s) {
   const me = selfRef(member);
   const toContact = s.to.startsWith('contact:');
@@ -401,6 +419,8 @@ function settlementView(ctx, doc, member, s) {
     disputeReason: s.disputeReason || '', confirmedBy: s.confirmedBy ? nameOf(doc, s.confirmedBy) : null, confirmedAt: s.confirmedAt || null,
     // Confirmed by the manager or owner who reported it (S5); a confirmation withdrawn by a void (S6).
     confirmedByReporter: !!s.confirmedByReporter, withdrawn: !!s.withdrawn,
+    // Confirmed over its receiver's dispute (F1): always shown as such.
+    confirmedOverDispute: !!s.confirmedOverDispute,
     // Who confirmed, relative to the payment: its receiver, the person who paid it, or someone else.
     confirmation: s.status === 'confirmed' && s.confirmedBy ? {
       by: nameOf(doc, s.confirmedBy),
@@ -411,7 +431,9 @@ function settlementView(ctx, doc, member, s) {
     // add to the group, or a viewer for a payment made to them (S7); when it is off, the payer never
     // confirms (S5). Once confirmed, only the receiving member or a manager or owner may withdraw it (S6).
     // Per person (Terry, 2026-09-14): an owner's or manager's override for this member, otherwise the group setting.
-    canConfirm: live && s.status !== 'confirmed' && (s.to === me || (groupSettings.confirmsAny(doc, member) ? writer(member) : s.from !== me && toContact && open && isManager(member))),
+    // A disputed payment follows "Who can settle a disputed payment" (F1).
+    canConfirm: live && s.status !== 'confirmed' && (s.status === 'disputed' ? canSettleDispute(doc, s, member)
+      : s.to === me || (groupSettings.confirmsAny(doc, member) ? writer(member) : s.from !== me && toContact && open && isManager(member))),
     canDispute: live && s.status === 'reported' && s.to === me,
     canVoid: open && (s.status === 'confirmed' ? (s.to === me || isManager(member)) : (s.createdBy === member.subject || isManager(member))),
   };
@@ -597,7 +619,12 @@ function settlementChange(kind) {
         // viewer never gets more than one made to them. Otherwise: never the person who paid (security
         // review S5); the receiving member, or a manager or owner for a contact.
         const anyone = groupSettings.confirmsAny(doc, member);
-        if (!anyone) {
+        // Over a dispute, only as "Who can settle a disputed payment" allows (financial recheck F1): being
+        // able to confirm payments moves a reported payment to confirmed, never a disputed one on its own.
+        const overDispute = s.status === 'disputed' && !s.voidedAt;
+        if (overDispute) {
+          if (!canSettleDispute(doc, s, member)) throw forbidden(settleDisputeText(doc));
+        } else if (!anyone) {
           if (s.from === me) throw forbidden('You paid this, so someone else must confirm that it arrived.');
           const allowed = s.to === me || (s.to.startsWith('contact:') && isManager(member));
           if (!allowed) throw forbidden(s.to.startsWith('contact:') ? 'Only a manager or owner can confirm a payment to a contact.' : 'Only the person who received this payment can confirm it.');
@@ -615,9 +642,10 @@ function settlementChange(kind) {
         s.confirmedBy = member.subject;
         s.confirmedAt = nowIso;
         s.confirmedByReporter = byReporter;
+        s.confirmedOverDispute = overDispute;
         s.revision += 1;
-        s.history = [...(s.history || []), { revision: s.revision, at: nowIso, by: member.subject, event: byReporter ? 'confirmed-by-reporter' : 'confirmed' }];
-        audit.record(doc, { actor: member.subject, action: 'group.settlement.confirm', targetType: 'group-settlement', targetId: s.id, at: nowIso });
+        s.history = [...(s.history || []), { revision: s.revision, at: nowIso, by: member.subject, event: overDispute ? 'confirmed-over-dispute' : byReporter ? 'confirmed-by-reporter' : 'confirmed' }];
+        audit.record(doc, { actor: member.subject, action: 'group.settlement.confirm', targetType: 'group-settlement', targetId: s.id, at: nowIso, ...(overDispute ? { fields: ['overDispute'] } : {}) });
         if (ledgerAccountId) linkCurrency(ctx, doc, member, s.currency, ledgerAccountId);
         else followOwnLink(ctx, doc, member, s, 'settlement', 'Repayment');
       } else {

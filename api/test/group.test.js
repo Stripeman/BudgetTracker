@@ -335,7 +335,8 @@ describe('BT-009-04 settlements: reported, confirmed, disputed, void', () => {
     assert.equal(v.settlements.length, 1, 'still listed');
     assert.equal((await act('alice', 'void', { settlementId: s.id, revision: 4, reason: 'x' })).body.error.code, 'already_void');
     const hist = ok(await G(h, f, 'bob', 'GET', { query: { action: 'history', settlementId: s.id } }));
-    assert.deepEqual(hist.history.map((x) => x.event), ['reported', 'disputed', 'confirmed', 'withdrawn']);
+    // Alice's confirmation came after her own dispute, so it is kept as one made over a dispute (financial recheck F1).
+    assert.deepEqual(hist.history.map((x) => x.event), ['reported', 'disputed', 'confirmed-over-dispute', 'withdrawn']);
   });
 
   test('a payment to a contact is confirmed by a manager or owner, not a plain member; bad payments are refused', async () => {

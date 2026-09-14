@@ -29,6 +29,18 @@ const SETTINGS = Object.freeze({
     ]),
     explanation: 'These entries keep your own account in step with a shared group. \'Owed to others\' records your share of something someone else paid: it counts as your spending now and as money you owe, and no money leaves your account. \'Repayment\' records money you paid back to someone. Shared expenses creates both automatically when you record your part on your own account. Allow entering them by hand only if you settle shared costs outside Shared expenses.',
   }),
+  // Who may confirm a payment over its receiver's dispute (financial recheck of 47617b5, F1). Confirming
+  // under "Anyone in the group can confirm payments" moves a REPORTED payment only; a disputed one follows
+  // this rule, and a confirmation over a dispute is always marked in the view, history and audit.
+  settleDisputes: Object.freeze({
+    type: 'choice', default: 'receiver', label: 'Who can settle a disputed payment',
+    options: Object.freeze([
+      Object.freeze({ value: 'receiver', label: 'The person who received it (a manager or owner for a contact)' }),
+      Object.freeze({ value: 'receiver-or-manager', label: 'The person who received it, or a manager or owner' }),
+      Object.freeze({ value: 'confirmers', label: 'Anyone who can confirm payments' }),
+    ]),
+    explanation: 'A disputed payment counts in the balances only once someone allowed here confirms it, and that confirmation is always shown as made over the dispute.',
+  }),
 });
 const KEYS = Object.freeze(Object.keys(SETTINGS));
 const own = (o, k) => Object.prototype.hasOwnProperty.call(o, k);

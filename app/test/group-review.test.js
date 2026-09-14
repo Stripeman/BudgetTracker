@@ -216,6 +216,15 @@ describe("Group settings card and who confirmed (Terry, 2026-09-14)", () => {
     assert.equal(cardOf(v.element).hidden, true);
   });
 
+  test("a payment confirmed over its receiver's dispute says so and who did it (financial recheck F1)", () => {
+    const { ctx, state } = ctxWith(STRANDED, { settlements: [
+      payment({ confirmedOverDispute: true, disputeReason: "Never arrived", confirmation: { by: "Alice Fictional", relation: "receiver" } }),
+    ] });
+    const v = createGroupView(ctx);
+    v.update(state);
+    assert.match(v.element.textContent, /Confirmed over a dispute by Alice Fictional\./);
+  });
+
   test("a payment confirmed by the person who paid it, or by someone for its receiver, says who", () => {
     const { ctx, state } = ctxWith(STRANDED, { settlements: [
       payment({ confirmation: { by: "Bob Fictional", relation: "payer" } }),

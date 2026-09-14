@@ -230,7 +230,7 @@ describe('Group settings: one validated list, changed by owners and managers, wi
     const h = harness();
     const f = await fixture(h);
     let v = await view(h, f, 'carol');
-    assert.deepEqual(v.groupSettings.settings.map((s) => [s.key, s.type, s.value, s.default]), [['anyoneConfirms', 'boolean', true, true], ['ownedEntries', 'choice', 'shared-only', 'shared-only']]);
+    assert.deepEqual(v.groupSettings.settings.map((s) => [s.key, s.type, s.value, s.default]), [['anyoneConfirms', 'boolean', true, true], ['ownedEntries', 'choice', 'shared-only', 'shared-only'], ['settleDisputes', 'choice', 'receiver', 'receiver']]);
     for (const s of v.groupSettings.settings) assert.ok(s.label.length > 10 && s.explanation.length > 40, s.key);
     assert.deepEqual(v.groupSettings.settings[1].options.map((o) => o.value), ['shared-only', 'manual']);
     for (const w of ['bob', 'carol', 'eve']) assert.equal((await setSettings(h, f, w, { anyoneConfirms: false })).status, 403, w);
@@ -244,7 +244,7 @@ describe('Group settings: one validated list, changed by owners and managers, wi
     // The same value again changes nothing and adds no history.
     ok(await setSettings(h, f, 'alice', { ownedEntries: 'manual', anyoneConfirms: false }));
     v = await view(h, f, 'bob');
-    assert.deepEqual(v.groupSettings.settings.map((s) => s.value), [false, 'manual']);
+    assert.deepEqual(v.groupSettings.settings.map((s) => s.value), [false, 'manual', 'receiver']);
     assert.deepEqual(v.groupSettings.history.map((x) => [x.by, x.key, x.from, x.to, x.reason]), [
       ['Frank Fictional', 'anyoneConfirms', true, false, 'We keep it strict'],
       ['Alice Fictional', 'ownedEntries', 'shared-only', 'manual', ''],
@@ -546,6 +546,74 @@ describe('B per person: "Can confirm payments" for each member (Terry, 2026-09-1
     }
     const last = managerView.history[managerView.history.length - 1];
     assert.deepEqual([last.by, last.key, last.member, last.from, last.to, last.reason], ['Frank Fictional', 'confirmOverrides', 'Bob Fictional', 'inherit', 'no', 'Keeps his own accounts']);
+  });
+});
+
+describe('F1 (financial recheck of 47617b5): a disputed payment is settled only as the group allows', () => {
+  const dispute = (h, f, w, s) => act(h, f, w, 'dispute', { settlementId: s.id, revision: s.revision, reason: 'Never arrived' });
+  const fresh = async (h, f, s, w = 'alice') => (await view(h, f, w)).settlements.find((x) => x.id === s.id);
+  // Bob reports paying Alice; Alice disputes it.
+  const disputed = async (h, f, amount = '20.00') => {
+    const s = await settle(h, f, 'bob', { from: f.refs.bob, to: f.refs.alice, amount });
+    ok(await dispute(h, f, 'alice', s));
+    return fresh(h, f, s);
+  };
+  const nets = async (h, f) => { const rows = (await view(h, f)).balances.find((b) => b.currency === 'EUR').rows; return ['Alice Fictional', 'Bob Fictional'].map((n) => rows.find((r) => r.name === n).net); };
+  const events = async (h, f, s) => ok(await G(h, f, 'alice', 'GET', { query: { action: 'history', settlementId: s.id } })).history.map((x) => x.event);
+
+  test('default, with anyone able to confirm: neither the payer, a manager nor another member confirms over Alice\'s dispute; Alice does, marked as over a dispute, and only then does it count', async () => {
+    const h = harness();
+    const f = await fixture(h);
+    const s = await disputed(h, f);
+    for (const w of ['bob', FRANK, 'eve']) assert.equal((await confirm(h, f, w, s)).status, 403, typeof w === 'string' ? w : w.name);
+    assert.deepEqual([(await fresh(h, f, s, 'bob')).canConfirm, (await fresh(h, f, s, FRANK)).canConfirm, (await fresh(h, f, s, 'eve')).canConfirm, (await fresh(h, f, s, 'alice')).canConfirm], [false, false, false, true]);
+    // A disputed payment is not in the balances: no expenses, so Alice 0.00 and Bob 0.00.
+    assert.deepEqual(await nets(h, f), ['0.00', '0.00']);
+    const done = ok(await confirm(h, f, 'alice', s)).settlement;
+    assert.deepEqual([done.status, done.confirmedOverDispute, done.confirmation], ['confirmed', true, { by: 'Alice Fictional', relation: 'receiver' }]);
+    // Now it counts: Bob paid out 20.00 (+20.00), Alice received 20.00 (−20.00).
+    assert.deepEqual(await nets(h, f), ['-20.00', '20.00']);
+    assert.deepEqual(await events(h, f, s), ['reported', 'disputed', 'confirmed-over-dispute']);
+    const doc = (await h.storage.getJson(`workspaces/${f.ws.id}/workspace.json`)).value;
+    assert.deepEqual(doc.audit.filter((a) => a.action === 'group.settlement.confirm' && a.targetId === s.id).map((a) => a.fields), [['overDispute']]);
+    // A plain confirmation of a reported payment is not marked.
+    const plain = await settle(h, f, 'bob', { from: f.refs.bob, to: f.refs.alice, amount: '1.00' });
+    assert.equal(ok(await confirm(h, f, 'bob', plain)).settlement.confirmedOverDispute, false);
+  });
+
+  test('"the person who received it, or a manager or owner": Frank settles it; the payer and Eve still cannot', async () => {
+    const h = harness();
+    const f = await fixture(h);
+    ok(await setSettings(h, f, 'alice', { settleDisputes: 'receiver-or-manager' }));
+    const s = await disputed(h, f);
+    assert.equal((await confirm(h, f, 'bob', s)).status, 403);
+    assert.equal((await confirm(h, f, 'eve', s)).status, 403);
+    const done = ok(await confirm(h, f, FRANK, s)).settlement;
+    assert.deepEqual([done.confirmedOverDispute, done.confirmation], [true, { by: 'Frank Fictional', relation: 'other' }]);
+  });
+
+  test('"anyone who can confirm payments": Eve and the payer may; a viewer who did not receive it, or someone set to No, may not', async () => {
+    const h = harness();
+    const f = await fixture(h);
+    ok(await setSettings(h, f, 'alice', { settleDisputes: 'confirmers' }));
+    const s1 = await disputed(h, f, '11.00');
+    assert.equal(ok(await confirm(h, f, 'eve', s1)).settlement.confirmedOverDispute, true);
+    const s2 = await disputed(h, f, '12.00');
+    assert.equal((await confirm(h, f, 'carol', s2)).status, 403, 'a viewer');
+    ok(await setSettings(h, f, 'alice', { confirmOverrides: { [f.mid('Eve')]: 'no' } }));
+    assert.equal((await confirm(h, f, 'eve', s2)).status, 403, 'Eve set to No');
+    assert.deepEqual(ok(await confirm(h, f, 'bob', s2)).settlement.confirmation, { by: 'Bob Fictional', relation: 'payer' });
+  });
+
+  test('with the group setting off, the default lets the receiver settle a dispute and no manager; the setting is validated and only managers change it', async () => {
+    const h = harness();
+    const f = await fixture(h);
+    ok(await setSettings(h, f, 'alice', { anyoneConfirms: false }));
+    const s = await disputed(h, f);
+    assert.equal((await confirm(h, f, FRANK, s)).status, 403);
+    assert.equal(ok(await confirm(h, f, 'alice', s)).settlement.confirmedOverDispute, true);
+    assert.equal((await setSettings(h, f, 'alice', { settleDisputes: 'payer' })).status, 400);
+    assert.equal((await setSettings(h, f, 'bob', { settleDisputes: 'confirmers' })).status, 403);
   });
 });
 
