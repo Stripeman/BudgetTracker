@@ -174,8 +174,11 @@ async function list(ctx, req) {
     let amount = t.amountMinor;
     if (f.categoryId && (t.splits || []).length) amount = money.sum(t.splits.filter((s) => s.categoryId === f.categoryId).map((s) => s.amountMinor));
     const s = summary[t.currency] || (summary[t.currency] = { gross: 0, refunds: 0, income: 0, adjustments: 0, advances: 0, reimbursements: 0, payables: 0, repayments: 0, receivable: 0, count: 0 });
-    // advances − reimbursements − payables + repayments is −(the sum of their signed amounts).
-    if (OWED.has(bucket) && ownPrivate.has(t.accountId)) s.receivable = money.sum([s.receivable, -amount]);
+    // advances − reimbursements − payables + repayments is −(the sum of their signed amounts). Counted on
+    // the viewer's own private accounts, and for the viewer's own entries from Shared expenses wherever
+    // they can see them (financial recheck N-1: a part kept where the money moved still counts).
+    const ownGroupEntry = t.createdBy === ctx.principal.subject && t.links && (t.links.groupExpenseId || t.links.groupSettlementId);
+    if (OWED.has(bucket) && (ownPrivate.has(t.accountId) || ownGroupEntry)) s.receivable = money.sum([s.receivable, -amount]);
     s.count += 1;
     if (bucket === 'spending') s.gross = money.sum([s.gross, -amount]);
     else if (bucket === 'refund') s.refunds = money.sum([s.refunds, amount]);

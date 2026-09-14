@@ -138,6 +138,64 @@ describe('N-2: entries the person can no longer change but still sees are left a
   });
 });
 
+describe('N-1: entries that moved real cash stay on the account the money used; only entries that moved no cash follow the link', () => {
+  const share = async (h, f, w, id) => ok(await h.call('accounts', 'PATCH', { ...who(w), query: f.q, body: { accountId: id, revision: (await accountNow(h, f, w, id)).revision, visibility: 'shared', confirmShare: true } }));
+  const balance = async (h, f, id) => (await accountNow(h, f, 'alice', id)).balance;
+
+  test('the reviewer\'s dinner: after Alice shares her card and chooses a new wallet, the card keeps 775.00 and the wallet 100.00; corrections land where the money went', async () => {
+    const h = harness();
+    const f = await fixture(h);
+    const { alice, bob, carol, dana } = f.refs;
+    // Alice records on her card (1000.00). A 300.00 dinner she paid, shared by Alice, Bob, Carol and Dana:
+    // 75.00 each. Card: −75.00 (her share) −225.00 (lent) = 700.00. Bob pays her 75.00 back: 775.00.
+    // Spending 75.00; outstanding 225.00 − 75.00 = 150.00 (her group balance: 300 − 75 − 75).
+    const card = await account(h, f, 'alice', { name: 'Alice Card', openingBalance: '1000.00' });
+    ok(await act(h, f, 'alice', 'ledger', { currency: 'EUR', accountId: card.id }));
+    const dinner = await addExpense(h, f, 'alice', { description: 'Fictional dinner', amount: '300.00', payers: [{ ref: alice }], split: equal(alice, bob, carol, dana) });
+    await settle(h, f, 'alice', { from: bob, to: alice, amount: '75.00' });
+    assert.deepEqual([await balance(h, f, card.id), await summary(h, f, 'alice')], ['775.00', { spending: '75.00', outstanding: '150.00' }]);
+    // She shares the card and chooses a new wallet (100.00): nothing that moved cash moves.
+    await share(h, f, 'alice', card.id);
+    const wallet = await account(h, f, 'alice', { name: 'Alice Wallet', openingBalance: '100.00' });
+    ok(await act(h, f, 'alice', 'ledger', { currency: 'EUR', accountId: wallet.id }));
+    assert.deepEqual([await balance(h, f, card.id), await balance(h, f, wallet.id), await summary(h, f, 'alice')], ['775.00', '100.00', { spending: '75.00', outstanding: '150.00' }]);
+    const v = await view(h, f, 'alice');
+    assert.deepEqual([v.expenses[0].myLedger.needsReview, v.settlements[0].myLedger.needsReview], [false, false], 'kept where the money moved, nothing to review');
+    // Bob sees the shared card, but its amounts are Alice's: his outstanding stays 0.00 (F2 privacy).
+    assert.equal((await summary(h, f, 'bob')).outstanding, '0.00');
+    // Corrected to 200.00 (50.00 each): the card, where the money went, now shows 1000 − 200 + 75 = 875.00.
+    // Spending 50.00; outstanding 150.00 − 75.00 = 75.00.
+    const d1 = (await view(h, f)).expenses.find((e) => e.id === dinner.id);
+    ok(await G(h, f, 'alice', 'PATCH', { body: { expenseId: d1.id, revision: d1.revision, amount: '200.00', payers: [{ ref: alice }], split: equal(alice, bob, carol, dana), reason: 'Bill was 200' } }));
+    assert.deepEqual([await balance(h, f, card.id), await balance(h, f, wallet.id), await summary(h, f, 'alice')], ['875.00', '100.00', { spending: '50.00', outstanding: '75.00' }]);
+    // Voided: the card is 1000 + 75 = 1075.00; spending 0.00; outstanding −75.00 (she owes Bob's 75.00 back).
+    const d2 = (await view(h, f)).expenses.find((e) => e.id === dinner.id);
+    ok(await act(h, f, 'alice', 'void', { expenseId: d2.id, revision: d2.revision, reason: 'Duplicate' }));
+    assert.deepEqual([await balance(h, f, card.id), await balance(h, f, wallet.id), await summary(h, f, 'alice')], ['1075.00', '100.00', { spending: '0.00', outstanding: '-75.00' }]);
+    assert.deepEqual([await netOf(h, f, 'Alice Fictional'), await netOf(h, f, 'Bob Fictional')], ['-75.00', '75.00']);
+  });
+
+  test('a share someone else paid moved no cash, so it follows the link: Alice\'s 20.00 share of Bob\'s taxi moves to her wallet', async () => {
+    const h = harness();
+    const f = await fixture(h);
+    const { alice, bob } = f.refs;
+    // 40.00 paid by Bob, shared by Alice and Bob: Alice's share 20.00 is spending, owed 20.00, no money moved.
+    const card = await account(h, f, 'alice', { name: 'Alice Card', openingBalance: '1000.00' });
+    ok(await act(h, f, 'alice', 'ledger', { currency: 'EUR', accountId: card.id }));
+    await addExpense(h, f, 'bob', { description: 'Fictional taxi', amount: '40.00', payers: [{ ref: bob }], split: equal(alice, bob) });
+    ok(await act(h, f, 'alice', 'ledger', { currency: 'EUR' }));
+    await share(h, f, 'alice', card.id);
+    assert.equal((await view(h, f, 'alice')).expenses[0].myLedger.needsReview, true, 'needs an account of her own until she chooses one');
+    const wallet = await account(h, f, 'alice', { name: 'Alice Wallet', openingBalance: '100.00' });
+    ok(await act(h, f, 'alice', 'ledger', { currency: 'EUR', accountId: wallet.id }));
+    // The pair is reversed on the card and recorded on the wallet: both balances unchanged (1000.00, 100.00).
+    const onWallet = ok(await h.call('transactions', 'GET', { as: 'alice', query: { ...f.q, accountId: wallet.id } })).transactions.map((t) => [t.kind, t.amount]).sort();
+    assert.deepEqual(onWallet, [['expense', '-20.00'], ['payable', '20.00']]);
+    assert.deepEqual([await balance(h, f, card.id), await balance(h, f, wallet.id), await summary(h, f, 'alice')], ['1000.00', '100.00', { spending: '20.00', outstanding: '-20.00' }]);
+    assert.equal((await view(h, f, 'alice')).expenses[0].myLedger.needsReview, false);
+  });
+});
+
 describe('Personal defaults on the server: a request without payer or split takes the caller\'s own defaults, else the group\'s', () => {
   const prefs = (h, w, body) => h.call('preferences', 'PUT', { ...who(w), body });
   const amounts = (e) => [e.payers.map((p) => [p.ref, p.amount]), e.shares.map((s) => [s.ref, s.amount])];

@@ -457,17 +457,17 @@ describe('finding 1: each person\'s entries are theirs alone', () => {
   }
 
   // Security recheck R1 (Terry, 2026-09-14): nothing new is recorded on an account that is not the
-  // person's own private account. Financial recheck F2 (decision 2026-09-14): entries left on such an
-  // account need review, with the reason, and are moved only once the person chooses a private account
-  // of their own; until then a sync writes nothing.
-  test('each person sees only their own entry; entries left on a shared account need review and a sync without an account writes nothing', async () => {
+  // person's own private account. Financial recheck of 53cf181, N-1 (decision 2026-09-14): each of them
+  // paid their own share from the Joint, so their entries stay there, where the money moved; they need no
+  // review, and a sync finds them already up to date.
+  test('each person sees only their own entry; entries that moved cash on a shared account stay there and a sync writes nothing', async () => {
     const { h, f, joint, e } = await legacyJoint();
     assert.equal(await balanceOf(h, f, 'alice', joint.id), '800.00');
     const count = (await entriesOf(h, f, 'alice', joint.id)).length;
     for (const w of ['alice', FRANK]) {
       const mine = (await view(h, f, w)).expenses[0].myLedger;
-      assert.deepEqual([mine.entries.length, mine.needsReview, mine.formerAccount.reason], [1, true, 'shared'], JSON.stringify(w));
-      assert.equal((await act(h, f, w, 'ledger', { expenseId: e.id })).body.error.code, 'account_needed');
+      assert.deepEqual([mine.entries.length, mine.needsReview, mine.keptAccount.reason], [1, false, 'shared'], JSON.stringify(w));
+      ok(await act(h, f, w, 'ledger', { expenseId: e.id }));
       ok(await act(h, f, w, 'ledger', { currency: 'EUR' }));
     }
     // Nothing written by either: 1000.00 − 100.00 − 100.00 = 800.00, the same two entries (no flip-flop).

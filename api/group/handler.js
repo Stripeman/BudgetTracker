@@ -273,6 +273,27 @@ function writeProblem(ctx, doc, accountId, rec, toReverse) {
 // Entries that can never be reversed where they are: the account is gone or out of the person's reach.
 const unreachable = (ctx, doc, rec, t) => ['unavailable', 'rights'].includes(writeProblem(ctx, doc, t.accountId, rec, [t]));
 
+// Whether a person's entries (or the entries a record wants) for one record moved real cash (financial
+// recheck of 53cf181, N-1): money lent, repaid to them or repaid by them, or a share not fully covered by
+// an amount owed (they paid at least part of it). A share someone else paid, with its amount owed, moved
+// no cash.
+const CASH_KINDS = new Set(['advance', 'reimbursement', 'repayment']);
+function movedCash(list) {
+  if (list.some((t) => CASH_KINDS.has(t.kind))) return true;
+  const sum = (kind) => list.filter((t) => t.kind === kind).reduce((a, t) => a + t.amountMinor, 0);
+  return sum('expense') + sum('payable') !== 0;
+}
+// Where a person's part of one record belongs (N-1; decision 2026-09-14: an account's balance is always
+// the cash that really moved through it). A part that moved cash stays on the account the money used,
+// as long as the person may still write there (a closed account still counts: it asks to be reopened),
+// and corrections land there too; otherwise it goes on the account they record on now. A part that moved
+// no cash follows the account they record on now.
+function placeFor(ctx, doc, rec, live, wanted, targetId) {
+  const ids = [...new Set(live.map((t) => t.accountId))];
+  const anchorId = live.length && ids.length === 1 && movedCash(live) && [null, 'closed'].includes(writeProblem(ctx, doc, ids[0], rec, live)) ? ids[0] : null;
+  return movedCash(wanted) ? anchorId || targetId : targetId || anchorId;
+}
+
 function syncRecord(ctx, doc, member, rec, type, { reason, strict, stop = false }) {
   const nowIso = ctx.nowIso();
   // Nothing new is recorded on an account that is not the person's own private account (security
@@ -283,15 +304,18 @@ function syncRecord(ctx, doc, member, rec, type, { reason, strict, stop = false 
     return 'not_own';
   }
   const live = liveEntries(doc, rec, type, member.subject);
-  const targetId = targetOf(doc, rec, member.subject);
-  // Financial recheck F2 (decision 2026-09-14): without an account of their own to record on, entries
-  // left on a former account are not touched — reversing them would record the person's part nowhere.
-  // Only stopping reverses them.
+  const wanted = groups.desiredEntries(rec, type, selfRef(member));
+  // Where the part belongs (N-1): where the money moved, or the account they record on now. Stopping
+  // reverses everything the sync made.
+  const targetId = stop ? null : placeFor(ctx, doc, rec, live, wanted, targetOf(doc, rec, member.subject));
+  // Financial recheck F2 (decision 2026-09-14): without an account to record on, entries left on a
+  // former account are not touched — reversing them would record the person's part nowhere. Only
+  // stopping reverses them.
   if (!targetId && !stop && live.some((t) => formerReason(ctx, doc, member, t.accountId))) {
     if (strict) throw conflict('Your part of this is on an account that is no longer your own private account. Choose a private account of yours in Shared expenses to record it there.', 'account_needed');
     return 'no_account';
   }
-  const desired = targetId ? groups.desiredEntries(rec, type, selfRef(member)) : [];
+  const desired = targetId ? wanted : [];
   const onTarget = live.filter((t) => t.accountId === targetId);
   const elsewhere = live.filter((t) => t.accountId !== targetId);
   // F2: the person's own entries elsewhere are reversed where they are (they created them; this route
@@ -406,13 +430,18 @@ function myLedger(ctx, doc, member, rec, type, entriesFor = entryIndex(doc, memb
   // shared) is no account to record on (financial recheck F2); a closed own account still is, and asks
   // to be reopened.
   const linked = targetOf(doc, rec, member.subject);
-  const targetId = linked && ['deleted', 'unavailable', 'shared'].includes(formerReason(ctx, doc, member, linked)) ? null : linked;
+  const current = linked && ['deleted', 'unavailable', 'shared'].includes(formerReason(ctx, doc, member, linked)) ? null : linked;
   const live = entriesFor(rec, type);
-  const desired = targetId ? groups.desiredEntries(rec, type, selfRef(member)) : [];
+  const wanted = groups.desiredEntries(rec, type, selfRef(member));
+  // The same place as the sync uses (N-1): where the money moved, or the account they record on now.
+  const targetId = placeFor(ctx, doc, rec, live, wanted, current);
+  const desired = targetId ? wanted : [];
   if (!live.length && !desired.length) return null;
   const now = ctx.now();
   const sees = (id) => { const a = (doc.accounts || []).find((x) => x.id === id); return a && !a.deletedAt && capabilitiesFor(doc, ctx.principal, a, now).size > 0 ? a : null; };
   const account = targetId ? sees(targetId) : null;
+  // A part kept where the money moved, on an account that is not (or no longer) the person's own.
+  const keptReason = targetId && targetId !== current ? formerReason(ctx, doc, member, targetId) : null;
   const onTarget = live.filter((t) => t.accountId === targetId);
   const elsewhere = live.filter((t) => t.accountId !== targetId);
   // Financial recheck F2: entries on an account that is no longer the person's usable private account
@@ -428,7 +457,8 @@ function myLedger(ctx, doc, member, rec, type, entriesFor = entryIndex(doc, memb
   return {
     accountId: account ? account.id : null, accountName: account ? account.name : null, accountUnavailable: !!targetId && !account,
     needsReview,
-    ...(first ? { formerAccount: { reason: first.reason, name: firstAccount ? firstAccount.name : null, left }, note: formerNote(first.reason, firstAccount ? firstAccount.name : null, { left, hasAccount: !!targetId }) } : {}),
+    ...(first ? { formerAccount: { reason: first.reason, name: firstAccount ? firstAccount.name : null, left }, note: formerNote(first.reason, firstAccount ? firstAccount.name : null, { left, hasAccount: !!targetId }) }
+      : keptReason && account ? { keptAccount: { reason: keptReason, name: account.name }, note: `Your part stays on ${account.name}, where the money moved.` } : {}),
     entries: live.filter((t) => sees(t.accountId)).map((t) => ({ id: t.id, kind: t.kind, amount: money.toDecimal(t.amountMinor, t.currency) })),
   };
 }

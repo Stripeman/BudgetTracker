@@ -200,15 +200,15 @@ describe('R1: shared-expense recording never writes to an account that is not th
     assert.deepEqual(doc.audit.filter((a) => a.action === 'group.ledger.end').map((a) => [a.scope, a.targetId]), [['self:google:g-bob', doc.groupLedgers[0].id]]);
     const v = await view(x.h, x.f, 'bob');
     assert.equal(v.myLedgers, undefined);
-    // Financial recheck F2 (decision 2026-09-14): the pizza now sits on an account that is no longer
-    // Bob's own private account, so it needs review, says why, and has no account until Bob chooses one.
+    // Financial recheck of 53cf181, N-1 (decision 2026-09-14): Bob paid the pizza from the wallet, so his
+    // part stays there, where the money moved — it needs no review, and the view says where it is.
     const mine = v.expenses[0].myLedger;
-    assert.deepEqual([mine.needsReview, mine.accountId, mine.formerAccount && mine.formerAccount.reason], [true, null, 'shared']);
-    assert.match(mine.note, /Bob Wallet, which is now shared/);
+    assert.deepEqual([mine.needsReview, mine.accountId, mine.keptAccount && mine.keptAccount.reason], [false, x.wallet.id, 'shared']);
+    assert.match(mine.note, /Your part stays on Bob Wallet, where the money moved/);
     assert.equal(await balanceOf(x.h, x.f, 'alice', x.wallet.id), '60.00');
   });
 
-  test('after sharing, nothing is written until Bob chooses another private account; then his part moves there (financial recheck F2)', async () => {
+  test('after sharing, the pizza Bob paid stays on the wallet and its correction lands there; only the taxi share, which moved no cash, goes to his spare (financial recheck N-1)', async () => {
     const x = await bobsWallet();
     await shareWallet(x);
     const before = (await entriesOf(x.h, x.f, 'alice', x.wallet.id)).length;
@@ -216,26 +216,24 @@ describe('R1: shared-expense recording never writes to an account that is not th
     await taxi(x);
     const p = (await view(x.h, x.f)).expenses.find((e) => e.id === x.pizza.id);
     ok(await G(x.h, x.f, 'alice', 'PATCH', { body: { expenseId: x.pizza.id, revision: p.revision, amount: '50.00', payers: [{ ref: x.f.refs.bob }], split: equal(x.f.refs.bob, x.f.refs.alice), reason: 'Receipt says 50' } }));
-    // Without an account to record on, an update touches nothing (reversing would record his part nowhere).
+    // Bob's update brings the pizza up to date where the money moved, the wallet: his share 20.00 → 25.00
+    // and lent 20.00 → 25.00 (both reversed and recorded again, never rewritten): 100.00 − 50.00 = 50.00.
+    // The taxi share moved no cash and waits for an account of his own.
     ok(await act(x.h, x.f, 'bob', 'ledger', { currency: 'EUR' }));
-    const strict = await act(x.h, x.f, 'bob', 'ledger', { expenseId: x.pizza.id });
-    assert.deepEqual([strict.status, strict.body.error.code], [409, 'account_needed']);
-    assert.equal((await entriesOf(x.h, x.f, 'alice', x.wallet.id)).length, before, 'nothing written to the shared wallet');
-    assert.equal(await balanceOf(x.h, x.f, 'alice', x.wallet.id), '60.00');
-    // The shared wallet cannot be linked again; the spare can. Bob's own pizza entries on the wallet are
-    // reversed there (he created them) and everything the group now needs is recorded on the spare:
-    //   pizza 50.00 paid by Bob, his share 25.00: spending 25.00, lent 25.00, cash −50.00;
-    //   taxi 30.00 paid by Alice, his share 15.00: spending 15.00, owed 15.00, no money moved.
-    // Spare: 50.00 − 50.00 = 0.00; spending 40.00; owed 15.00; receivable 25.00 − 15.00 = 10.00, which
-    // is his group balance: paid 50.00 − shares 25.00 − 15.00 = 10.00. Wallet: back to 100.00, with the
-    // two reversals added (never deleted).
+    ok(await act(x.h, x.f, 'bob', 'ledger', { expenseId: x.pizza.id }));
+    assert.deepEqual([await balanceOf(x.h, x.f, 'alice', x.wallet.id), (await entriesOf(x.h, x.f, 'alice', x.wallet.id)).length], ['50.00', before + 4]);
+    // The shared wallet cannot be linked again; the spare can, and takes the taxi share only: spare 50.00
+    // (no money moved), spending 15.00, owed 15.00, its own receivable −15.00.
     assert.equal((await act(x.h, x.f, 'bob', 'ledger', { currency: 'EUR', accountId: x.wallet.id })).body.error.code, 'not_own_account');
     ok(await act(x.h, x.f, 'bob', 'ledger', { currency: 'EUR', accountId: x.spare.id }));
     const s = await summaryOf(x.h, x.f, 'bob', x.spare.id);
-    assert.deepEqual([await balanceOf(x.h, x.f, 'bob', x.spare.id), s.gross, s.payables, s.receivable], ['0.00', '40.00', '15.00', '10.00']);
+    assert.deepEqual([await balanceOf(x.h, x.f, 'bob', x.spare.id), s.gross, s.payables, s.receivable], ['50.00', '15.00', '15.00', '-15.00']);
+    assert.equal(await balanceOf(x.h, x.f, 'alice', x.wallet.id), '50.00', 'the wallet keeps the 50.00 Bob really paid from it');
+    // Bob's outstanding over all his entries: lent 25.00 on the wallet − owed 15.00 on the spare = 10.00,
+    // his group balance: paid 50.00 − shares 25.00 − 15.00 = 10.00.
+    const all = ok(await x.h.call('transactions', 'GET', { as: 'bob', query: x.f.q })).summary.find((y) => y.currency === 'EUR');
     const bobRow = (await view(x.h, x.f)).balances.find((b) => b.currency === 'EUR').rows.find((r) => r.name === 'Bob Fictional');
-    assert.equal(bobRow.net, '10.00');
-    assert.deepEqual([await balanceOf(x.h, x.f, 'alice', x.wallet.id), (await entriesOf(x.h, x.f, 'alice', x.wallet.id)).length], ['100.00', before + 2]);
+    assert.deepEqual([all.receivable, bobRow.net], ['10.00', '10.00']);
     assert.equal((await view(x.h, x.f, 'bob')).expenses.every((e) => !e.myLedger || !e.myLedger.needsReview), true, 'nothing left to review');
   });
 
@@ -693,7 +691,8 @@ describe('F2 (financial recheck of 47617b5): a part left on an account that is n
   // Alice's own numbers across all her accounts (the list without an account filter) and on the wallet.
   const numbers = async (x) => {
     const all = ok(await x.h.call('transactions', 'GET', { as: 'alice', query: x.f.q })).summary.find((s) => s.currency === 'EUR');
-    const w = await summaryOf(x.h, x.f, 'alice', x.wallet.id);
+    // An account with no entries has no summary line: nothing spent, nothing outstanding.
+    const w = (await summaryOf(x.h, x.f, 'alice', x.wallet.id)) || { gross: '0.00', receivable: '0.00' };
     return { spending: all.gross, outstanding: all.receivable, wallet: [await balanceOf(x.h, x.f, 'alice', x.wallet.id), w.gross, w.receivable] };
   };
   const correctThenVoid = async (x) => {
@@ -707,30 +706,31 @@ describe('F2 (financial recheck of 47617b5): a part left on an account that is n
     return { corrected, voided: await numbers(x) };
   };
 
-  test('share path: once Alice Cash is shared her part needs review and nothing moves until she chooses Alice Wallet; then her part is there and corrections keep it right', async () => {
+  test('share path: once Alice Cash is shared her part stays there, where the money moved; choosing Alice Wallet moves nothing, and corrections land on Alice Cash (financial recheck N-1)', async () => {
     const x = await alicesPart();
     const acc = ok(await x.h.call('accounts', 'GET', { as: 'alice', query: x.f.q })).accounts.find((a) => a.id === x.cash.id);
     ok(await x.h.call('accounts', 'PATCH', { as: 'alice', query: x.f.q, body: { accountId: x.cash.id, revision: acc.revision, visibility: 'shared', confirmShare: true } }));
     let v = await view(x.h, x.f, 'alice');
     for (const rec of [v.expenses[0], v.settlements[0]]) {
-      assert.deepEqual([rec.myLedger.needsReview, rec.myLedger.formerAccount.reason], [true, 'shared']);
-      assert.match(rec.myLedger.note, /Alice Cash, which is now shared/);
+      assert.deepEqual([rec.myLedger.needsReview, rec.myLedger.keptAccount.reason], [false, 'shared']);
+      assert.match(rec.myLedger.note, /Your part stays on Alice Cash, where the money moved/);
     }
     const count = (await entriesOf(x.h, x.f, 'alice', x.cash.id)).length;
     ok(await act(x.h, x.f, 'alice', 'ledger', { currency: 'EUR' }));
-    assert.equal((await act(x.h, x.f, 'alice', 'ledger', { expenseId: x.dinner.id })).body.error.code, 'account_needed');
-    assert.equal((await entriesOf(x.h, x.f, 'alice', x.cash.id)).length, count, 'nothing moved without an account');
-    // She chooses Alice Wallet: her three entries on Cash are reversed there (Cash back to 500.00) and her
-    // part is recorded on the wallet: 200.00 − 120.00 + 75.00 = 155.00; spending 30.00; outstanding 15.00.
+    ok(await act(x.h, x.f, 'alice', 'ledger', { expenseId: x.dinner.id }));
+    assert.equal((await entriesOf(x.h, x.f, 'alice', x.cash.id)).length, count, 'already up to date where the money moved');
+    // She chooses Alice Wallet: nothing that moved cash moves. Cash stays 455.00, the wallet 200.00;
+    // spending 30.00 and outstanding 15.00, counted over her own entries on Cash.
     ok(await act(x.h, x.f, 'alice', 'ledger', { currency: 'EUR', accountId: x.wallet.id }));
-    assert.equal(await balanceOf(x.h, x.f, 'alice', x.cash.id), '500.00');
-    assert.deepEqual(await numbers(x), { spending: '30.00', outstanding: '15.00', wallet: ['155.00', '30.00', '15.00'] });
+    assert.equal(await balanceOf(x.h, x.f, 'alice', x.cash.id), '455.00');
+    assert.deepEqual(await numbers(x), { spending: '30.00', outstanding: '15.00', wallet: ['200.00', '0.00', '0.00'] });
     v = await view(x.h, x.f, 'alice');
     assert.deepEqual([v.expenses[0].myLedger.needsReview, v.settlements[0].myLedger.needsReview], [false, false]);
     const { corrected, voided } = await correctThenVoid(x);
-    // Wallet after the correction: 200.00 − 200.00 + 75.00 = 75.00; after the void: 200.00 + 75.00 = 275.00.
-    assert.deepEqual(corrected, { spending: '50.00', outstanding: '75.00', wallet: ['75.00', '50.00', '75.00'] });
-    assert.deepEqual(voided, { spending: '0.00', outstanding: '-75.00', wallet: ['275.00', '0.00', '-75.00'] });
+    // Corrected to 200.00 on Cash, where she paid: 500.00 − 200.00 + 75.00 = 375.00; voided: 500.00 + 75.00 = 575.00.
+    assert.deepEqual(corrected, { spending: '50.00', outstanding: '75.00', wallet: ['200.00', '0.00', '0.00'] });
+    assert.deepEqual(voided, { spending: '0.00', outstanding: '-75.00', wallet: ['200.00', '0.00', '0.00'] });
+    assert.equal(await balanceOf(x.h, x.f, 'alice', x.cash.id), '575.00');
   });
 
   test('delete path: once Alice Cash is removed her part needs review; choosing Alice Wallet leaves the old entries where they are and records her whole part on the wallet', async () => {
