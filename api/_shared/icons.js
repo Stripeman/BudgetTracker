@@ -26,6 +26,8 @@ const FALLBACK = 'fallback';
 const BUILT_IN = Object.freeze([
   ['fallback', 'Unknown', 'system'], ['money-in', 'Money in', 'system'], ['money-out', 'Money out', 'system'],
   ['transfer', 'Transfer', 'system'], ['reversal', 'Refund or reversal', 'system'],
+  // An amount owed for a shared expense: no money moved (BT-009 recheck N3, Terry: two lines, no heads).
+  ['no-money-moved', 'No money moved', 'system'],
   ['home', 'Home', 'category'], ['bolt', 'Energy', 'category'], ['cart', 'Groceries', 'category'], ['utensils', 'Dining', 'category'],
   ['car', 'Car', 'category'], ['heart', 'Health', 'category'], ['shield', 'Protection', 'category'], ['film', 'Entertainment', 'category'],
   ['bag', 'Shopping', 'category'], ['plane', 'Travel', 'category'], ['book', 'Education', 'category'], ['gift', 'Gift', 'category'],

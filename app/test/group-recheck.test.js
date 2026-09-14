@@ -79,10 +79,10 @@ describe("N2: entries recorded from Shared expenses are locked on the Transactio
   });
 });
 
-describe("N3: an amount owed shows no money arrow, because no money moved", () => {
-  test("a payable and its reversal have no direction; repayment, reimbursement and advance keep theirs", () => {
-    assert.equal(directionOf({ kind: "payable", amountMinor: 2500 }), "none");
-    assert.equal(directionOf({ kind: "payable", amountMinor: -2500, links: { reverses: "txn_x" } }), "none");
+describe("N3: an amount owed shows the no-money-moved mark, never a money arrow", () => {
+  test("a payable and its reversal get the no-money-moved mark; repayment, reimbursement and advance keep their arrows", () => {
+    assert.equal(directionOf({ kind: "payable", amountMinor: 2500 }), "no-money-moved");
+    assert.equal(directionOf({ kind: "payable", amountMinor: -2500, links: { reverses: "txn_x" } }), "no-money-moved");
     assert.equal(directionOf({ kind: "repayment", amountMinor: -2500 }), "money-out");
     assert.equal(directionOf({ kind: "reimbursement", amountMinor: 2500 }), "money-in");
     assert.equal(directionOf({ kind: "advance", amountMinor: -2500 }), "money-out");
@@ -90,18 +90,21 @@ describe("N3: an amount owed shows no money arrow, because no money moved", () =
     assert.equal(directionOf({ kind: "repayment", amountMinor: 2500, links: { reverses: "txn_y" } }), "reversal");
   });
 
-  test("an amount owed says No money moved beside it, with no arrow; a repayment keeps its money-out arrow", () => {
+  test("an amount owed shows the no-money-moved mark beside the words No money moved; a repayment keeps its money-out arrow", () => {
     const owed = entryAmount({ kind: "payable", amountMinor: 2500, amount: "25.00", currency: "EUR" }, { effective: {} });
-    assert.ok(owed.querySelector("svg") === null, "no arrow");
+    const marks = owed.querySelectorAll("svg").map((s) => s.getAttribute("data-icon"));
+    assert.deepEqual(marks, ["no-money-moved"], "one mark, no arrow");
     assert.match(owed.textContent, /EUR 25\.00/);
     assert.match(owed.textContent, /No money moved/);
     const repaid = entryAmount({ kind: "repayment", amountMinor: -2500, amount: "-25.00", currency: "EUR" }, { effective: {} });
     assert.equal(repaid.querySelector("svg").getAttribute("data-icon"), "money-out");
   });
 
-  test("the Transactions list shows Bob's 80.00 owed without a money-in arrow", () => {
+  test("the Transactions list shows Bob's 80.00 owed with the no-money-moved mark and no money-in arrow", () => {
     const list = listOf([OWED]);
     assert.match(list.textContent, /EUR 80\.00\s*No money moved/);
-    assert.equal(list.querySelectorAll("svg").filter((s) => s.getAttribute("data-icon") === "money-in").length, 0);
+    const marks = list.querySelectorAll("svg").map((s) => s.getAttribute("data-icon"));
+    assert.ok(marks.includes("no-money-moved"), marks.join(", "));
+    assert.equal(marks.includes("money-in"), false);
   });
 });

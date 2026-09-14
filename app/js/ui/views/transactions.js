@@ -32,8 +32,14 @@ export { amountWithDirection };
 // a shared expense, where no money moved — no arrow and the words "No money moved" (Terry's rule: arrows
 // only for money actually in or out; BT-009 recheck N3).
 export function entryAmount(t, prefs) {
-  if (directionOf(t) !== "none") return amountWithDirection(t, prefs);
-  return el("span", { class: "amount-dir" }, [amountText(t.amount, t.currency, prefs), el("span", { class: "muted small", text: " No money moved" })]);
+  if (directionOf(t) !== "no-money-moved") return amountWithDirection(t, prefs);
+  // The |==| mark, the amount in neutral colour (neither in nor out) and the words: the mark is
+  // decorative, the words say it (BT-011-05: an icon never stands alone).
+  return el("span", { class: "amount-dir" }, [
+    el("span", { class: "dir" }, [icon("no-money-moved")]),
+    amountText(t.amount, t.currency, prefs),
+    el("span", { class: "muted small", text: " No money moved" }),
+  ]);
 }
 
 const PRECISION = { JPY: 0, KRW: 0, ISK: 0, CLP: 0, VND: 0, BHD: 3, KWD: 3, JOD: 3, OMR: 3, TND: 3 };
