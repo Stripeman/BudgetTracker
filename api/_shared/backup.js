@@ -78,6 +78,9 @@ function checkInvariants(doc) {
   uniqueIds(doc.groupSettlements || [], 'group settlement');
   const groupProblem = groups.invariantProblem(doc);
   if (groupProblem) throw invalidData(groupProblem);
+  // The group settings object (Terry, 2026-09-14): its shape, and valid values for known keys.
+  const settingsProblem = require('./group-settings').problem(doc);
+  if (settingsProblem) throw invalidData(settingsProblem);
   // A reversal matches the entry it reverses: same account and kind, exactly the opposite amount.
   const txById = new Map((doc.transactions || []).map((t) => [t.id, t]));
   for (const t of doc.transactions || []) {

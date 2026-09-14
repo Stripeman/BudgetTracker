@@ -300,6 +300,9 @@ describe('BT-009-04 settlements: reported, confirmed, disputed, void', () => {
   test('only the receiving member confirms or disputes; a dispute can be resolved; a confirmed payment is voided, not disputed', async () => {
     const h = harness();
     const f = await groupFixture(h);
+    // These are the rules when "Anyone in the group can confirm payments" is off (Terry, 2026-09-14;
+    // it is on by default, tested in group-recheck.test.js).
+    ok(await G(h, f, 'alice', 'POST', { query: { action: 'settings' }, body: { changes: { anyoneConfirms: false } } }));
     await addExpense(h, f, 'alice', { description: 'Fictional fuel', amount: '60.00', payers: [{ ref: f.refs.alice }], split: equal(f.refs.alice, f.refs.bob) });
     const s = await settle(h, f, 'bob', { from: f.refs.bob, to: f.refs.alice, amount: '30.00', method: 'Bank transfer' });
     assert.deepEqual([s.status, s.voided, s.method], ['reported', false, 'Bank transfer']);
@@ -338,6 +341,8 @@ describe('BT-009-04 settlements: reported, confirmed, disputed, void', () => {
   test('a payment to a contact is confirmed by a manager or owner, not a plain member; bad payments are refused', async () => {
     const h = harness();
     const f = await groupFixture(h);
+    // The rule when "Anyone in the group can confirm payments" is off (Terry, 2026-09-14; default on).
+    ok(await G(h, f, 'alice', 'POST', { query: { action: 'settings' }, body: { changes: { anyoneConfirms: false } } }));
     const s = await settle(h, f, 'bob', { from: f.refs.bob, to: f.refs.dana, amount: '10.00' });
     assert.equal((await G(h, f, 'bob', 'POST', { query: { action: 'confirm' }, body: { settlementId: s.id, revision: 1 } })).status, 403);
     assert.equal((await G(h, f, 'bob', 'POST', { query: { action: 'dispute' }, body: { settlementId: s.id, revision: 1, reason: 'x' } })).status, 403);

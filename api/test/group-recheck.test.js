@@ -220,3 +220,85 @@ describe('R1: shared-expense recording never writes to an account that is not th
   });
 });
 
+// ---- group settings (Terry, 2026-09-14) ---------------------------------------------------------
+const setSettings = (h, f, w, changes, reason) => act(h, f, w, 'settings', { changes, ...(reason ? { reason } : {}) });
+const settle = async (h, f, w, body) => ok(await act(h, f, w, 'settle', body), 201).settlement;
+const confirm = (h, f, w, s) => act(h, f, w, 'confirm', { settlementId: s.id, revision: s.revision });
+
+describe('Group settings: one validated list, changed by owners and managers, with history and audit', () => {
+  test('every member sees each setting with its default and explanation; only owners and managers change them', async () => {
+    const h = harness();
+    const f = await fixture(h);
+    let v = await view(h, f, 'carol');
+    assert.deepEqual(v.groupSettings.settings.map((s) => [s.key, s.type, s.value, s.default]), [['anyoneConfirms', 'boolean', true, true], ['ownedEntries', 'choice', 'shared-only', 'shared-only']]);
+    for (const s of v.groupSettings.settings) assert.ok(s.label.length > 10 && s.explanation.length > 40, s.key);
+    assert.deepEqual(v.groupSettings.settings[1].options.map((o) => o.value), ['shared-only', 'manual']);
+    for (const w of ['bob', 'carol', 'eve']) assert.equal((await setSettings(h, f, w, { anyoneConfirms: false })).status, 403, w);
+    for (const [changes, code] of [[{ nosuch: true }, 'unknown_setting'], [{ anyoneConfirms: 'no' }, 'invalid_setting'], [{ ownedEntries: 'sometimes' }, 'invalid_setting'], [{}, 'invalid_field']]) {
+      const res = await setSettings(h, f, 'alice', changes);
+      assert.equal(res.status, 400, JSON.stringify(changes));
+      assert.equal(res.body.error.code, code);
+    }
+    ok(await setSettings(h, f, FRANK, { anyoneConfirms: false }, 'We keep it strict'));
+    ok(await setSettings(h, f, 'alice', { ownedEntries: 'manual' }));
+    // The same value again changes nothing and adds no history.
+    ok(await setSettings(h, f, 'alice', { ownedEntries: 'manual', anyoneConfirms: false }));
+    v = await view(h, f, 'bob');
+    assert.deepEqual(v.groupSettings.settings.map((s) => s.value), [false, 'manual']);
+    assert.deepEqual(v.groupSettings.history.map((x) => [x.by, x.key, x.from, x.to, x.reason]), [
+      ['Frank Fictional', 'anyoneConfirms', true, false, 'We keep it strict'],
+      ['Alice Fictional', 'ownedEntries', 'shared-only', 'manual', ''],
+    ]);
+    const { value: doc } = await h.storage.getJson(`workspaces/${f.ws.id}/workspace.json`);
+    assert.deepEqual(doc.audit.filter((a) => a.action === 'group.settings.update').map((a) => a.fields), [['anyoneConfirms'], ['ownedEntries']]);
+  });
+});
+
+describe('B: "Anyone in the group can confirm payments"', () => {
+  test('on (the default): a member confirms their own payment or one to a contact, and the confirmation says who', async () => {
+    const h = harness();
+    const f = await fixture(h);
+    const { alice, bob, eve, frank, dana, carol } = f.refs;
+    // Bob says he paid Alice 25.00 and confirms it himself.
+    const s1 = await settle(h, f, 'bob', { from: bob, to: alice, amount: '25.00' });
+    const c1 = ok(await confirm(h, f, 'bob', s1)).settlement;
+    assert.deepEqual([c1.status, c1.confirmation], ['confirmed', { by: 'Bob Fictional', relation: 'payer' }]);
+    // Eve (member) confirms her own payment to Dana, a contact; Bob confirms one between Frank and Dana.
+    const s2 = await settle(h, f, 'eve', { from: eve, to: dana, amount: '10.00' });
+    assert.deepEqual(ok(await confirm(h, f, 'eve', s2)).settlement.confirmation, { by: 'Eve Outsider', relation: 'payer' });
+    const s3 = await settle(h, f, FRANK, { from: frank, to: dana, amount: '5.00' });
+    assert.deepEqual(ok(await confirm(h, f, 'bob', s3)).settlement.confirmation, { by: 'Bob Fictional', relation: 'other' });
+    // Money Alice records as received is confirmed by its receiver.
+    const s4 = await settle(h, f, 'alice', { from: bob, to: alice, amount: '7.00' });
+    assert.deepEqual(s4.confirmation, { by: 'Alice Fictional', relation: 'receiver' });
+    // Viewers still confirm only payments to themselves; disputes stay with the receiver; withdrawing a
+    // confirmed payment stays with the receiver or a manager or owner (S6).
+    const s5 = await settle(h, f, 'bob', { from: bob, to: alice, amount: '3.00' });
+    assert.equal((await confirm(h, f, 'carol', s5)).status, 403);
+    const s6 = await settle(h, f, 'alice', { from: alice, to: carol, amount: '2.00' });
+    assert.equal(ok(await confirm(h, f, 'carol', s6)).settlement.status, 'confirmed');
+    assert.equal((await act(h, f, 'eve', 'dispute', { settlementId: s5.id, revision: s5.revision, reason: 'Not mine' })).status, 403);
+    assert.equal((await act(h, f, 'bob', 'void', { settlementId: s1.id, revision: c1.revision, reason: 'Oops' })).status, 403);
+    // Everyone who may confirm sees the button: Bob on his own payment, Eve on someone else's.
+    const s7 = await settle(h, f, 'bob', { from: bob, to: alice, amount: '1.00' });
+    assert.equal((await view(h, f, 'bob')).settlements.find((x) => x.id === s7.id).canConfirm, true);
+    assert.equal((await view(h, f, 'eve')).settlements.find((x) => x.id === s7.id).canConfirm, true);
+    assert.equal((await view(h, f, 'carol')).settlements.find((x) => x.id === s7.id).canConfirm, false);
+  });
+
+  test('off: only the receiver confirms, a manager or owner for a contact, and never the payer', async () => {
+    const h = harness();
+    const f = await fixture(h);
+    const { alice, bob, eve, dana } = f.refs;
+    ok(await setSettings(h, f, 'alice', { anyoneConfirms: false }));
+    const s1 = await settle(h, f, 'bob', { from: bob, to: alice, amount: '25.00' });
+    assert.equal((await confirm(h, f, 'bob', s1)).status, 403);
+    assert.equal((await confirm(h, f, 'eve', s1)).status, 403);
+    assert.equal((await view(h, f, 'bob')).settlements[0].canConfirm, false);
+    assert.deepEqual(ok(await confirm(h, f, 'alice', s1)).settlement.confirmation, { by: 'Alice Fictional', relation: 'receiver' });
+    const s2 = await settle(h, f, 'eve', { from: eve, to: dana, amount: '10.00' });
+    assert.equal((await confirm(h, f, 'eve', s2)).status, 403);
+    assert.deepEqual(ok(await confirm(h, f, FRANK, s2)).settlement.confirmation, { by: 'Frank Fictional', relation: 'other' });
+  });
+});
+

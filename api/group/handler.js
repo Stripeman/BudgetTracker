@@ -53,6 +53,7 @@ const fields = require('../_shared/fields');
 const audit = require('../_shared/audit');
 const ledger = require('../_shared/ledger');
 const groups = require('../_shared/groups');
+const groupSettings = require('../_shared/group-settings');
 const entries = require('../_shared/entries');
 const model = require('../_shared/workspace-model');
 
@@ -400,10 +401,16 @@ function settlementView(ctx, doc, member, s) {
     disputeReason: s.disputeReason || '', confirmedBy: s.confirmedBy ? nameOf(doc, s.confirmedBy) : null, confirmedAt: s.confirmedAt || null,
     // Confirmed by the manager or owner who reported it (S5); a confirmation withdrawn by a void (S6).
     confirmedByReporter: !!s.confirmedByReporter, withdrawn: !!s.withdrawn,
+    // Who confirmed, relative to the payment: its receiver, the person who paid it, or someone else.
+    confirmation: s.status === 'confirmed' && s.confirmedBy ? {
+      by: nameOf(doc, s.confirmedBy),
+      relation: (() => { const m = model.memberBySubject(doc, s.confirmedBy); const ref = m ? `member:${m.id}` : null; return ref === s.to ? 'receiver' : ref === s.from ? 'payer' : 'other'; })(),
+    } : null,
     createdBy: nameOf(doc, s.createdBy), createdBySelf: s.createdBy === member.subject, createdAt: s.createdAt, revision: s.revision,
-    // The payer never confirms (S5); a viewer may confirm or dispute a payment made to them (S7); once
-    // confirmed, only the receiving member or a manager or owner may withdraw it (S6).
-    canConfirm: live && s.status !== 'confirmed' && s.from !== me && (s.to === me || (toContact && open && isManager(member))),
+    // Confirming follows the group setting "Anyone in the group can confirm payments": any member who can
+    // add to the group, or a viewer for a payment made to them (S7); when it is off, the payer never
+    // confirms (S5). Once confirmed, only the receiving member or a manager or owner may withdraw it (S6).
+    canConfirm: live && s.status !== 'confirmed' && (s.to === me || (groupSettings.get(doc, 'anyoneConfirms') ? writer(member) : s.from !== me && toContact && open && isManager(member))),
     canDispute: live && s.status === 'reported' && s.to === me,
     canVoid: open && (s.status === 'confirmed' ? (s.to === me || isManager(member)) : (s.createdBy === member.subject || isManager(member))),
   };
@@ -448,6 +455,8 @@ async function list(ctx, req) {
   return {
     body: {
       currency: reportingCurrency(doc), kind: doc.kind,
+      // The group's settings from the one list, with who changed what (Terry, 2026-09-14).
+      groupSettings: groupSettings.view(doc, (s) => nameOf(doc, s)),
       permissions: { role: member.role, canAdd: writer(member), canManage: isManager(member), selfRef: selfRef(member) },
       participants: parts,
       expenses: [...(doc.groupExpenses || [])].sort(newestFirst).map((e) => expenseView(ctx, doc, member, e)),
@@ -581,10 +590,16 @@ function settlementChange(kind) {
       if (s.to !== me) requireWriter(member);
       const nowIso = ctx.nowIso();
       if (kind === 'confirm') {
-        // Never the person who paid (security review S5).
-        if (s.from === me) throw forbidden('You paid this, so someone else must confirm that it arrived.');
-        const allowed = s.to === me || (s.to.startsWith('contact:') && isManager(member));
-        if (!allowed) throw forbidden(s.to.startsWith('contact:') ? 'Only a manager or owner can confirm a payment to a contact.' : 'Only the person who received this payment can confirm it.');
+        // The group setting "Anyone in the group can confirm payments" (Terry, 2026-09-14; on by
+        // default): any member who can add to the group confirms any reported payment, their own
+        // included, and a viewer one made to them. When it is off: never the person who paid (security
+        // review S5); the receiving member, or a manager or owner for a contact.
+        const anyone = groupSettings.get(doc, 'anyoneConfirms');
+        if (!anyone) {
+          if (s.from === me) throw forbidden('You paid this, so someone else must confirm that it arrived.');
+          const allowed = s.to === me || (s.to.startsWith('contact:') && isManager(member));
+          if (!allowed) throw forbidden(s.to.startsWith('contact:') ? 'Only a manager or owner can confirm a payment to a contact.' : 'Only the person who received this payment can confirm it.');
+        }
         // Starting to record on an account is not something a viewer can do (S7).
         if (ledgerAccountId) requireWriter(member);
         if (s.voidedAt) throw conflict('This payment is void.', 'already_void');
@@ -592,7 +607,8 @@ function settlementChange(kind) {
         checkRevision(s, body.revision);
         // A manager or owner confirming a contact payment they reported themselves is allowed — a group
         // with one owner must be able to record them — but kept and shown distinctly (S5).
-        const byReporter = s.to !== me && s.createdBy === member.subject;
+        // Marked only under the strict rules; when anyone may confirm, the confirmation says who it was.
+        const byReporter = !anyone && s.to !== me && s.createdBy === member.subject;
         s.status = 'confirmed';
         s.confirmedBy = member.subject;
         s.confirmedAt = nowIso;
@@ -733,7 +749,26 @@ async function recordHistory(ctx, req) {
   };
 }
 
-const ACTIONS = Object.freeze({ void: voidRecord, settle: createSettlement, confirm: settlementChange('confirm'), dispute: settlementChange('dispute'), ledger: ledgerAction });
+// ---- group settings -----------------------------------------------------------------------------
+// POST ?action=settings { changes: { <key>: <value> }, reason? }: owners and managers change the
+// group's settings from the one list in api/_shared/group-settings.js; every real change is kept in
+// the history (who, when, from, to, why) and audited, in the same write.
+async function settingsAction(ctx, req) {
+  const wsId = requireId(query(req, 'workspaceId'), 'workspaceId');
+  const body = fields.onlyKeys(readBody(req), ['changes', 'reason']);
+  const changes = groupSettings.parseChanges(body.changes);
+  const reason = fields.text(body.reason, { field: 'Reason', max: 200 });
+  const { result } = await store.mutateWorkspace(ctx, wsId, (doc, member) => {
+    if (!isManager(member)) throw forbidden('Only owners and managers can change the group\'s settings.');
+    const at = ctx.nowIso();
+    const changed = groupSettings.apply(doc, changes, { by: member.subject, at, reason });
+    if (changed.length) audit.record(doc, { actor: member.subject, action: 'group.settings.update', targetType: 'workspace', targetId: doc.id, at, fields: changed });
+    return { groupSettings: groupSettings.view(doc, (s) => nameOf(doc, s)) };
+  });
+  return { body: result };
+}
+
+const ACTIONS = Object.freeze({ void: voidRecord, settle: createSettlement, confirm: settlementChange('confirm'), dispute: settlementChange('dispute'), ledger: ledgerAction, settings: settingsAction });
 
 async function post(ctx, req) {
   const action = query(req, 'action');

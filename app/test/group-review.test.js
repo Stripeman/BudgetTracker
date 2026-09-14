@@ -123,6 +123,55 @@ describe("S5 and S6: how a payment's confirmation is shown", () => {
   });
 });
 
+describe("Group settings card and who confirmed (Terry, 2026-09-14)", () => {
+  const SETTINGS = { settings: [
+    { key: "anyoneConfirms", type: "boolean", label: "Anyone in the group can confirm payments", explanation: "When this is on, anyone in the group can mark a payment as confirmed.", value: true, default: true },
+    { key: "ownedEntries", type: "choice", label: "Owed-to-others and repayment entries", explanation: "These entries keep your own account in step with a shared group.", value: "shared-only", default: "shared-only",
+      options: [{ value: "shared-only", label: "Created by Shared expenses only" }, { value: "manual", label: "Also allow entering them by hand" }] },
+  ], history: [{ at: "2026-09-14T08:00:00.000Z", by: "Frank Fictional", key: "anyoneConfirms", label: "Anyone in the group can confirm payments", from: false, to: true, reason: "Family group" }] };
+  const cardOf = (root) => root.querySelectorAll("section").find((s) => s.getAttribute("aria-labelledby") === "grp-settings");
+  const payment = (extra) => ({ id: "gst_1", from: "member:b", to: "member:a", amount: "20.00", amountMinor: 2000, currency: "USD", date: "2026-09-12", method: "",
+    notes: "", status: "confirmed", voided: false, voidReason: "", disputeReason: "", confirmedByReporter: false, withdrawn: false, confirmation: null,
+    canConfirm: false, canDispute: false, canVoid: false, revision: 2, ...extra });
+
+  test("owners and managers see every setting with its explanation and history, and save only what changed", async () => {
+    const { ctx, state, calls } = ctxWith(STRANDED);
+    state.group.data.groupSettings = SETTINGS;
+    const v = createGroupView(ctx);
+    v.update(state);
+    const card = cardOf(v.element);
+    assert.equal(card.hidden, false);
+    for (const text of [/Anyone in the group can confirm payments/, /When this is on, anyone in the group can mark a payment as confirmed\./, /Owed-to-others and repayment entries/,
+      /Created by Shared expenses only/, /Also allow entering them by hand/, /Frank Fictional/, /Family group/]) assert.match(card.textContent, text);
+    const box = card.querySelector('input[type="checkbox"]');
+    assert.equal(box.checked, true);
+    box.checked = false;
+    buttonNamed(card, "Save settings").click();
+    await tick();
+    assert.deepEqual(calls.map((c) => [c.action, c.body]), [["settings", { changes: { anyoneConfirms: false } }]]);
+  });
+
+  test("members and viewers do not see the card", () => {
+    const { ctx, state } = ctxWith(STRANDED);
+    state.group.data.groupSettings = SETTINGS;
+    state.group.data.permissions = { ...state.group.data.permissions, canManage: false, role: "member" };
+    const v = createGroupView(ctx);
+    v.update(state);
+    assert.equal(cardOf(v.element).hidden, true);
+  });
+
+  test("a payment confirmed by the person who paid it, or by someone for its receiver, says who", () => {
+    const { ctx, state } = ctxWith(STRANDED, { settlements: [
+      payment({ confirmation: { by: "Bob Fictional", relation: "payer" } }),
+      payment({ id: "gst_2", from: "member:a", to: "member:b", confirmation: { by: "Frank Fictional", relation: "other" } }),
+    ] });
+    const v = createGroupView(ctx);
+    v.update(state);
+    assert.match(v.element.textContent, /Confirmed by Bob Fictional, who paid it\./);
+    assert.match(v.element.textContent, /Confirmed by Frank Fictional for Bob\./);
+  });
+});
+
 describe("S2 and finding 2: the own-account choice", () => {
   const OWN = { id: "acc_own", name: "Alice Cash", currency: "USD", status: "open", visibility: "private", ownedBySelf: true, capabilities: ["create", "view-transactions"] };
   const JOINT = { id: "acc_joint", name: "Joint", currency: "USD", status: "open", visibility: "shared", ownedBySelf: false, capabilities: ["create", "view-transactions"] };

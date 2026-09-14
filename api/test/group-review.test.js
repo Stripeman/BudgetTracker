@@ -687,6 +687,9 @@ describe('S5: nobody confirms their own payment; a manager confirming a payment 
   test('the payer never confirms; a manager or owner confirming a contact payment they reported is marked', async () => {
     const h = harness();
     const f = await fixture(h);
+    // The S5 rules apply when "Anyone in the group can confirm payments" is off (Terry, 2026-09-14;
+    // it is on by default, tested in group-recheck.test.js).
+    ok(await act(h, f, 'alice', 'settings', { changes: { anyoneConfirms: false } }));
     // Frank (manager) reports that Bob paid Dana (a contact) and confirms it himself: allowed, marked.
     const s1 = await settle(h, f, FRANK, { from: f.refs.bob, to: f.refs.dana, amount: '50.00' });
     const c1 = ok(await act(h, f, FRANK, 'confirm', { settlementId: s1.id, revision: s1.revision })).settlement;

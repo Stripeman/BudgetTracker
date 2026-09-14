@@ -77,6 +77,9 @@ export function createView(ctx) {
   const settleBox = el("div");
   const expensesBox = el("div");
   const paymentsBox = el("div");
+  // The group's settings (Terry, 2026-09-14), shown to owners and managers.
+  const settingsBox = el("div");
+  const settingsCard = el("section", { class: "card", "aria-labelledby": "grp-settings", hidden: true }, [titled("grp-settings", "filter", "Shared expenses settings"), settingsBox]);
   let mode = "suggested";
   const element = el("section", {}, [
     el("div", { class: "page-head" }, [el("h1", { text: "Shared expenses" }), actions]),
@@ -88,6 +91,7 @@ export function createView(ctx) {
       el("section", { class: "card", "aria-labelledby": "grp-settle" }, [titled("grp-settle", "users", "Settle up"), settleBox]),
       el("section", { class: "card", "aria-labelledby": "grp-expenses" }, [titled("grp-expenses", "receipt", "Expenses"), expensesBox]),
       el("section", { class: "card", "aria-labelledby": "grp-payments" }, [titled("grp-payments", "coins", "Payments"), paymentsBox]),
+      settingsCard,
     ]),
   ]);
   void ctx.store.actions.refreshGroup();
@@ -123,6 +127,53 @@ export function createView(ctx) {
     renderSettle(tables, data, fmt, nameOf, me);
     renderExpenses(data, fmt, nameOf, me, effective.dateFormat, state);
     renderPayments(data, fmt, nameOf, me, effective.dateFormat, state);
+    // The group's settings, for owners and managers (the server decides who may change them).
+    settingsCard.hidden = !(data.permissions.canManage && data.groupSettings);
+    if (!settingsCard.hidden) renderSettings(data.groupSettings);
+  }
+
+  // Every setting from the server's one list (Terry, 2026-09-14): a checkbox for on/off, a choice for the
+  // others, each with its plain explanation. Save sends only what changed; who changed what is listed.
+  function renderSettings(gs) {
+    const shown = (key, value) => {
+      const s = gs.settings.find((x) => x.key === key);
+      if (!s) return String(value);
+      if (s.type === "boolean") return value ? "on" : "off";
+      const o = (s.options || []).find((x) => x.value === value);
+      return o ? o.label : String(value);
+    };
+    const controls = gs.settings.map((s) => {
+      if (s.type === "boolean") {
+        const box = el("input", { type: "checkbox", id: uid("gset") });
+        box.checked = s.value === true;
+        return { s, read: () => box.checked, node: el("div", { class: "field field--wide" }, [
+          el("div", { class: "field--inline" }, [box, el("label", { for: box.id, text: s.label })]),
+          el("p", { class: "field__help", text: s.explanation }),
+        ]) };
+      }
+      const name = uid("gset");
+      const radios = (s.options || []).map((o) => { const r = el("input", { type: "radio", name, id: uid("gopt"), value: o.value }); r.checked = o.value === s.value; return [o, r]; });
+      return { s, read: () => { const hit = radios.find(([, r]) => r.checked); return hit ? hit[0].value : s.value; }, node: el("fieldset", { class: "plain-fieldset field--wide" }, [
+        el("legend", { class: "field__label", text: s.label }),
+        ...radios.map(([o, r]) => el("div", { class: "field--inline" }, [r, el("label", { for: r.id, text: o.label })])),
+        el("p", { class: "field__help", text: s.explanation }),
+      ]) };
+    });
+    const save = button("Save settings", async () => {
+      const changes = Object.fromEntries(controls.filter((c) => c.read() !== c.s.value).map((c) => [c.s.key, c.read()]));
+      if (!Object.keys(changes).length) { announce("Nothing changed."); return; }
+      const out = await ctx.store.actions.write((ws) => ctx.api.groupAction(ws, "settings", { changes }), ["group"]);
+      announce(out.ok ? "Settings saved. Everyone in the group now works this way." : messageFor(out.error));
+    }, { variant: "primary" });
+    const history = gs.history.length ? el("details", { class: "more" }, [
+      el("summary", { text: `Changes (${gs.history.length})` }),
+      el("ul", { class: "history-list" }, gs.history.slice().reverse().map((h) => el("li", {}, [
+        el("div", { class: "muted small", text: `${stampOf(h.at)} · ${h.by}` }),
+        el("div", { text: `${h.label}: ${shown(h.key, h.from)} → ${shown(h.key, h.to)}` }),
+        h.reason ? el("div", { class: "muted small", text: `Reason: ${h.reason}` }) : null,
+      ]))),
+    ]) : null;
+    mount(settingsBox, ...controls.map((c) => c.node), el("div", { class: "row" }, [save]), history);
   }
 
   // One table per currency shown (the reporting currency, then any other with an open balance).
@@ -230,7 +281,10 @@ export function createView(ctx) {
         // A confirmation withdrawn afterwards, and one given by the person who reported the payment, are
         // said as such (security review S5, S6).
         const detail = s.voided ? `${s.withdrawn ? "Confirmation withdrawn" : "Voided"}: ${s.voidReason}` : s.status === "reported" ? `Waiting for ${s.to === me ? "you" : nameOf(s.to)} to confirm it arrived.`
-          : s.status === "disputed" ? `Disputed: ${s.disputeReason}` : s.confirmedByReporter ? "Confirmed by the person who reported it." : null;
+          : s.status === "disputed" ? `Disputed: ${s.disputeReason}` : s.confirmedByReporter ? "Confirmed by the person who reported it."
+            // Who confirmed, when it was not the receiver (the group setting "Anyone in the group can confirm payments").
+            : s.confirmation && s.confirmation.relation === "payer" ? `Confirmed by ${s.confirmation.by}, who paid it.`
+              : s.confirmation && s.confirmation.relation === "other" ? `Confirmed by ${s.confirmation.by} for ${nameOf(s.to)}.` : null;
         return el("tr", { class: s.voided ? "row--void" : "" }, [
           el("th", { scope: "row", "data-label": "Date", text: formatDate(s.date, dateFormat) }),
           el("td", { "data-label": "Payment" }, [el("span", { text: label }), s.method ? el("div", { class: "muted small", text: s.method }) : null]),
