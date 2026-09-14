@@ -60,6 +60,18 @@ function txCtx({ params = {} } = {}) {
   return { ctx: { store, api, params }, state, calls };
 }
 
+describe("BT-004-05 transactions: an empty field reads naturally (UX review U6)", () => {
+  test("the transfer's empty To account says “Choose an account…”, not “Choose to account…”", () => {
+    const { ctx } = txCtx();
+    openQuickEntry(ctx);
+    const root = dom.body.querySelector(".modal");
+    const to = pickerNamed(root, "To account");
+    assert.equal(to.value, "", "nothing chosen yet");
+    assert.equal(triggerFor(to).querySelector(".cmdpick__value").textContent, "Choose an account…");
+    assert.equal(spoken(to), "To account: Choose an account…. Search and choose.");
+  });
+});
+
 describe("BT-004-05 transactions: filters", () => {
   test("the filters are pickers with their marks; history keeps closed and archived choices, labelled", () => {
     const { ctx, state } = txCtx();

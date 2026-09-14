@@ -57,6 +57,17 @@ function billsCtx() {
   return { ctx: { store, api }, state, calls };
 }
 
+describe("BT-004-05 bills: an empty field reads naturally (UX review U6)", () => {
+  test("a new bill's empty To account says “Choose an account…”, not “Choose to account…”", () => {
+    const { ctx } = billsCtx();
+    openBillEditor(ctx);
+    const root = dom.body.querySelector(".modal");
+    const to = pickerNamed(root, "To account");
+    assert.equal(to.value, "", "nothing chosen yet");
+    assert.equal(triggerFor(to).querySelector(".cmdpick__value").textContent, "Choose an account…");
+  });
+});
+
 describe("BT-004-05 bills: the bill editor", () => {
   test("every dropdown is a picker; the short lists have no search box; people load into Responsible person", async () => {
     const { ctx } = billsCtx();
