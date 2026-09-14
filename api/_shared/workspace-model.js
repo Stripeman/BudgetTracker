@@ -5,6 +5,7 @@ const { stampDocument } = require('./schema');
 const audit = require('./audit');
 const colors = require('./colors');
 const icons = require('./icons');
+const workspaceSettings = require('./workspace-settings');
 
 const KINDS = Object.freeze(['personal', 'household', 'group', 'trip']);
 
@@ -44,6 +45,9 @@ function summary(doc, member) {
     id: doc.id, name: doc.name, kind: doc.kind, status: doc.status, role: member.role,
     reportingCurrency: doc.settings && doc.settings.reportingCurrency, revision: doc.revision,
     memberCount: activeMembers(doc).length, archivedAt: doc.archivedAt || null,
+    // The workspace settings' current values (no financial data), so the app applies them without
+    // another request; labels, explanations and who may change them come with the workspace GET.
+    settingValues: workspaceSettings.values(doc),
   };
 }
 
