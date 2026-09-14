@@ -1,9 +1,9 @@
 // BT-009 RECHECK (branch fix/bt009-recheck), THREE BROWSERS AT ONCE: who may confirm a payment (the
-// group setting "Anyone in the group can confirm payments"), owed-to-others and repayment entries (the
-// group setting and the quick-entry Type choices), entries recorded from Shared expenses locked on the
-// Transactions page, the |==| no-money-moved mark, sharing an account that records a group (R1), a
-// create-new restore that carries nobody else's identity (S4), and parallel requests against the
-// file-backed dev server. Fictional data only.
+// group setting "Anyone in the group can confirm payments" and each person's "Can confirm payments"),
+// owed-to-others and repayment entries (the group setting and the quick-entry Type choices), entries
+// recorded from Shared expenses locked on the Transactions page, the |==| no-money-moved mark, sharing
+// an account that records a group (R1), a create-new restore that carries nobody else's identity (S4),
+// and parallel requests against the file-backed dev server. Fictional data only.
 //
 // Hand-computed expectations (independent of the app's arithmetic):
 //   dinner 90.00 paid by Alice, shared by Alice, Bob and Carol: 30.00 each.
@@ -15,7 +15,7 @@ import { createWorkspace, DISPLAY, firstRecord } from "../harness/fixtures.mjs";
 import { newIdempotencyKey } from "../harness/api.mjs";
 
 export const name = "recheck";
-export const title = "BT-009 recheck: confirm-payments and owed-entries settings across users, locked group entries, the |==| mark, sharing a linked account, create-new identities, parallel requests";
+export const title = "BT-009 recheck: confirm-payments (group and per person) and owed-entries settings across users, locked group entries, the |==| mark, sharing a linked account, create-new identities, parallel requests";
 export const needsBrowser = true;
 
 const PAYMENTS = '[aria-labelledby="grp-payments"]';
@@ -24,6 +24,20 @@ const eq = (...refs) => ({ method: "equal", lines: refs.map((ref) => ({ ref })) 
 const confirmButtons = (s, label) => s.evaluate(`[...document.querySelectorAll('button')].filter((b) => (b.getAttribute('aria-label') || '') === ${JSON.stringify(label)}).length`);
 // The quick-entry Type choices: the native select behind the command picker holds the offered options.
 const typeChoices = (s) => s.evaluate(`(() => { const sel = [...document.querySelectorAll('.modal select')].find((x) => [...x.options].some((o) => o.text === 'Expense')); return sel ? [...sel.options].map((o) => o.text) : null; })()`);
+// The value behind a person's "Can confirm payments" picker in the settings card.
+const personValue = (s, person) => s.evaluate(`(() => { const sel = [...document.querySelectorAll('${SETTINGS} select')].find((x) => x.getAttribute('aria-label') === ${JSON.stringify(`Can confirm payments: ${person}`)}); return sel ? sel.value : null; })()`);
+// A full reload only once the page is quiet: a request still running when the page reloads is
+// cancelled and would otherwise stay counted as in flight in the harness.
+const fresh = async (s, route) => { await s.settle(); await s.reload(); await s.goto(route); };
+
+// Presses Save settings and waits for the app to say it saved (the polite live region), then for
+// the re-read that follows.
+async function saveSettings(s) {
+  await s.evaluate("(() => { const r = document.getElementById('a11y-live'); if (r) r.textContent = ''; })()");
+  await s.click({ role: "button", name: "Save settings", scope: SETTINGS });
+  await s.waitFor("(() => { const r = document.getElementById('a11y-live'); return !!r && r.textContent.startsWith('Settings saved'); })()", { what: "the Settings saved announcement" });
+  await s.settle();
+}
 
 export async function run(h, t) {
   const W = await createWorkspace(h, { name: "E2E Recheck Club", kind: "group", members: { bob: "member", carol: "viewer" } });
@@ -40,11 +54,7 @@ export async function run(h, t) {
   t.note(`workspace ${W.name}: ${W.id}`);
 
   const b = await h.browsers(["alice", "bob", "carol"], { prefix: "recheck-" });
-  // Diagnostic trail: how many waits have timed out in each browser so far (a request still counted
-  // as in flight makes every later wait time out), noted after each step.
-  const trail = (step) => t.note(`after ${step}: timed-out waits alice ${b.alice.log.failed.length}, bob ${b.bob.log.failed.length}, carol ${b.carol.log.failed.length}`);
   for (const s of Object.values(b)) { await s.open("group"); await s.useWorkspace(W.name); await s.goto("group"); }
-  trail("opening the group");
   if (!(await b.alice.exists(SETTINGS))) { t.skip("recheck in the browser", "the Shared expenses settings card is not present at this commit"); return; }
 
   // ---- B: Alice adds an expense in her browser while Bob confirms his own payment in his ----------
@@ -69,13 +79,11 @@ export async function run(h, t) {
     expected: { ferry: true, status: "confirmed", confirmation: { by: DISPLAY.bob, relation: "payer" } },
     actual: { ferry: afterB.expenses.some((e) => e.description === "E2E ferry"), status: afterB.settlements.find((s) => s.id === s1.id).status, confirmation: afterB.settlements.find((s) => s.id === s1.id).confirmation },
   });
-  await Promise.all([b.alice.reload(), b.bob.reload()]);
-  await Promise.all([b.alice.goto("group"), b.bob.goto("group")]);
+  await Promise.all([fresh(b.alice, "group"), fresh(b.bob, "group")]);
   t.check("B: Alice and Bob each read 'Confirmed by Bob Fictional, who paid it.'", {
     expected: [true, true],
     actual: [(await b.alice.text(PAYMENTS)).includes("Confirmed by Bob Fictional, who paid it."), (await b.bob.text(PAYMENTS)).includes("Confirmed by Bob Fictional, who paid it.")],
   });
-  trail("B (add while confirming, reloads)");
 
   // ---- S7: Carol (viewer) confirms the payment made to her; she has nothing to add -----------------
   const carolAdd = await b.carol.evaluate("[...document.querySelectorAll('.page-head button')].some((x) => x.textContent.trim() === 'Add expense')");
@@ -87,23 +95,54 @@ export async function run(h, t) {
     expected: { addExpense: false, status: "confirmed" },
     actual: { addExpense: carolAdd, status: (await api("carol").ok("group", { query: q })).settlements.find((s) => s.id === s2.id).status },
   });
-  trail("S7 (Carol confirms)");
 
-  // ---- B: Alice turns the setting off in her card; Bob's Confirm disappears and the API refuses him -
+  // ---- B per person: the group setting is on; Alice sets Bob to No in her card ------------------
+  // Bob loses Confirm on his own payment (the API refuses him too); Carol still confirms one made to her.
   const s3 = (await api("bob").ok("group", { method: "POST", query: { ...q, action: "settle" }, body: { from: B, to: A, amount: "10.00" } })).settlement;
-  await b.bob.reload(); await b.bob.goto("group");
-  const before = await confirmButtons(b.bob, "Confirm You paid Alice Fictional");
-  await b.alice.click({ label: "Anyone in the group can confirm payments", scope: SETTINGS });
-  await b.alice.click({ role: "button", name: "Save settings", scope: SETTINGS });
-  await b.alice.waitFor(`(() => { const box = document.querySelector('${SETTINGS} input[type="checkbox"]'); return !!box && box.checked === false; })()`, { what: "the setting to show off after saving" });
-  await b.bob.reload(); await b.bob.goto("group");
-  const after = await confirmButtons(b.bob, "Confirm You paid Alice Fictional");
-  const bobSeesCard = await b.bob.evaluate(`!!document.querySelector('${SETTINGS}:not([hidden])')`);
-  const direct = await api("bob").request("group", { method: "POST", query: { ...q, action: "confirm" }, body: { settlementId: s3.id, revision: s3.revision } });
-  t.check("B: with the setting off (by Alice, in her card) Bob no longer sees Confirm on his own payment and the API refuses him; Bob sees no settings card", {
-    expected: { before: 1, after: 0, bobSeesCard: false, direct: 403 }, actual: { before, after, bobSeesCard, direct: direct.status },
+  const s5 = (await api("bob").ok("group", { method: "POST", query: { ...q, action: "settle" }, body: { from: B, to: C, amount: "4.00" } })).settlement;
+  await fresh(b.alice, "group");
+  const listed = await b.alice.evaluate(`[...document.querySelectorAll('${SETTINGS} select')].map((x) => x.getAttribute('aria-label')).filter((l) => (l || '').startsWith('Can confirm payments: '))`);
+  await b.alice.choose(DISPLAY.bob, "No", { scope: SETTINGS });
+  await saveSettings(b.alice);
+  const aliceCard = { bob: await personValue(b.alice, DISPLAY.bob), carol: await personValue(b.alice, DISPLAY.carol), text: await b.alice.text(SETTINGS) };
+  await fresh(b.bob, "group");
+  const bobNo = {
+    confirm: await confirmButtons(b.bob, "Confirm You paid Alice Fictional"),
+    says: (await b.bob.text(PAYMENTS)).includes("You can confirm payments made to you."),
+    card: await b.bob.evaluate(`!!document.querySelector('${SETTINGS}:not([hidden])')`),
+    direct: (await api("bob").request("group", { method: "POST", query: { ...q, action: "confirm" }, body: { settlementId: s3.id, revision: s3.revision } })).status,
+  };
+  await fresh(b.carol, "group");
+  await b.carol.click({ role: "button", name: "Confirm Bob Fictional paid you", scope: PAYMENTS });
+  await b.carol.waitFor("!!document.querySelector('.modal')", { what: "Carol's second Confirm payment dialog" });
+  await b.carol.click({ role: "button", name: "Confirm", scope: ".modal" });
+  await b.carol.waitFor("!document.querySelector('.modal')", { what: "Carol's dialog to close again" });
+  const carolGot = (await api("carol").ok("group", { query: q })).settlements.find((s) => s.id === s5.id);
+  t.check("B per person: Alice's card lists everyone with a picker; she sets Bob to No while the group setting is on", {
+    expected: { listed: [`Can confirm payments: ${DISPLAY.alice}`, `Can confirm payments: ${DISPLAY.bob}`, `Can confirm payments: ${DISPLAY.carol}`], bob: "no", carol: "inherit", bobHelp: true, carolHelp: true },
+    actual: { listed, bob: aliceCard.bob, carol: aliceCard.carol, bobHelp: aliceCard.text.includes("Only payments made to them now"), carolHelp: aliceCard.text.includes("Only payments made to them (a viewer)") },
   });
-  trail("B (setting off)");
+  t.check("B per person: in Bob's browser there is no Confirm on his own payment, he is told he confirms payments made to him, sees no settings card, and the API refuses him", {
+    expected: { confirm: 0, says: true, card: false, direct: 403 }, actual: bobNo,
+  });
+  t.check("B per person: Carol still confirms the payment made to her in her browser", {
+    expected: { status: "confirmed", confirmation: { by: DISPLAY.carol, relation: "receiver" } }, actual: { status: carolGot.status, confirmation: carolGot.confirmation },
+  });
+  // Back to "Use the group setting": Bob follows the group (on) again.
+  await b.alice.choose(DISPLAY.bob, "Use the group setting", { scope: SETTINGS });
+  await saveSettings(b.alice);
+  await fresh(b.bob, "group");
+  const before = await confirmButtons(b.bob, "Confirm You paid Alice Fictional");
+
+  // ---- B: Alice turns the group setting off; Bob's Confirm disappears and the API refuses him -------
+  await b.alice.click({ label: "Anyone in the group can confirm payments", scope: SETTINGS });
+  await saveSettings(b.alice);
+  await fresh(b.bob, "group");
+  const after = await confirmButtons(b.bob, "Confirm You paid Alice Fictional");
+  const direct = await api("bob").request("group", { method: "POST", query: { ...q, action: "confirm" }, body: { settlementId: s3.id, revision: s3.revision } });
+  t.check("B: back on 'Use the group setting' Bob sees Confirm on his own payment again; with the group setting off (by Alice) he does not and the API refuses him", {
+    expected: { before: 1, after: 0, direct: 403 }, actual: { before, after, direct: direct.status },
+  });
 
   // ---- N1 + C: quick entry's Type choices follow the owed-entries setting ------------------------
   await b.alice.goto("transactions");
@@ -113,9 +152,8 @@ export async function run(h, t) {
   await b.alice.click({ role: "button", name: "Cancel", scope: ".modal" });
   await b.alice.goto("group");
   await b.alice.click({ label: "Also allow entering them by hand", scope: SETTINGS });
-  await b.alice.click({ role: "button", name: "Save settings", scope: SETTINGS });
-  await b.alice.waitFor(`(() => { const r = [...document.querySelectorAll('${SETTINGS} input[type="radio"]')].find((x) => x.value === 'manual'); return !!r && r.checked; })()`, { what: "hand entry to show allowed" });
-  await b.alice.reload(); await b.alice.goto("transactions");
+  await saveSettings(b.alice);
+  await fresh(b.alice, "transactions");
   await b.alice.click({ role: "button", name: "Add expense", scope: ".page-head" });
   await b.alice.waitFor("!!document.querySelector('.modal')", { what: "quick entry again" });
   const kindsManual = await typeChoices(b.alice);
@@ -129,7 +167,6 @@ export async function run(h, t) {
   t.check("C: a hand-entered owed amount is a pair (spending and owed) and the balance stays 500.00", {
     expected: { status: 201, kinds: "expense,payable", balance: "500.00" }, actual: { status: pair.status, kinds: pair.data && pair.data.transactions ? pair.data.transactions.map((x) => x.kind).join(",") : pair.code, balance: cash },
   });
-  trail("N1/C (Type choices)");
 
   // ---- N2 + D: Bob's entries from Shared expenses on his Transactions page ------------------------
   await b.bob.goto("transactions");
@@ -155,7 +192,6 @@ export async function run(h, t) {
   const lock = await b.bob.evaluate(`(() => { const m = document.querySelector('.modal'); return { says: m.innerText.includes('follow the shared expense. Change it in Shared expenses'), amountLocked: m.querySelector('input[placeholder="0.00 or 12.50+3.20"]').disabled }; })()`);
   await b.bob.click({ role: "button", name: "Cancel", scope: ".modal" });
   t.check("N2: its edit form keeps the amount locked and says to change it in Shared expenses", { expected: { says: true, amountLocked: true }, actual: lock });
-  trail("N2/D (Bob's Transactions page)");
   const shots = [await b.bob.shot("owed-light")];
   await b.bob.cdp.send("Emulation.setEmulatedMedia", { features: [{ name: "prefers-color-scheme", value: "dark" }, { name: "prefers-reduced-motion", value: "reduce" }] });
   shots.push(await b.bob.shot("owed-dark"));
@@ -164,26 +200,29 @@ export async function run(h, t) {
   await b.bob.cdp.send("Emulation.setEmulatedMedia", { features: [{ name: "prefers-color-scheme", value: "light" }, { name: "prefers-reduced-motion", value: "reduce" }] });
   await b.bob.cdp.send("Emulation.setDeviceMetricsOverride", { width: 1280, height: 900, deviceScaleFactor: 1, mobile: false });
   t.note(`screenshots of the |==| mark: ${shots.join(", ")}`);
-  trail("screenshots");
+  await fresh(b.alice, "group");
+  t.note(`screenshot of Alice's settings card: ${await b.alice.shot("settings-card")}`);
 
-  // ---- R1: Bob shares his wallet from his browser; recording on it stops --------------------------
-  await b.bob.goto("group");
-  const shared = await b.bob.evaluate(`(async () => {
-    const accs = await (await fetch('/api/accounts?workspaceId=${W.id}')).json(); const w = accs.accounts.find((a) => a.id === '${wallet.id}');
-    const r = await fetch('/api/accounts?workspaceId=${W.id}', { method: 'PATCH', headers: { 'content-type': 'application/json', 'x-bt-request': '1' }, body: JSON.stringify({ accountId: w.id, revision: w.revision, visibility: 'shared', confirmShare: true }) });
-    return r.status; })()`);
-  trail("R1 (Bob's in-page share requests)");
+  // ---- R1: Bob shares his wallet; recording on it stops, and his browser shows nothing to update -----
+  // The Accounts page offers no way to make an existing account shared (only per-member grants), so the
+  // share itself is Bob's API request, as the server's confirmation flow expects; the evidence in his
+  // browser is what he sees afterwards.
+  const w = (await api("bob").ok("accounts", { query: q })).accounts.find((a) => a.id === wallet.id);
+  const shareAsked = await api("bob").request("accounts", { method: "PATCH", query: q, body: { accountId: w.id, revision: w.revision, visibility: "shared" } });
+  const shared = (await api("bob").request("accounts", { method: "PATCH", query: q, body: { accountId: w.id, revision: w.revision, visibility: "shared", confirmShare: true } })).status;
+  t.check("R1: asked to share without confirming, the server says recording on it for Shared expenses stops", {
+    expected: { status: 400, code: "confirm_required", says: true }, actual: { status: shareAsked.status, code: shareAsked.code, says: /recording on this account stops/.test(shareAsked.message || "") },
+  });
   const walletEntries = async () => (await api("bob").ok("transactions", { query: { ...q, accountId: wallet.id } })).transactions.length;
   const beforeShare = await walletEntries();
   await api("alice").ok("group", { method: "POST", query: q, body: { description: "E2E taxi", amount: "20.00", payers: [{ ref: A }], split: eq(A, B) } });
   await api("bob").ok("group", { method: "POST", query: { ...q, action: "ledger" }, body: { currency: "EUR" } });
   const bobGroup = await api("bob").ok("group", { query: q });
-  await b.bob.reload(); await b.bob.goto("group");
+  await fresh(b.bob, "group");
   t.check("R1: after Bob shares his wallet in his browser, Alice's taxi and Bob's update write nothing there and no link remains", {
     expected: { share: 200, entriesAfter: beforeShare, link: undefined, notice: false },
     actual: { share: shared, entriesAfter: await walletEntries(), link: bobGroup.myLedgers, notice: (await b.bob.text("body")).includes("Your account needs updating") },
   });
-  trail("R1 (after reload)");
 
   // ---- E: parallel requests against the file-backed dev server ------------------------------------
   const s4 = (await api("bob").ok("group", { method: "POST", query: { ...q, action: "settle" }, body: { from: B, to: A, amount: "7.00" } })).settlement;
@@ -209,6 +248,8 @@ export async function run(h, t) {
   const bobWallet = firstRecord(await api("bob").ok("accounts", { method: "POST", query: R.q, body: { name: "E2E Bob Wallet", type: "cash", currency: "EUR", openingBalance: "50.00" } }));
   const bobsEntry = firstRecord(await api("bob").ok("transactions", { method: "POST", query: R.q, body: { accountId: joint.id, kind: "expense", amount: "12.00", notes: "E2E milk" } }));
   await api("alice").ok("recurring", { method: "POST", query: R.q, body: { name: "E2E rent", billType: "housing", accountId: joint.id, amount: "800.00", schedule: { freq: "monthly", startDate: "2026-10-01" }, responsibleRef: R.ref("bob") } });
+  // A per-person right for Bob is keyed by his member id: it must not come along either.
+  await api("alice").ok("group", { method: "POST", query: { ...R.q, action: "settings" }, body: { changes: { confirmOverrides: { [R.memberOf("bob").id]: "no" } } } });
   const archiveId = (await api("alice").ok("backups", { method: "POST", query: R.q, body: {} })).archive.archiveId;
   const created = (await api("alice").ok("restore", { method: "POST", query: { action: "execute" }, body: { workspaceId: R.id, archiveId, mode: "create-new" } })).workspace;
   t.note(`workspace ${R.name}: ${R.id}; its create-new copy ${created.name}: ${created.id}`);
@@ -222,13 +263,12 @@ export async function run(h, t) {
   const inv = await api("alice").ok("invitations", { method: "POST", query: { workspaceId: created.id }, body: { email: "bob@example.com", role: "member" } });
   await api("bob").ok("invitations", { method: "POST", query: { action: "accept" }, body: { workspaceId: created.id, token: inv.token } });
   const oldEntry = (await api("bob").ok("transactions", { query: { workspaceId: created.id } })).transactions.find((x) => x.id === bobsEntry.id);
-  await b.bob.reload(); await b.bob.useWorkspace(created.name); await b.bob.goto("transactions");
+  await b.bob.settle(); await b.bob.reload(); await b.bob.useWorkspace(created.name); await b.bob.goto("transactions");
   const bobRow = await b.bob.evaluate(`(() => { const r = [...document.querySelectorAll('tbody tr')].find((x) => x.innerText.includes('EUR 12.00')); return r ? [...r.querySelectorAll('button')].map((x) => x.textContent.trim()) : null; })()`);
   t.check("S4: invited into the restored workspace, Bob does not own his old entry — createdBySelf false and no Edit or Delete in his browser", {
     expected: { createdBySelf: false, buttons: [] }, actual: { createdBySelf: oldEntry ? oldEntry.createdBySelf : "missing", buttons: bobRow },
   });
-  trail("S4 (Bob in the restored workspace)");
 
   // ---- every browser stayed clean -----------------------------------------------------------------
-  for (const s of Object.values(b)) t.check(`${s.name}: no exceptions, console errors or failed requests in the browser`, { expected: [], actual: s.problems() });
+  for (const s of Object.values(b)) { await s.settle(); t.check(`${s.name}: no exceptions, console errors or failed requests in the browser`, { expected: [], actual: s.problems() }); }
 }
