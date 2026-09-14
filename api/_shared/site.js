@@ -44,4 +44,12 @@ function publicView(site, signedIn) {
   };
 }
 
-module.exports = { DEFAULT_SITE, THEME_MODES, PALETTES, EDITOR_TOOLBARS, readSite, publicView, stampSite: (d) => stampDocument('site', d) };
+// The site settings without the staging-link default (BT-011-06), for people who may not see it:
+// visitors who are not signed in, and signed-in people who are neither a site administrator nor an
+// active member of any workspace (security review of d363eff, finding 1).
+function withoutStagingDefault(site) {
+  const { stagingUrl, ...defaults } = site.defaults || {};
+  return { ...site, defaults };
+}
+
+module.exports = { DEFAULT_SITE, THEME_MODES, PALETTES, EDITOR_TOOLBARS, readSite, publicView, withoutStagingDefault, stampSite: (d) => stampDocument('site', d) };
