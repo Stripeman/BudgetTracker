@@ -808,6 +808,37 @@ describe('L3 (financial recheck of 47617b5): the backup check is as tolerant as 
   });
 });
 
+describe('R3-1 (security recheck of 53cf181): the person who paid never settles a dispute over their own payment, unless anyone who can confirm may', () => {
+  const dispute = (h, f, w, s) => act(h, f, w, 'dispute', { settlementId: s.id, revision: s.revision, reason: 'Never arrived' });
+  const fresh = async (h, f, s, w) => (await view(h, f, w)).settlements.find((x) => x.id === s.id);
+
+  test('managers may dispute and confirming is strict: Alice reports paying Dana, Frank disputes it; Alice is offered no Confirm and refused; Frank may confirm it', async () => {
+    const h = harness();
+    const f = await fixture(h);
+    ok(await setSettings(h, f, 'alice', { disputePayments: 'receiver-or-manager', anyoneConfirms: false }));
+    const s = await settle(h, f, 'alice', { from: f.refs.alice, to: f.refs.dana, amount: '8.00' });
+    ok(await dispute(h, f, FRANK, s));
+    const d = await fresh(h, f, s, 'alice');
+    assert.equal(d.canConfirm, false, 'no Confirm for the payer');
+    assert.equal((await confirm(h, f, 'alice', d)).status, 403);
+    assert.equal((await fresh(h, f, s, FRANK)).canConfirm, true);
+    const done = ok(await confirm(h, f, FRANK, d)).settlement;
+    assert.deepEqual([done.confirmedOverDispute, done.confirmation.relation], [true, 'other']);
+  });
+
+  test('"the person who received it, or a manager or owner" settles disputes: Alice (owner) paid Bob, Bob disputes; Alice may not confirm over it, Frank may', async () => {
+    const h = harness();
+    const f = await fixture(h);
+    ok(await setSettings(h, f, 'alice', { settleDisputes: 'receiver-or-manager' }));
+    const s = await settle(h, f, 'alice', { from: f.refs.alice, to: f.refs.bob, amount: '9.00' });
+    ok(await dispute(h, f, 'bob', s));
+    const d = await fresh(h, f, s, 'alice');
+    assert.equal(d.canConfirm, false);
+    assert.equal((await confirm(h, f, 'alice', d)).status, 403);
+    assert.equal(ok(await confirm(h, f, FRANK, d)).settlement.confirmedOverDispute, true);
+  });
+});
+
 describe('R3-3 (security recheck of 53cf181): a link names another record only to someone who may see it', () => {
   test('a transfer from Alice\'s private bill into the shared Joint: Bob, Carol and Eve see no bill id on its shared side; Alice does', async () => {
     const h = harness();

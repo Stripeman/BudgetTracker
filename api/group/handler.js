@@ -481,8 +481,11 @@ function expenseView(ctx, doc, member, e) {
 function canSettleDispute(doc, s, member) {
   const me = selfRef(member);
   if (s.to === me) return true;
-  const forContact = s.to.startsWith('contact:') && isManager(member);
   const rule = groupSettings.get(doc, 'settleDisputes');
+  // The person who paid never settles a dispute over their own payment, a manager or owner included,
+  // unless the group lets anyone who can confirm payments settle disputes (security recheck R3-1).
+  if (s.from === me && rule !== 'confirmers') return false;
+  const forContact = s.to.startsWith('contact:') && isManager(member);
   if (rule === 'receiver-or-manager') return isManager(member);
   if (rule === 'confirmers') return forContact || groupSettings.confirmsAny(doc, member);
   return forContact;
