@@ -18,6 +18,8 @@ import { formatAmount, formatDate, todayIso } from "../../core/format.js";
 import { previewSplit, precisionOf, formatMinor, parseAmount } from "../../core/split.js";
 import { icon, withIcon } from "../icons.js";
 import { messageFor } from "../../core/errors.js";
+// Values in words exactly as the workspace settings card shows them (eefd115).
+import { settingText } from "./workspace.js";
 
 export const METHOD_LABELS = Object.freeze({ equal: "Equally", amounts: "By amounts", percentages: "By percentages", shares: "By shares" });
 const VALUE_LABELS = { amounts: "Amount for", percentages: "Percent for", shares: "Shares for" };
@@ -155,30 +157,24 @@ export function createView(ctx) {
   // Every setting from the server's one list (Terry, 2026-09-14): a checkbox for on/off, a choice for the
   // others, each with its plain explanation. Save sends only what changed; who changed what is listed.
   function renderSettings(gs) {
-    const shown = (key, value) => {
-      const s = gs.settings.find((x) => x.key === key);
-      if (!s) return String(value);
-      if (s.type === "boolean") return value ? "on" : "off";
-      const o = (s.options || []).find((x) => x.value === value);
-      return o ? o.label : String(value);
-    };
+    // The same presentation as the workspace settings card (eefd115): the command picker for on/off and
+    // for choices, grouped under headings, each with its plain explanation, and values in words.
+    const shown = (key, value) => { const s = gs.settings.find((x) => x.key === key); return s ? settingText(s, value) : String(value); };
     const controls = gs.settings.map((s) => {
-      if (s.type === "boolean") {
-        const box = el("input", { type: "checkbox", id: uid("gset") });
-        box.checked = s.value === true;
-        return { s, read: () => box.checked, node: el("div", { class: "field field--wide" }, [
-          el("div", { class: "field--inline" }, [box, el("label", { for: box.id, text: s.label })]),
-          el("p", { class: "field__help", text: s.explanation }),
-        ]) };
-      }
-      const name = uid("gset");
-      const radios = (s.options || []).map((o) => { const r = el("input", { type: "radio", name, id: uid("gopt"), value: o.value }); r.checked = o.value === s.value; return [o, r]; });
-      return { s, read: () => { const hit = radios.find(([, r]) => r.checked); return hit ? hit[0].value : s.value; }, node: el("fieldset", { class: "plain-fieldset field--wide" }, [
-        el("legend", { class: "field__label", text: s.label }),
-        ...radios.map(([o, r]) => el("div", { class: "field--inline" }, [r, el("label", { for: r.id, text: o.label })])),
-        el("p", { class: "field__help", text: s.explanation }),
-      ]) };
+      const options = s.type === "boolean" ? [{ value: "true", label: "On" }, { value: "false", label: "Off" }] : (s.options || []).map((o) => ({ value: String(o.value), label: o.label }));
+      const pick = pickerSelect(options, String(s.value), {}, { search: false });
+      const read = () => (s.type === "boolean" ? pick.value === "true" : ((s.options || []).find((o) => String(o.value) === pick.value) || { value: s.value }).value);
+      return { s, read, node: field(s.label, pick, { help: s.explanation, wide: true }) };
     });
+    const grouped = [];
+    for (const c of controls) {
+      const name = c.s.group || "Shared expenses";
+      let g = grouped.find((x) => x.name === name);
+      if (!g) { g = { name, nodes: [] }; grouped.push(g); }
+      g.nodes.push(c.node);
+    }
+    const reason = input({ maxlength: "200", placeholder: "Optional", autocomplete: "off" });
+    const status = el("p", { class: "field__help", role: "status" });
     // "Can confirm payments" for each person (owners and managers only; the server sends the list only to them).
     const perPerson = (gs.perMember || []).find((p) => p.key === "confirmOverrides") || { label: "Can confirm payments",
       options: [{ value: "inherit", label: "Use the group setting" }, { value: "yes", label: "Yes" }, { value: "no", label: "No" }] };
@@ -198,9 +194,10 @@ export function createView(ctx) {
       const changes = Object.fromEntries(controls.filter((c) => c.read() !== c.s.value).map((c) => [c.s.key, c.read()]));
       const overrides = Object.fromEntries(people.filter((p) => p.pick.value !== p.m.override).map((p) => [p.m.memberId, p.pick.value]));
       if (Object.keys(overrides).length) changes.confirmOverrides = overrides;
-      if (!Object.keys(changes).length) { announce("Nothing changed."); return; }
-      const out = await ctx.store.actions.write((ws) => ctx.api.groupAction(ws, "settings", { changes }), ["group"]);
-      if (!out.ok) { announce(messageFor(out.error)); return; }
+      if (!Object.keys(changes).length) { status.textContent = "Nothing changed."; announce("Nothing changed."); return; }
+      const body = { changes, ...(reason.value.trim() ? { reason: reason.value.trim() } : {}) };
+      const out = await ctx.store.actions.write((ws) => ctx.api.groupAction(ws, "settings", body), ["group"]);
+      if (!out.ok) { status.textContent = messageFor(out.error); announce(messageFor(out.error)); return; }
       // Said only for what the server now holds (security recheck of 47617b5, M1): every value asked for
       // is compared with the settings it returned.
       const kept = (out.result && out.result.groupSettings) || null;
@@ -208,7 +205,9 @@ export function createView(ctx) {
         ...Object.entries(changes).filter(([k]) => k !== "confirmOverrides").filter(([k, v]) => { const s = (kept.settings || []).find((x) => x.key === k); return !s || s.value !== v; }).map(([k]) => (gs.settings.find((x) => x.key === k) || { label: k }).label),
         ...Object.entries(overrides).filter(([id, v]) => { const m = (kept.members || []).find((x) => x.memberId === id); return !m || m.override !== v; }).map(([id]) => `${perPerson.label}: ${(people.find((p) => p.m.memberId === id) || { m: { name: id } }).m.name}`),
       ];
-      announce(missed.length ? `Not everything was saved: ${missed.join("; ")}. The settings shown are what is saved now.` : "Settings saved. Everyone in the group now works this way.");
+      const said = missed.length ? `Not everything was saved: ${missed.join("; ")}. The settings shown are what is saved now.` : "Settings saved. Everyone in the group now works this way.";
+      status.textContent = said;
+      announce(said);
     }, { variant: "primary" });
     const history = gs.history.length ? el("details", { class: "more" }, [
       el("summary", { text: `Changes (${gs.history.length})` }),
@@ -218,7 +217,11 @@ export function createView(ctx) {
         h.reason ? el("div", { class: "muted small", text: `Reason: ${h.reason}` }) : null,
       ]))),
     ]) : null;
-    mount(settingsBox, ...controls.map((c) => c.node), peopleBox, el("div", { class: "row" }, [save]), history);
+    mount(settingsBox,
+      ...grouped.flatMap((g) => [el("h3", { class: "section-title", text: g.name }), el("div", { class: "form-grid" }, g.nodes)]),
+      peopleBox,
+      el("div", { class: "form-grid" }, [field("Reason for the change (optional)", reason, { help: "Kept with the change in the history below.", wide: true })]),
+      el("div", { class: "row" }, [save]), status, history);
   }
 
   // The person's own defaults (settings b and e): personal preferences that apply only to them and

@@ -96,6 +96,12 @@ const SETTINGS = Object.freeze({
   }),
 });
 const KEYS = Object.freeze(Object.keys(SETTINGS));
+// The heading each setting is shown under, as the workspace settings card groups its own (eefd115).
+const GROUP_OF = Object.freeze({
+  anyoneConfirms: 'Confirming payments', settleDisputes: 'Confirming payments', ownedEntries: 'Entries on your own account',
+  splitMethod: 'New expenses', splitWho: 'New expenses', paidBy: 'New expenses', changeExpenses: 'Corrections',
+  withdrawPayments: 'Payments', disputePayments: 'Payments', receiverConfirms: 'Payments', countReported: 'Suggested payments',
+});
 const own = (o, k) => Object.prototype.hasOwnProperty.call(o, k);
 
 // PER-PERSON OVERRIDES of a group setting (Terry, 2026-09-14), set by owners and managers on each
@@ -236,7 +242,7 @@ function view(doc, nameOf, member, manages) {
   const label = (k) => (SETTINGS[k] ? SETTINGS[k].label : PER_MEMBER[k] ? PER_MEMBER[k].label : k);
   return {
     settings: KEYS.map((k) => ({
-      key: k, type: SETTINGS[k].type, label: SETTINGS[k].label, explanation: SETTINGS[k].explanation, value: v[k], default: SETTINGS[k].default,
+      key: k, group: GROUP_OF[k] || 'Shared expenses', type: SETTINGS[k].type, label: SETTINGS[k].label, explanation: SETTINGS[k].explanation, value: v[k], default: SETTINGS[k].default,
       ...(SETTINGS[k].options ? { options: SETTINGS[k].options.map((o) => ({ ...o })) } : {}),
     })),
     perMember: PER_MEMBER_KEYS.map((k) => ({ key: k, setting: PER_MEMBER[k].setting, label: PER_MEMBER[k].label, options: PER_MEMBER[k].options.map((o) => ({ ...o })) })),

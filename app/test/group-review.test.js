@@ -143,9 +143,10 @@ describe("Group settings card and who confirmed (Terry, 2026-09-14)", () => {
     assert.equal(card.hidden, false);
     for (const text of [/Anyone in the group can confirm payments/, /When this is on, anyone in the group can mark a payment as confirmed\./, /Owed-to-others and repayment entries/,
       /Created by Shared expenses only/, /Also allow entering them by hand/, /Frank Fictional/, /Family group/]) assert.match(card.textContent, text);
-    const box = card.querySelector('input[type="checkbox"]');
-    assert.equal(box.checked, true);
-    box.checked = false;
+    // On/off is a picker, as in the workspace settings card (eefd115).
+    const onOff = card.querySelectorAll("select").find((s) => s.querySelectorAll("option").map((o) => o.textContent).join() === "On,Off");
+    assert.equal(onOff.value, "true");
+    onOff.value = "false";
     buttonNamed(card, "Save settings").click();
     await tick();
     assert.deepEqual(calls.map((c) => [c.action, c.body]), [["settings", { changes: { anyoneConfirms: false } }]]);

@@ -146,6 +146,32 @@ describe('N2: entries recorded from Shared expenses are changed only there', () 
   });
 });
 
+describe('N2 under the workspace setting "Members may change other members\' entries" = any entry (eefd115)', () => {
+  test('Eve may change the notes of Bob\'s entry on the shared wallet, but never its amount, and may not reverse or delete it', async () => {
+    const h = harness();
+    const f = await fixture(h, { kind: 'household' });
+    // Bob records his part on his wallet (100.00): a 160.00 dinner Alice paid, his share 80.00 (spending,
+    // owed 80.00, no money moved). He then shares the wallet, so his entries sit on a shared account.
+    const wallet = await account(h, f, 'bob', { name: 'Bob Wallet', type: 'cash', currency: 'EUR', openingBalance: '100.00' });
+    ok(await act(h, f, 'bob', 'ledger', { currency: 'EUR', accountId: wallet.id }));
+    await addExpense(h, f, 'alice', { description: 'Fictional dinner', amount: '160.00', payers: [{ ref: f.refs.alice }], split: equal(f.refs.alice, f.refs.bob) });
+    ok(await act(h, f, 'bob', 'ledger', { currency: 'EUR' }));
+    const acc = ok(await h.call('accounts', 'GET', { as: 'bob', query: f.q })).accounts.find((a) => a.id === wallet.id);
+    ok(await h.call('accounts', 'PATCH', { as: 'bob', query: f.q, body: { accountId: wallet.id, revision: acc.revision, visibility: 'shared', confirmShare: true } }));
+    ok(await h.call('workspaces', 'PATCH', { as: 'alice', query: { id: f.ws.id }, body: { settings: { memberEditsOthers: 'any' } } }));
+    const owed = (await entriesOf(h, f, 'eve', wallet.id)).find((t) => t.kind === 'payable');
+    // The setting lets Eve change another member's entry: its notes.
+    const noted = ok(await txPatch(h, f, 'eve', owed, { notes: 'Checked by Eve' })).transactions[0];
+    assert.equal(noted.notes, 'Checked by Eve');
+    // The shared-expense lock (N2) still wins over it: amount, reversal and deletion are refused.
+    const amount = await txPatch(h, f, 'eve', noted, { amount: '1.00' });
+    const rev = await h.call('transactions', 'POST', { as: 'eve', query: { ...f.q, action: 'reverse' }, body: { transactionId: owed.id, reason: 'Probe' } });
+    const del = await h.call('transactions', 'DELETE', { as: 'eve', query: f.q, body: { transactionId: owed.id, revision: noted.revision, reason: 'Probe' } });
+    assert.deepEqual([amount, rev, del].map((r) => [r.status, r.body.error.code]), [[409, 'shared_expense_locked'], [409, 'shared_expense_locked'], [409, 'shared_expense_locked']]);
+    assert.equal(await balanceOf(h, f, 'eve', wallet.id), '100.00');
+  });
+});
+
 describe('R1: shared-expense recording never writes to an account that is not the person\'s own private account', () => {
   // Bob records his part on his wallet (100.00) and has a spare private account (50.00). He pays a
   // 40.00 pizza shared with Alice: share 20.00, lent 20.00; wallet 100.00 − 40.00 = 60.00.
