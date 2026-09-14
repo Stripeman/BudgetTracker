@@ -186,6 +186,93 @@ try {
         await key("Enter", "Enter", 13); await sleep(300); await probe("enter-opens-dialog");
         await key("Escape", "Escape", 27); await sleep(300); await probe("escape-closes-dialog");
       }
+      // BT-004-05: a converted dropdown open in its dialog or page, at desktop light, "-dark" or
+      // "-narrow" (390 px). "pickkeys" drives the Add account dialog with REAL key presses (Escape in a
+      // list without a search box closes only the list; Tab leaves an open panel for the next field;
+      // typing searches; the next Escape closes the dialog). "pickprog" changes a picker's select from
+      // code in the real browser (value, disabled, hints, new options, an option's own text through
+      // the MutationObserver) and reports what the trigger shows. Nothing is saved.
+      const PICKS = {
+        pickacct: { route: "accounts", open: "Add account", field: "Type" },
+        pickcurrency: { route: "accounts", open: "Add account", field: "Currency" },
+        pickquick: { route: "transactions", open: "Add expense", field: "Category" },
+        pickbill: { route: "bills", open: "Add bill", field: "Repeats" },
+        pickbudget: { route: "planning", open: "Add budget", field: "Category" },
+        pickmerchant: { route: "payees", open: "Add merchant", field: "Default category" },
+        pickfilter: { route: "transactions", field: "Category", filters: true },
+        picksettings: { route: "settings", field: "Date format" },
+        pickrole: { route: "workspace", spoken: "Role for " },
+        pickgroup: { route: "group", open: "Add expense", field: "Split", workspace: "Dinner Club" },
+      };
+      const pickBase = action.replace(/-(dark|narrow)$/, "");
+      if (PICKS[pickBase] || action === "pickkeys" || action === "pickprog") {
+        const p = PICKS[pickBase] || { route: "accounts", open: "Add account" };
+        const narrow = action.endsWith("-narrow");
+        const dark = action.endsWith("-dark");
+        await cdp.send("Emulation.setDeviceMetricsOverride", { width: narrow ? 390 : 1280, height: narrow ? 844 : 900, deviceScaleFactor: 1, mobile: narrow });
+        await cdp.send("Emulation.setEmulatedMedia", { features: [{ name: "prefers-color-scheme", value: dark ? "dark" : "light" }, { name: "prefers-reduced-motion", value: "reduce" }] });
+        await cdp.send("Page.reload", { ignoreCache: true });
+        await sleep(1500);
+        if (p.workspace) {
+          await evaluate(`(() => { const s = document.querySelector('#workspace-picker'); const o = [...s.querySelectorAll('option')].find((x) => x.textContent.includes(${JSON.stringify(p.workspace)})); s.value = o.value; s.dispatchEvent(new Event('change', { bubbles: true })); })()`);
+          await sleep(1500);
+        }
+        await evaluate(`location.hash = '#/${p.route}'`);
+        await sleep(1500);
+        if (p.open) {
+          await evaluate(`[...document.querySelectorAll('.page-head button')].find((b) => b.textContent === ${JSON.stringify(p.open)}).click()`);
+          await sleep(600);
+        }
+        if (p.filters) { await evaluate("document.querySelector('.filters-box').open = true"); await sleep(300); }
+        const triggerOf = (field, spoken = "") => `(() => { const scope = document.querySelector('.modal') || document; if (${JSON.stringify(spoken)}) return [...scope.querySelectorAll('.cmdpick__trigger')].find((b) => (b.getAttribute('aria-label') || '').startsWith(${JSON.stringify(spoken)})); const l = [...scope.querySelectorAll('label')].find((x) => x.textContent === ${JSON.stringify(field)}); return l && document.getElementById(l.getAttribute('for')); })()`;
+        const state = async (label) => {
+          const r = await evaluate(`JSON.stringify((() => { const panel = document.querySelector('.cmdpick__panel'); const r = panel && panel.getBoundingClientRect(); const a = document.activeElement; return { open: !!panel, dialog: !!document.querySelector('.modal'), focus: a ? (a.className || a.tagName) : null, focusName: a ? (a.getAttribute('aria-label') || a.textContent || '').slice(0, 70) : null, rows: document.querySelectorAll('.cmdpick__opt').length, panel: r ? { left: Math.round(r.left), top: Math.round(r.top), right: Math.round(r.right), bottom: Math.round(r.bottom), width: Math.round(r.width) } : null, inside: r ? r.left >= 0 && r.top >= 0 && r.right <= innerWidth && r.bottom <= innerHeight : null, viewport: [innerWidth, innerHeight], overflowX: document.documentElement.scrollWidth > innerWidth }; })())`);
+          console.error(`${action} ${label} ${r.result.value}`);
+        };
+        const key = async (name, code, vk, extra = {}) => {
+          for (const type of ["keyDown", "keyUp"]) await cdp.send("Input.dispatchKeyEvent", { type, key: name, code, windowsVirtualKeyCode: vk, ...extra, ...(type === "keyDown" && name === "Enter" ? { text: "\r", unmodifiedText: "\r" } : {}) });
+          await sleep(250);
+        };
+        if (PICKS[pickBase]) {
+          await evaluate(`(() => { const t = ${triggerOf(p.field, p.spoken)}; t.scrollIntoView({ block: "center" }); t.click(); })()`);
+          await sleep(400);
+          await state("open");
+        } else if (action === "pickkeys") {
+          await evaluate(`${triggerOf("Type")}.focus()`);
+          await key("Enter", "Enter", 13); await state("enter-opens-list");
+          await key("ArrowDown", "ArrowDown", 40);
+          await key("Escape", "Escape", 27); await state("escape-closes-list-only");
+          await key("Enter", "Enter", 13);
+          await key("Tab", "Tab", 9); await state("tab-leaves-panel");
+          await evaluate(`${triggerOf("Currency")}.focus()`);
+          await key("Enter", "Enter", 13);
+          await cdp.send("Input.insertText", { text: "gb" });
+          await sleep(250);
+          await state("typed-gb");
+          await key("Enter", "Enter", 13);
+          const chosen = await evaluate(`${triggerOf("Currency")}.getAttribute('aria-label')`);
+          console.error(`${action} chosen ${JSON.stringify(chosen.result.value)}`);
+          await key("Escape", "Escape", 27); await state("escape-closes-dialog");
+        } else {
+          const r = await evaluate(`(async () => {
+            const t = ${triggerOf("Currency")};
+            const s = t.parentNode.querySelector('select');
+            const text = () => t.querySelector('.cmdpick__value').textContent;
+            const out = { labelFor: !!document.querySelector('label[for="' + t.id + '"]') };
+            s.value = 'CHF'; out.value = text();
+            s.disabled = true; out.disabled = t.disabled; s.disabled = false; out.enabled = !t.disabled;
+            s.setAttribute('aria-describedby', 'fictional-hint'); s.setAttribute('aria-invalid', 'true');
+            out.describedby = t.getAttribute('aria-describedby'); out.invalid = t.getAttribute('aria-invalid');
+            s.removeAttribute('aria-invalid'); out.invalidCleared = !t.hasAttribute('aria-invalid');
+            s.replaceChildren(new Option('Fictional A', 'A'), new Option('Fictional B', 'B')); out.replaced = text();
+            s.querySelector('option').textContent = 'Fictional A renamed';
+            await new Promise((r) => setTimeout(r, 100)); out.observed = text();
+            s.focus(); out.focusOnTrigger = document.activeElement === t;
+            return JSON.stringify(out);
+          })()`);
+          console.error(`${action} ${r.result.value}`);
+        }
+      }
       if (action.startsWith("wspick") && action !== "wspickkeys") {
         if (action === "wspickdark" || action === "wspicknarrow") {
           const narrow = action === "wspicknarrow";
