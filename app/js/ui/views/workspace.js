@@ -274,7 +274,11 @@ export function createView(ctx) {
       }).join("; "),
     }));
     form.render({ settings: list, history, intro: list.some((s) => s.canChange) ? INTRO_CHANGE : INTRO_READ });
+    // Opened from a link that names a setting (the Shared expenses "off" page, finding 9): focus on it,
+    // with its group open, once.
+    if (!linkedFocusDone && ctx.params && ctx.params.setting) linkedFocusDone = form.focusSetting(ctx.params.setting);
   }
+  let linkedFocusDone = false;
 
   // Workspace category colours (BT-011-04): owners and managers choose them; everyone sees them.
   // Each member may still pick personal colours in My settings.

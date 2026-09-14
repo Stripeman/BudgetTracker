@@ -481,6 +481,53 @@ describe("Settings card (shared by the workspace and group settings; UX review o
     assert.match(never.root.textContent, /Start it on 2026-08-16 or later\./);
   });
 
+  test("finding 9: the off page offers a way back — owners and managers open the setting, others are told whom to ask; a site switch-off offers neither", () => {
+    const offPage = (role, site = null) => {
+      const listeners = new Set();
+      const state = {
+        auth: { status: "ready", user: { name: "Fictional Person" } }, preferences: null, site, app: { version: "0.0.0-test", environment: "test" },
+        workspaces: [{ id: "ws_1", name: "Fictional household", kind: "household", status: "active", role, settingValues: { sharedExpenses: false } }],
+        selectedWorkspaceId: "ws_1",
+      };
+      const store = { getState: () => state, subscribe(fn) { listeners.add(fn); return () => listeners.delete(fn); },
+        actions: { refreshGroup: async () => {}, refreshTransactions: async () => {}, refreshBills: async () => {}, refreshForecast: async () => {}, savePreferences: async () => ({ ok: true }), selectWorkspace: async () => {} } };
+      const theme = createThemeController({ root: { setAttribute() {} }, storage: { getItem: () => null, setItem() {} }, media: { matches: false, addEventListener() {} } });
+      const mountPoint = document.createElement("div");
+      dom.body.appendChild(mountPoint);
+      createShell({ mountPoint, store, router: { current: () => ({ id: "group", params: {} }), subscribe() {}, navigate() {} }, theme, api: {} }).render();
+      const main = mountPoint.querySelector("main");
+      const link = main.querySelectorAll("a").find((a) => a.textContent === "Open Workspace settings");
+      const text = main.textContent;
+      dom.body.removeChild(mountPoint);
+      return { href: link ? link.getAttribute("href") : null, text };
+    };
+    for (const role of ["owner", "manager"]) {
+      const page = offPage(role);
+      assert.equal(page.href, "#/workspace?setting=sharedExpenses", role);
+      assert.doesNotMatch(page.text, /Ask an owner or manager/, role);
+    }
+    for (const role of ["member", "viewer"]) {
+      const page = offPage(role);
+      assert.equal(page.href, null, role);
+      assert.match(page.text, /Ask an owner or manager to turn it on\./, role);
+    }
+    const site = offPage("owner", { modules: { sharedExpenses: false } });
+    assert.equal(site.href, null, "the workspace setting cannot turn it back on");
+    assert.match(site.text, /turned off for this site by the site administrator/);
+    assert.doesNotMatch(site.text, /Ask an owner or manager/);
+  });
+
+  test("finding 9: the Workspace page opened from that link puts focus on the setting and opens its group", async () => {
+    const { ctx, state } = page();
+    const view = createWorkspace({ ...ctx, params: { setting: "sharedExpenses" } });
+    dom.body.appendChild(view.element);
+    view.update(state);
+    await settle();
+    const card = settingsCard(view.element);
+    assert.equal(bodyOf(card, "Shared expenses").hidden, false, "its group is open");
+    assert.ok(document.activeElement === triggerFor(pickerNamed(card, "Use Shared expenses in this workspace")), "focus is on the setting");
+  });
+
   test("settingText writes each kind of value in words", () => {
     const [period, , days, shared, perDay, modes] = LIST(true);
     assert.equal(settingText(period, "biweekly"), "Every two weeks");

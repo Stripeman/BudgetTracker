@@ -43,13 +43,22 @@ const VIEWS = { dashboard, group, transactions, bills, planning, accounts, payee
 const SHARED_EXPENSES_OFF = {
   createView(ctx) {
     const notice = el("p", { class: "notice" });
+    // A way back (UX/accessibility review of eefd115, finding 9): owners and managers go straight to the
+    // setting; everyone else is told whom to ask. A site switch-off is not the workspace's to undo.
+    const wayBack = el("div", { class: "row" });
     const view = {
-      element: el("section", {}, [el("div", { class: "page-head" }, [el("h1", { text: "Shared expenses" })]), notice]),
+      element: el("section", {}, [el("div", { class: "page-head" }, [el("h1", { text: "Shared expenses" })]), notice, wayBack]),
       update(state) {
         const site = state && state.site;
-        notice.textContent = site && site.modules && site.modules.sharedExpenses === false
+        const siteOff = !!(site && site.modules && site.modules.sharedExpenses === false);
+        const ws = ((state && state.workspaces) || []).find((w) => w.id === state.selectedWorkspaceId);
+        const manages = !!ws && (ws.role === "owner" || ws.role === "manager");
+        notice.textContent = siteOff
           ? "Shared expenses are turned off for this site by the site administrator. Nothing recorded has been removed."
-          : "Shared expenses are turned off in this workspace. Nothing recorded has been removed; an owner or manager can turn them on again in Workspace settings.";
+          : "Shared expenses are turned off in this workspace. Nothing recorded has been removed.";
+        mount(wayBack, siteOff ? null : manages
+          ? el("a", { class: "btn btn--primary", href: "#/workspace?setting=sharedExpenses", text: "Open Workspace settings" })
+          : el("p", { class: "muted", text: "Ask an owner or manager to turn it on." }));
       },
     };
     view.update(ctx.state);
