@@ -549,6 +549,32 @@ describe('B per person: "Can confirm payments" for each member (Terry, 2026-09-1
   });
 });
 
+describe('L3 (security recheck of 47617b5): a transfer names the other account only to someone who may see it', () => {
+  test('on the shared side of Bob\'s transfer to his private wallet, Alice, Carol, Eve and Frank get no account id; Bob does, and so does Eve once he lets her see the wallet', async () => {
+    const h = harness();
+    const f = await fixture(h, { kind: 'household' });
+    const joint = await account(h, f, 'alice', { name: 'Joint', type: 'checking', currency: 'EUR', visibility: 'shared', openingBalance: '1000.00' });
+    const wallet = await account(h, f, 'bob', { name: 'Bob Wallet', type: 'cash', currency: 'EUR', openingBalance: '100.00' });
+    const [out] = ok(await txPost(h, f, 'bob', { accountId: joint.id, kind: 'transfer', amount: '50.00', transfer: { toAccountId: wallet.id } }), 201).transactions;
+    const counterpartFor = async (w) => {
+      const t = (await entriesOf(h, f, w, joint.id)).find((x) => x.id === out.id);
+      assert.ok(t, `${typeof w === 'string' ? w : w.name} sees the Joint's leg`);
+      return t.counterpartAccountId;
+    };
+    assert.deepEqual([await counterpartFor('alice'), await counterpartFor('carol'), await counterpartFor('eve'), await counterpartFor(FRANK)], [null, null, null, null]);
+    assert.equal(await counterpartFor('bob'), wallet.id);
+    // Nor does the response to creating it, or any list without an account filter, name the wallet to others.
+    for (const w of ['alice', 'carol', 'eve', FRANK]) {
+      const all = ok(await h.call('transactions', 'GET', { ...who(w), query: f.q })).transactions;
+      assert.equal(JSON.stringify(all).includes(wallet.id), false, `${typeof w === 'string' ? w : w.name}: no trace of the wallet`);
+    }
+    // Bob lets Eve see the wallet's balance: now the other account may be named to her.
+    ok(await h.call('grants', 'POST', { as: 'bob', query: f.q, body: { accountId: wallet.id, memberId: f.mid('Eve'), capabilities: ['view-balances'] } }), 201);
+    assert.equal(await counterpartFor('eve'), wallet.id);
+    assert.equal(await counterpartFor('alice'), null);
+  });
+});
+
 describe('M1 (security recheck of 47617b5): several per-person rights saved in one request are all kept', () => {
   const setPerson = (h, f, w, overrides, reason) => setSettings(h, f, w, { confirmOverrides: overrides }, reason);
   const stored = async (h, f) => (await h.storage.getJson(`workspaces/${f.ws.id}/workspace.json`)).value;

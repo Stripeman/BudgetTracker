@@ -9,7 +9,7 @@
 const { badRequest } = require('./http');
 const money = require('./money');
 const fields = require('./fields');
-const { capabilitiesFor } = require('./authz');
+const { capabilitiesFor, can } = require('./authz');
 const icons = require('./icons');
 
 const ACCOUNT_TYPES = Object.freeze(['checking', 'savings', 'cash', 'credit-card', 'loan', 'mortgage',
@@ -220,6 +220,10 @@ function validateSplits(splits, amountMinor, currency, doc) {
 
 function transactionView(doc, t, principal, now, lookups) {
   const account = lookups.accounts.get(t.accountId);
+  // The other account of a transfer is identified only to someone who may see it, as a bill's
+  // destination is (SEC-B12; security recheck of 47617b5, L3); the client then says "another account".
+  const other = t.counterpartAccountId ? (doc.accounts || []).find((a) => a.id === t.counterpartAccountId) : null;
+  const counterpartAccountId = other && can(doc, principal, other, 'view-balances', now) ? other.id : null;
   return {
     id: t.id, accountId: t.accountId, accountName: account ? account.name : '', kind: t.kind,
     amountMinor: t.amountMinor, amount: money.toDecimal(t.amountMinor, t.currency), currency: t.currency,
@@ -227,7 +231,7 @@ function transactionView(doc, t, principal, now, lookups) {
     payeeId: t.payeeId || null, payeeName: t.payeeId && lookups.payees.get(t.payeeId) ? lookups.payees.get(t.payeeId).name : '',
     categoryId: t.categoryId || null, splits: (t.splits || []).map((s) => ({ ...s, amount: money.toDecimal(s.amountMinor, t.currency) })),
     tags: t.tags || [], notes: t.notes || '', responsibleRef: t.responsibleRef || null,
-    transferId: t.transferId || null, counterpartAccountId: t.counterpartAccountId || null,
+    transferId: t.transferId || null, counterpartAccountId,
     // A hand-entered amount owed and its matching share, recorded and corrected together (BT-009).
     owedPairId: t.owedPairId || null,
     links: t.links || {}, createdAt: t.createdAt, updatedAt: t.updatedAt || null, revision: t.revision || 1,
