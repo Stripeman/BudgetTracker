@@ -139,12 +139,25 @@ async function patch(ctx, req) {
     }
     if (body.visibility !== undefined && body.visibility !== account.visibility) {
       if (body.visibility !== 'shared') throw badRequest('A shared account cannot be made private; create a new private account instead.', 'visibility_change');
-      if (body.confirmShare !== true) throw badRequest('Sharing exposes this account\'s balance and full history to every workspace member. Confirm with confirmShare: true.', 'confirm_required');
+      if (body.confirmShare !== true) throw badRequest('Sharing exposes this account\'s balance and full history to every workspace member. Your shared-expense recording on this account stops; choose another private account in Shared expenses. Confirm with confirmShare: true.', 'confirm_required');
       account.visibility = 'shared';
       account.sharedAt = ctx.nowIso();
       account.sharedBy = member.subject;
       account.ownerSubject = null;
       for (const g of doc.grants || []) if (g.resourceId === account.id && g.revokedAt === null) { g.revokedAt = ctx.nowIso(); g.revokedBy = member.subject; }
+      // Shared expenses are recorded only on their owner's own private account (security recheck R1):
+      // every link to this account ends in this write, audited to its owner only. What is already on
+      // the account stays as recorded.
+      const at = ctx.nowIso();
+      for (const l of doc.groupLedgers || []) {
+        if (l.accountId !== account.id || l.endedAt) continue;
+        l.endedAt = at;
+        l.endReason = 'The account was shared';
+        audit.record(doc, { actor: member.subject, action: 'group.ledger.end', targetType: 'group-ledger', targetId: l.id, scope: `self:${l.subject}`, at });
+      }
+      for (const rec of [...(doc.groupExpenses || []), ...(doc.groupSettlements || [])]) {
+        for (const l of rec.ledgerLinks || []) if (l.accountId === account.id && !l.endedAt) { l.endedAt = at; l.endReason = 'The account was shared'; }
+      }
       changed.push('visibility');
     }
     if (!changed.length) return { account: ledger.accountView(doc, ctx.principal, account, now) };

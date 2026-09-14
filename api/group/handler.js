@@ -198,9 +198,19 @@ const NOTES = Object.freeze({
 function syncRecord(ctx, doc, member, rec, type, { reason, strict }) {
   const now = ctx.now();
   const nowIso = ctx.nowIso();
+  // Nothing is ever written to an account that is not the person's own private account (security
+  // recheck R1). A link whose account stopped being theirs (for example shared) needs another account.
+  const link = groupLink(doc, member.subject, rec.currency);
+  if (link && !ownPrivateAccount(doc, link.accountId, member.subject)) {
+    if (strict) throw conflict('The account your shared expenses are recorded on is no longer your own private account. Choose another private account of yours in Shared expenses.', 'account_not_own');
+    return 'not_own';
+  }
+  const live = liveEntries(doc, rec, type, member.subject);
+  // Entries already on an account that is no longer theirs are real cash history: kept exactly as
+  // recorded — never reversed, and never recorded again on another account.
+  if (live.some((t) => !ownPrivateAccount(doc, t.accountId, member.subject))) return 'same';
   const targetId = targetOf(doc, rec, member.subject);
   const desired = targetId ? groups.desiredEntries(rec, type, selfRef(member)) : [];
-  const live = liveEntries(doc, rec, type, member.subject);
   const onTarget = live.filter((t) => t.accountId === targetId);
   const elsewhere = live.filter((t) => t.accountId !== targetId);
   const matches = sameEntries(onTarget, desired);
@@ -316,6 +326,15 @@ function myLedger(ctx, doc, member, rec, type, entriesFor = entryIndex(doc, memb
   if (!live.length && !desired.length) return null;
   const now = ctx.now();
   const sees = (id) => { const a = (doc.accounts || []).find((x) => x.id === id); return a && !a.deletedAt && capabilitiesFor(doc, ctx.principal, a, now).size > 0 ? a : null; };
+  // Kept as recorded on an account that is no longer their own private account (R1): nothing to update.
+  const foreign = live.find((t) => !ownPrivateAccount(doc, t.accountId, member.subject));
+  if (foreign) {
+    const where = sees(foreign.accountId);
+    return {
+      accountId: where ? where.id : null, accountName: where ? where.name : null, accountUnavailable: !where, needsReview: false, kept: true,
+      entries: live.filter((t) => sees(t.accountId)).map((t) => ({ id: t.id, kind: t.kind, amount: money.toDecimal(t.amountMinor, t.currency) })),
+    };
+  }
   const account = targetId ? sees(targetId) : null;
   return {
     accountId: account ? account.id : null, accountName: account ? account.name : null, accountUnavailable: !!targetId && !account,
@@ -338,7 +357,10 @@ function myLedgers(ctx, doc, member, entriesFor) {
         if (m && m.needsReview) reviewCount += 1;
       }
     }
-    return { currency: l.currency, accountId: visible ? a.id : null, accountName: visible ? a.name : null, accountUnavailable: !visible, since: l.linkedAt, reviewCount };
+    // A link whose account stopped being its owner's private account writes nothing until they choose
+    // another one (R1); it counts as unavailable so the choice is offered again.
+    const own = !!ownPrivateAccount(doc, l.accountId, member.subject);
+    return { currency: l.currency, accountId: visible ? a.id : null, accountName: visible ? a.name : null, accountUnavailable: !visible || !own, needsAccount: !own, since: l.linkedAt, reviewCount };
   });
 }
 

@@ -146,3 +146,77 @@ describe('N2: entries recorded from Shared expenses are changed only there', () 
   });
 });
 
+describe('R1: shared-expense recording never writes to an account that is not the person\'s own private account', () => {
+  // Bob records his part on his wallet (100.00) and has a spare private account (50.00). He pays a
+  // 40.00 pizza shared with Alice: share 20.00, lent 20.00; wallet 100.00 − 40.00 = 60.00.
+  async function bobsWallet() {
+    const h = harness();
+    const f = await fixture(h);
+    const wallet = await account(h, f, 'bob', { name: 'Bob Wallet', type: 'cash', currency: 'EUR', openingBalance: '100.00' });
+    const spare = await account(h, f, 'bob', { name: 'Bob Spare', type: 'cash', currency: 'EUR', openingBalance: '50.00' });
+    const pizza = await addExpense(h, f, 'bob', { description: 'Fictional pizza', amount: '40.00', payers: [{ ref: f.refs.bob }], split: equal(f.refs.bob, f.refs.alice), ledger: { accountId: wallet.id } });
+    assert.equal(await balanceOf(h, f, 'bob', wallet.id), '60.00');
+    return { h, f, wallet, spare, pizza };
+  }
+  const shareWallet = async (x) => {
+    const acc = ok(await x.h.call('accounts', 'GET', { as: 'bob', query: x.f.q })).accounts.find((a) => a.id === x.wallet.id);
+    return ok(await x.h.call('accounts', 'PATCH', { as: 'bob', query: x.f.q, body: { accountId: x.wallet.id, revision: acc.revision, visibility: 'shared', confirmShare: true } }));
+  };
+  const taxi = (x) => addExpense(x.h, x.f, 'alice', { description: 'Fictional taxi', amount: '30.00', payers: [{ ref: x.f.refs.alice }], split: equal(x.f.refs.alice, x.f.refs.bob) });
+
+  test('sharing the account ends the link in the same write, audited to its owner only; what is there stays as recorded', async () => {
+    const x = await bobsWallet();
+    await shareWallet(x);
+    const { value: doc } = await x.h.storage.getJson(`workspaces/${x.f.ws.id}/workspace.json`);
+    assert.equal(doc.groupLedgers.length, 1);
+    assert.ok(doc.groupLedgers[0].endedAt, 'ended, kept');
+    assert.match(doc.groupLedgers[0].endReason, /shared/i);
+    assert.deepEqual(doc.audit.filter((a) => a.action === 'group.ledger.end').map((a) => [a.scope, a.targetId]), [['self:google:g-bob', doc.groupLedgers[0].id]]);
+    const v = await view(x.h, x.f, 'bob');
+    assert.equal(v.myLedgers, undefined);
+    // The pizza is real cash history on the wallet: kept as recorded, nothing to update.
+    assert.deepEqual([v.expenses[0].myLedger.kept, v.expenses[0].myLedger.needsReview], [true, false]);
+    assert.equal(await balanceOf(x.h, x.f, 'alice', x.wallet.id), '60.00');
+  });
+
+  test('after sharing, others\' changes and the owner\'s updates write nothing there; relinking to another private account works', async () => {
+    const x = await bobsWallet();
+    await shareWallet(x);
+    const before = (await entriesOf(x.h, x.f, 'alice', x.wallet.id)).length;
+    // Alice adds a 30.00 taxi shared with Bob (his share 15.00, owed) and corrects the pizza to 50.00.
+    await taxi(x);
+    const p = (await view(x.h, x.f)).expenses.find((e) => e.id === x.pizza.id);
+    ok(await G(x.h, x.f, 'alice', 'PATCH', { body: { expenseId: x.pizza.id, revision: p.revision, amount: '50.00', payers: [{ ref: x.f.refs.bob }], split: equal(x.f.refs.bob, x.f.refs.alice), reason: 'Receipt says 50' } }));
+    ok(await act(x.h, x.f, 'bob', 'ledger', { currency: 'EUR' }));
+    ok(await act(x.h, x.f, 'bob', 'ledger', { expenseId: x.pizza.id }));
+    assert.equal((await entriesOf(x.h, x.f, 'alice', x.wallet.id)).length, before, 'nothing written to the shared wallet');
+    assert.equal(await balanceOf(x.h, x.f, 'alice', x.wallet.id), '60.00');
+    // The shared wallet cannot be linked again; the spare can, and takes only what is not recorded
+    // anywhere yet: the taxi share. Spare: cash 50.00 (no money moved), spending 15.00, owes 15.00.
+    assert.equal((await act(x.h, x.f, 'bob', 'ledger', { currency: 'EUR', accountId: x.wallet.id })).body.error.code, 'not_own_account');
+    ok(await act(x.h, x.f, 'bob', 'ledger', { currency: 'EUR', accountId: x.spare.id }));
+    const s = await summaryOf(x.h, x.f, 'bob', x.spare.id);
+    assert.deepEqual([await balanceOf(x.h, x.f, 'bob', x.spare.id), s.gross, s.payables, s.receivable], ['50.00', '15.00', '15.00', '-15.00']);
+    assert.equal((await entriesOf(x.h, x.f, 'alice', x.wallet.id)).length, before);
+  });
+
+  test('a link whose account stopped being its owner\'s private account writes nothing and asks for another account', async () => {
+    const x = await bobsWallet();
+    // The wallet becomes shared without the link being ended (data from before this rule).
+    const name = `workspaces/${x.f.ws.id}/workspace.json`;
+    const { value: doc } = await x.h.storage.getJson(name);
+    const w = doc.accounts.find((a) => a.id === x.wallet.id);
+    w.visibility = 'shared';
+    w.ownerSubject = null;
+    await x.h.storage.putJson(name, doc);
+    const t = await taxi(x);
+    const before = (await entriesOf(x.h, x.f, 'alice', x.wallet.id)).length;
+    ok(await act(x.h, x.f, 'bob', 'ledger', { currency: 'EUR' }));
+    const strict = await act(x.h, x.f, 'bob', 'ledger', { expenseId: t.id });
+    assert.equal(strict.status, 409);
+    assert.equal(strict.body.error.code, 'account_not_own');
+    assert.equal((await entriesOf(x.h, x.f, 'alice', x.wallet.id)).length, before, 'nothing written');
+    assert.equal((await view(x.h, x.f, 'bob')).myLedgers[0].needsAccount, true);
+  });
+});
+
