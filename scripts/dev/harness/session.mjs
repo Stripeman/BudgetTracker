@@ -23,6 +23,8 @@ const KEYS = {
   Home: { key: "Home", code: "Home", windowsVirtualKeyCode: 36 },
   End: { key: "End", code: "End", windowsVirtualKeyCode: 35 },
   Space: { key: " ", code: "Space", windowsVirtualKeyCode: 32, text: " " },
+  PageDown: { key: "PageDown", code: "PageDown", windowsVirtualKeyCode: 34 },
+  PageUp: { key: "PageUp", code: "PageUp", windowsVirtualKeyCode: 33 },
 };
 
 function keyDef(name) {
@@ -256,7 +258,8 @@ class Session {
     const { nodes } = await this.cdp.send("Accessibility.getFullAXTree");
     const prop = (n, name) => { const p = (n.properties || []).find((x) => x.name === name); return p && p.value ? p.value.value : undefined; };
     return nodes.filter((n) => !n.ignored).map((n) => ({
-      role: n.role ? n.role.value : "", name: n.name ? n.name.value : "", focused: prop(n, "focused") === true, expanded: prop(n, "expanded"), modal: prop(n, "modal"),
+      role: n.role ? n.role.value : "", name: n.name ? n.name.value : "", value: n.value ? n.value.value : "", description: n.description ? n.description.value : "",
+      focused: prop(n, "focused") === true, expanded: prop(n, "expanded"), modal: prop(n, "modal"), invalid: prop(n, "invalid"), required: prop(n, "required"),
     }));
   }
 
