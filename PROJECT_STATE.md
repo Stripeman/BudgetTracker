@@ -21,7 +21,12 @@ Terry asked (2026-09-14) for one list of what he still has to answer or do, so h
 - Production release steps when everything passes (see "Exact next steps"): remove the merged agent worktrees or use a fresh clone, add the Production redirect URI, run the Production deploy, the B3 key drill and move the escrow file offline, decide the Production failure alert.
 - Optional: a non-admin GitHub identity for agents (branch protection is not enforced against his admin token).
 
+**Requested features not yet built**
+- **Staging link in the account (profile) menu (Terry, 2026-09-14):** "include … a link to staging!! so i can get to it" / "make it a field that can be updated" / "make the link in the users drop down profile menu actually. but be sure it can be edited and looks good". Plan: a "Staging (preview)" link in the header account menu that opens the staging site in a new tab, with an Edit control beside it to change the address (https only, validated like rich-text links, saved as a personal preference and audited like other preferences); styled like the menu's other items in light and dark.
+
 **Answered (kept for the record)**
+- 2026-09-14 — **First Production release: now**, with the known issues avoided until the next release (do not pick "Owed to others" by hand; do not use "Also record my part on my own account"). PR #1 merged by the agent as `ebc45f8` (one-time authorization; tree identical to the CI-green `59c23d0`).
+- 2026-09-14 — **Later releases:** standing permission for the agent to merge a release PR into `main` after all checks and reviews pass; Terry still runs every Production deploy himself.
 - 2026-09-14 — Payer confirming their own payment / single-owner contact payments (S5): a group setting "Anyone in the group can confirm payments", default ON, with an explanation; OFF keeps the strict rules.
 - 2026-09-14 — Hand entry of "Owed to others" and "Repayment" (R2/N1): a group setting, default "Created by Shared expenses only", with an explanation; when allowed, an owed-to-others entry is always paired with its share as spending.
 - 2026-09-14 — No-money-moved lines (N3): an icon of two parallel lines without heads (|==|) beside the words.
