@@ -3,7 +3,13 @@
 // own browser on the Workspace page; Bob (member), open in his own browser at the same time, loses
 // access; Alice brings it back from "Deleted workspaces" in My settings; Bob regains access. The
 // underlying archive is recoverable (BT-001-05): nothing recorded is ever erased.
-import { createWorkspace, firstRecord } from "../harness/fixtures.mjs";
+//
+// Reuses the seeded "Fictional Household" (alice owner, bob already a member) rather than creating a
+// new workspace: workspace creation is bounded to 10 a day per person (SEC-R5), and a full `npm run e2e`
+// runs every scenario against the same isolated seed in one day, several of which already create a
+// workspace as alice. This scenario runs last and brings the household back before it ends, so the
+// household is exactly as the other scenarios left it by the time the run finishes.
+import { firstRecord } from "../harness/fixtures.mjs";
 
 export const name = "deleteworkspace";
 export const title = "Delete workspace (owner) and Bring back: Bob loses access while it is deleted and regains it once Alice brings it back";
@@ -11,13 +17,16 @@ export const needsBrowser = true;
 
 const pickerOptions = (s) => s.evaluate("[...document.querySelectorAll('#workspace-picker option')].map((o) => o.textContent)");
 const DELETED_CARD = 'section[aria-labelledby="set-deleted"]';
+const NAME = "Fictional Household";
 
 export async function run(h, t) {
-  const W = await createWorkspace(h, { name: "E2E Delete Household", kind: "household", members: { bob: "member" } });
-  const q = W.q;
   const api = (u) => h.api(u);
-  const wallet = firstRecord(await api("alice").ok("accounts", { method: "POST", query: q, body: { name: "E2E Delete Joint", type: "checking", currency: "EUR", visibility: "shared", openingBalance: "100.00" } }));
+  const found = (await api("alice").ok("workspaces")).workspaces.find((w) => w.name === NAME);
+  if (!found) { t.skip("deleteworkspace", `the seeded workspace "${NAME}" was not found`); return; }
+  const q = { workspaceId: found.id };
+  const wallet = firstRecord(await api("alice").ok("accounts", { method: "POST", query: q, body: { name: "E2E Delete Wallet", type: "cash", currency: "EUR", visibility: "shared", openingBalance: "50.00" } }));
   await api("bob").ok("transactions", { method: "POST", query: q, body: { accountId: wallet.id, kind: "expense", amount: "4.50", notes: "E2E before delete" } });
+  const W = { id: found.id, name: NAME, q };
   t.note(`workspace ${W.name}: ${W.id}`);
 
   const b = await h.browsers(["alice", "bob"], { prefix: "delete-" });
