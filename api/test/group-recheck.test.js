@@ -302,6 +302,63 @@ describe('B: "Anyone in the group can confirm payments"', () => {
   });
 });
 
+describe('S4 residual: a create-new restore carries nobody else\'s identity on any record', () => {
+  test('other members\' subjects, member ids and private account ids appear nowhere in the new workspace, and grant nothing if they join it', async () => {
+    const h = harness();
+    const f = await fixture(h, { kind: 'household' });
+    const q = f.q;
+    const joint = await account(h, f, 'alice', { name: 'Joint', type: 'checking', currency: 'EUR', visibility: 'shared', openingBalance: '1000.00' });
+    const wallet = await account(h, f, 'bob', { name: 'Bob Wallet', type: 'cash', currency: 'EUR', openingBalance: '100.00' });
+    // Bob's entry on the Joint, corrected by Frank (a manager).
+    const [bobsEntry] = ok(await txPost(h, f, 'bob', { accountId: joint.id, kind: 'expense', amount: '12.00', notes: 'Fictional milk' }), 201).transactions;
+    ok(await txPatch(h, f, FRANK, bobsEntry, { notes: 'Fictional oat milk' }));
+    // A shared merchant Frank added and changed; a bill for which Bob is responsible; a shared budget.
+    const bakery = ok(await h.call('payees', 'POST', { user: FRANK, query: q, body: { name: 'Fictional Bakery', visibility: 'shared' } }), 201).payee;
+    ok(await h.call('payees', 'PATCH', { user: FRANK, query: q, body: { payeeId: bakery.id, revision: bakery.revision, icon: 'cart' } }));
+    ok(await h.call('recurring', 'POST', { user: FRANK, query: q, body: { name: 'Fictional rent', billType: 'housing', accountId: joint.id, amount: '800.00', schedule: { freq: 'monthly', startDate: '2026-10-01' }, responsibleRef: f.refs.bob } }), 201);
+    const cat = ok(await h.call('categories', 'GET', { as: 'alice', query: q })).categories.find((c) => c.type !== 'income' && !c.archived);
+    ok(await h.call('budgets', 'POST', { user: FRANK, query: q, body: { name: 'Fictional food', scope: 'shared', currency: 'EUR', startDate: '2026-01-01', lines: [{ categoryId: cat.id, amount: '300.00' }] } }), 201);
+    // Frank edits the shared contact and renames a category; Frank corrects a shared expense Alice paid
+    // for Alice and Dana, and changes a group setting.
+    ok(await h.call('contacts', 'PATCH', { user: FRANK, body: { scope: 'workspace', workspaceId: f.ws.id, contactId: f.dana.id, email: 'dana@example.com', reason: 'New email' } }));
+    ok(await h.call('categories', 'PATCH', { user: FRANK, query: q, body: { categoryId: cat.id, name: 'Fictional groceries' } }));
+    const e = await addExpense(h, f, 'alice', { description: 'Fictional picnic', amount: '20.00', payers: [{ ref: f.refs.alice }], split: equal(f.refs.alice, f.refs.dana) });
+    ok(await G(h, f, FRANK, 'PATCH', { body: { expenseId: e.id, revision: e.revision, description: 'Fictional picnic (park)', reason: 'Clearer' } }));
+    ok(await setSettings(h, f, FRANK, { anyoneConfirms: false }, 'Strict for now'));
+    // Bob records the group on his private wallet.
+    ok(await act(h, f, 'bob', 'ledger', { currency: 'EUR', accountId: wallet.id }));
+    h.clock.advance(60000);
+    const archiveId = ok(await h.call('backups', 'POST', { as: 'alice', query: q, body: {} }), 201).archive.archiveId;
+    h.clock.advance(60000);
+    const pv = ok(await h.call('restore', 'POST', { as: 'alice', query: { action: 'preview' }, body: { workspaceId: f.ws.id, archiveId, mode: 'create-new' } }));
+    assert.equal(pv.canExecute, true, JSON.stringify(pv.blockers));
+    const created = ok(await h.call('restore', 'POST', { as: 'alice', query: { action: 'execute' }, body: { workspaceId: f.ws.id, archiveId, mode: 'create-new' } }), 201).workspace;
+    const { value: doc } = await h.storage.getJson(`workspaces/${created.id}/workspace.json`);
+    const text = JSON.stringify(doc);
+    for (const [label, secret] of [
+      ['Bob\'s subject', 'google:g-bob'], ['Frank\'s subject', 'google:g-frank'], ['Carol\'s subject', 'google:g-carol'], ['Eve\'s subject', 'google:g-eve'],
+      ['Bob\'s member id', f.mid('Bob')], ['Frank\'s member id', f.mid('Frank')], ['Carol\'s member id', f.mid('Carol')], ['Eve\'s member id', f.mid('Eve')],
+      ['Bob\'s wallet', wallet.id],
+    ]) assert.equal(text.includes(secret), false, label);
+    assert.ok(text.includes('google:g-alice'), 'the restorer keeps her own identity');
+    // Carried records are still there: Bob's entry on the Joint, the merchant, the bill, the budget,
+    // the shared expense and the setting.
+    assert.ok(doc.transactions.some((t) => t.id === bobsEntry.id));
+    assert.deepEqual([doc.payees.some((p) => p.id === bakery.id), doc.recurring.length, doc.budgets.length, doc.groupExpenses.length], [true, 1, 1, 1]);
+    // If Bob joins the restored workspace, nothing of old counts as his: his old entry is not his, he
+    // cannot edit it as a member, and its history shows a former member.
+    const nq = { workspaceId: created.id };
+    const inv = ok(await h.call('invitations', 'POST', { as: 'alice', query: nq, body: { email: USERS.bob.email, role: 'member' } }), 201);
+    ok(await h.call('invitations', 'POST', { as: 'bob', query: { action: 'accept' }, body: { workspaceId: created.id, token: inv.token } }));
+    const seen = ok(await h.call('transactions', 'GET', { as: 'bob', query: nq })).transactions.find((t) => t.id === bobsEntry.id);
+    assert.equal(seen.createdBySelf, false);
+    const edit = await h.call('transactions', 'PATCH', { as: 'bob', query: nq, body: { transactionId: seen.id, revision: seen.revision, notes: 'Mine again?' } });
+    assert.equal(edit.status, 403);
+    const hist = ok(await h.call('transactions', 'GET', { as: 'alice', query: { ...nq, action: 'history', transactionId: seen.id } }));
+    assert.equal(hist.createdBy, 'Former member');
+  });
+});
+
 describe('C: "Owed-to-others and repayment entries"', () => {
   const MANUAL = ['expense', 'income', 'transfer', 'refund', 'fee', 'reimbursement', 'advance', 'adjustment', 'interest'];
   const kindsOffered = async (h, f) => ok(await h.call('transactions', 'GET', { as: 'alice', query: f.q })).entryKinds;
