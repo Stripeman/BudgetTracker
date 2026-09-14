@@ -7,6 +7,7 @@ import { test, describe, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import { installDom, DomEvent } from "./domdouble.js";
 import { createWorkspacePicker, workspaceMarkerFor } from "../js/ui/workspacepicker.js";
+import { spokenOf } from "./pickerassert.js";
 
 let dom;
 beforeEach(() => { dom = installDom(); });
@@ -99,7 +100,12 @@ describe("BT-004-04 the trigger", () => {
     const badge = picker.element.querySelector(".cmdpick__badge").querySelector(".people__badge");
     assert.equal(badge.textContent, "M");
     assert.equal(badge.getAttribute("aria-label"), "Manager");
-    assert.equal(trigger(picker).getAttribute("aria-label"), "Workspace: Shared flat — Manager. Search and choose.");
+    // A combobox named by the visible "Workspace" label, its value spoken with the exact role
+    // (a11y review finding 6); the badge itself is hidden from assistive technology on the trigger.
+    assert.equal(trigger(picker).getAttribute("role"), "combobox");
+    // Its own aria-label, in ordinary case: the visible header label is drawn in capitals.
+    assert.equal(trigger(picker).getAttribute("aria-label"), "Workspace");
+    assert.equal(spokenOf(trigger(picker)), "Workspace: Shared flat — Manager. Search and choose.");
   });
 });
 

@@ -94,14 +94,17 @@ export async function run(h, t) {
   // ---- 2. Bob reports paying Alice 30.00 ---------------------------------------------------------
   await b.bob.click({ role: "button", name: /^Record payment of .*30\.00 from You to Alice Fictional$/ });
   await b.bob.waitFor("!!document.querySelector('.modal')", { what: "the Record a payment dialog" });
+  // The From and To triggers are comboboxes named by their labels; the person chosen is their value,
+  // the visually hidden text a screen reader hears (picker review, BT-004-07).
+  const pickerValue = (label) => b.bob.evaluate(`(() => { const l = [...document.querySelectorAll('.modal label')].find((x) => x.textContent === ${JSON.stringify(label)}); const t = l && document.getElementById(l.getAttribute('for')); const v = t && t.querySelector('.cmdpick__spoken'); return v ? v.textContent : null; })()`);
   const preset = {
-    from: (await b.bob.locate({ css: ".cmdpick__trigger", label: "From", scope: ".modal" })).name,
-    to: (await b.bob.locate({ css: ".cmdpick__trigger", label: "To", scope: ".modal" })).name,
+    from: await pickerValue("From"),
+    to: await pickerValue("To"),
     amount: (await b.bob.locate({ label: "Amount (EUR)", scope: ".modal" })).value,
   };
   t.check("bob: the suggested payment opens prefilled from Bob to Alice for 30.00", {
     expected: { from: true, to: true, amount: "30.00" },
-    actual: { from: preset.from.startsWith("From: Bob Fictional (you)"), to: preset.to.startsWith("To: Alice Fictional"), amount: preset.amount },
+    actual: { from: String(preset.from).startsWith("Bob Fictional (you)"), to: String(preset.to).startsWith("Alice Fictional"), amount: preset.amount },
   });
   await b.bob.shot("3-record-payment-dialog");
   await b.bob.click({ role: "button", name: "Record payment", scope: ".modal" });

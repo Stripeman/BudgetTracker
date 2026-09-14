@@ -75,6 +75,16 @@ class Node {
     this.childNodes.push(child);
     return child;
   }
+  // Inserts before `ref`, or at the end when `ref` is null, as in the DOM (the command picker puts its
+  // search row back before its list when a list grows long, UX review U2).
+  insertBefore(child, ref) {
+    if (child.parentNode) child.parentNode.removeChild(child);
+    child.parentNode = this;
+    const at = ref ? this.childNodes.indexOf(ref) : -1;
+    if (at < 0) this.childNodes.push(child);
+    else this.childNodes.splice(at, 0, child);
+    return child;
+  }
   removeChild(child) {
     this.childNodes = this.childNodes.filter((c) => c !== child);
     child.parentNode = null;

@@ -108,6 +108,12 @@ export function createWorkspacePicker({
   const picker = createCommandPicker({
     select,
     label: "Workspace",
+    // Always a search box, however few workspaces: "+ New workspace" starts from what was typed. On a
+    // touch screen it still opens with focus on the list (UX review U2).
+    search: true,
+    // The trigger keeps an aria-label "Workspace" although a <label for> points at it: the header label
+    // is drawn in capitals (text-transform), and a name computed from it reads "WORKSPACE", which some
+    // screen readers spell out (seen in Edge's accessibility tree, a11y review finding 6 retest).
     placeholder: "Choose workspace…",
     // A NEW NODE EVERY CALL: the same element cannot be in the trigger and in a row at once.
     badgeOf: (value) => {

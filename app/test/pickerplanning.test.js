@@ -15,7 +15,9 @@ afterEach(() => dom.teardown());
 
 const tick = () => new Promise((resolve) => setTimeout(resolve, 0));
 const buttonNamed = (root, text) => root.querySelectorAll("button").find((b) => b.textContent === text);
-const spoken = (select) => triggerFor(select).getAttribute("aria-label");
+import { spokenOf } from "./pickerassert.js";
+// What a screen reader announces: the field's name, the value and how to use it (a11y review finding 6).
+const spoken = (select) => spokenOf(triggerFor(select));
 const fieldOf = (select) => { let n = triggerFor(select); while (n && !(n.classList && n.classList.contains("field"))) n = n.parentNode; return n; };
 
 function planningCtx() {
@@ -99,9 +101,9 @@ describe("BT-004-05 planning: the budget editor", () => {
     assert.deepEqual(nativeDropdowns(root), []);
     assert.deepEqual(pickerLabels(root), ["Who it is for", "Currency", "Period", "Category"]);
     assert.equal(spoken(pickerNamed(root, "Who it is for")), "Who it is for: Shared (shared accounts only). Choose.");
-    assert.equal(spoken(pickerNamed(root, "Currency")), "Currency: EUR. Search and choose.");
+    assert.equal(spoken(pickerNamed(root, "Currency")), "Currency: EUR. Choose.");
     assert.equal(spoken(pickerNamed(root, "Period")), "Period: Monthly. Choose.");
-    assert.equal(spoken(pickerNamed(root, "Category")), "Category: Housing. Search and choose.");
+    assert.equal(spoken(pickerNamed(root, "Category")), "Category: Housing. Choose.");
     assert.deepEqual(offeredOptions(pickerNamed(root, "Category")), ["Housing", "Groceries"], "income categories are not budgeted");
     buttonNamed(root, "Add a category").click();
     const lines = root.querySelectorAll("fieldset.budget-line");

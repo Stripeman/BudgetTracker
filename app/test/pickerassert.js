@@ -25,6 +25,23 @@ export function pickerLabels(root) {
   });
 }
 
+// What a screen reader announces for a picker's trigger, written "<name>: <value>. <how to use it>" —
+// the words the trigger once carried in one aria-label. Since the accessibility review (finding 6) the
+// trigger is a combobox and they are three separate things, each checked here from the DOM: the name is
+// the <label for> pointing at the trigger (or its own aria-label when it has no visible label), the value
+// is its visually hidden spoken text, and the instructions are the element its description points to.
+export function spokenOf(trigger) {
+  let root = trigger;
+  while (root.parentNode) root = root.parentNode;
+  const label = root.querySelectorAll("label").find((l) => l.getAttribute("for") === trigger.id);
+  const name = label ? label.textContent : trigger.getAttribute("aria-label");
+  const spoken = trigger.querySelector(".cmdpick__spoken");
+  const howId = `${trigger.id}-how`;
+  const how = root.querySelectorAll(`#${howId}`)[0];
+  const described = String(trigger.getAttribute("aria-describedby") || "").split(/\s+/);
+  return `${name}: ${spoken ? spoken.textContent : ""}. ${how && described.includes(howId) ? how.textContent : ""}`;
+}
+
 // The select whose picker is labelled `text` inside `root`.
 export function pickerNamed(root, text) {
   const labels = root.querySelectorAll("label");
@@ -41,7 +58,7 @@ export function pickerNamed(root, text) {
 // The select whose picker's spoken name starts with `prefix` — for a picker placed in a list row
 // without a field label (named by its own aria-label, "Role for Bob Fictional").
 export function pickerSpokenAs(root, prefix) {
-  const hit = root.querySelectorAll("select").find((s) => pickerOf(s) && String(pickerOf(s).trigger.getAttribute("aria-label")).startsWith(prefix));
+  const hit = root.querySelectorAll("select").find((s) => pickerOf(s) && spokenOf(pickerOf(s).trigger).startsWith(prefix));
   if (!hit) throw new Error(`no picker spoken as ${JSON.stringify(prefix)}; have ${JSON.stringify(pickerLabels(root))}`);
   return hit;
 }
@@ -80,8 +97,13 @@ export function chooseByKeyboard(select, { type = null, keys = [] } = {}) {
   const open = panel(doc);
   if (type !== null) {
     const box = open.querySelector(".cmdpick__search");
-    box.value = type;
-    box.dispatchEvent(new DomEvent("input", { bubbles: true }));
+    if (box) {
+      box.value = type;
+      box.dispatchEvent(new DomEvent("input", { bubbles: true }));
+    } else {
+      // A short list has no search box (UX review U2): the same letters are type-ahead, as in a native list.
+      for (const ch of type) press(open.querySelector(".cmdpick__list"), ch);
+    }
   }
   for (const key of keys) press(open, key);
   press(open, "Enter");
