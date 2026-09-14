@@ -51,7 +51,8 @@ const STATUS_LABELS = { pending: "Pending", cleared: "Cleared", reconciled: "Rec
 // tags and status can change, so the edit form locks the rest and says why. The server enforces it.
 // An entry recorded from Shared expenses follows the shared expense: the server keeps its financial
 // details locked here (BT-009 recheck N2), and the form says where to change it.
-export const sharedLinked = (t) => !!(t.links && (t.links.groupExpenseId || t.links.groupSettlementId));
+// The server says so even when it does not show which shared expense (security recheck R3-3).
+export const sharedLinked = (t) => !!(t.fromSharedExpense || (t.links && (t.links.groupExpenseId || t.links.groupSettlementId)));
 export function reversalLock(t) {
   if (sharedLinked(t)) return "This entry was recorded from Shared expenses, so its amount, date, type, category and merchant follow the shared expense. Change it in Shared expenses; notes, tags and status can be changed here.";
   if (t.reversedBy) return "This entry has been reversed, so its amount, date, type, category and merchant can no longer change. To correct it, add a new entry.";
