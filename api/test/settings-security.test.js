@@ -4,6 +4,7 @@
 const { test, describe } = require('node:test');
 const assert = require('node:assert/strict');
 const { harness, household } = require('./helpers');
+const { createMemoryStorage } = require('../_shared/storage');
 
 const ok = (res, status = 200) => { assert.equal(res.status, status, JSON.stringify(res.body)); return res.body; };
 const docPath = (id) => `workspaces/${id}/workspace.json`;
@@ -108,6 +109,48 @@ describe('L-1: a well-typed value this version does not know reads as its defaul
       const f = await household(h);
       await editDoc(h, f.ws.id, change);
       assert.equal(await backupStatus(h, f.ws.id), 422, label);
+    }
+  });
+});
+
+// ---- L-2: Shared expenses switched off between the gate's read and the write -----------------------
+// Storage that turns Shared expenses off right after the next read of the workspace (the gate's read), as
+// an owner's switch-off landing between the gate and the write would.
+function switchOffAfterNextRead() {
+  const base = createMemoryStorage();
+  let armed = null;
+  const storage = { ...base, async getJson(name) {
+    const r = await base.getJson(name);
+    if (armed && name === armed) {
+      armed = null;
+      const v = structuredClone(r.value);
+      v.settings.sharedExpenses = false;
+      await base.putJson(name, v);
+    }
+    return r;
+  } };
+  return { storage, arm: (name) => { armed = name; } };
+}
+
+describe('L-2: a group write re-checks Shared expenses in the same write', () => {
+  test('an expense, a payment report and a settings change that meet Shared expenses off at the write are refused, and nothing is written', async () => {
+    const attempts = {
+      expense: (f, A, B) => ({ query: f.q, body: { description: 'Fictional race', amount: '10.00', payers: [{ ref: A }], split: { method: 'equal', lines: [{ ref: A }, { ref: B }] } } }),
+      settle: (f, A, B) => ({ query: { ...f.q, action: 'settle' }, body: { from: B, to: A, amount: '5.00' } }),
+      settings: (f) => ({ query: { ...f.q, action: 'settings' }, body: { changes: { anyoneConfirms: false } } }),
+    };
+    for (const [label, make] of Object.entries(attempts)) {
+      const { storage, arm } = switchOffAfterNextRead();
+      const h = harness({ storage });
+      const f = await household(h);
+      const [A, B] = [`member:${f.memberId('Alice')}`, `member:${f.memberId('Bob')}`];
+      const before = await readDoc(h, f.ws.id);
+      arm(docPath(f.ws.id));
+      const res = await h.call('group', 'POST', { as: 'alice', ...make(f, A, B) });
+      assert.deepEqual([res.status, res.body.error && res.body.error.code], [403, 'shared_expenses_off'], label);
+      const after = await readDoc(h, f.ws.id);
+      assert.deepEqual([(after.groupExpenses || []).length, (after.groupSettlements || []).length, JSON.stringify(after.groupSettings || null), after.settings.sharedExpenses],
+        [(before.groupExpenses || []).length, (before.groupSettlements || []).length, JSON.stringify(before.groupSettings || null), false], label);
     }
   });
 });
