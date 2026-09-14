@@ -247,6 +247,27 @@ function paidElsewhereIndex(doc) {
   return out;
 }
 
+// The links a viewer may see (security recheck R3-3): a bill's id and occurrence only to someone who can
+// see that bill (view-transactions on its account, as the bills route decides), and a shared expense's
+// or payment's id only to the owner of the entry (the person whose part it records). Other link keys
+// point at entries on the same account and stay.
+const BILL_LINKS = new Set(['recurringId', 'occurrence']);
+const GROUP_LINKS = new Set(['groupExpenseId', 'groupSettlementId']);
+function visibleLinks(doc, t, principal, now) {
+  const l = t.links || {};
+  const out = {};
+  for (const [k, v] of Object.entries(l)) if (!BILL_LINKS.has(k) && !(GROUP_LINKS.has(k) && t.createdBy !== principal.subject)) out[k] = v;
+  if (l.recurringId) {
+    const bill = (doc.recurring || []).find((r) => r.id === l.recurringId);
+    const account = bill && (doc.accounts || []).find((a) => a.id === bill.accountId && !a.deletedAt);
+    if (account && can(doc, principal, account, 'view-transactions', now)) {
+      out.recurringId = l.recurringId;
+      if (l.occurrence !== undefined) out.occurrence = l.occurrence;
+    }
+  }
+  return out;
+}
+
 function transactionView(doc, t, principal, now, lookups) {
   const account = lookups.accounts.get(t.accountId);
   // Computed once per set of lookups (one request), after the request's own changes.
@@ -267,7 +288,10 @@ function transactionView(doc, t, principal, now, lookups) {
     owedPairId: t.owedPairId || null,
     // A share someone else paid: no money moved (L4).
     paidBySomeoneElse: paidElsewhere.has(t.id),
-    links: t.links || {}, createdAt: t.createdAt, updatedAt: t.updatedAt || null, revision: t.revision || 1,
+    links: visibleLinks(doc, t, principal, now),
+    // Recorded from Shared expenses: locked there (N2), said even when the link itself is not shown (R3-3).
+    fromSharedExpense: !!(t.links && (t.links.groupExpenseId || t.links.groupSettlementId)),
+    createdAt: t.createdAt, updatedAt: t.updatedAt || null, revision: t.revision || 1,
     amendmentCount: (t.amendments || []).length, reversedBy: t.reversedBy || null,
     createdBySelf: t.createdBy === principal.subject, deletedAt: t.deletedAt || null,
   };

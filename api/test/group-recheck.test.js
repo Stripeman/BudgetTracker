@@ -808,6 +808,43 @@ describe('L3 (financial recheck of 47617b5): the backup check is as tolerant as 
   });
 });
 
+describe('R3-3 (security recheck of 53cf181): a link names another record only to someone who may see it', () => {
+  test('a transfer from Alice\'s private bill into the shared Joint: Bob, Carol and Eve see no bill id on its shared side; Alice does', async () => {
+    const h = harness();
+    const f = await fixture(h, { kind: 'household' });
+    const joint = await account(h, f, 'alice', { name: 'Joint', type: 'checking', currency: 'EUR', visibility: 'shared', openingBalance: '1000.00' });
+    const savings = await account(h, f, 'alice', { name: 'Alice Savings', type: 'savings', currency: 'EUR', openingBalance: '500.00' });
+    const bill = ok(await h.call('recurring', 'POST', { as: 'alice', query: f.q, body: { name: 'Fictional house fund', billType: 'savings', kind: 'transfer', accountId: savings.id, toAccountId: joint.id, amount: '50.00', schedule: { freq: 'monthly', startDate: '2026-09-01' } } }), 201).recurring;
+    ok(await h.call('recurring', 'POST', { as: 'alice', query: { ...f.q, action: 'record' }, body: { recurringId: bill.id, occurrence: '2026-09-01' } }), 201);
+    // The Joint: 1000.00 + 50.00 = 1050.00.
+    assert.equal(await balanceOf(h, f, 'alice', joint.id), '1050.00');
+    const incoming = async (w) => (await entriesOf(h, f, w, joint.id)).find((t) => t.kind === 'transfer' && t.amount === '50.00');
+    for (const w of ['bob', 'carol', 'eve']) {
+      const t = await incoming(w);
+      assert.deepEqual([t.links.recurringId, t.links.occurrence], [undefined, undefined], w);
+      const all = ok(await h.call('transactions', 'GET', { as: w, query: f.q })).transactions;
+      assert.equal(JSON.stringify(all).includes(bill.id), false, `${w}: no trace of the bill`);
+    }
+    assert.deepEqual([(await incoming('alice')).links.recurringId, (await incoming('alice')).links.occurrence], [bill.id, '2026-09-01']);
+  });
+
+  test('Bob\'s entries on his now-shared wallet show Eve that they come from Shared expenses, but not which expense; Bob sees the link', async () => {
+    const h = harness();
+    const f = await fixture(h, { kind: 'household' });
+    const wallet = await account(h, f, 'bob', { name: 'Bob Wallet', type: 'cash', currency: 'EUR', openingBalance: '100.00' });
+    ok(await act(h, f, 'bob', 'ledger', { currency: 'EUR', accountId: wallet.id }));
+    const e = await addExpense(h, f, 'alice', { description: 'Fictional dinner', amount: '160.00', payers: [{ ref: f.refs.alice }], split: equal(f.refs.alice, f.refs.bob) });
+    ok(await act(h, f, 'bob', 'ledger', { currency: 'EUR' }));
+    const acc = ok(await h.call('accounts', 'GET', { as: 'bob', query: f.q })).accounts.find((a) => a.id === wallet.id);
+    ok(await h.call('accounts', 'PATCH', { as: 'bob', query: f.q, body: { accountId: wallet.id, revision: acc.revision, visibility: 'shared', confirmShare: true } }));
+    const eves = (await entriesOf(h, f, 'eve', wallet.id)).find((t) => t.kind === 'payable');
+    assert.deepEqual([eves.links.groupExpenseId, eves.fromSharedExpense], [undefined, true]);
+    assert.equal(JSON.stringify(ok(await h.call('transactions', 'GET', { as: 'eve', query: f.q })).transactions).includes(e.id), false);
+    const bobs = (await entriesOf(h, f, 'bob', wallet.id)).find((t) => t.kind === 'payable');
+    assert.deepEqual([bobs.links.groupExpenseId, bobs.fromSharedExpense], [e.id, true]);
+  });
+});
+
 describe('L4 (financial recheck of 47617b5): a share someone else paid is marked as such, never as money out', () => {
   test('Bob\'s share of a dinner Alice paid, and the spending half of a hand-entered pair, are paid by someone else; Alice\'s own share and a part-payer\'s share are not', async () => {
     const h = harness();
