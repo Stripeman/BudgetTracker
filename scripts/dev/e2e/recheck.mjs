@@ -102,9 +102,15 @@ export async function run(h, t) {
   const s5 = (await api("bob").ok("group", { method: "POST", query: { ...q, action: "settle" }, body: { from: B, to: C, amount: "4.00" } })).settlement;
   await fresh(b.alice, "group");
   const listed = await b.alice.evaluate(`[...document.querySelectorAll('${SETTINGS} select')].map((x) => x.getAttribute('aria-label')).filter((l) => (l || '').startsWith('Can confirm payments: '))`);
+  // Two people in ONE Save (security recheck of 47617b5, M1): both must be kept, not only the last.
   await b.alice.choose(DISPLAY.bob, "No", { scope: SETTINGS });
+  await b.alice.choose(DISPLAY.carol, "No", { scope: SETTINGS });
   await saveSettings(b.alice);
-  const aliceCard = { bob: await personValue(b.alice, DISPLAY.bob), carol: await personValue(b.alice, DISPLAY.carol), text: await b.alice.text(SETTINGS) };
+  await fresh(b.alice, "group");
+  const aliceCard = {
+    bob: await personValue(b.alice, DISPLAY.bob), carol: await personValue(b.alice, DISPLAY.carol), text: await b.alice.text(SETTINGS),
+    history: await b.alice.evaluate(`(document.querySelector('${SETTINGS}').textContent.match(/Can confirm payments for (Bob|Carol) Fictional: Use the group setting → No/g) || []).length`),
+  };
   await fresh(b.bob, "group");
   const bobNo = {
     confirm: await confirmButtons(b.bob, "Confirm You paid Alice Fictional"),
@@ -118,9 +124,9 @@ export async function run(h, t) {
   await b.carol.click({ role: "button", name: "Confirm", scope: ".modal" });
   await b.carol.waitFor("!document.querySelector('.modal')", { what: "Carol's dialog to close again" });
   const carolGot = (await api("carol").ok("group", { query: q })).settlements.find((s) => s.id === s5.id);
-  t.check("B per person: Alice's card lists everyone with a picker; she sets Bob to No while the group setting is on", {
-    expected: { listed: [`Can confirm payments: ${DISPLAY.alice}`, `Can confirm payments: ${DISPLAY.bob}`, `Can confirm payments: ${DISPLAY.carol}`], bob: "no", carol: "inherit", bobHelp: true, carolHelp: true },
-    actual: { listed, bob: aliceCard.bob, carol: aliceCard.carol, bobHelp: aliceCard.text.includes("Only payments made to them now"), carolHelp: aliceCard.text.includes("Only payments made to them (a viewer)") },
+  t.check("B per person and M1: Alice's card lists everyone with a picker; she sets Bob and Carol to No in one Save while the group setting is on, and after a reload both show No, each once in the history", {
+    expected: { listed: [`Can confirm payments: ${DISPLAY.alice}`, `Can confirm payments: ${DISPLAY.bob}`, `Can confirm payments: ${DISPLAY.carol}`], bob: "no", carol: "no", bobHelp: true, carolHelp: true, history: 2 },
+    actual: { listed, bob: aliceCard.bob, carol: aliceCard.carol, bobHelp: aliceCard.text.includes("Only payments made to them now"), carolHelp: aliceCard.text.includes("Only payments made to them (a viewer)"), history: aliceCard.history },
   });
   t.check("B per person: in Bob's browser there is no Confirm on his own payment, he is told he confirms payments made to him, sees no settings card, and the API refuses him", {
     expected: { confirm: 0, says: true, card: false, direct: 403 }, actual: bobNo,
@@ -130,6 +136,7 @@ export async function run(h, t) {
   });
   // Back to "Use the group setting": Bob follows the group (on) again.
   await b.alice.choose(DISPLAY.bob, "Use the group setting", { scope: SETTINGS });
+  await b.alice.choose(DISPLAY.carol, "Use the group setting", { scope: SETTINGS });
   await saveSettings(b.alice);
   await fresh(b.bob, "group");
   const before = await confirmButtons(b.bob, "Confirm You paid Alice Fictional");
@@ -248,6 +255,18 @@ export async function run(h, t) {
   const bobWallet = firstRecord(await api("bob").ok("accounts", { method: "POST", query: R.q, body: { name: "E2E Bob Wallet", type: "cash", currency: "EUR", openingBalance: "50.00" } }));
   const bobsEntry = firstRecord(await api("bob").ok("transactions", { method: "POST", query: R.q, body: { accountId: joint.id, kind: "expense", amount: "12.00", notes: "E2E milk" } }));
   await api("alice").ok("recurring", { method: "POST", query: R.q, body: { name: "E2E rent", billType: "housing", accountId: joint.id, amount: "800.00", schedule: { freq: "monthly", startDate: "2026-10-01" }, responsibleRef: R.ref("bob") } });
+  // L3 (security recheck of 47617b5): Bob moves 5.00 from the Joint to his private wallet. Alice sees the
+  // Joint's side as a transfer to "another account", and nothing in her page or her API answer names the
+  // wallet; Bob sees his wallet's name.
+  await api("bob").ok("transactions", { method: "POST", query: R.q, body: { accountId: joint.id, kind: "transfer", amount: "5.00", transfer: { toAccountId: bobWallet.id } } });
+  const aliceList = await api("alice").ok("transactions", { query: R.q });
+  await fresh(b.alice, "group"); await b.alice.useWorkspace(R.name); await b.alice.goto("transactions");
+  await fresh(b.bob, "group"); await b.bob.useWorkspace(R.name); await b.bob.goto("transactions");
+  const transferRow = (s) => s.evaluate(`(() => { const r = [...document.querySelectorAll('tbody tr')].find((x) => x.innerText.includes('Transfer to')); return r ? (r.innerText.match(/Transfer to [^\\n\\t]+/) || [''])[0].trim() : null; })()`);
+  t.check("L3: Alice's browser shows the Joint's side as 'Transfer to another account' and her page and API answer hold no id of Bob's wallet; Bob's shows his wallet", {
+    expected: { alice: "Transfer to another account", alicePage: false, aliceApi: false, bob: "Transfer to E2E Bob Wallet" },
+    actual: { alice: await transferRow(b.alice), alicePage: await b.alice.evaluate(`document.documentElement.outerHTML.includes(${JSON.stringify(bobWallet.id)})`), aliceApi: JSON.stringify(aliceList).includes(bobWallet.id), bob: await transferRow(b.bob) },
+  });
   // A per-person right for Bob is keyed by his member id: it must not come along either.
   await api("alice").ok("group", { method: "POST", query: { ...R.q, action: "settings" }, body: { changes: { confirmOverrides: { [R.memberOf("bob").id]: "no" } } } });
   const archiveId = (await api("alice").ok("backups", { method: "POST", query: R.q, body: {} })).archive.archiveId;
@@ -256,9 +275,12 @@ export async function run(h, t) {
   // The isolated server keeps its storage in <dataRoot>/dev-data (scripts/dev/dataroot.mjs).
   const file = [path.join(h.server.dataRoot, "dev-data", "workspaces", created.id, "workspace.json"), path.join(h.server.dataRoot, "workspaces", created.id, "workspace.json")].find((p) => fs.existsSync(p)) || "";
   const text = file ? fs.readFileSync(file, "utf8") : "";
-  t.check("S4: the new workspace's stored document holds no subject, member id or private account of Bob, and keeps Alice's own", {
-    expected: { read: true, bobSubject: false, bobMemberId: false, bobWallet: false, aliceSubject: true },
-    actual: { read: !!text, bobSubject: text.includes("google:dev-bob"), bobMemberId: text.includes(R.memberOf("bob").id), bobWallet: text.includes(bobWallet.id), aliceSubject: text.includes("google:dev-alice") },
+  // L2: every account id named in the new workspace is one of its own accounts.
+  const carried = text ? new Set(JSON.parse(text).accounts.map((a) => a.id)) : new Set();
+  const strayAccounts = [...new Set(text.match(/\bacc_[A-Za-z0-9]+/g) || [])].filter((id) => !carried.has(id));
+  t.check("S4 and L2: the new workspace's stored document holds no subject, member id or private account of Bob (not even on the Joint's side of his transfer), and keeps Alice's own", {
+    expected: { read: true, bobSubject: false, bobMemberId: false, bobWallet: false, strayAccounts: [], aliceSubject: true },
+    actual: { read: !!text, bobSubject: text.includes("google:dev-bob"), bobMemberId: text.includes(R.memberOf("bob").id), bobWallet: text.includes(bobWallet.id), strayAccounts, aliceSubject: text.includes("google:dev-alice") },
   });
   const inv = await api("alice").ok("invitations", { method: "POST", query: { workspaceId: created.id }, body: { email: "bob@example.com", role: "member" } });
   await api("bob").ok("invitations", { method: "POST", query: { action: "accept" }, body: { workspaceId: created.id, token: inv.token } });
