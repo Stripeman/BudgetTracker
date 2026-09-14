@@ -75,6 +75,11 @@ const SEARCH_THRESHOLD = 12;
 // How long typing must pause before the result count is spoken (A10).
 const ANNOUNCE_DELAY = 400;
 
+// PageUp/PageDown move this many options (the listbox pattern's ten), and letters typed within this
+// many milliseconds of each other make one type-ahead prefix (A14).
+const PAGE = 10;
+const TYPE_AHEAD_RESET = 500;
+
 /**
  * @param {object} options
  * @param {HTMLSelectElement} options.select  the control that holds the value
@@ -446,6 +451,7 @@ export function createCommandPicker({ select, label = "Choose", placeholder = ""
     open = false;
     stopAnnouncing();
     stopFollowing();
+    resetTypeAhead();
     panel.setAttribute("hidden", "");
     if (panel.parentNode) panel.parentNode.removeChild(panel);
     trigger.setAttribute("aria-expanded", "false");
@@ -574,10 +580,22 @@ export function createCommandPicker({ select, label = "Choose", placeholder = ""
 
   // ---- keyboard -----------------------------------------------------------
 
+  // A14 — THE KEYS A NATIVE SELECT HAS, on the closed trigger: Enter, Space and either arrow (with or
+  // without Alt) open it; a letter opens it and starts the search with that letter, or, in a list
+  // without a search box, moves to the first option starting with it — choosing nothing (UX review U3).
   trigger.addEventListener("keydown", (event) => {
-    if (event.key === "ArrowDown" || event.key === "Enter" || event.key === " ") {
+    if (open) return;
+    if (event.key === "ArrowDown" || event.key === "ArrowUp" || event.key === "Enter" || event.key === " ") {
       event.preventDefault();
       show();
+      return;
+    }
+    if (isTypeAhead(event)) {
+      event.preventDefault();
+      show();
+      if (!open) return;
+      if (searchable) startSearch(event.key);
+      else typeAheadKey(event.key);
     }
   });
 
@@ -615,6 +633,8 @@ export function createCommandPicker({ select, label = "Choose", placeholder = ""
       }
       return;
     }
+    // A14 — keys typed into the search box are text: Home, End, Space and letters edit it.
+    const inSearch = event.target === search;
     if (event.key === "ArrowDown") {
       event.preventDefault();
       active = step(found, active, 1);
@@ -623,27 +643,63 @@ export function createCommandPicker({ select, label = "Choose", placeholder = ""
       event.preventDefault();
       active = step(found, active, -1);
       markActive();
-    } else if (event.key === "Home") {
+    } else if ((event.key === "Home" || event.key === "End") && !inSearch) {
       event.preventDefault();
-      active = firstSelectable(found);
+      active = event.key === "Home" ? firstSelectable(found) : lastSelectable(found);
       markActive();
-    } else if (event.key === "End") {
+    } else if (event.key === "PageDown" || event.key === "PageUp") {
+      // A14 — a page at a time (the listbox pattern's ten options), stopping at the ends.
       event.preventDefault();
-      active = lastSelectable(found);
+      active = pageFrom(found, active, event.key === "PageDown" ? PAGE : -PAGE);
       markActive();
     } else if (event.key === "Enter") {
       event.preventDefault();
       if (found[active] && !found[active].disabled) pick(found[active].value);
-    } else if (!searchable && isTypeAhead(event)) {
-      // WHAT A NATIVE SELECT DOES: a letter MOVES to the next option starting with it.
+    } else if (event.key === " " && !inSearch) {
+      // A14 — Space chooses, as in a native list; while typing ahead it is part of a name.
       event.preventDefault();
-      const at = typeAhead(found, event.key, active);
-      if (at >= 0) {
-        active = at;
-        markActive();
-      }
+      if (typed) typeAheadKey(" ");
+      else if (found[active] && !found[active].disabled) pick(found[active].value);
+    } else if (!inSearch && !searchable && isTypeAhead(event)) {
+      // WHAT A NATIVE SELECT DOES: letters MOVE to the next option starting with them.
+      event.preventDefault();
+      typeAheadKey(event.key);
     }
   });
+
+  // A14 — a page from `from`, never past either end; an unavailable row is stepped over in the same
+  // direction.
+  function pageFrom(found, from, delta) {
+    if (!found.length) return from;
+    const direction = delta > 0 ? 1 : -1;
+    let index = Math.max(0, Math.min(found.length - 1, from + delta));
+    while (index >= 0 && index < found.length && found[index].disabled) index += direction;
+    if (index < 0 || index >= found.length) return direction > 0 ? lastSelectable(found) : firstSelectable(found);
+    return index;
+  }
+
+  // A14 — TYPE-AHEAD AS A NATIVE LIST DOES IT: letters typed within half a second make one prefix
+  // ("mor" reaches Mortgage past Mobile wallet), looked for from the current row; one letter repeated
+  // cycles through the rows starting with it; after a pause a letter starts again.
+  let typed = "";
+  let typedTimer = null;
+  function typeAheadKey(key) {
+    clearTimeout(typedTimer);
+    typed += String(key).toLowerCase();
+    typedTimer = setTimeout(resetTypeAhead, TYPE_AHEAD_RESET);
+    const found = matches();
+    const oneLetter = typed.length === 1 || [...typed].every((ch) => ch === typed[0]);
+    const at = oneLetter ? typeAhead(found, typed[0], active, 1) : typeAhead(found, typed, active, 0);
+    if (at >= 0) {
+      active = at;
+      markActive();
+    }
+  }
+  function resetTypeAhead() {
+    clearTimeout(typedTimer);
+    typedTimer = null;
+    typed = "";
+  }
 
   function isTypeAhead(event) {
     return (
@@ -656,24 +712,32 @@ export function createCommandPicker({ select, label = "Choose", placeholder = ""
     );
   }
 
-  // FROM THE ONE AFTER THE CURRENT ROW, wrapping, so repeating a letter cycles.
-  function typeAhead(found, key, from) {
-    const letter = key.toLowerCase();
-    for (let offset = 1; offset <= found.length; offset += 1) {
-      const index = (from + offset + found.length) % found.length;
+  // From `start` rows after the current one (1: from the next row, so a repeated letter cycles; 0: the
+  // current row too, so a longer prefix of the current name stays put), wrapping.
+  function typeAhead(found, prefix, from, start) {
+    for (let offset = start; offset < found.length + start; offset += 1) {
+      const index = (from + offset) % found.length;
       const option = found[index];
       if (!option || option.disabled) continue;
-      if (String(option.label || "").trim().toLowerCase().startsWith(letter)) return index;
+      if (String(option.label || "").trim().toLowerCase().startsWith(prefix)) return index;
     }
     return -1;
   }
 
-  search.addEventListener("input", () => {
+  function onSearchInput() {
     const found = matches();
     active = firstSelectable(found);
     paintList();
     announceSoon();
-  });
+  }
+  search.addEventListener("input", onSearchInput);
+
+  // A14 — a letter typed on the closed trigger is the start of the search.
+  function startSearch(text) {
+    search.value = text;
+    search.focus();
+    onSearchInput();
+  }
 
   // A10 — debounced, so a screen reader hears the count for what was typed, not for every letter.
   let announceTimer = null;

@@ -529,6 +529,121 @@ describe("BT-004-04 PLACEMENT (through custom properties; real layout is checked
   });
 });
 
+describe("BT-004-05 THE KEYS A NATIVE SELECT HAS (a11y review finding 7, UX review U3)", () => {
+  const TYPES = ["Cash", "Checking", "Credit card", "Loan", "Mobile wallet", "Mortgage", "Savings"].map((label) => ({ value: label.toLowerCase().replace(/\s+/g, "-"), label }));
+  const keyOn = (node, key, extra = {}) => { const e = Object.assign(new DomEvent("keydown", { bubbles: true, key }), extra); node.dispatchEvent(e); return e; };
+  const activeLabel = () => {
+    const holder = document.activeElement;
+    const row = rows().find((r) => r.id === holder.getAttribute("aria-activedescendant"));
+    return row ? labelOf(row) : null;
+  };
+
+  test("the closed trigger opens on ArrowUp, Alt+ArrowUp and Alt+ArrowDown as well", () => {
+    for (const [key, extra] of [["ArrowUp", {}], ["ArrowUp", { altKey: true }], ["ArrowDown", { altKey: true }]]) {
+      const { picker } = mount({ value: "rent" });
+      const e = keyOn(trigger(picker), key, extra);
+      assert.ok(panel(), `${key}${extra.altKey ? " with Alt" : ""} opens it`);
+      assert.equal(e.defaultPrevented, true, "and the page does not scroll");
+      assert.equal(activeLabel(), "Rent and housing", "on the chosen option");
+      picker.destroy();
+    }
+  });
+
+  test("a letter on the closed trigger of a searched list opens it and starts the search with that letter", () => {
+    const { picker } = mount({ search: true });
+    const e = keyOn(trigger(picker), "h");
+    assert.ok(panel());
+    assert.equal(e.defaultPrevented, true);
+    const box = panel().querySelector(".cmdpick__search");
+    same(document.activeElement, box);
+    assert.equal(box.value, "h");
+    assert.deepEqual(rows().map(labelOf), ["Rent and housing"], "already filtered");
+  });
+
+  test("a letter on the closed trigger of a short list opens it on the first match, choosing nothing", () => {
+    const { picker, select } = mount({ options: TYPES, value: "cash", search: false });
+    keyOn(trigger(picker), "l");
+    assert.ok(panel());
+    assert.equal(activeLabel(), "Loan");
+    assert.equal(select.value, "cash", "type-ahead moves, it does not choose");
+  });
+
+  test("a Ctrl or Alt letter on the closed trigger does nothing", () => {
+    const { picker } = mount();
+    keyOn(trigger(picker), "c", { ctrlKey: true });
+    keyOn(trigger(picker), "c", { altKey: true });
+    none(panel());
+  });
+
+  test("multi-character type-ahead: m-o-r reaches Mortgage past Mobile wallet, and a pause starts over", (t) => {
+    t.mock.timers.enable({ apis: ["setTimeout"] });
+    const { picker } = mount({ options: TYPES, value: "cash", search: false });
+    open(picker);
+    keyOn(panel(), "m");
+    assert.equal(activeLabel(), "Mobile wallet");
+    keyOn(panel(), "o");
+    assert.equal(activeLabel(), "Mobile wallet", "“mo” still matches the current row, so it stays");
+    keyOn(panel(), "r");
+    assert.equal(activeLabel(), "Mortgage");
+    t.mock.timers.tick(500);
+    keyOn(panel(), "l");
+    assert.equal(activeLabel(), "Loan", "after the pause a letter starts a new search");
+  });
+
+  test("repeating one letter cycles through the options that start with it", (t) => {
+    t.mock.timers.enable({ apis: ["setTimeout"] });
+    const { picker } = mount({ options: TYPES, value: "cash", search: false });
+    open(picker);
+    keyOn(panel(), "c");
+    assert.equal(activeLabel(), "Checking");
+    keyOn(panel(), "c");
+    assert.equal(activeLabel(), "Credit card");
+    keyOn(panel(), "c");
+    assert.equal(activeLabel(), "Cash", "and wraps");
+  });
+
+  test("Space chooses in a list without a search box, but is part of a name while typing ahead", (t) => {
+    t.mock.timers.enable({ apis: ["setTimeout"] });
+    const first = mount({ options: TYPES, value: "cash", search: false });
+    open(first.picker);
+    keyOn(panel(), "ArrowDown");
+    const e = keyOn(panel(), " ");
+    assert.equal(e.defaultPrevented, true);
+    assert.equal(first.select.value, "checking", "Space took the active option");
+    none(panel(), "and closed the list");
+    open(first.picker);
+    for (const key of ["c", "r", "e", "d", "i", "t", " ", "c"]) keyOn(panel(), key);
+    assert.ok(panel(), "the space inside “credit c” did not choose");
+    assert.equal(activeLabel(), "Credit card");
+    assert.equal(first.select.value, "checking");
+  });
+
+  test("PageDown and PageUp move ten options at a time, stopping at the ends", () => {
+    const many = Array.from({ length: 30 }, (_, i) => ({ value: `v${i}`, label: `Option ${String(i).padStart(2, "0")}` }));
+    const { picker } = mount({ options: many, value: "v0" });
+    open(picker);
+    keyOn(panel(), "PageDown");
+    assert.equal(activeLabel(), "Option 10");
+    keyOn(panel(), "PageDown");
+    keyOn(panel(), "PageDown");
+    assert.equal(activeLabel(), "Option 29", "not past the last");
+    const e = keyOn(panel(), "PageUp");
+    assert.equal(activeLabel(), "Option 19");
+    assert.equal(e.defaultPrevented, true);
+  });
+
+  test("Home and End in the search box move the text cursor, not the list", () => {
+    const { picker } = mount({ value: "rent", search: true });
+    open(picker);
+    const box = panel().querySelector(".cmdpick__search");
+    for (const key of ["Home", "End"]) {
+      const e = keyOn(box, key);
+      assert.equal(e.defaultPrevented, false, `${key} is left to the text box`);
+      assert.equal(activeLabel(), "Rent and housing", "the active option did not move");
+    }
+  });
+});
+
 describe("BT-004-05 RESULTS ARE ANNOUNCED (a11y review finding 3, WCAG 4.1.3)", () => {
   const status = () => panel().querySelector(".cmdpick__status");
 
