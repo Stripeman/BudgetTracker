@@ -169,13 +169,10 @@ export function createView(ctx) {
     const perPerson = (gs.perMember || []).find((p) => p.key === "confirmOverrides") || { label: "Can confirm payments",
       options: [{ value: "inherit", label: "Use the group setting" }, { value: "yes", label: "Yes" }, { value: "no", label: "No" }] };
     const people = (gs.members || []).map((m) => {
-      const pick = pickerSelect(perPerson.options, m.override, { id: uid("gper"), "aria-label": `${perPerson.label}: ${m.name}` }, { search: false });
+      const pick = pickerSelect(perPerson.options, m.override, { "aria-label": `${perPerson.label}: ${m.name}` }, { search: false });
       const now = m.role === "viewer" ? "Only payments made to them (a viewer)" : m.effective ? "Can confirm any payment now" : "Only payments made to them now";
-      return { m, pick, node: el("div", { class: "field" }, [
-        el("label", { class: "field__label", for: pick.id, text: m.name }),
-        pick,
-        el("p", { class: "field__help", text: now }),
-      ]) };
+      // field() names the picker's trigger by the visible label (BT-004-07); the legend says what it is.
+      return { m, pick, node: field(m.name, pick, { help: now }) };
     });
     const peopleBox = people.length ? el("fieldset", { class: "plain-fieldset field--wide" }, [
       el("legend", { class: "field__label", text: perPerson.label }),
