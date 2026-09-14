@@ -477,6 +477,9 @@ fieldset.budget-line { margin: 0; padding: var(--space-3); border: 1px solid var
 
 .cmdpick__list { flex: 1 1 auto; min-height: 0; max-height: 15rem; overflow-y: auto; padding: var(--space-1); }
 .cmdpick__none { margin: 0; padding: var(--space-3); font-size: var(--text-sm); color: var(--text-muted); }
+/* The polite result count (a11y review finding 3): visually hidden through .sr-only, never display:none,
+   or it would not be announced. */
+.cmdpick__status { white-space: nowrap; }
 .cmdpick__opt {
   display: flex; align-items: center; gap: var(--space-2);
   padding: var(--space-2);

@@ -446,6 +446,74 @@ describe("BT-004-04 PLACEMENT (through custom properties; real layout is checked
   });
 });
 
+describe("BT-004-05 RESULTS ARE ANNOUNCED (a11y review finding 3, WCAG 4.1.3)", () => {
+  const status = () => panel().querySelector(".cmdpick__status");
+
+  test("a polite, visually hidden status region in the panel, outside the listbox", () => {
+    const { picker } = mount();
+    open(picker);
+    assert.ok(status(), "present");
+    assert.equal(status().getAttribute("role"), "status");
+    assert.equal(status().getAttribute("aria-live"), "polite");
+    assert.equal(status().getAttribute("aria-atomic"), "true");
+    assert.ok(status().classList.contains("sr-only"), "visually hidden");
+    same(status().parentNode, panel(), "not inside the listbox, which may hold only options");
+    assert.equal(status().textContent, "", "silent on opening a list that has options");
+  });
+
+  test("after typing pauses it says how many results, or that nothing matches", (t) => {
+    t.mock.timers.enable({ apis: ["setTimeout"] });
+    const { picker } = mount();
+    open(picker);
+    const box = panel().querySelector(".cmdpick__search");
+    type(box, "o"); // Food, Rent and housing
+    assert.equal(status().textContent, "", "not while typing");
+    t.mock.timers.tick(399);
+    assert.equal(status().textContent, "", "not before the pause");
+    t.mock.timers.tick(1);
+    assert.equal(status().textContent, "2 results");
+    type(box, "tra");
+    t.mock.timers.tick(400);
+    assert.equal(status().textContent, "1 result");
+    type(box, "euzzz");
+    t.mock.timers.tick(400);
+    assert.equal(status().textContent, "Nothing matches “euzzz”.");
+  });
+
+  test("typing again before the pause restarts the wait, so only the last count is spoken", (t) => {
+    t.mock.timers.enable({ apis: ["setTimeout"] });
+    const { picker } = mount();
+    open(picker);
+    const box = panel().querySelector(".cmdpick__search");
+    type(box, "r"); // Rent and housing, Travel
+    t.mock.timers.tick(300);
+    type(box, "re"); // Rent and housing
+    t.mock.timers.tick(300);
+    assert.equal(status().textContent, "", "the first count was never spoken");
+    t.mock.timers.tick(100);
+    assert.equal(status().textContent, "1 result");
+  });
+
+  test("an empty list says so when it opens", (t) => {
+    t.mock.timers.enable({ apis: ["setTimeout"] });
+    const { picker } = mount({ options: [], value: "" });
+    open(picker);
+    t.mock.timers.tick(400);
+    assert.equal(status().textContent, "Nothing to choose from.");
+  });
+
+  test("closing cancels a pending announcement", (t) => {
+    t.mock.timers.enable({ apis: ["setTimeout"] });
+    const { picker } = mount();
+    open(picker);
+    const region = status();
+    type(panel().querySelector(".cmdpick__search"), "tra");
+    press(panel(), "Escape");
+    t.mock.timers.tick(400);
+    assert.equal(region.textContent, "", "nothing is announced for a list that is gone");
+  });
+});
+
 describe("BT-004-04 LEAVING THE PALETTE", () => {
   test("tabbing out closes it without pulling focus back; focus that went nowhere keeps it open", () => {
     const { picker } = mount();

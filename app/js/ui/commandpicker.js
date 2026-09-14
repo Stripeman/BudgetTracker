@@ -68,6 +68,9 @@ function landsOnControl(node) {
 // Above this many options, a field that asked for no search box gets one anyway.
 const SEARCH_THRESHOLD = 12;
 
+// How long typing must pause before the result count is spoken (A10).
+const ANNOUNCE_DELAY = 400;
+
 /**
  * @param {object} options
  * @param {HTMLSelectElement} options.select  the control that holds the value
@@ -158,6 +161,11 @@ export function createCommandPicker({ select, label = "Choose", placeholder = ""
     ? el("button", { class: "cmdpick__create", type: "button" }, [el("span", { class: "cmdpick__plus", "aria-hidden": "true", text: "+" }), createLabel])
     : null;
 
+  // A10 — WHAT A SEARCH FOUND IS SPOKEN. A screen reader hears nothing when rows appear or vanish, and
+  // "Nothing matches" inside the listbox is ignored. A polite status region in the panel (outside the
+  // listbox) says "3 results" or "Nothing matches “x”." once typing pauses.
+  const status = el("div", { class: "cmdpick__status sr-only", role: "status", "aria-live": "polite", "aria-atomic": "true" });
+
   const panel = el("div", { class: ["cmdpick__panel", searchable ? "" : "cmdpick__panel--nosearch"], role: "dialog", "aria-label": label }, [
     searchable
       ? el("div", { class: "cmdpick__searchrow" }, [
@@ -174,6 +182,7 @@ export function createCommandPicker({ select, label = "Choose", placeholder = ""
       el("span", {}, [el("kbd", { class: "cmdpick__kbd", text: "↵" }), el("span", { text: " choose" })]),
       searchable ? null : el("span", {}, [el("kbd", { class: "cmdpick__kbd", text: "esc" }), el("span", { text: " close" })]),
     ].filter(Boolean)),
+    status,
   ].filter(Boolean));
   panel.setAttribute("hidden", "");
 
@@ -382,6 +391,9 @@ export function createCommandPicker({ select, label = "Choose", placeholder = ""
     const current = found.findIndex((o) => o.value === select.value && !o.disabled);
     active = current >= 0 ? current : firstSelectable(found);
     paintList();
+    // A10 — silent when there is something to choose; an empty list says so.
+    stopAnnouncing();
+    if (!found.length) announceSoon();
     place();
     keyHolder.focus();
     dismissal.opened();
@@ -390,6 +402,7 @@ export function createCommandPicker({ select, label = "Choose", placeholder = ""
   function close({ restoreFocus = true } = {}) {
     if (!open) return;
     open = false;
+    stopAnnouncing();
     panel.setAttribute("hidden", "");
     if (panel.parentNode) panel.parentNode.removeChild(panel);
     trigger.setAttribute("aria-expanded", "false");
@@ -522,7 +535,30 @@ export function createCommandPicker({ select, label = "Choose", placeholder = ""
     const found = matches();
     active = firstSelectable(found);
     paintList();
+    announceSoon();
   });
+
+  // A10 — debounced, so a screen reader hears the count for what was typed, not for every letter.
+  let announceTimer = null;
+  function resultsText() {
+    const found = matches();
+    const term = search.value.trim();
+    if (!found.length) return term ? `Nothing matches “${term}”.` : "Nothing to choose from.";
+    return `${found.length} ${found.length === 1 ? "result" : "results"}`;
+  }
+  function announceSoon() {
+    clearTimeout(announceTimer);
+    status.textContent = "";
+    announceTimer = setTimeout(() => {
+      announceTimer = null;
+      if (open) status.textContent = resultsText();
+    }, ANNOUNCE_DELAY);
+  }
+  function stopAnnouncing() {
+    clearTimeout(announceTimer);
+    announceTimer = null;
+    status.textContent = "";
+  }
 
   // TABBING OUT, not clicking out — the pointer is the registry's job. Focus that went NOWHERE is a
   // press on inert text, not somebody leaving.
