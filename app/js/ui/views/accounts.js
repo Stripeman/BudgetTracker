@@ -14,6 +14,101 @@ import { managesSharedLists } from "../../core/workspacesettings.js";
 const CURRENCIES = ["EUR", "USD", "GBP", "CHF", "SEK", "NOK", "DKK", "PLN", "CZK", "HUF", "CAD", "AUD", "NZD", "JPY", "SGD", "HKD", "INR", "ZAR"];
 const GRANTABLE = [["view-balances", "See balance"], ["view-transactions", "See entries"], ["create", "Add entries"], ["edit", "Edit entries"], ["delete", "Delete entries"], ["comment", "Comment"], ["download-receipts", "Download receipts"], ["export", "Export"]];
 
+// Terms are shown and edited only for account types that carry them (BT-006, `ledger.validateTerms`).
+const CREDIT_TERM_TYPES = new Set(["credit-card", "merchant-credit"]);
+const LOAN_TERM_TYPES = new Set(["loan", "mortgage", "other-liability"]);
+
+// Type and currency cannot be changed once an account exists (BT-006): every entry, category rule
+// and, for loans/credit cards, the terms above assume them. Shown read-only with this explanation.
+const TYPE_CURRENCY_LOCKED = "Type and currency are set when an account is created and can't be changed, because every entry and rule on this account depends on them. To fix a wrong type or currency, close this account and create a new one.";
+const OPENING_LOCKED = "This account has reconciled entries, so this is locked to keep reconciled statements correct.";
+
+// The same shape `termsControls(...).collect()` produces, built directly from the account's data
+// rather than by reading the controls back — so "did terms change" never depends on a browser
+// having already reflected the fields' initial `value` attributes into their `.value` property.
+function canonicalTerms(type, terms) {
+  const t = terms || {};
+  if (CREDIT_TERM_TYPES.has(type)) {
+    return {
+      creditLimit: t.creditLimit || undefined,
+      statementDay: t.statementDay ? Number(t.statementDay) : undefined,
+      dueDay: t.dueDay ? Number(t.dueDay) : undefined,
+      minimumPayment: t.minimumPayment || undefined,
+      apr: t.apr || undefined,
+      promoApr: t.promoApr || undefined,
+      promoEndDate: t.promoEndDate || undefined,
+    };
+  }
+  if (LOAN_TERM_TYPES.has(type)) {
+    return {
+      principal: t.principal || undefined,
+      interestRate: t.interestRate || undefined,
+      termMonths: t.termMonths || undefined,
+      payment: t.payment || undefined,
+      paymentDay: t.paymentDay ? Number(t.paymentDay) : undefined,
+      startDate: t.startDate || undefined,
+    };
+  }
+  return null;
+}
+
+// The terms controls for a loan or credit-card account: the same fields `ledger.validateTerms`
+// accepts, pre-filled from the account's current terms. The server replaces the whole `terms`
+// object on any change, so `collect()` always returns every field, not only the one that changed.
+function termsControls(type, terms) {
+  const t = terms || {};
+  if (CREDIT_TERM_TYPES.has(type)) {
+    const creditLimit = input({ inputmode: "decimal", placeholder: "0.00", value: t.creditLimit || "" });
+    const statementDay = input({ type: "number", min: "1", max: "31", inputmode: "numeric", value: t.statementDay || "" });
+    const dueDay = input({ type: "number", min: "1", max: "31", inputmode: "numeric", value: t.dueDay || "" });
+    const minimumPayment = input({ inputmode: "decimal", placeholder: "0.00", value: t.minimumPayment || "" });
+    const apr = input({ inputmode: "decimal", placeholder: "e.g. 19.99", value: t.apr || "" });
+    const promoApr = input({ inputmode: "decimal", placeholder: "e.g. 0.00", value: t.promoApr || "" });
+    const promoEndDate = input({ type: "date", value: t.promoEndDate || "" });
+    return {
+      legend: "Credit terms",
+      fields: [
+        field("Credit limit", creditLimit), field("Statement day", statementDay), field("Due day", dueDay),
+        field("Minimum payment", minimumPayment), field("APR", apr), field("Promotional APR", promoApr),
+        field("Promotion end date", promoEndDate),
+      ],
+      collect: () => ({
+        creditLimit: creditLimit.value.trim() || undefined,
+        statementDay: statementDay.value.trim() ? Number(statementDay.value.trim()) : undefined,
+        dueDay: dueDay.value.trim() ? Number(dueDay.value.trim()) : undefined,
+        minimumPayment: minimumPayment.value.trim() || undefined,
+        apr: apr.value.trim() || undefined,
+        promoApr: promoApr.value.trim() || undefined,
+        promoEndDate: promoEndDate.value || undefined,
+      }),
+    };
+  }
+  if (LOAN_TERM_TYPES.has(type)) {
+    const principal = input({ inputmode: "decimal", placeholder: "0.00", value: t.principal || "" });
+    const interestRate = input({ inputmode: "decimal", placeholder: "e.g. 4.5", value: t.interestRate || "" });
+    const termMonths = input({ type: "number", min: "1", max: "600", inputmode: "numeric", value: t.termMonths || "" });
+    const payment = input({ inputmode: "decimal", placeholder: "0.00", value: t.payment || "" });
+    const paymentDay = input({ type: "number", min: "1", max: "31", inputmode: "numeric", value: t.paymentDay || "" });
+    const startDate = input({ type: "date", value: t.startDate || "" });
+    return {
+      legend: "Loan terms",
+      fields: [
+        field("Principal", principal), field("Interest rate", interestRate), field("Term (months)", termMonths),
+        field("Payment", payment), field("Payment day", paymentDay), field("Start date", startDate),
+      ],
+      collect: () => ({
+        principal: principal.value.trim() || undefined,
+        interestRate: interestRate.value.trim() || undefined,
+        termMonths: termMonths.value.trim() ? Number(termMonths.value.trim()) : undefined,
+        payment: payment.value.trim() || undefined,
+        paymentDay: paymentDay.value.trim() ? Number(paymentDay.value.trim()) : undefined,
+        startDate: startDate.value || undefined,
+      }),
+    };
+  }
+  return null;
+}
+
 // Who may edit, close or reopen: the owner of a private account; for a shared one whoever manages the
 // workspace's shared lists (owners and managers, or members too when the workspace setting says so).
 // Presentation only; the server decides.
@@ -90,19 +185,40 @@ function openLifecycle(ctx, account) {
   });
 }
 
-// Name and icon (BT-011-05). Every change is kept in the account's history with the reason.
+// Every currently-editable field (BT-006): name, institution, account number, opening balance and
+// date (locked once the account has a reconciled entry), icon, notes, and — for loans and credit
+// cards — the terms. Type and currency are shown read-only; they are fixed after creation because
+// every entry and rule on the account depends on them. Every change is kept in the account's
+// history with the reason (BT-011-05, BT-001-05).
 function openEditAccount(ctx, account) {
+  const locked = !!account.reconciledLocked;
   const name = input({ required: true, maxlength: "80", value: account.name, autocomplete: "off" });
+  const institution = input({ maxlength: "80", value: account.institution || "", autocomplete: "off" });
+  const last = input({ inputmode: "numeric", maxlength: "4", placeholder: "Last 2–4 digits only", value: account.maskedNumber || "", autocomplete: "off" });
+  const opening = input({ inputmode: "decimal", placeholder: "0.00", value: account.openingBalance || "", disabled: locked });
+  const openingDate = input({ type: "date", value: account.openingDate || "", disabled: locked });
+  const notes = el("textarea", { class: "field__input", maxlength: "5000", text: account.notes || "" });
   const chosen = account.iconSource === "record" ? account.icon : null;
   const iconPick = createIconPicker({ value: chosen, inherited: chosen ? defaultIconFor("account", account.type) : account.icon, name: account.name });
   const reason = input({ maxlength: "200", placeholder: "Optional", autocomplete: "off" });
+  const terms = termsControls(account.type, account.terms);
+  const initialTerms = terms ? JSON.stringify(canonicalTerms(account.type, account.terms)) : null;
   const save = button("Save changes", async () => {
     modal.setError("");
     if (!name.value.trim()) { name.setAttribute("aria-invalid", "true"); name.setAttribute("aria-errormessage", modal.errorId); modal.setError("Give the account a name."); name.focus(); return; }
     const body = { accountId: account.id, revision: account.revision };
     if (name.value.trim() !== account.name) body.name = name.value.trim();
+    if (institution.value.trim() !== (account.institution || "")) body.institution = institution.value.trim();
+    if (last.value.trim() !== (account.maskedNumber || "")) body.maskedNumber = last.value.trim();
+    if (!locked && opening.value.trim() !== (account.openingBalance || "")) body.openingBalance = opening.value.trim() || "0";
+    if (!locked && openingDate.value !== (account.openingDate || "")) body.openingDate = openingDate.value;
+    if (notes.value !== (account.notes || "")) body.notes = notes.value;
     const icon = iconChange(chosen, iconPick.getValue());
     if (icon !== undefined) body.icon = icon;
+    if (terms) {
+      const current = JSON.stringify(terms.collect());
+      if (current !== initialTerms) body.terms = terms.collect();
+    }
     if (Object.keys(body).length === 2) { announce("Nothing changed."); modal.close(); return; }
     if (reason.value.trim()) body.reason = reason.value.trim();
     modal.setBusy(true);
@@ -114,7 +230,19 @@ function openEditAccount(ctx, account) {
   }, { variant: "primary" });
   const modal = openModal({
     title: `Edit ${account.name}`,
-    body: [el("div", { class: "form-grid" }, [field("Name", name), iconPick.element, field("Reason for this change", reason, { wide: true })])],
+    body: [el("div", { class: "form-grid" }, [
+      field("Name", name),
+      field("Type", input({ readonly: true, value: ACCOUNT_TYPE_LABELS[account.type] || account.type }), { help: TYPE_CURRENCY_LOCKED }),
+      field("Currency", input({ readonly: true, value: account.currency }), { help: TYPE_CURRENCY_LOCKED }),
+      field("Institution", institution),
+      field("Account number", last, { help: "Never store a full account or card number." }),
+      field("Opening balance", opening, { help: locked ? OPENING_LOCKED : "Loans and other debts: enter the amount owed as a negative number, e.g. -20000.00." }),
+      field("Opening date", openingDate, locked ? { help: OPENING_LOCKED } : {}),
+      iconPick.element,
+      field("Notes", notes, { wide: true }),
+      terms ? el("fieldset", { class: "form-grid budget-line field--wide" }, [el("legend", { class: "field__label", text: terms.legend }), ...terms.fields]) : null,
+      field("Reason for this change", reason, { wide: true }),
+    ])],
     actions: [button("Cancel", () => modal.close()), save],
   });
 }
