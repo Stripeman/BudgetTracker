@@ -84,6 +84,17 @@ npm run dev        # http://127.0.0.1:4380 — pick a fictional user on the loca
 node scripts/dev/screenshot.mjs --user alice --out .local/shots --interact menu,quick   # headless Edge evidence
 ```
 
-The dev server binds 127.0.0.1 only and uses file storage under the ignored `.local/`. It refuses to start where Azure environment markers exist. Its sign-in page offers fictional identities and exists only locally; the API itself has no bypass. Never use or stop ports 4280, 7071 or 10000–10002: they belong to another local application. Set `BT_DEV_PORT` to use a different free port.
+The dev server binds 127.0.0.1 only and uses file storage under the ignored `.local/`. It refuses to start where Azure environment markers exist. Its sign-in page offers fictional identities and exists only locally; the API itself has no bypass. Never use or stop ports 4280, 7071 or 10000–10002: they belong to another local application. Set `BT_DEV_PORT` to use a different free port, and `BT_DEV_DATA_ROOT` (a directory inside `.local/`) to give a server and the seed their own data.
+
+**Multi-user browser tests (BT-004-06, fictional data only).** `npm run e2e` starts its OWN dev server on a free port with freshly seeded fictional data under `.local/e2e/<run>/`, opens one headless Microsoft Edge per fictional user at the same time (alice owner, bob member, carol viewer, dave site administrator, eve outsider; each with its own throwaway profile, debugging port and sign-in), runs the scenarios and prints PASS, FAIL or SKIP for every check with the expected and actual values. Screenshots, `server.log`, `seed.log` and `results.json` stay in `.local/e2e/<run>/`; the browser profiles and the run's data are removed, and the run reports every PID it started and proves none is still running. It exits non-zero on any failure or incomplete cleanup. It needs Edge (set `BT_EDGE_PATH` if it is installed elsewhere), so it is not part of `npm test`.
+
+```powershell
+npm run e2e                             # every scenario
+npm run e2e -- --only privacy,shared    # privacy, shared (or group), concurrency, guards, dropdown
+npm run e2e -- --list                   # what each scenario checks
+npm run e2e -- --keep-data              # keep .local/e2e/<run>/data for inspection
+```
+
+Scenarios live in `scripts/dev/e2e/`, the library in `scripts/dev/harness/`: a session per user with a small page API (open, goto, reload, useWorkspace, click by role and name or by text, fill by label, real key presses, choose in a command picker, read text and the accessibility tree, screenshots, console errors and failed requests) and a direct API client per user that sends the app's CSRF header and Idempotency-Key, for firing parallel requests. It never uses ports 4280, 4380, 7071 or 10000–10002 and never reads or writes Terry's `.local/dev-data`. Reviewers and implementers verify interface and multi-user claims with it on their own isolated server.
 
 **Further documentation.** The [foundation design](docs/FOUNDATION_DESIGN.md), [recovery procedure](docs/RECOVERY_RUNBOOK.md), [TaskTracker inventory](docs/TASKTRACKER_REUSE.md) and [Word comparison](docs/BRIEF_RECONCILIATION.md) record decisions and gaps. See PROJECT_STATE.md for current status and next steps.
