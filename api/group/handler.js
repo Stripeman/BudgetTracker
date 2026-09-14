@@ -369,16 +369,21 @@ function expenseView(ctx, doc, member, e) {
 function settlementView(ctx, doc, member, s) {
   const me = selfRef(member);
   const toContact = s.to.startsWith('contact:');
-  const open = !s.voidedAt && writer(member);
+  const live = !s.voidedAt;
+  const open = live && writer(member);
   const out = {
     id: s.id, from: s.from, to: s.to, amount: money.toDecimal(s.amountMinor, s.currency), amountMinor: s.amountMinor, currency: s.currency,
     date: s.date, method: s.method || '', notes: s.notes || '', status: s.status, voided: !!s.voidedAt,
     voidedAt: s.voidedAt || null, voidReason: s.voidReason || '', voidedBy: s.voidedBy ? nameOf(doc, s.voidedBy) : null,
     disputeReason: s.disputeReason || '', confirmedBy: s.confirmedBy ? nameOf(doc, s.confirmedBy) : null, confirmedAt: s.confirmedAt || null,
+    // Confirmed by the manager or owner who reported it (S5); a confirmation withdrawn by a void (S6).
+    confirmedByReporter: !!s.confirmedByReporter, withdrawn: !!s.withdrawn,
     createdBy: nameOf(doc, s.createdBy), createdBySelf: s.createdBy === member.subject, createdAt: s.createdAt, revision: s.revision,
-    canConfirm: open && s.status !== 'confirmed' && (s.to === me || (toContact && isManager(member))),
-    canDispute: open && s.status === 'reported' && s.to === me,
-    canVoid: open && (s.createdBy === member.subject || isManager(member)),
+    // The payer never confirms (S5); a viewer may confirm or dispute a payment made to them (S7); once
+    // confirmed, only the receiving member or a manager or owner may withdraw it (S6).
+    canConfirm: live && s.status !== 'confirmed' && s.from !== me && (s.to === me || (toContact && open && isManager(member))),
+    canDispute: live && s.status === 'reported' && s.to === me,
+    canVoid: open && (s.status === 'confirmed' ? (s.to === me || isManager(member)) : (s.createdBy === member.subject || isManager(member))),
   };
   const mine = myLedger(ctx, doc, member, s, 'settlement');
   if (mine) out.myLedger = mine;
@@ -549,20 +554,29 @@ function settlementChange(kind) {
     const ledgerAccountId = kind === 'confirm' ? ledgerChoice(body.ledger) : null;
     const { result } = await store.mutateWorkspace(ctx, wsId, (doc, member) => {
       const s = findSettlement(doc, id);
-      requireWriter(member);
       const me = selfRef(member);
+      // A viewer may confirm or dispute a payment made to them, and nothing else (security review S7).
+      if (s.to !== me) requireWriter(member);
       const nowIso = ctx.nowIso();
       if (kind === 'confirm') {
+        // Never the person who paid (security review S5).
+        if (s.from === me) throw forbidden('You paid this, so someone else must confirm that it arrived.');
         const allowed = s.to === me || (s.to.startsWith('contact:') && isManager(member));
         if (!allowed) throw forbidden(s.to.startsWith('contact:') ? 'Only a manager or owner can confirm a payment to a contact.' : 'Only the person who received this payment can confirm it.');
+        // Starting to record on an account is not something a viewer can do (S7).
+        if (ledgerAccountId) requireWriter(member);
         if (s.voidedAt) throw conflict('This payment is void.', 'already_void');
         if (s.status === 'confirmed') throw conflict('This payment is already confirmed.', 'already_confirmed');
         checkRevision(s, body.revision);
+        // A manager or owner confirming a contact payment they reported themselves is allowed — a group
+        // with one owner must be able to record them — but kept and shown distinctly (S5).
+        const byReporter = s.to !== me && s.createdBy === member.subject;
         s.status = 'confirmed';
         s.confirmedBy = member.subject;
         s.confirmedAt = nowIso;
+        s.confirmedByReporter = byReporter;
         s.revision += 1;
-        s.history = [...(s.history || []), { revision: s.revision, at: nowIso, by: member.subject, event: 'confirmed' }];
+        s.history = [...(s.history || []), { revision: s.revision, at: nowIso, by: member.subject, event: byReporter ? 'confirmed-by-reporter' : 'confirmed' }];
         audit.record(doc, { actor: member.subject, action: 'group.settlement.confirm', targetType: 'group-settlement', targetId: s.id, at: nowIso });
         if (ledgerAccountId) linkCurrency(ctx, doc, member, s.currency, ledgerAccountId);
         else followOwnLink(ctx, doc, member, s, 'settlement', 'Repayment');
@@ -594,8 +608,15 @@ async function voidRecord(ctx, req) {
   const id = requireId(type === 'expense' ? body.expenseId : body.settlementId, type === 'expense' ? 'expenseId' : 'settlementId');
   const { result } = await store.mutateWorkspace(ctx, wsId, (doc, member) => {
     const rec = type === 'expense' ? findExpense(doc, id) : findSettlement(doc, id);
-    const allowed = writer(member) && (rec.createdBy === member.subject || isManager(member));
-    if (!allowed) throw forbidden(`Only the person who added this ${type === 'expense' ? 'expense' : 'payment'}, or a manager or owner, can void it.`);
+    // Once a payment is confirmed, the payer or reporter alone can no longer take it back: only its
+    // receiving member or a manager or owner may, and it is recorded as a withdrawn confirmation
+    // (security review S6). Before that, whoever reported it (or a manager or owner) may void it.
+    const confirmedPayment = type === 'settlement' && rec.status === 'confirmed';
+    const allowed = writer(member) && (confirmedPayment ? (rec.to === selfRef(member) || isManager(member)) : (rec.createdBy === member.subject || isManager(member)));
+    if (!allowed) {
+      throw forbidden(confirmedPayment ? 'Only the person who received this payment, or a manager or owner, can withdraw its confirmation.'
+        : `Only the person who added this ${type === 'expense' ? 'expense' : 'payment'}, or a manager or owner, can void it.`);
+    }
     if (rec.voidedAt) throw conflict(`This ${type === 'expense' ? 'expense' : 'payment'} is already void.`, 'already_void');
     checkRevision(rec, body.revision);
     const reason = requireReason(body.reason, 'voiding it');
@@ -604,7 +625,8 @@ async function voidRecord(ctx, req) {
     rec.voidedBy = member.subject;
     rec.voidReason = reason;
     rec.revision += 1;
-    rec.history = [...(rec.history || []), { revision: rec.revision, at: nowIso, by: member.subject, event: 'void', reason }];
+    if (confirmedPayment) rec.withdrawn = true;
+    rec.history = [...(rec.history || []), { revision: rec.revision, at: nowIso, by: member.subject, event: confirmedPayment ? 'withdrawn' : 'void', reason }];
     if (type === 'expense') rec.amendments = [...(rec.amendments || []), { revision: rec.revision, at: nowIso, by: member.subject, reason, changes: [{ field: 'status', from: 'active', to: 'void' }] }];
     audit.record(doc, { actor: member.subject, action: `group.${type}.void`, targetType: `group-${type}`, targetId: rec.id, at: nowIso });
     followOwnLink(ctx, doc, member, rec, type, `${type === 'expense' ? 'Shared expense' : 'Repayment'} voided: ${reason}`);
@@ -640,7 +662,10 @@ async function ledgerAction(ctx, req) {
   const choosing = Object.prototype.hasOwnProperty.call(body, 'accountId');
   const accountId = choosing && body.accountId !== null ? requireId(body.accountId, 'accountId') : null;
   const { result } = await store.mutateWorkspace(ctx, wsId, (doc, member) => {
-    requireWriter(member);
+    // Bringing one's own entries up to date, or stopping, only writes to one's own private account, so a
+    // viewer may do it too — for example after being made a viewer (security review S7). Starting or
+    // moving a link is for members, managers and owners.
+    if (choosing && accountId !== null) requireWriter(member);
     const rec = type ? (type === 'expense' ? findExpense(doc, id) : findSettlement(doc, id)) : null;
     const currency = rec ? rec.currency : body.currency;
     let outcome = null;

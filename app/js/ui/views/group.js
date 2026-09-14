@@ -23,7 +23,8 @@ export const METHOD_LABELS = Object.freeze({ equal: "Equally", amounts: "By amou
 const VALUE_LABELS = { amounts: "Amount for", percentages: "Percent for", shares: "Shares for" };
 const VALUE_HINTS = { amounts: "0.00", percentages: "%", shares: "1" };
 const STATUS_LABELS = { reported: "Reported", confirmed: "Confirmed", disputed: "Disputed" };
-const EVENT_LABELS = { create: "Added", update: "Corrected", void: "Voided", reported: "Reported as paid", confirmed: "Confirmed as received", disputed: "Disputed" };
+const EVENT_LABELS = { create: "Added", update: "Corrected", void: "Voided", reported: "Reported as paid", confirmed: "Confirmed as received", disputed: "Disputed",
+  "confirmed-by-reporter": "Confirmed by the person who reported it", withdrawn: "Confirmation withdrawn" };
 const FIELD_LABELS = { description: "Description", date: "Date", amountMinor: "Amount", categoryId: "Category", notes: "Notes", payers: "Paid by", split: "Split", shares: "Shares", status: "Status" };
 
 const titled = (id, iconId, text) => el("h2", { class: "card__title", id }, [withIcon(iconId, text)]);
@@ -226,7 +227,10 @@ export function createView(ctx) {
       el("tbody", {}, data.settlements.map((s) => {
         const label = `${nameOf(s.from)} paid ${s.to === me ? "you" : nameOf(s.to)}`;
         const status = s.voided ? badge("Voided", "closed") : badge(STATUS_LABELS[s.status] || s.status, s.status === "disputed" ? "overdue" : "");
-        const detail = s.voided ? `Voided: ${s.voidReason}` : s.status === "reported" ? `Waiting for ${s.to === me ? "you" : nameOf(s.to)} to confirm it arrived.` : s.status === "disputed" ? `Disputed: ${s.disputeReason}` : null;
+        // A confirmation withdrawn afterwards, and one given by the person who reported the payment, are
+        // said as such (security review S5, S6).
+        const detail = s.voided ? `${s.withdrawn ? "Confirmation withdrawn" : "Voided"}: ${s.voidReason}` : s.status === "reported" ? `Waiting for ${s.to === me ? "you" : nameOf(s.to)} to confirm it arrived.`
+          : s.status === "disputed" ? `Disputed: ${s.disputeReason}` : s.confirmedByReporter ? "Confirmed by the person who reported it." : null;
         return el("tr", { class: s.voided ? "row--void" : "" }, [
           el("th", { scope: "row", "data-label": "Date", text: formatDate(s.date, dateFormat) }),
           el("td", { "data-label": "Payment" }, [el("span", { text: label }), s.method ? el("div", { class: "muted small", text: s.method }) : null]),

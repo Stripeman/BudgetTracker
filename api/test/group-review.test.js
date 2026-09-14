@@ -687,3 +687,124 @@ describe('S8: the integrity check covers personal ledger links and the entries t
     await backupNow(h, f);
   });
 });
+
+// ---- settlement rules (S5, S6, S7) --------------------------------------------------------------
+const historyOf = async (h, f, settlementId) => ok(await G(h, f, 'alice', 'GET', { query: { action: 'history', settlementId } })).history;
+
+describe('S5: nobody confirms their own payment; a manager confirming a payment they reported is shown as such', () => {
+  test('the payer never confirms; a manager or owner confirming a contact payment they reported is marked', async () => {
+    const h = harness();
+    const f = await fixture(h);
+    // Frank (manager) reports that Bob paid Dana (a contact) and confirms it himself: allowed, marked.
+    const s1 = await settle(h, f, FRANK, { from: f.refs.bob, to: f.refs.dana, amount: '50.00' });
+    const c1 = ok(await act(h, f, FRANK, 'confirm', { settlementId: s1.id, revision: s1.revision })).settlement;
+    assert.deepEqual([c1.status, c1.confirmedByReporter], ['confirmed', true]);
+    assert.deepEqual((await historyOf(h, f, s1.id)).map((x) => x.event), ['reported', 'confirmed-by-reporter']);
+    // Frank reports his own payment to Dana: he paid, so he cannot confirm it; the owner can.
+    const s2 = await settle(h, f, FRANK, { from: f.refs.frank, to: f.refs.dana, amount: '10.00' });
+    assert.equal(s2.canConfirm, false);
+    assert.equal((await act(h, f, FRANK, 'confirm', { settlementId: s2.id, revision: s2.revision })).status, 403);
+    const c2 = ok(await act(h, f, 'alice', 'confirm', { settlementId: s2.id, revision: s2.revision })).settlement;
+    assert.deepEqual([c2.status, c2.confirmedByReporter], ['confirmed', false]);
+    // The owner cannot confirm her own payment to a contact either.
+    const s3 = await settle(h, f, 'alice', { from: f.refs.alice, to: f.refs.dana, amount: '5.00' });
+    assert.equal((await act(h, f, 'alice', 'confirm', { settlementId: s3.id, revision: s3.revision })).status, 403);
+    // Money a member records as received is the confirmation itself, and is not marked.
+    const s4 = await settle(h, f, 'alice', { from: f.refs.bob, to: f.refs.alice, amount: '7.00' });
+    assert.deepEqual([s4.status, s4.confirmedByReporter], ['confirmed', false]);
+    // A plain member still cannot confirm a payment to a contact.
+    const s5 = await settle(h, f, 'eve', { from: f.refs.eve, to: f.refs.dana, amount: '3.00' });
+    assert.equal((await act(h, f, 'eve', 'confirm', { settlementId: s5.id, revision: s5.revision })).status, 403);
+  });
+});
+
+describe('S6: a confirmed payment is withdrawn only by its receiver or a manager or owner', () => {
+  test('an owner or manager may withdraw a confirmation, and it is recorded as withdrawn with the reason', async () => {
+    const h = harness();
+    const f = await fixture(h);
+    // Bob paid 50.00 shared with Alice: Alice owes 25.00, reports paying it, and Bob confirms. Alice is
+    // the owner, and owners and managers may withdraw a confirmation (S6); other members may not.
+    await addExpense(h, f, 'bob', { description: 'Fictional fuel', amount: '50.00', payers: [{ ref: f.refs.bob }], split: equal(f.refs.alice, f.refs.bob) });
+    const s = await settle(h, f, 'alice', { from: f.refs.alice, to: f.refs.bob, amount: '25.00' });
+    const c = ok(await act(h, f, 'bob', 'confirm', { settlementId: s.id, revision: s.revision })).settlement;
+    assert.equal((await view(h, f)).settlements[0].canVoid, true, 'the owner may');
+    assert.equal((await view(h, f, 'eve')).settlements[0].canVoid, false, 'a member who is not the receiver may not');
+    ok(await act(h, f, 'alice', 'void', { settlementId: s.id, revision: c.revision, reason: 'Changed my mind' }));
+    const hist = await historyOf(h, f, s.id);
+    assert.deepEqual(hist.map((x) => [x.event, x.reason]), [['reported', ''], ['confirmed', ''], ['withdrawn', 'Changed my mind']]);
+  });
+
+  test('a plain member who paid cannot withdraw it; the receiving member or a manager can', async () => {
+    const h = harness();
+    const f = await fixture(h);
+    // Eve owes Bob 25.00 (fuel 50.00 shared by Eve and Bob); she reports paying and Bob confirms.
+    await addExpense(h, f, 'bob', { description: 'Fictional fuel', amount: '50.00', payers: [{ ref: f.refs.bob }], split: equal(f.refs.eve, f.refs.bob) });
+    const s = await settle(h, f, 'eve', { from: f.refs.eve, to: f.refs.bob, amount: '25.00' });
+    const c = ok(await act(h, f, 'bob', 'confirm', { settlementId: s.id, revision: s.revision })).settlement;
+    assert.equal((await view(h, f, 'eve')).settlements[0].canVoid, false);
+    assert.equal((await act(h, f, 'eve', 'void', { settlementId: s.id, revision: c.revision, reason: 'Changed my mind' })).status, 403);
+    assert.equal(netOf(await view(h, f), f.refs.eve), '0.00', 'still counted');
+    const w = ok(await act(h, f, 'bob', 'void', { settlementId: s.id, revision: c.revision, reason: 'The transfer bounced' })).settlement;
+    assert.deepEqual([w.voided, w.withdrawn, w.voidReason], [true, true, 'The transfer bounced']);
+    assert.equal(netOf(await view(h, f), f.refs.eve), '-25.00');
+    assert.deepEqual((await historyOf(h, f, s.id)).map((x) => [x.event, x.reason]), [['reported', ''], ['confirmed', ''], ['withdrawn', 'The transfer bounced']]);
+    // A manager may withdraw another confirmation.
+    const s2 = await settle(h, f, 'eve', { from: f.refs.eve, to: f.refs.bob, amount: '25.00' });
+    const c2 = ok(await act(h, f, 'bob', 'confirm', { settlementId: s2.id, revision: s2.revision })).settlement;
+    assert.equal(ok(await act(h, f, FRANK, 'void', { settlementId: s2.id, revision: c2.revision, reason: 'Duplicate' })).settlement.withdrawn, true);
+  });
+
+  test('before confirmation the reporter may still void, which is not a withdrawal; a confirmed payment to a contact is withdrawn by a manager or owner only', async () => {
+    const h = harness();
+    const f = await fixture(h);
+    const r = await settle(h, f, 'eve', { from: f.refs.eve, to: f.refs.bob, amount: '10.00' });
+    const v = ok(await act(h, f, 'eve', 'void', { settlementId: r.id, revision: r.revision, reason: 'Entered twice' })).settlement;
+    assert.deepEqual([v.voided, v.withdrawn], [true, false]);
+    assert.deepEqual((await historyOf(h, f, r.id)).map((x) => x.event), ['reported', 'void']);
+    const d = await settle(h, f, 'eve', { from: f.refs.eve, to: f.refs.dana, amount: '4.00' });
+    const dc = ok(await act(h, f, FRANK, 'confirm', { settlementId: d.id, revision: d.revision })).settlement;
+    assert.equal((await act(h, f, 'eve', 'void', { settlementId: d.id, revision: dc.revision, reason: 'x' })).status, 403);
+    assert.equal(ok(await act(h, f, 'alice', 'void', { settlementId: d.id, revision: dc.revision, reason: 'Never paid' })).settlement.withdrawn, true);
+  });
+});
+
+describe('S7: a viewer confirms or disputes payments to them and keeps their own account up to date', () => {
+  test('a viewer confirms or disputes payments made to them, and nothing else', async () => {
+    const h = harness();
+    const f = await fixture(h);
+    const s = await settle(h, f, 'alice', { from: f.refs.alice, to: f.refs.carol, amount: '5.00' });
+    const mine = (await view(h, f, 'carol')).settlements.find((x) => x.id === s.id);
+    assert.deepEqual([mine.canConfirm, mine.canDispute, mine.canVoid], [true, true, false]);
+    assert.equal(ok(await act(h, f, 'carol', 'confirm', { settlementId: s.id, revision: s.revision })).settlement.status, 'confirmed');
+    const d = await settle(h, f, 'bob', { from: f.refs.bob, to: f.refs.carol, amount: '6.00' });
+    const dd = ok(await act(h, f, 'carol', 'dispute', { settlementId: d.id, revision: d.revision, reason: 'Not received' })).settlement;
+    assert.equal(dd.status, 'disputed');
+    for (const [label, res] of [
+      ['add an expense', await G(h, f, 'carol', 'POST', { body: { description: 'x', amount: '1.00', payers: [{ ref: f.refs.carol }], split: equal(f.refs.carol) } })],
+      ['report a payment', await act(h, f, 'carol', 'settle', { from: f.refs.carol, to: f.refs.alice, amount: '1.00' })],
+      ['void', await act(h, f, 'carol', 'void', { settlementId: s.id, revision: s.revision + 1, reason: 'x' })],
+      ['start a link', await act(h, f, 'carol', 'ledger', { currency: 'EUR', accountId: 'acc_nosuch00000' })],
+      ['confirm and start a link', await act(h, f, 'carol', 'confirm', { settlementId: d.id, revision: dd.revision, ledger: { accountId: 'acc_nosuch00000' } })],
+      ['confirm a payment to someone else', await act(h, f, 'carol', 'confirm', { settlementId: (await settle(h, f, 'bob', { from: f.refs.bob, to: f.refs.alice, amount: '2.00' })).id, revision: 1 })],
+    ]) assert.equal(res.status, 403, label);
+  });
+
+  test('a member demoted to viewer still updates and stops recording on their own private account, but cannot start again', async () => {
+    const h = harness();
+    const f = await fixture(h);
+    const cash = await account(h, f, 'eve', { name: 'Eve Cash', type: 'cash', currency: 'EUR', openingBalance: '50.00' });
+    // Eve paid 8.00 shared with Alice: share 4.00, lent 4.00; cash 50.00 − 8.00 = 42.00.
+    await addExpense(h, f, 'eve', { description: 'Fictional tea', amount: '8.00', payers: [{ ref: f.refs.eve }], split: equal(f.refs.eve, f.refs.alice), ledger: { accountId: cash.id } });
+    assert.equal(await balanceOf(h, f, 'eve', cash.id), '42.00');
+    ok(await h.call('members', 'PATCH', { as: 'alice', query: f.q, body: { memberId: f.mid('Eve'), role: 'viewer' } }));
+    // Alice's bread 6.00 shared with Eve: Eve's 3.00 is spending and owed; no cash moves.
+    await addExpense(h, f, 'alice', { description: 'Fictional bread', amount: '6.00', payers: [{ ref: f.refs.alice }], split: equal(f.refs.alice, f.refs.eve) });
+    assert.equal((await view(h, f, 'eve')).myLedgers[0].reviewCount, 1);
+    ok(await act(h, f, 'eve', 'ledger', { currency: 'EUR' }));
+    // Spending 4 + 3 = 7; outstanding 4 − 3 = 1 = Eve's balance 8 − 4 − 3.
+    assert.deepEqual(await ledgerOf(h, f, 'eve', cash.id), { cash: '42.00', spent: '7.00', advances: '4.00', payables: '3.00', reimbursed: '0.00', repaid: '0.00', receivable: '1.00' });
+    assert.equal((await act(h, f, 'eve', 'ledger', { currency: 'EUR', accountId: cash.id })).status, 403, 'cannot start or move a link');
+    ok(await act(h, f, 'eve', 'ledger', { currency: 'EUR', accountId: null }));
+    assert.equal(await balanceOf(h, f, 'eve', cash.id), '50.00');
+  });
+});

@@ -103,6 +103,26 @@ describe("finding 3: every currency with an open balance is shown and can be set
   });
 });
 
+describe("S5 and S6: how a payment's confirmation is shown", () => {
+  const payment = (extra) => ({ id: "gst_1", from: "member:b", to: "member:a", amount: "20.00", amountMinor: 2000, currency: "USD", date: "2026-09-12", method: "",
+    notes: "", status: "confirmed", voided: false, voidReason: "", disputeReason: "", confirmedByReporter: false, withdrawn: false,
+    canConfirm: false, canDispute: false, canVoid: false, revision: 2, ...extra });
+
+  test("a confirmation by the person who reported the payment is said so", () => {
+    const { ctx, state } = ctxWith(STRANDED, { settlements: [payment({ confirmedByReporter: true })] });
+    const v = createGroupView(ctx);
+    v.update(state);
+    assert.match(v.element.textContent, /Confirmed by the person who reported it\./);
+  });
+
+  test("a withdrawn confirmation says so with its reason, not only that it was voided", () => {
+    const { ctx, state } = ctxWith(STRANDED, { settlements: [payment({ voided: true, withdrawn: true, voidReason: "The transfer bounced" })] });
+    const v = createGroupView(ctx);
+    v.update(state);
+    assert.match(v.element.textContent, /Confirmation withdrawn: The transfer bounced/);
+  });
+});
+
 describe("S2 and finding 2: the own-account choice", () => {
   const OWN = { id: "acc_own", name: "Alice Cash", currency: "USD", status: "open", visibility: "private", ownedBySelf: true, capabilities: ["create", "view-transactions"] };
   const JOINT = { id: "acc_joint", name: "Joint", currency: "USD", status: "open", visibility: "shared", ownedBySelf: false, capabilities: ["create", "view-transactions"] };

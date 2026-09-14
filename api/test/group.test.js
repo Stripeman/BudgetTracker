@@ -322,14 +322,17 @@ describe('BT-009-04 settlements: reported, confirmed, disputed, void', () => {
     assert.equal((await act('alice', 'dispute', { settlementId: s.id, revision: 3, reason: 'x' })).body.error.code, 'not_disputable');
     assert.equal((await act('alice', 'confirm', { settlementId: s.id, revision: 3 })).body.error.code, 'already_confirmed');
     assert.equal((await act('carol', 'void', { settlementId: s.id, revision: 3, reason: 'x' })).status, 403);
-    const voided = ok(await act('bob', 'void', { settlementId: s.id, revision: 3, reason: 'Paid the wrong person' })).settlement;
-    assert.deepEqual([voided.voided, voided.voidReason, voided.status], [true, 'Paid the wrong person', 'confirmed']);
+    // Once confirmed, the payer and reporter alone can no longer void it; the receiver withdraws the
+    // confirmation (security review S6, Terry 2026-09-14).
+    assert.equal((await act('bob', 'void', { settlementId: s.id, revision: 3, reason: 'Paid the wrong person' })).status, 403);
+    const voided = ok(await act('alice', 'void', { settlementId: s.id, revision: 3, reason: 'Paid the wrong person' })).settlement;
+    assert.deepEqual([voided.voided, voided.voidReason, voided.status, voided.withdrawn], [true, 'Paid the wrong person', 'confirmed', true]);
     v = await view(h, f);
     assert.equal(row(v, f.refs.alice).net, '30.00', 'a void takes the payment out again');
     assert.equal(v.settlements.length, 1, 'still listed');
-    assert.equal((await act('bob', 'void', { settlementId: s.id, revision: 4, reason: 'x' })).body.error.code, 'already_void');
+    assert.equal((await act('alice', 'void', { settlementId: s.id, revision: 4, reason: 'x' })).body.error.code, 'already_void');
     const hist = ok(await G(h, f, 'bob', 'GET', { query: { action: 'history', settlementId: s.id } }));
-    assert.deepEqual(hist.history.map((x) => x.event), ['reported', 'disputed', 'confirmed', 'void']);
+    assert.deepEqual(hist.history.map((x) => x.event), ['reported', 'disputed', 'confirmed', 'withdrawn']);
   });
 
   test('a payment to a contact is confirmed by a manager or owner, not a plain member; bad payments are refused', async () => {
