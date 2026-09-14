@@ -196,6 +196,39 @@ describe('N-1: entries that moved real cash stay on the account the money used; 
   });
 });
 
+describe('Note on incomplete figures: until an account is chosen, a part the totals leave out says so', () => {
+  test('Alice removes her card before choosing a new one: her dinner needs review, the note says her totals leave it out, and they read 0.00', async () => {
+    const h = harness();
+    const f = await fixture(h);
+    const { alice, bob, carol, dana } = f.refs;
+    const card = await account(h, f, 'alice', { name: 'Alice Card', openingBalance: '1000.00' });
+    ok(await act(h, f, 'alice', 'ledger', { currency: 'EUR', accountId: card.id }));
+    await addExpense(h, f, 'alice', { description: 'Fictional dinner', amount: '300.00', payers: [{ ref: alice }], split: equal(alice, bob, carol, dana) });
+    ok(await h.call('accounts', 'DELETE', { as: 'alice', query: f.q, body: { accountId: card.id, reason: 'Card cancelled' } }));
+    const mine = (await view(h, f, 'alice')).expenses[0].myLedger;
+    assert.equal(mine.needsReview, true);
+    assert.match(mine.note, /an account that no longer exists\. Choose a private account of yours to record it there\. Until you do, your totals leave this part out\./);
+    // The removed card counts nowhere: spending 0.00, outstanding 0.00 until she chooses an account.
+    assert.deepEqual(await summary(h, f, 'alice'), { spending: '0.00', outstanding: '0.00' });
+  });
+
+  test('a part that still counts, on a card Alice shared, needs an account but does not say the totals leave it out: spending 20.00, outstanding −20.00', async () => {
+    const h = harness();
+    const f = await fixture(h);
+    const { alice, bob } = f.refs;
+    const card = await account(h, f, 'alice', { name: 'Alice Card', openingBalance: '1000.00' });
+    ok(await act(h, f, 'alice', 'ledger', { currency: 'EUR', accountId: card.id }));
+    // 40.00 paid by Bob, shared by Alice and Bob: her share 20.00, owed 20.00, no money moved.
+    await addExpense(h, f, 'bob', { description: 'Fictional taxi', amount: '40.00', payers: [{ ref: bob }], split: equal(alice, bob) });
+    ok(await act(h, f, 'alice', 'ledger', { currency: 'EUR' }));
+    ok(await h.call('accounts', 'PATCH', { as: 'alice', query: f.q, body: { accountId: card.id, revision: (await accountNow(h, f, 'alice', card.id)).revision, visibility: 'shared', confirmShare: true } }));
+    const mine = (await view(h, f, 'alice')).expenses[0].myLedger;
+    assert.equal(mine.needsReview, true);
+    assert.doesNotMatch(mine.note, /totals leave/);
+    assert.deepEqual(await summary(h, f, 'alice'), { spending: '20.00', outstanding: '-20.00' });
+  });
+});
+
 describe('Personal defaults on the server: a request without payer or split takes the caller\'s own defaults, else the group\'s', () => {
   const prefs = (h, w, body) => h.call('preferences', 'PUT', { ...who(w), body });
   const amounts = (e) => [e.payers.map((p) => [p.ref, p.amount]), e.shares.map((s) => [s.ref, s.amount])];

@@ -470,7 +470,10 @@ function formerNote(reason, name, { left, hasAccount }) {
       : `${name || 'an account'}, which is now shared`;
   if (left) return `Your part was recorded on ${where}. Those entries are left on a former account as they were, and your whole part is recorded on your current account.`;
   if (reason === 'closed') return `Your part was recorded on ${where}. Reopen it on the Accounts page so it can be updated.`;
-  return `Your part was recorded on ${where}. ${hasAccount ? 'Update your account to record it on your own account instead.' : 'Choose a private account of yours to record it there.'}`;
+  // Until an account is chosen, a part the totals leave out (removed, out of reach, or read-only) is said
+  // to be missing from them (financial recheck of 53cf181, note on incomplete figures).
+  const leftOut = !hasAccount && ['deleted', 'unavailable', 'read-only'].includes(reason) ? ' Until you do, your totals leave this part out.' : '';
+  return `Your part was recorded on ${where}. ${hasAccount ? 'Update your account to record it on your own account instead.' : 'Choose a private account of yours to record it there.'}${leftOut}`;
 }
 
 // The caller's current links, one per currency, with how many records need updating.
