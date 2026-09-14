@@ -154,3 +154,27 @@ describe('L-2: a group write re-checks Shared expenses in the same write', () =>
     }
   });
 });
+
+// ---- L-3: what the entries list offers on a transfer follows the both-sides rule -------------------
+// Alice moves 100.00 from the shared Joint into her private Alice Savings, and 40.00 from the Joint into a
+// second shared account; then she chooses "Any entry".
+describe('L-3: the entries list offers Edit and Delete on a transfer only when both sides may change', () => {
+  test('Bob is not offered Edit or Delete on the Joint side of a transfer into Alice\'s private account, and the server refuses both; a shared-to-shared transfer is offered and correctable', async () => {
+    const h = harness();
+    const f = await household(h);
+    const joint2 = ok(await h.call('accounts', 'POST', { as: 'alice', query: f.q, body: { name: 'Fictional Joint Savings', type: 'savings', currency: 'EUR', visibility: 'shared' } }), 201).account;
+    ok(await h.call('transactions', 'POST', { as: 'alice', query: f.q, body: { accountId: f.joint.id, kind: 'transfer', amount: '100.00', date: '2026-09-12', transfer: { toAccountId: f.aliceSavings.id } } }), 201);
+    ok(await h.call('transactions', 'POST', { as: 'alice', query: f.q, body: { accountId: f.joint.id, kind: 'transfer', amount: '40.00', date: '2026-09-12', transfer: { toAccountId: joint2.id } } }), 201);
+    ok(await setSettings(h, 'alice', f.ws.id, { memberEditsOthers: 'any' }));
+    const bobs = ok(await h.call('transactions', 'GET', { as: 'bob', query: f.q })).transactions.filter((t) => t.kind === 'transfer' && t.accountId === f.joint.id);
+    const toPrivate = bobs.find((t) => t.amount === '-100.00');
+    const toShared = bobs.find((t) => t.amount === '-40.00');
+    assert.deepEqual([toPrivate.canEdit, toPrivate.canDelete], [false, false], 'into Alice\'s private account');
+    assert.deepEqual([toShared.canEdit, toShared.canDelete], [true, true], 'between two shared accounts');
+    assert.equal((await h.call('transactions', 'PATCH', { as: 'bob', query: f.q, body: { transactionId: toPrivate.id, revision: toPrivate.revision, notes: 'Bob' } })).status, 403);
+    assert.equal((await h.call('transactions', 'DELETE', { as: 'bob', query: f.q, body: { transactionId: toPrivate.id, revision: toPrivate.revision, reason: 'Bob' } })).status, 403);
+    ok(await h.call('transactions', 'PATCH', { as: 'bob', query: f.q, body: { transactionId: toShared.id, revision: toShared.revision, notes: 'Checked by Bob' } }));
+    const alices = ok(await h.call('transactions', 'GET', { as: 'alice', query: f.q })).transactions.find((t) => t.id === toPrivate.id);
+    assert.deepEqual([alices.canEdit, alices.canDelete], [true, true], 'Alice keeps both');
+  });
+});

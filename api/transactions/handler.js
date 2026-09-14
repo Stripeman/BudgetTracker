@@ -180,12 +180,24 @@ async function list(ctx, req) {
   const limit = Math.min(Math.max(parseInt(query(req, 'limit') || '200', 10) || 200, 1), 1000);
   const offset = Math.max(parseInt(query(req, 'offset') || '0', 10) || 0, 0);
   const look = lookups(doc);
+  // A transfer is edited and deleted as a pair, and the routes require the right on every leg, so the
+  // list offers Edit and Delete only when both sides may change (security review of eefd115, L-3).
+  const legs = new Map();
+  for (const x of doc.transactions || []) if (x.transferId) legs.set(x.transferId, [...(legs.get(x.transferId) || []), x]);
+  const mayChange = (t, account, capability) => {
+    if (!canChangeRecord(doc, ctx.principal, account, t, capability, now)) return false;
+    if (!t.transferId) return true;
+    return (legs.get(t.transferId) || []).filter((x) => x.id !== t.id).every((x) => {
+      const other = look.accounts.get(x.accountId);
+      return !!other && canChangeRecord(doc, ctx.principal, other, x, capability, now);
+    });
+  };
   const page = txns.slice(offset, offset + limit).map((t) => {
     const view = ledger.transactionView(doc, t, ctx.principal, now, look);
     const account = look.accounts.get(t.accountId);
     view.responsible = people.labelFor(t.responsibleRef, { doc, user });
-    view.canEdit = canChangeRecord(doc, ctx.principal, account, t, 'edit', now);
-    view.canDelete = canChangeRecord(doc, ctx.principal, account, t, 'delete', now);
+    view.canEdit = mayChange(t, account, 'edit');
+    view.canDelete = mayChange(t, account, 'delete');
     return view;
   });
   return {
