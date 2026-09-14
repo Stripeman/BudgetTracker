@@ -98,7 +98,8 @@ async function preview(ctx, req) {
   const wsId = requireId(body.workspaceId, 'workspaceId');
   const { value } = await ctx.storage.getJson(store.paths.workspace(wsId));
   const doc = readDocument('workspace', value);
-  const inv = doc && findValid(doc, body.token, ctx.principal, ctx.now());
+  // A deleted (archived) workspace takes no one in: its invitations are not valid until it is brought back.
+  const inv = doc && doc.status !== 'archived' && findValid(doc, body.token, ctx.principal, ctx.now());
   if (!inv) throw notFound('This invitation is not valid for your account.');
   return { body: { workspace: { name: doc.name, kind: doc.kind }, role: inv.role, summary: ROLE_SUMMARY[inv.role], capabilities: ROLE_PRESETS[inv.role], expiresAt: inv.expiresAt } };
 }
@@ -151,7 +152,7 @@ async function join(ctx, wsId, body, setJoined, profileName = '') {
   let joined = null;
   await update(ctx.storage, store.paths.workspace(wsId), (value) => {
     const doc = readDocument('workspace', value);
-    if (!doc) throw notFound('This invitation is not valid for your account.');
+    if (!doc || doc.status === 'archived') throw notFound('This invitation is not valid for your account.');
     if (activeMember(doc, ctx.principal)) { joined = { already: true }; return undefined; }
     const inv = findValid(doc, body.token, ctx.principal, ctx.now());
     if (!inv) throw notFound('This invitation is not valid for your account.');

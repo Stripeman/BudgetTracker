@@ -4,8 +4,9 @@
 //   GET ?id=         one workspace
 //   POST             create (Idempotency-Key supported); the creator becomes its owner
 //   PATCH ?id=       rename / shared settings (owner or manager)
-//   DELETE ?id=      archive (owner) — recoverable, never a permanent delete
-//   POST ?id=&action=restore   unarchive (owner)
+//   DELETE ?id=      archive (owner) — shown as "Delete workspace"; recoverable, never a permanent delete.
+//                    Nobody reaches an archived workspace until an owner brings it back (store.loadWorkspace).
+//   POST ?id=&action=restore   unarchive (owner) — "Bring back" under Deleted workspaces in My settings
 const { readBody, query, header, badRequest, forbidden, notFound, conflict } = require('../_shared/http');
 const { newId, requireId, isIdempotencyKey } = require('../_shared/ids');
 const { PreconditionFailed } = require('../_shared/storage');
@@ -27,7 +28,7 @@ async function list(ctx) {
     const { value } = await ctx.storage.getJson(store.paths.workspace(id));
     const doc = readDocument('workspace', value);
     const member = doc && activeMember(doc, ctx.principal);
-    if (member) out.push(model.summary(doc, member));
+    if (model.listed(doc, member)) out.push(model.summary(doc, member));
   }
   return { body: { workspaces: out } };
 }
@@ -148,7 +149,7 @@ async function archive(ctx, req) {
     addLifecycle(doc, { at: doc.archivedAt, by: member.subject, state: 'archived', reason: fields.text(body.reason, { field: 'Reason', max: 200 }) });
     audit.record(doc, { actor: member.subject, action: 'workspace.archive', targetType: 'workspace', targetId: doc.id, at: ctx.nowIso() });
     return { workspace: model.summary(doc, member) };
-  }, { allowHeadroom: true });
+  }, { allowHeadroom: true, archived: true });
   return { body: result };
 }
 
@@ -157,8 +158,8 @@ async function post(ctx, req) {
     const id = requireId(query(req, 'id'), 'id');
     const body = fields.onlyKeys(readBody(req), ['reason']);
     // Unarchiving counts toward the creator's active-workspace limit like creating one (SEC-T4).
-    const { doc: current } = await store.loadWorkspace(ctx, id);
-    if (current.status === 'archived' && current.createdBy === ctx.principal.subject) await store.assertCanCreateWorkspace(ctx);
+    const { doc: current } = await store.loadWorkspace(ctx, id, { archived: true });
+    if (current.status === 'archived' && current.createdBy === ctx.principal.subject) await store.assertCanCreateWorkspace(ctx, { restoring: true });
     const { result } = await store.mutateWorkspace(ctx, id, (doc, member) => {
       if (member.role !== 'owner') throw forbidden('Only an owner can restore a workspace.');
       if (doc.status !== 'archived') return { workspace: model.summary(doc, member) };
@@ -168,7 +169,7 @@ async function post(ctx, req) {
       doc.archivedAt = null;
       audit.record(doc, { actor: member.subject, action: 'workspace.restore', targetType: 'workspace', targetId: doc.id, at: ctx.nowIso() });
       return { workspace: model.summary(doc, member) };
-    });
+    }, { archived: true });
     return { body: result };
   }
   if (query(req, 'action') !== undefined) throw notFound();

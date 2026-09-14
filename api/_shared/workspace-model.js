@@ -40,6 +40,13 @@ const activeOwners = (doc) => activeMembers(doc).filter((m) => m.role === 'owner
 const findMember = (doc, memberId) => (doc.members || []).find((m) => m.id === memberId) || null;
 const memberBySubject = (doc, subject) => (doc.members || []).find((m) => m.subject === subject) || null;
 
+// Whether a workspace appears in this person's lists (/api/me, /api/workspaces): an active member's
+// workspace, except a deleted (archived) one, which only its owners still see — under "Deleted
+// workspaces", to bring it back (Terry, 2026-09-14).
+function listed(doc, member) {
+  return !!(doc && member) && (doc.status !== 'archived' || member.role === 'owner');
+}
+
 function summary(doc, member) {
   return {
     id: doc.id, name: doc.name, kind: doc.kind, status: doc.status, role: member.role,
@@ -60,4 +67,4 @@ function memberView(m, viewer) {
   return out;
 }
 
-module.exports = { KINDS, newWorkspaceDoc, activeMembers, activeOwners, findMember, memberBySubject, summary, memberView };
+module.exports = { KINDS, newWorkspaceDoc, activeMembers, activeOwners, findMember, memberBySubject, listed, summary, memberView };

@@ -105,7 +105,8 @@ async function seesSiteStaging(ctx, user) {
   const doc = user || readDocument('user', (await ctx.storage.getJson(store.paths.user(ctx.principal.subject))).value);
   for (const id of (doc && doc.workspaceIds) || []) {
     const { value } = await ctx.storage.getJson(store.paths.workspace(id));
-    if (activeMember(readDocument('workspace', value), ctx.principal)) return true;
+    const doc = readDocument('workspace', value);
+    if (doc && doc.status !== 'archived' && activeMember(doc, ctx.principal)) return true;
   }
   return false;
 }
