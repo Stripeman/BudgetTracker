@@ -280,6 +280,44 @@ describe("BT-004-05 inside a modal dialog", () => {
     none(panel(), "Tab from the last stop leaves");
   });
 
+  // One event, offered to the document's capture listeners (the modal) and then to the element, as in
+  // a browser — so what the modal did to it (preventDefault) is visible to the assertions.
+  const keyThrough = (node, key, extra = {}) => {
+    const e = Object.assign(new DomEvent("keydown", { bubbles: true, key, target: node }), extra);
+    document.dispatchEvent(e);
+    if (!e.propagationStopped) node.dispatchEvent(e);
+    return e;
+  };
+
+  test("the open panel is inside the dialog, so aria-modal never hides its options (a11y review finding 4)", () => {
+    const { select } = inModal();
+    const dialog = dom.body.querySelector(".modal");
+    triggerOf(select).click();
+    assert.ok(panel(), "open");
+    assert.ok(dialog.contains(panel()), "the panel is in the aria-modal dialog's subtree");
+    assert.equal(panel().getAttribute("role"), "dialog");
+    // Still dismissed by a press outside it, even though it now lives inside the dialog.
+    document.dispatchEvent(new DomEvent("mousedown", { bubbles: true, target: dialog.querySelector("h2") }));
+    none(panel(), "a press on the dialog's own title closes the panel");
+    assert.ok(dialogOpen(), "and not the dialog");
+  });
+
+  test("outside a dialog the panel still floats on the body (TaskTracker's placement)", () => {
+    const { select } = mounted();
+    triggerOf(select).click();
+    same(panel().parentNode, dom.body);
+  });
+
+  test("the dialog's Tab trap leaves Tab inside an open panel to the panel, even when the picker is the dialog's last control", () => {
+    const select = pickerSelect(PERIODS, "monthly");
+    openModal({ title: "Choose a period", body: [field("Period", select)] });
+    triggerOf(select).click();
+    const e = keyThrough(panel().querySelector(".cmdpick__search"), "Tab");
+    none(panel(), "Tab left the panel");
+    same(document.activeElement, triggerOf(select), "focus is back on the trigger, where the browser's Tab continues");
+    assert.equal(e.defaultPrevented, false, "the dialog did not wrap focus to its first control");
+  });
+
   test("closing the dialog closes a panel opened from it", () => {
     const { select, modal } = inModal();
     triggerOf(select).click();

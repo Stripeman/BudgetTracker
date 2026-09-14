@@ -43,6 +43,10 @@
 //      is spoken as "Choose." rather than "Search and choose.", and Tab or Shift+Tab at the panel's
 //      edge closes it and continues from the trigger, so a dialog's own Tab order carries on.
 //   A7 `close()` is public, so a control that is disabled from outside can close its panel.
+//   Accessibility and UX review fixes (2026-09-14, reviews of be25017; docs/TASKTRACKER_REUSE.md):
+//   A8 Inside an aria-modal dialog the panel is appended to the dialog, not the body, so assistive
+//      technology that honours aria-modal can still reach its options; the dialog's Tab trap leaves
+//      Tab inside the panel to the panel (modal.js).
 import { el, clear } from "./dom.js";
 import { computePlacement } from "../core/popover.js";
 import { registerPopup } from "./popup.js";
@@ -333,7 +337,12 @@ export function createCommandPicker({ select, label = "Choose", placeholder = ""
     const doc = element.ownerDocument;
     if (!doc || !doc.body || !doc.body.contains(trigger)) return;
     open = true;
-    doc.body.appendChild(panel);
+    // A8 — INSIDE A MODAL DIALOG, THE PANEL LIVES IN THE DIALOG. `aria-modal` tells assistive technology
+    // that nothing outside the dialog exists, so a panel on the body could be unreachable there
+    // (VoiceOver/Safari). It stays `position: fixed`, so where it sits in the tree does not move it.
+    // Outside a dialog it floats on the body, as in TaskTracker.
+    const host = (typeof trigger.closest === "function" && trigger.closest('[aria-modal="true"]')) || doc.body;
+    host.appendChild(panel);
     panel.removeAttribute("hidden");
     trigger.setAttribute("aria-expanded", "true");
     search.value = "";
