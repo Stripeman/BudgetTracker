@@ -67,8 +67,8 @@ describe('BT-006-05 moving an entry: balances, totals, forecasts and budgets fol
     const h = harness();
     const f = await wrongAccount(h);
     const lines = [{ categoryId: f.cats.Groceries, amount: '400.00' }];
-    ok(await h.call('budgets', 'POST', { as: 'alice', query: f.q, body: { name: 'Shared food', scope: 'shared', currency: 'EUR', startDate: '2026-01-01', lines } }), 201);
-    ok(await h.call('budgets', 'POST', { as: 'alice', query: f.q, body: { name: 'My food', scope: 'private', currency: 'EUR', startDate: '2026-01-01', lines } }), 201);
+    ok(await h.call('budgets', 'POST', { as: 'alice', query: f.q, body: { name: 'Shared food', scope: 'shared', currency: 'EUR', startDate: '2026-01-01', lines, confirmBackdate: true } }), 201);
+    ok(await h.call('budgets', 'POST', { as: 'alice', query: f.q, body: { name: 'My food', scope: 'private', currency: 'EUR', startDate: '2026-01-01', lines, confirmBackdate: true } }), 201);
     const actual = async () => Object.fromEntries(ok(await h.call('budgets', 'GET', { as: 'alice', query: f.q })).budgets.map((b) => [b.name, b.status.lines[0].actual]));
     // On Alice's private Checking: the shared budget (shared accounts only) 0.00; her own 40.00.
     assert.deepEqual(await actual(), { 'Shared food': '0.00', 'My food': '40.00' });
