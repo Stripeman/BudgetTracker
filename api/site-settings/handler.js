@@ -13,7 +13,7 @@ const { newId } = require('../_shared/ids');
 const { appInfo } = require('../_shared/version');
 
 const EDITABLE = ['branding', 'defaults', 'locked', 'modules', 'publicSharingEnabled', 'invitationPolicy', 'uploadLimitBytes', 'exchangeRateProvider', 'announcement', 'maintenanceMessage', 'backupPolicy'];
-const LOCKABLE = ['themeMode', 'themePalette', 'editorToolbar', 'balanceMasking', 'dateFormat', 'locale'];
+const LOCKABLE = ['themeMode', 'themePalette', 'editorToolbar', 'balanceMasking', 'dateFormat', 'locale', 'stagingUrl'];
 
 // The application version, environment and deployed commit are public (the repository is public),
 // so anyone can verify which build a deployment runs without signing in.
@@ -29,7 +29,7 @@ function clean(body, current) {
   const changed = [];
   if (body.branding !== undefined) { fields.onlyKeys(body.branding || {}, ['name']); next.branding = { name: fields.text(body.branding.name, { field: 'Site name', max: 60, required: true }) }; changed.push('branding'); }
   if (body.defaults !== undefined) {
-    const d = fields.onlyKeys(body.defaults || {}, ['themeMode', 'themePalette', 'editorToolbar', 'dateFormat', 'locale']);
+    const d = fields.onlyKeys(body.defaults || {}, ['themeMode', 'themePalette', 'editorToolbar', 'dateFormat', 'locale', 'stagingUrl']);
     next.defaults = {
       themeMode: fields.oneOf(d.themeMode, site.THEME_MODES, 'Default theme mode', current.defaults.themeMode),
       themePalette: fields.oneOf(d.themePalette, site.PALETTES, 'Default palette', current.defaults.themePalette),
@@ -37,6 +37,10 @@ function clean(body, current) {
       dateFormat: fields.oneOf(d.dateFormat, ['iso', 'dmy', 'mdy'], 'Default date format', current.defaults.dateFormat),
       locale: d.locale === undefined ? current.defaults.locale : fields.text(d.locale, { field: 'Locale', max: 5, required: true }),
     };
+    // The staging link everyone inherits (BT-011-06): kept when another default changes, validated
+    // like the personal one, and removed (not stored as null) when cleared.
+    const stagingUrl = d.stagingUrl === undefined ? current.defaults.stagingUrl : d.stagingUrl === null ? undefined : fields.webAddress(d.stagingUrl, 'Staging link');
+    if (stagingUrl) next.defaults.stagingUrl = stagingUrl;
     changed.push('defaults');
   }
   if (body.locked !== undefined) {

@@ -97,6 +97,31 @@ function email(value, field, { required = false } = {}) {
   return out;
 }
 
+// A web address a person saves to open later, such as the staging link (BT-011-06). It builds on
+// the rich-text link rule (richtext.safeLinkHref: "//" and no backslash, no user name or password, no
+// control or invisible characters) and is stricter: https only (there is no environment notion here,
+// so not even a local http address), printable ASCII only (no spaces, and no look-alike Unicode host
+// — international names are written in their xn-- form) and at most `max` characters. The client
+// applies the same rule before it draws the link (app/js/core/links.js, checked by a mirror test).
+const WEB_ADDRESS_CHARS = /^[\x21-\x7e]+$/;
+function webAddress(value, field, { max = 300 } = {}) {
+  const refuse = (detail) => badRequest(`${field} ${detail}`, 'invalid_url');
+  if (typeof value !== 'string') throw refuse('must be a web address starting with https://.');
+  // Only ASCII spaces and line breaks around the address are trimmed: String.prototype.trim would
+  // also strip a byte-order mark, and hidden characters are refused, never stripped.
+  const cleaned = value.replace(/^[ \t\r\n]+|[ \t\r\n]+$/g, '');
+  if (cleaned.length > max) throw refuse(`must be at most ${max} characters.`);
+  const safe = richtext.safeLinkHref(cleaned);
+  let url = null;
+  try { url = safe ? new URL(safe) : null; } catch { url = null; }
+  // `safe === cleaned`: the link rule trims with String.prototype.trim, which would quietly drop a
+  // byte-order mark; anything it would change is refused instead.
+  if (!safe || safe !== cleaned || !WEB_ADDRESS_CHARS.test(cleaned) || !url || url.protocol !== 'https:' || !url.hostname) {
+    throw refuse('must be a web address starting with https://, without spaces, a user name, a password or hidden characters.');
+  }
+  return safe;
+}
+
 // Rejects any unknown key so a client cannot smuggle server-owned fields through a body.
 function onlyKeys(body, allowed) {
   for (const key of Object.keys(body)) {
@@ -105,4 +130,4 @@ function onlyKeys(body, allowed) {
   return body;
 }
 
-module.exports = { text, richText, oneOf, bool, date, optionalId, idList, tags, email, onlyKeys };
+module.exports = { text, richText, oneOf, bool, date, optionalId, idList, tags, email, webAddress, onlyKeys };

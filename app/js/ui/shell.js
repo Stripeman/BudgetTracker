@@ -14,6 +14,7 @@ import { createDayNightControl } from "./daynight.js";
 import { initials } from "./components.js";
 import { createThemePicker } from "./themepicker.js";
 import { createWorkspacePicker } from "./workspacepicker.js";
+import { createStagingMenuEntry, openPersonalStagingEditor } from "./staginglink.js";
 import { AUTH } from "../core/api.js";
 import { ROUTES, navRoutes } from "../core/router.js";
 import { Status } from "../core/store.js";
@@ -89,12 +90,19 @@ export function createShell({ mountPoint, store, router, theme, api }) {
         announce(`The palette could not be saved. ${messageFor(out.error)}`);
       },
     });
+    // The staging link (BT-011-06), built once with the menu and refreshed in place. Editing closes
+    // the menu and puts focus on its button first, so the dialog gives focus back there when it closes.
+    const staging = createStagingMenuEntry({
+      getState: () => store.getState(),
+      onEdit: () => { setOpen(false); trigger.focus(); openPersonalStagingEditor({ store }); },
+    });
     panel.append(
       el("div", { class: "menu__group" }, [el("div", { class: "menu__identity" }, [el("strong", { text: user.name || "Signed in" }), el("div", { class: "muted small", text: user.email })])]),
       el("div", { class: "menu__group" }, [
         el("p", { class: "menu__heading", text: "Appearance" }), dayNight.element,
         el("div", { class: "menu__palette" }, [el("p", { class: "field__label small", id: "menu-palette-label", text: "Colour palette" }), palette.element]),
       ]),
+      staging.element,
       el("div", { class: "menu__group" }, [
         // Track something separately in its own workspace; the menu closes and focus returns to its
         // button first, so the dialog gives focus back there when it closes.
@@ -115,6 +123,7 @@ export function createShell({ mountPoint, store, router, theme, api }) {
         dayNight.setLocked(isLocked("themeMode"));
         if (palette.getValue() !== theme.getTheme()) palette.select(theme.getTheme());
         palette.setDisabled(isLocked("themePalette"));
+        staging.refresh();
       },
     };
   }

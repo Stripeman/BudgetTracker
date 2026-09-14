@@ -30,11 +30,14 @@ async function readSite(storage) {
 }
 
 // What anyone may learn before signing in: branding, theme defaults and a public announcement.
+// The staging link's site default (BT-011-06) is for signed-in people only: a visitor to the
+// Production site never learns where the staging site is.
 function publicView(site, signedIn) {
   const a = site.announcement || {};
   const showAnnouncement = a.active && a.text && (a.audience === 'everyone' || signedIn);
+  const { stagingUrl, ...publicDefaults } = site.defaults || {};
   return {
-    branding: site.branding, defaults: site.defaults, locked: site.locked,
+    branding: site.branding, defaults: signedIn ? site.defaults : publicDefaults, locked: site.locked,
     announcement: showAnnouncement ? { text: a.text, version: a.version } : null,
     maintenanceMessage: site.maintenanceMessage || '', publicSharingEnabled: !!site.publicSharingEnabled,
     modules: site.modules,
