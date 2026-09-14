@@ -260,7 +260,7 @@ export async function run(h, t) {
   await fresh(b.bob, "group");
   const bobCouldEdit = await ferryEdit(b.bob);
   await fresh(b.alice, "group");
-  await b.alice.choose("Who may correct or void a shared expense", "Any member who can add expenses", { scope: SETTINGS });
+  await b.alice.choose("Who can correct or void a shared expense", "Any member who can add expenses", { scope: SETTINGS });
   await saveSettings(b.alice);
   await fresh(b.bob, "group");
   const bobCanEdit = await ferryEdit(b.bob);

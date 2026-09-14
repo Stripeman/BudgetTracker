@@ -496,6 +496,79 @@ describe('(j) Bill defaults: due-soon days and the date of a late payment', () =
   });
 });
 
+// ---- UX/accessibility review of eefd115 (fix/workspace-settings-ux) --------------------------------
+// Texts are the reviewer's, written out here.
+const settingOf = (ws, key) => ws.settingsList.find((s) => s.key === key);
+
+describe('UX review: errors name the setting, plain wording, option labels, a unit, and a read-only history', () => {
+  test('a refused value says which setting and what to do, and names it for the app (details.setting)', async () => {
+    const { h, id } = await setup();
+    const cases = [
+      [{ memberRestoreModes: ['restore-deleted'] }, 'memberRestoreModes', '“Merge that also brings back deleted entries” needs “Merge” ticked as well.'],
+      [{ billReminderDays: 61 }, 'billReminderDays', '“Days before the due date a new bill shows as Due soon”: enter a whole number from 0 to 60.'],
+      [{ memberRestoresPerDay: 4 }, 'memberRestoresPerDay', '“How often a member may restore their own records”: choose one of the options shown.'],
+      [{ budgetBackdating: 'sometimes' }, 'budgetBackdating', '“Changing a budget for periods that have finished”: choose one of the options shown.'],
+      [{ sharedExpenses: 'yes' }, 'sharedExpenses', '“Use Shared expenses in this workspace”: choose one of the options shown.'],
+    ];
+    for (const [settings, key, message] of cases) {
+      const res = await patchSettings(h, 'alice', id, settings);
+      assert.equal(res.status, 400, key);
+      assert.deepEqual([res.body.error.code, res.body.error.message, res.body.error.details], ['invalid_setting', message, { setting: key }], key);
+    }
+  });
+
+  test('labels and options are the reviewed wording; the restore number has option labels, the due-soon days a unit, the restores a note', async () => {
+    const { h, id } = await setup();
+    const ws = ok(await getWs(h, 'alice', id)).workspace;
+    const wording = (key) => { const s = settingOf(ws, key); return [s.label, (s.options || []).map((o) => o.label)]; };
+    assert.deepEqual(wording('sharedExpenses'), ['Use Shared expenses in this workspace', []]);
+    assert.deepEqual(wording('memberEditsOthers'), ['Which entries a member may correct on shared accounts', ['Only entries they added', 'Any entry']]);
+    assert.match(settingOf(ws, 'memberEditsOthers').explanation, /^Owners and managers can always correct any entry on shared accounts\./);
+    assert.deepEqual(wording('sharedListManagers'), ['Who can add and change shared accounts, budgets and categories', ['Owners and managers only', 'Owners, managers and members']]);
+    assert.match(settingOf(ws, 'sharedListManagers').explanation, /merchants/);
+    assert.match(settingOf(ws, 'sharedListManagers').explanation, /contacts/);
+    assert.deepEqual(wording('budgetBackdating'), ['Changing a budget for periods that have finished', ['Allowed after a confirmation', 'Not allowed']]);
+    assert.deepEqual(wording('billReminderDays'), ['Days before the due date a new bill shows as Due soon', []]);
+    assert.equal(settingOf(ws, 'billReminderDays').unit, 'days');
+    const perDay = settingOf(ws, 'memberRestoresPerDay');
+    assert.deepEqual([perDay.label, perDay.type, perDay.options.map((o) => [o.value, o.label])], ['How often a member may restore their own records', 'integer',
+      [[0, 'Not allowed'], [1, 'Once a day'], [2, 'Up to 2 a day'], [3, 'Up to 3 a day']]]);
+    assert.match(perDay.explanation, /Each restore first saves a safety copy of the workspace, which is why 3 a day is the most\./);
+    assert.equal(perDay.groupNote, "Members can't restore from the app yet; this applies to restores through the API.");
+    // Every explanation opens with a sentence that stands on its own (the card shows it first).
+    for (const s of ws.settingsList) assert.match(s.explanation, /^[^.]{12,}\./, s.key);
+  });
+
+  test('members and viewers read the settings history (who, when, from, to, why), never name or lifecycle changes; managers keep the full history', async () => {
+    const { h, id } = await setup();
+    ok(await h.call('workspaces', 'PATCH', { as: 'alice', query: { id }, body: { name: 'Fictional Home', settings: { weekStart: 0 }, reason: 'Sunday people' } }));
+    ok(await patchSettings(h, 'alice', id, { billReminderDays: 5 }));
+    for (const who of ['bob', 'carol']) {
+      const ws = ok(await getWs(h, who, id)).workspace;
+      assert.equal(ws.history, undefined, `${who}: no full history`);
+      assert.equal(ws.lifecycle, undefined, `${who}: no lifecycle`);
+      assert.deepEqual(ws.settingsHistory.map((e) => [e.by, e.changes, e.reason]), [
+        ['Alice Fictional', [{ field: 'settings.weekStart', from: 1, to: 0 }], 'Sunday people'],
+        ['Alice Fictional', [{ field: 'settings.billReminderDays', from: 3, to: 5 }], ''],
+      ], who);
+      assert.ok(ws.settingsHistory.every((e) => typeof e.at === 'string'));
+    }
+    const alice = ok(await getWs(h, 'alice', id)).workspace;
+    assert.deepEqual(alice.history[alice.history.length - 2].changes.map((c) => c.field), ['name', 'settings.weekStart']);
+    assert.equal(alice.settingsHistory.length, 2);
+    assert.equal((await getWs(h, 'eve', id)).status, 404);
+  });
+
+  test('group settings: a refused value names the setting the same way', async () => {
+    const { h, f } = await setup();
+    const res = await h.call('group', 'POST', { as: 'alice', query: { ...f.q, action: 'settings' }, body: { changes: { changeExpenses: 'everyone' } } });
+    assert.equal(res.status, 400);
+    assert.deepEqual([res.body.error.message, res.body.error.details], ['“Who can correct or void a shared expense”: choose one of the options shown.', { setting: 'changeExpenses' }]);
+    const labels = ok(await h.call('group', 'GET', { as: 'carol', query: f.q })).groupSettings.settings.map((s) => s.label);
+    for (const label of ['Who can correct or void a shared expense', 'Who can withdraw a confirmed payment', 'Who can dispute a reported payment']) assert.ok(labels.includes(label), label);
+  });
+});
+
 describe('Workspace settings: older documents, backups and restores', () => {
   test('a document without the settings reads the defaults; a stored "custom" budget period reads as monthly and still backs up', async () => {
     const { h, id } = await setup();

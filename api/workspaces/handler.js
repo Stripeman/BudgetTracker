@@ -41,8 +41,13 @@ async function get(ctx, req) {
   // 2026-09-14). Values only; nothing financial.
   const { site } = await siteSettings.readSite(ctx.storage);
   const workspace = { ...model.summary(doc, member), settings: doc.settings, settingsList: workspaceSettings.view(doc, member, site) };
+  const names = new Map((doc.members || []).map((m) => [m.subject, m.name || 'Member']));
+  // Every member reads the settings history — who, when, from, to and why, settings only; no name or
+  // lifecycle changes, nothing financial (UX review of eefd115, decision 6).
+  workspace.settingsHistory = (doc.history || [])
+    .map((h) => ({ at: h.at, by: names.get(h.by) || 'Former member', changes: (h.changes || []).filter((c) => c && typeof c.field === 'string' && c.field.startsWith('settings.')), reason: h.reason || '' }))
+    .filter((h) => h.changes.length);
   if (roleAtLeast(member.role, 'manager')) {
-    const names = new Map((doc.members || []).map((m) => [m.subject, m.name || 'Member']));
     const named = (list) => (list || []).map((h) => ({ ...h, by: names.get(h.by) || 'Former member' }));
     workspace.history = named(doc.history);
     workspace.lifecycle = named(doc.lifecycle);

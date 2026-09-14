@@ -60,7 +60,7 @@ export async function run(h, t) {
   });
 
   // ---- (f) Alice lets members change any entry on shared accounts; Bob corrects Carol's entry --------
-  await b.alice.choose("Members may change other members' entries", "Any entry, as a member who can add entries", { scope: CARD });
+  await b.alice.choose("Which entries a member may correct on shared accounts", "Any entry", { scope: CARD });
   await saveSettings(b.alice, "E2E we share the bookkeeping");
   await fresh(b.bob, "transactions");
   const offered = await rowButtons(b.bob, "23.45");
@@ -88,7 +88,7 @@ export async function run(h, t) {
 
   // ---- (a) Alice turns Shared expenses off: gone for Bob, and the API refuses him -----------------------
   await b.alice.goto("workspace");
-  await b.alice.choose("Shared expenses", "Off", { scope: CARD });
+  await b.alice.choose("Use Shared expenses in this workspace", "Off", { scope: CARD });
   await saveSettings(b.alice);
   const aliceNav = (await navLinks(b.alice)).includes("Shared expenses");
   await fresh(b.bob, "dashboard");
@@ -109,7 +109,7 @@ export async function run(h, t) {
   // ---- (h) Alice sets member restores to 0: Bob's restore is refused ------------------------------------
   await b.alice.goto("workspace");
   await b.alice.settle();
-  await b.alice.choose("Merge or replace restores a member may make each day", "0", { scope: CARD });
+  await b.alice.choose("How often a member may restore their own records", "0", { scope: CARD });
   await saveSettings(b.alice);
   const pv = await api("bob").request("restore", { method: "POST", query: { action: "preview" }, body: { workspaceId: W.id, archiveId, mode: "merge" } });
   const ex = await api("bob").request("restore", { method: "POST", query: { action: "execute" }, body: { workspaceId: W.id, archiveId, mode: "replace", confirm: "REPLACE", expectedEtag: "e2e" } });
@@ -120,7 +120,7 @@ export async function run(h, t) {
 
   // ---- Carol (viewer) sees the settings but cannot change them; Alice's history names them in words ---
   await fresh(b.carol, "workspace");
-  await b.carol.waitForText("Members may change other members' entries", { scope: CARD });
+  await b.carol.waitForText("Which entries a member may correct on shared accounts", { scope: CARD });
   const carolCard = await b.carol.evaluate(`(() => { const c = document.querySelector('${CARD}'); return { pickers: c.querySelectorAll('select').length, save: [...c.querySelectorAll('button')].some((x) => x.textContent === 'Save workspace settings'), text: c.innerText }; })()`);
   await fresh(b.alice, "workspace");
   await b.alice.waitForText("Any entry", { scope: HISTORY });
@@ -128,9 +128,9 @@ export async function run(h, t) {
   t.check("Carol (viewer) sees each setting in words with who changes it, and no controls; Alice's Workspace changes list the changes in words with her reason", {
     expected: { pickers: 0, save: false, any: true, zero: true, who: true, history: true, reason: true },
     actual: {
-      pickers: carolCard.pickers, save: carolCard.save, any: carolCard.text.includes("Any entry, as a member who can add entries"),
-      zero: /Merge or replace restores a member may make each day\s*0/.test(carolCard.text), who: carolCard.text.includes("Only owners change this."),
-      history: historyText.includes("Members may change other members' entries Only their own entries → Any entry, as a member who can add entries"),
+      pickers: carolCard.pickers, save: carolCard.save, any: /Which entries a member may correct on shared accounts\s*Any entry/.test(carolCard.text),
+      zero: /How often a member may restore their own records\s*0/.test(carolCard.text), who: carolCard.text.includes("Only owners change this."),
+      history: historyText.includes("Which entries a member may correct on shared accounts Only entries they added → Any entry"),
       reason: historyText.includes("E2E we share the bookkeeping"),
     },
   });
