@@ -426,6 +426,9 @@ fieldset.budget-line { margin: 0; padding: var(--space-3); border: 1px solid var
 .cmdpick__value { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .cmdpick--empty .cmdpick__value { color: var(--text-muted); }
 .cmdpick__hint { flex: none; color: var(--text-muted); font-size: var(--text-xs); }
+/* A locked field cannot open, so it promises no search and no list (UX review U5). Hidden rather than
+   removed, so it keeps the width of the fields beside it. */
+.cmdpick__trigger:disabled .cmdpick__hint { visibility: hidden; }
 /* A colour edge only for things that have a canonical colour (a category); never colour alone. */
 .cmdpick__swatch { display: none; }
 .cmdpick--swatched .cmdpick__swatch {

@@ -385,6 +385,12 @@ describe("BT-004-05 nothing is cut off (real layout is checked in a browser)", (
     assert.equal(panel().hasAttribute("style"), false);
   });
 
+  test("a locked (disabled) trigger shows no search or list hint, since it cannot open (UX review U5)", () => {
+    const css = fs.readFileSync(fileURLToPath(new URL("../styles/components.css", import.meta.url)), "utf8");
+    // Hidden, not removed, so a locked field keeps the same width as its neighbours.
+    assert.match(css, /\.cmdpick__trigger:disabled\s+\.cmdpick__hint\s*\{\s*visibility:\s*hidden;?\s*\}/);
+  });
+
   test("the stylesheet honours that width and lets long option names wrap instead of hiding them", () => {
     const css = fs.readFileSync(fileURLToPath(new URL("../styles/components.css", import.meta.url)), "utf8");
     const rule = (name) => (new RegExp(`\\.${name}\\s*\\{([^}]*)\\}`).exec(css) || [])[1] || "";
