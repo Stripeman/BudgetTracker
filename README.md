@@ -66,7 +66,7 @@ npm run validate           # route registry, SWA config, versions, forbidden API
 npm run generate:functions # regenerate api/<route>/function.json and index.js from the registry
 ```
 
-**What is built so far.** API: identity, workspaces, members, invitations, grants, contacts, people selectors, preferences, site settings, audit, accounts, merchants, categories (with colours), transactions (amendments and reversals), recurring bills, budgets, forecast and what-if, backups and restores. Web app: dashboard, transactions, bills, planning, accounts, merchants, workspace and settings, and a staging (preview) link in the account menu whose address each person sets in My settings or inherits from the site (BT-011-06; the app never hard-codes the address; https only, plus http to 127.0.0.1, [::1] or localhost when running locally). The legacy `lib/foundation.cjs` prototype remains for reference only; the API supersedes it.
+**What is built so far.** API: identity, workspaces, members, invitations, grants, contacts, people selectors, preferences, site settings, audit, accounts, merchants, categories (with colours), transactions (amendments and reversals), recurring bills, budgets, forecast and what-if, backups and restores, and workspace settings (policy choices such as Shared expenses on or off, who may change others' entries or manage shared lists, member restores, and budget and bill defaults — each defaulting to the earlier fixed behaviour; BT-011-07..13). Web app: dashboard, transactions, bills, planning, accounts, merchants, workspace and settings, and a staging (preview) link in the account menu whose address each person sets in My settings or inherits from the site (BT-011-06; the app never hard-codes the address; https only, plus http to 127.0.0.1, [::1] or localhost when running locally). The legacy `lib/foundation.cjs` prototype remains for reference only; the API supersedes it.
 
 **What is not built yet.** The Tiptap editor, receipts and attachments, imports and reconciliation, shared expenses and settlement, trips and currency conversion, debt planning, goals and alerts, reports and exports, offline use, scheduled backups, and the partitioning in ADR-003. See the requirement register.
 
@@ -90,7 +90,7 @@ The dev server binds 127.0.0.1 only and uses file storage under the ignored `.lo
 
 ```powershell
 npm run e2e                             # every scenario
-npm run e2e -- --only privacy,shared    # privacy, shared (or group), concurrency, guards, dropdown, staging
+npm run e2e -- --only privacy,shared    # privacy, shared (or group), concurrency, guards, dropdown, staging, recheck, settings
 npm run e2e -- --list                   # what each scenario checks
 npm run e2e -- --keep-data              # keep .local/e2e/<run>/data for inspection
 ```
