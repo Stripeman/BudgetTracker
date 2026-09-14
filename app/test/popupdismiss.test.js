@@ -81,6 +81,21 @@ describe("BT-004-04 popup dismissal", () => {
     same(document.activeElement, triggerOf(picker), "main is not a control; focus goes back to the picker");
   });
 
+  test("1e. only focus the panel had is given back: when it did not hold focus, a press outside moves nothing", async () => {
+    const { picker } = mountPicker();
+    const title = document.createElement("h2");
+    dom.body.appendChild(title);
+    triggerOf(picker).click();
+    // Something else took focus while the list was open (it does not hold it any more).
+    const other = document.createElement("input");
+    dom.body.appendChild(other);
+    other.focus();
+    pressAt(title);
+    document.activeElement = dom.body; // the browser's default action for a press on text
+    await afterPress();
+    same(document.activeElement, dom.body, "the picker does not pull focus it never had");
+  });
+
   test("1d. a press on the picker's own label does not close it under the pointer (the label's click toggles it)", () => {
     const { picker } = mountPicker();
     const label = document.createElement("label");
