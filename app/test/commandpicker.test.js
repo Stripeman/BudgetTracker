@@ -536,6 +536,139 @@ describe("BT-004-05 RESULTS ARE ANNOUNCED (a11y review finding 3, WCAG 4.1.3)", 
   });
 });
 
+describe("BT-004-05 THE PANEL FOLLOWS ITS TRIGGER (a11y review finding 5, UX review U1)", () => {
+  // A window and a visual viewport that can be resized and fired at, as a browser's are.
+  function eventTarget(props = {}) {
+    const listeners = new Map();
+    return Object.assign({
+      addEventListener(type, fn) { if (!listeners.has(type)) listeners.set(type, []); listeners.get(type).push(fn); },
+      removeEventListener(type, fn) { listeners.set(type, (listeners.get(type) || []).filter((f) => f !== fn)); },
+      fire(type) { for (const fn of [...(listeners.get(type) || [])]) fn({ type, target: this }); },
+      count(type) { return (listeners.get(type) || []).length; },
+    }, props);
+  }
+  // Rectangles read from `geo` at the moment they are asked for, so a test can "scroll" by moving the
+  // trigger. `.scroller` stands for a dialog body with overflow:auto; `clip` is its visible box.
+  let geo;
+  function withLayout(initial = {}) {
+    geo = { anchorTop: 10, anchorLeft: 40, panelHeight: 167.6, chrome: 86, rowHeight: 36, clip: null, ...initial };
+    const create = document.createElement;
+    const box = (top, left, width, height) => ({ top, left, width, height, bottom: top + height, right: left + width });
+    document.createElement = (tag) => {
+      const node = create(tag);
+      node.getBoundingClientRect = function () {
+        if (this.classList.contains("cmdpick__panel")) return box(0, 0, 352, geo.panelHeight);
+        if (this.classList.contains("cmdpick__list")) return box(0, 0, 352, geo.panelHeight - geo.chrome);
+        if (this.classList.contains("cmdpick__opt")) return box(0, 0, 340, geo.rowHeight);
+        if (this.classList.contains("scroller")) return geo.clip || box(0, 0, 10000, 10000);
+        return box(geo.anchorTop, geo.anchorLeft, 200, 36);
+      };
+      return node;
+    };
+    const view = eventTarget({
+      innerWidth: 1280,
+      innerHeight: 900,
+      getComputedStyle: (n) => (n.classList && n.classList.contains("scroller") ? { overflowX: "hidden", overflowY: "auto" } : { overflowX: "visible", overflowY: "visible" }),
+    });
+    document.defaultView = view;
+    return view;
+  }
+  function mountInScroller() {
+    const scroller = document.createElement("div");
+    scroller.classList.add("scroller");
+    dom.body.appendChild(scroller);
+    const select = selectOf(OPTIONS, "food");
+    const picker = createCommandPicker({ select, label: "Category" });
+    scroller.appendChild(picker.element);
+    return { picker, scroller };
+  }
+  const scrolled = (target) => document.dispatchEvent(new DomEvent("scroll", { target }));
+  const top = () => panel().style.getPropertyValue("--pop-top");
+  const left = () => panel().style.getPropertyValue("--pop-left");
+
+  test("when a dialog body or the page scrolls, the open panel moves with its trigger", () => {
+    withLayout();
+    const { picker, scroller } = mountInScroller();
+    open(picker);
+    assert.equal(top(), "50px", "10 + 36 + 4");
+    geo.anchorTop = 210;
+    scrolled(scroller);
+    assert.equal(top(), "250px", "210 + 36 + 4: it followed the dialog body");
+    geo.anchorTop = 110;
+    scrolled(document);
+    assert.equal(top(), "150px", "and the page");
+  });
+
+  test("the list's own scrolling does not move the panel", () => {
+    withLayout();
+    const { picker } = mountInScroller();
+    open(picker);
+    geo.anchorTop = 300;
+    scrolled(panel().querySelector(".cmdpick__list"));
+    assert.equal(top(), "50px");
+  });
+
+  test("after a window resize it is placed again inside the new width", () => {
+    const view = withLayout({ anchorLeft: 600 });
+    const { picker } = mountInScroller();
+    open(picker);
+    assert.equal(left(), "600px", "600 + 352 fits in 1280 - 8");
+    view.innerWidth = 820;
+    view.fire("resize");
+    // The trigger (600–800) is still in the window; 600 + 352 - (820 - 8) = 140 past the edge, so 460.
+    assert.equal(left(), "460px", "pulled back inside the narrower window");
+  });
+
+  test("when the on-screen keyboard shrinks the visual viewport, the panel is capped to what is still visible", () => {
+    const view = withLayout({ panelHeight: 400, anchorTop: 300 });
+    view.innerWidth = 390;
+    view.innerHeight = 844;
+    view.visualViewport = eventTarget({ width: 390, height: 844, offsetTop: 0, offsetLeft: 0 });
+    const { picker } = mountInScroller();
+    open(picker);
+    assert.equal(panel().style.getPropertyValue("--pop-max-height"), "", "fits below at first: 844 - 336 - 12 = 496");
+    view.visualViewport.height = 500;
+    view.visualViewport.fire("resize");
+    // below = 500 - 336 - 12 = 152; above = 300 - 12 = 288: above, capped at 288, top 8.
+    assert.equal(panel().style.getPropertyValue("--pop-max-height"), "288px");
+    assert.equal(top(), "8px");
+  });
+
+  test("when the trigger scrolls out of the dialog body's visible area, the list closes and focus stays on the trigger", () => {
+    withLayout({ anchorTop: 200, clip: { top: 100, left: 0, width: 1280, height: 400, bottom: 500, right: 1280 } });
+    const { picker, scroller } = mountInScroller();
+    open(picker);
+    assert.ok(panel());
+    geo.anchorTop = 520; // under the dialog body's visible bottom (500), though still inside the window
+    scrolled(scroller);
+    none(panel(), "closed");
+    same(document.activeElement, trigger(picker), "focus is on the trigger, not lost with the panel");
+  });
+
+  test("and when it leaves the window entirely", () => {
+    withLayout();
+    const { picker } = mountInScroller();
+    open(picker);
+    geo.anchorTop = -80;
+    scrolled(document);
+    none(panel());
+    same(document.activeElement, trigger(picker));
+  });
+
+  test("closing stops following: no listeners are left on the window or the visual viewport", () => {
+    const view = withLayout();
+    view.visualViewport = eventTarget({ width: 1280, height: 900, offsetTop: 0, offsetLeft: 0 });
+    const { picker } = mountInScroller();
+    open(picker);
+    assert.equal(view.count("resize"), 1);
+    assert.equal(view.visualViewport.count("resize"), 1);
+    press(panel(), "Escape");
+    assert.equal(view.count("resize"), 0);
+    assert.equal(view.visualViewport.count("resize"), 0);
+    assert.equal(view.visualViewport.count("scroll"), 0);
+  });
+});
+
 describe("BT-004-04 LEAVING THE PALETTE", () => {
   test("tabbing out closes it without pulling focus back; focus that went nowhere keeps it open", () => {
     const { picker } = mount();
