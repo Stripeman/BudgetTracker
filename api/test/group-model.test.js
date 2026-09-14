@@ -182,6 +182,9 @@ describe('BT-009-04/05 balances and suggestions', () => {
   });
 });
 
+// Terry's model (2026-09-14, financial review finding 2): for each record the entries add up to the cash
+// the person moved, the `expense` entry is their share, and the non-spending entries are what they are
+// owed (advance) or owe (payable).
 describe('BT-009-06 personal ledger entries (the EUR 300 dinner rule)', () => {
   test('a payer is charged what they paid: their share as spending, the rest as money lent', () => {
     const dinner = { id: 'D', currency: 'EUR', amountMinor: 30000, date: '2026-09-05', categoryId: 'cat_dining', voidedAt: null,
@@ -190,17 +193,36 @@ describe('BT-009-06 personal ledger entries (the EUR 300 dinner rule)', () => {
       { kind: 'expense', amountMinor: -7500, categoryId: 'cat_dining', date: '2026-09-05' },
       { kind: 'advance', amountMinor: -22500, categoryId: null, date: '2026-09-05' },
     ]);
-    assert.deepEqual(groups.desiredEntries(dinner, 'expense', B), [], 'not a payer');
+    // Someone who shared but paid nothing: their 75.00 is spending and owed; no money moves (−75 + 75 = 0).
+    assert.deepEqual(groups.desiredEntries(dinner, 'expense', B), [
+      { kind: 'expense', amountMinor: -7500, categoryId: 'cat_dining', date: '2026-09-05' },
+      { kind: 'payable', amountMinor: 7500, categoryId: null, date: '2026-09-05' },
+    ]);
+    assert.deepEqual(groups.desiredEntries(dinner, 'expense', 'member:nobody'), [], 'not in the expense');
     assert.deepEqual(groups.desiredEntries({ ...dinner, voidedAt: '2026-09-06T00:00:00.000Z' }, 'expense', A), [], 'void');
-    // Paying less than one's share: only what was paid is spending now; nothing is lent.
+    // Paying less than one's share (50.00 of a 75.00 share): spending 75.00, owed 25.00; cash −50.00.
+    // The other payer (250.00, share 75.00) lent 175.00; cash −250.00.
     const partly = { ...dinner, payers: [{ ref: A, amountMinor: 5000 }, { ref: B, amountMinor: 25000 }] };
-    assert.deepEqual(groups.desiredEntries(partly, 'expense', A), [{ kind: 'expense', amountMinor: -5000, categoryId: 'cat_dining', date: '2026-09-05' }]);
+    assert.deepEqual(groups.desiredEntries(partly, 'expense', A), [
+      { kind: 'expense', amountMinor: -7500, categoryId: 'cat_dining', date: '2026-09-05' },
+      { kind: 'payable', amountMinor: 2500, categoryId: null, date: '2026-09-05' },
+    ]);
+    assert.deepEqual(groups.desiredEntries(partly, 'expense', B), [
+      { kind: 'expense', amountMinor: -7500, categoryId: 'cat_dining', date: '2026-09-05' },
+      { kind: 'advance', amountMinor: -17500, categoryId: null, date: '2026-09-05' },
+    ]);
   });
 
-  test('a confirmed repayment to the recipient is a reimbursement, never income or spending', () => {
+  test('a confirmed repayment is a reimbursement for the receiver and a repayment for the payer, never income or spending', () => {
     const s = { id: 'S', from: B, to: A, amountMinor: 7500, currency: 'EUR', status: 'confirmed', date: '2026-09-07', voidedAt: null };
     assert.deepEqual(groups.desiredEntries(s, 'settlement', A), [{ kind: 'reimbursement', amountMinor: 7500, categoryId: null, date: '2026-09-07' }]);
-    assert.deepEqual(groups.desiredEntries({ ...s, status: 'reported' }, 'settlement', A), []);
-    assert.deepEqual(groups.desiredEntries(s, 'settlement', B), [], 'the payer records nothing here');
+    assert.deepEqual(groups.desiredEntries(s, 'settlement', B), [{ kind: 'repayment', amountMinor: -7500, categoryId: null, date: '2026-09-07' }]);
+    assert.deepEqual(groups.desiredEntries(s, 'settlement', F), [], 'not in the payment');
+    // Not in the balance yet, so nothing is recorded for either side.
+    for (const status of ['reported', 'disputed']) {
+      assert.deepEqual(groups.desiredEntries({ ...s, status }, 'settlement', A), [], status);
+      assert.deepEqual(groups.desiredEntries({ ...s, status }, 'settlement', B), [], status);
+    }
+    assert.deepEqual(groups.desiredEntries({ ...s, voidedAt: '2026-09-08T00:00:00.000Z' }, 'settlement', B), [], 'void');
   });
 });

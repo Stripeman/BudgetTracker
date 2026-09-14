@@ -8,7 +8,9 @@
 // where "received" and "paid out" count CONFIRMED settlements only. A POSITIVE net means the group
 // owes that person (they get money back); a NEGATIVE net means they owe the group. The nets of one
 // currency always add up to exactly zero. Reported payments are "pending" and disputed ones are
-// shown apart; neither is in the net.
+// shown apart; neither is in the net. Suggestions count a reported payment as made, but only up to
+// what its payer owes and its receiver is owed, so a pending claim never turns a creditor into a
+// debtor; the direct view counts reported payments in full between those two people.
 //
 // Money is integer minor units (money.js). Shares come from money.allocate — deterministic largest
 // remainder, ties to the first listed person — and the rounding adjustment (the minor units added to
@@ -110,6 +112,31 @@ function normalizeSplit(input, totalMinor, currency, checkRef) {
   return { method, lines };
 }
 
+// The same rules as normalizeSplit, applied to a STORED split (amounts already in minor units), for
+// the backup and restore integrity check (financial review finding 6). True when the split is one the
+// API would never have stored.
+function storedSplitBroken(split, totalMinor) {
+  if (!split || typeof split !== 'object' || !METHODS.includes(split.method)) return true;
+  const lines = split.lines;
+  if (!Array.isArray(lines) || !lines.length || lines.length > MAX_LINES) return true;
+  if (lines.some((l) => !l || typeof l.ref !== 'string')) return true;
+  if (unique(lines.map((l) => l.ref)).length !== lines.length) return true;
+  if (split.method === 'equal') return lines.some((l) => l.value !== null);
+  if (split.method === 'shares') return lines.some((l) => !Number.isInteger(l.value) || l.value < 1 || l.value > MAX_SHARES);
+  if (split.method === 'percentages') {
+    let sum = 0;
+    for (const l of lines) {
+      let units;
+      try { units = percentUnits(l.value); } catch { return true; }
+      if (percentText(units) !== l.value) return true;
+      sum += units;
+    }
+    return sum !== HUNDRED_PERCENT;
+  }
+  if (lines.some((l) => !money.isMinor(l.value) || l.value <= 0 || l.value > MAX_GROUP_MINOR)) return true;
+  try { return money.sum(lines.map((l) => l.value)) !== totalMinor; } catch { return true; }
+}
+
 // Who paid: one or more { ref, amount } that add up exactly to the total. A single payer may leave
 // the amount out; it is then the total.
 function normalizePayers(input, totalMinor, currency, checkRef) {
@@ -192,14 +219,28 @@ function blankRow(ref) {
   return { ref, paidMinor: 0, shareMinor: 0, settledOutMinor: 0, settledInMinor: 0, pendingOutMinor: 0, pendingInMinor: 0, disputedOutMinor: 0, disputedInMinor: 0, netMinor: 0, basisMinor: 0, expenses: [] };
 }
 
-// Minimum cash flow, greedy: the largest debtor pays the largest creditor, repeatedly. Ties go to the
-// person listed first. Every net is cleared exactly; at most n − 1 payments. Computed on `basisMinor`
-// (the net once reported payments are also counted), so nobody is asked to pay twice.
+// Fewest payments: first every creditor whose balance exactly matches a debtor's is paid by that debtor
+// in one payment (financial review finding 7: greedy alone turned +4 −9 +9 +6 −4 +6 −12 into six
+// payments instead of four); then the largest remaining debtor pays the largest remaining creditor,
+// repeatedly. Creditors are taken largest first, ties to the person listed first, and each is matched
+// to the first debtor of the same amount in that order, so the result is deterministic. Every net is
+// cleared exactly; each payment clears at least one person, so at most n − 1 payments. Computed on
+// `basisMinor` (the net once reported payments are counted as made, up to what is owed), so nobody is
+// asked to pay twice.
 function suggest(rows, rank) {
   const cmp = (a, b) => b.left - a.left || rank(a.ref) - rank(b.ref) || (a.ref < b.ref ? -1 : a.ref > b.ref ? 1 : 0);
-  const creditors = rows.filter((r) => r.basisMinor > 0).map((r) => ({ ref: r.ref, left: r.basisMinor }));
-  const debtors = rows.filter((r) => r.basisMinor < 0).map((r) => ({ ref: r.ref, left: -r.basisMinor }));
+  let creditors = rows.filter((r) => r.basisMinor > 0).map((r) => ({ ref: r.ref, left: r.basisMinor })).sort(cmp);
+  let debtors = rows.filter((r) => r.basisMinor < 0).map((r) => ({ ref: r.ref, left: -r.basisMinor })).sort(cmp);
   const out = [];
+  for (const c of creditors) {
+    const d = debtors.find((x) => x.left > 0 && x.left === c.left);
+    if (!d) continue;
+    out.push({ from: d.ref, to: c.ref, amountMinor: c.left });
+    c.left = 0;
+    d.left = 0;
+  }
+  creditors = creditors.filter((c) => c.left > 0);
+  debtors = debtors.filter((d) => d.left > 0);
   while (creditors.length && debtors.length) {
     creditors.sort(cmp);
     debtors.sort(cmp);
@@ -299,35 +340,75 @@ function balances(doc, order, { ensureCurrency = null } = {}) {
     const t = tables.get(currency);
     for (const ref of order) if (!t.has(ref)) t.set(ref, blankRow(ref));
     const rows = [...t.values()].sort((a, b) => rank(a.ref) - rank(b.ref) || (a.ref < b.ref ? -1 : a.ref > b.ref ? 1 : 0));
-    for (const r of rows) {
-      r.netMinor = money.sum([r.paidMinor, -r.shareMinor, -r.settledInMinor, r.settledOutMinor]);
-      r.basisMinor = money.sum([r.netMinor, -r.pendingInMinor, r.pendingOutMinor]);
+    for (const r of rows) r.netMinor = money.sum([r.paidMinor, -r.shareMinor, -r.settledInMinor, r.settledOutMinor]);
+    // The suggestion basis counts a reported (not yet confirmed) payment as made, but only up to what
+    // its payer still owes and its receiver is still owed (financial review finding 5): a claim of
+    // 80.00 against a debt of 50.00 must not make the creditor owe 30.00. Taken in a fixed order (date,
+    // then when reported, then id), so the basis is deterministic and still adds up to zero.
+    const left = new Map(rows.map((r) => [r.ref, r.netMinor]));
+    const pending = (doc.groupSettlements || []).filter((s) => !s.voidedAt && s.status === 'reported' && s.currency === currency)
+      .sort((p, q) => String(p.date).localeCompare(String(q.date)) || String(p.createdAt).localeCompare(String(q.createdAt)) || String(p.id).localeCompare(String(q.id)));
+    for (const s of pending) {
+      const x = Math.min(s.amountMinor, Math.max(0, -left.get(s.from)), Math.max(0, left.get(s.to)));
+      if (x <= 0) continue;
+      left.set(s.from, money.sum([left.get(s.from), x]));
+      left.set(s.to, money.sum([left.get(s.to), -x]));
     }
+    for (const r of rows) r.basisMinor = left.get(r.ref);
     out.push({ currency, rows, suggestions: suggest(rows, rank), direct: direct(doc, currency, rank) });
   }
   return out;
 }
 
+// Currencies in which someone's balance is not zero (confirmed payments only). A workspace's reporting
+// currency cannot change while any exists, and a payment may be recorded in any of them so an earlier
+// currency's balance can always be cleared (financial review finding 3).
+function openCurrencies(doc) {
+  const refs = participants(doc, null).map((p) => p.ref);
+  return balances(doc, refs).filter((b) => b.rows.some((r) => r.netMinor !== 0)).map((b) => b.currency);
+}
+
 // ---- personal ledger ---------------------------------------------------------------------------
-// The entries a person's own account should hold for one record (the brief's EUR 300 dinner rule):
-//   expense    what they paid is charged to their account: their own share as spending (`expense`),
-//              the rest as money lent to the others (`advance`), which is neither spending nor income.
-//              Someone who paid less than their share has only what they paid as spending now.
-//   settlement a CONFIRMED repayment to them is a `reimbursement` that clears the advance.
+// The entries a person's own account should hold for one record (the brief's EUR 300 dinner rule,
+// completed by Terry's model of 2026-09-14, financial review finding 2). For each group and currency,
+// on that account:
+//   cash      = −(what they paid for expenses) + (repayments received) − (repayments made)
+//   spending  = the sum of their shares of every active expense, whoever paid
+//   owed      = advances − reimbursements − payables + repayments = their group balance
+// so, per record:
+//   expense    their share is spending (`expense`, in the expense's category). What they paid beyond
+//              their share was lent (`advance`, money out); a share beyond what they paid is owed to
+//              the others (`payable`, positive, no money moves). Together: −(what they paid).
+//   settlement a CONFIRMED repayment to them is a `reimbursement` (money in); one they made is a
+//              `repayment` (money out). Reported and disputed payments are not in the balance, so
+//              they want nothing yet.
 // Amounts are signed from the account holder's point of view (ledger.js). A void record wants none.
 function desiredEntries(rec, type, ref) {
   if (rec.voidedAt) return [];
   if (type === 'expense') {
     const paid = sumByRef(rec.payers).get(ref) || 0;
-    if (!paid) return [];
-    const own = Math.min(paid, sumByRef(rec.shares).get(ref) || 0);
+    const share = sumByRef(rec.shares).get(ref) || 0;
     const out = [];
-    if (own > 0) out.push({ kind: 'expense', amountMinor: -own, categoryId: rec.categoryId || null, date: rec.date });
-    if (paid - own > 0) out.push({ kind: 'advance', amountMinor: -(paid - own), categoryId: null, date: rec.date });
+    if (share > 0) out.push({ kind: 'expense', amountMinor: -share, categoryId: rec.categoryId || null, date: rec.date });
+    if (paid > share) out.push({ kind: 'advance', amountMinor: -(paid - share), categoryId: null, date: rec.date });
+    if (share > paid) out.push({ kind: 'payable', amountMinor: share - paid, categoryId: null, date: rec.date });
     return out;
   }
-  if (rec.status !== 'confirmed' || rec.to !== ref) return [];
-  return [{ kind: 'reimbursement', amountMinor: rec.amountMinor, categoryId: null, date: rec.date }];
+  if (rec.status !== 'confirmed') return [];
+  if (rec.to === ref) return [{ kind: 'reimbursement', amountMinor: rec.amountMinor, categoryId: null, date: rec.date }];
+  if (rec.from === ref) return [{ kind: 'repayment', amountMinor: -rec.amountMinor, categoryId: null, date: rec.date }];
+  return [];
+}
+
+const LINK_KEYS = Object.freeze({ expense: 'groupExpenseId', settlement: 'groupSettlementId' });
+
+// Whether `subject` records `rec` on an account outside `accountIds` (restore planning): through their
+// link for its currency, a per-record link of increment 1, or live entries of theirs.
+function recordedOutside(doc, rec, type, subject, accountIds) {
+  const key = LINK_KEYS[type];
+  const links = [...(doc.groupLedgers || []).filter((l) => l.subject === subject && l.currency === rec.currency && !l.endedAt), ...(rec.ledgerLinks || []).filter((l) => l.subject === subject && !l.endedAt)];
+  if (links.some((l) => !accountIds.has(l.accountId))) return true;
+  return (doc.transactions || []).some((t) => t.createdBy === subject && t.links && t.links[key] === rec.id && !t.deletedAt && !t.reversedBy && !t.links.reverses && !accountIds.has(t.accountId));
 }
 
 // ---- integrity (used by backups and restores) -----------------------------------------------------
@@ -350,10 +431,12 @@ function invariantProblem(doc) {
     if (unique(e.payers.map((p) => p.ref)).length !== e.payers.length || total(e.payers) !== e.amountMinor) return 'group expense payers';
     if (e.shares.some((s) => !refOk(s.ref) || !money.isMinor(s.amountMinor) || s.amountMinor < 0)) return 'group expense shares';
     if (total(e.shares) !== e.amountMinor) return 'group expense shares';
-    // The stored shares are exactly what the stored split gives: one canonical calculation.
+    // The stored split follows the rules the API applies, and the stored shares are exactly what it
+    // gives: one canonical calculation.
+    if (storedSplitBroken(e.split, e.amountMinor)) return 'group expense split';
     let expected;
     try {
-      if (!e.split || !METHODS.includes(e.split.method) || !Array.isArray(e.split.lines) || e.split.lines.length !== e.shares.length) throw new Error('split');
+      if (e.split.lines.length !== e.shares.length) throw new Error('split');
       expected = computeShares(e.amountMinor, e.split).shares;
     } catch { return 'group expense shares'; }
     if (expected.some((s, i) => s.ref !== e.shares[i].ref || s.amountMinor !== e.shares[i].amountMinor)) return 'group expense shares';
@@ -363,6 +446,43 @@ function invariantProblem(doc) {
     if (!money.isCurrency(s.currency) || !money.isMinor(s.amountMinor) || s.amountMinor <= 0) return 'group settlement amounts';
     if (!refOk(s.from) || !refOk(s.to) || s.from === s.to) return 'group settlement people';
     if (!SETTLEMENT_STATES.includes(s.status)) return 'group settlement state';
+  }
+  // Personal ledger links and the entries they make (security review S8). Documents without them —
+  // older archives — pass unchanged.
+  const subjects = new Set((doc.members || []).map((m) => m.subject));
+  const accountsById = new Map((doc.accounts || []).map((a) => [a.id, a]));
+  const activeLinks = new Set();
+  for (const l of doc.groupLedgers || []) {
+    if (!l || typeof l.id !== 'string' || !subjects.has(l.subject) || !money.isCurrency(l.currency)) return 'group ledger link';
+    const a = accountsById.get(l.accountId);
+    if (!a || a.currency !== l.currency) return 'group ledger link';
+    if (!l.endedAt) {
+      const k = `${l.subject}|${l.currency}`;
+      if (activeLinks.has(k)) return 'group ledger link';
+      activeLinks.add(k);
+    }
+  }
+  for (const r of [...(doc.groupExpenses || []), ...(doc.groupSettlements || [])]) {
+    if (r.ledgerLinks === undefined) continue;
+    if (!Array.isArray(r.ledgerLinks)) return 'group ledger link';
+    const active = new Set();
+    for (const l of r.ledgerLinks) {
+      if (!l || !subjects.has(l.subject) || !accountsById.has(l.accountId)) return 'group ledger link';
+      if (!l.endedAt) {
+        if (active.has(l.subject)) return 'group ledger link';
+        active.add(l.subject);
+      }
+    }
+  }
+  // An entry recorded from a shared expense or payment names a record that exists — in the lists, or
+  // set aside whole by a replace restore (nothing is ever deleted).
+  const setAside = (collection) => (doc.superseded || []).filter((s) => s && s.collection === collection && s.record).map((s) => s.record.id);
+  const expenseIds = new Set([...(doc.groupExpenses || []).map((e) => e.id), ...setAside('groupExpenses')]);
+  const settlementIds = new Set([...(doc.groupSettlements || []).map((s) => s.id), ...setAside('groupSettlements')]);
+  for (const t of doc.transactions || []) {
+    const l = t.links || {};
+    if (l.groupExpenseId !== undefined && l.groupExpenseId !== null && !expenseIds.has(l.groupExpenseId)) return 'transaction group link';
+    if (l.groupSettlementId !== undefined && l.groupSettlementId !== null && !settlementIds.has(l.groupSettlementId)) return 'transaction group link';
   }
   return null;
 }
@@ -379,5 +499,5 @@ function memberIds(doc) {
 module.exports = {
   METHODS, SETTLEMENT_STATES, MAX_LINES, MAX_GROUP_MINOR, HUNDRED_PERCENT,
   percentUnits, percentText, positiveAmount, computeShares, normalizeSplit, normalizePayers, participantChecker,
-  participants, recordRefs, sumByRef, balances, desiredEntries, invariantProblem, memberIds,
+  participants, recordRefs, sumByRef, balances, openCurrencies, desiredEntries, recordedOutside, invariantProblem, memberIds,
 };

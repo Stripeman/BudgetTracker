@@ -12,9 +12,10 @@
 //                                           payment (Idempotency-Key supported)
 //   POST ?action=confirm { settlementId, revision, ledger? }
 //   POST ?action=dispute { settlementId, revision, reason }
-//   POST ?action=ledger  { expenseId | settlementId, accountId? }  record on the caller's own account
-//                                           (accountId), bring those entries up to date (no accountId)
-//                                           or stop recording there (accountId: null)
+//   POST ?action=ledger  { expenseId | settlementId | currency, accountId? }  record the caller's part of
+//                                           the group in that currency on their own private account
+//                                           (accountId), bring their entries up to date (no accountId)
+//                                           or stop recording (accountId: null)
 //
 // A group needs no account: an expense records who paid and who shared, nothing more (Terry,
 // 2026-09-14). Nothing is ever deleted (BT-001-05): corrections keep before and after values with a
@@ -30,14 +31,19 @@
 // Any of them can be voided with a reason. Only confirmed payments count in the net; reported ones
 // are pending and disputed ones are shown apart. Suggested payments are computed, never stored.
 //
-// PERSONAL LEDGER LINK (the brief's EUR 300 dinner rule): a payer may also record an expense on an
-// account of theirs where they may add entries — their share as an `expense`, the rest as an
-// `advance` (money lent) — and the receiver of a confirmed payment may record it as a
-// `reimbursement`, in the same atomic write. The link is visible only to its owner; nobody else learns
-// which account, balance, entry or note is involved. Only the link's owner ever writes to that
-// account: when they change or void the record, their entries follow at once by reversal and new
-// entries (never by rewriting); when someone else does, their entries are shown as needing review
-// until they bring them up to date with ?action=ledger.
+// PERSONAL LEDGER (the brief's EUR 300 dinner rule, completed by Terry's model of 2026-09-14): anyone
+// in the group may record their own part of it, per currency, on ONE private account of their own
+// (security review S2). On that account, per group and currency: the entries move exactly the cash
+// they moved; their shares of every active expense, whoever paid, are spending (`expense`); what they
+// paid for others is `advance`, shares they did not pay are `payable`, confirmed repayments to them are
+// `reimbursement` and by them `repayment` — so advances − reimbursements − payables + repayments is
+// their group balance (financial review finding 2). The link is visible only to its owner; nobody else
+// learns which account, balance, entry or note is involved. Only the owner ever writes there, and only
+// their own entries (server-set `createdBy`) are counted or reversed (finding 1): when they add, change
+// or void a record, their entries follow at once by reversal and new entries (never by rewriting); when
+// someone else does, their entries are shown as needing review until they bring them up to date with
+// ?action=ledger. The link is in `doc.groupLedgers`, never on a shared record, so it never changes a
+// record's revision.
 const { readBody, query, header, badRequest, forbidden, notFound, conflict } = require('../_shared/http');
 const { newId, requireId } = require('../_shared/ids');
 const { roleAtLeast, can, capabilitiesFor, canChangeRecord } = require('../_shared/authz');
@@ -64,11 +70,20 @@ function requireWriter(member) {
   if (!writer(member)) throw forbidden('Viewers can see shared expenses but cannot add or change them.');
 }
 const reportingCurrency = (doc) => (doc.settings && doc.settings.reportingCurrency) || 'EUR';
-// One currency per workspace in this increment (multi-currency group totals are pending, BT-009).
+// New expenses are in the reporting currency only in this increment (multi-currency group totals are
+// pending, BT-009).
 function currencyOf(doc, value) {
   const c = reportingCurrency(doc);
   if (value !== undefined && value !== null && value !== c) throw badRequest(`Shared expenses in this workspace are in ${c}. Other currencies are not supported yet.`, 'currency_not_supported');
   return c;
+}
+// A payment may also be in any currency that still has an open balance, so a balance left in an
+// earlier reporting currency can always be cleared (financial review finding 3).
+function settlementCurrency(doc, value) {
+  const c = reportingCurrency(doc);
+  if (value === undefined || value === null || value === c) return c;
+  if (typeof value === 'string' && groups.openCurrencies(doc).includes(value)) return value;
+  throw badRequest(`Payments in this workspace are in ${c}, or in a currency that still has an open balance. Nobody owes anything in that currency.`, 'currency_not_supported');
 }
 const nameOf = (doc, subject) => { const m = model.memberBySubject(doc, subject); return m ? m.name || 'Member' : 'Former member'; };
 
@@ -123,102 +138,208 @@ function expenseMoney(doc, body, rec) {
   return { currency, amountMinor, payers, split, shares };
 }
 
-// ---- the personal ledger link --------------------------------------------------------------------
-const activeLink = (rec, subject) => (rec.ledgerLinks || []).find((l) => l.subject === subject && !l.endedAt) || null;
+// ---- the personal ledger ------------------------------------------------------------------------
+// One link per person and currency (`doc.groupLedgers`): the account where that person records their
+// own part of every shared expense and payment in that currency (Terry, 2026-09-14). It must be their
+// OWN PRIVATE account (security review S2): nobody else can see which account or write to it. A
+// per-record link from increment 1 (`rec.ledgerLinks`) still counts for its record while the person has
+// no link for that currency, and only when it points at their own private account.
+const ownPrivateAccount = (doc, accountId, subject) => {
+  const a = (doc.accounts || []).find((x) => x.id === accountId);
+  return a && !a.deletedAt && a.visibility === 'private' && a.ownerSubject === subject ? a : null;
+};
+const groupLink = (doc, subject, currency) => (doc.groupLedgers || []).find((l) => l.subject === subject && l.currency === currency && !l.endedAt) || null;
+const recordLink = (rec, subject) => (rec.ledgerLinks || []).find((l) => l.subject === subject && !l.endedAt) || null;
+function targetOf(doc, rec, subject) {
+  const g = groupLink(doc, subject, rec.currency);
+  if (g) return g.accountId;
+  const l = recordLink(rec, subject);
+  return l && ownPrivateAccount(doc, l.accountId, subject) ? l.accountId : null;
+}
 
-// Live entries on one account that came from this record: not deleted, not reversed, not reversals.
-function liveLinked(doc, rec, type, accountId) {
+// A person's live entries for one record, on any account: not deleted, not reversed, not reversals.
+// An entry is theirs when they created it — `createdBy` is set by the server and never edited, and
+// clients cannot add group links (S3) — so one person's update never counts, compares or reverses
+// another person's entries (financial review finding 1).
+const isLive = (t) => !!t.links && !t.deletedAt && !t.reversedBy && !t.links.reverses;
+function liveEntries(doc, rec, type, subject) {
   const key = LINK_KEY[type];
-  return (doc.transactions || []).filter((t) => t.accountId === accountId && t.links && t.links[key] === rec.id && !t.deletedAt && !t.reversedBy && !t.links.reverses);
+  return (doc.transactions || []).filter((t) => isLive(t) && t.links[key] === rec.id && t.createdBy === subject);
+}
+// The same, indexed once for a whole view.
+function entryIndex(doc, subject) {
+  const map = new Map();
+  for (const t of doc.transactions || []) {
+    if (t.createdBy !== subject || !isLive(t)) continue;
+    for (const [type, key] of Object.entries(LINK_KEY)) {
+      if (!t.links[key]) continue;
+      const k = `${type}|${t.links[key]}`;
+      map.set(k, [...(map.get(k) || []), t]);
+    }
+  }
+  return (rec, type) => map.get(`${type}|${rec.id}`) || [];
 }
 const entryKey = (x) => `${x.kind}|${x.amountMinor}|${x.categoryId || ''}|${x.date}`;
 const sameEntries = (live, desired) => JSON.stringify(live.map(entryKey).sort()) === JSON.stringify(desired.map(entryKey).sort());
 
-function noteFor(rec, kind) {
-  if (kind === 'reimbursement') return 'Repayment recorded in Shared expenses';
-  return `${kind === 'advance' ? 'Paid for others in' : 'My share of'} shared expense: ${rec.description}`;
-}
+const NOTES = Object.freeze({
+  expense: (rec) => `My share of shared expense: ${rec.description}`,
+  advance: (rec) => `Paid for others in shared expense: ${rec.description}`,
+  payable: (rec) => `Owed to others for shared expense: ${rec.description}`,
+  reimbursement: () => 'Repayment received in Shared expenses',
+  repayment: () => 'Repayment made in Shared expenses',
+});
 
-// Brings the caller's own entries for one record in line with it: reverses those that no longer
-// match and adds what the record now needs, in the same write. Only the link's owner runs this.
-// `strict` throws when the account cannot take the change; otherwise the entries are left for the
-// owner to review (a derived "needs review", never a stored flag).
-function syncLedger(ctx, doc, member, rec, type, link, { reason, strict }) {
+// Brings the caller's own entries for one record in line with it on their account: reverses what no
+// longer matches (or sits on another account) and adds what the record now needs, in the same write.
+// Only the entries' owner runs this. Returns 'same', 'updated' or the problem that stopped it; `strict`
+// throws the problem instead (otherwise the entries are left for the owner to review — a derived
+// "needs review", never a stored flag).
+function syncRecord(ctx, doc, member, rec, type, { reason, strict }) {
   const now = ctx.now();
   const nowIso = ctx.nowIso();
-  const desired = link.endedAt ? [] : groups.desiredEntries(rec, type, selfRef(member));
-  const live = liveLinked(doc, rec, type, link.accountId);
-  if (sameEntries(live, desired)) return false;
-  const account = (doc.accounts || []).find((a) => a.id === link.accountId);
-  let problem = null;
-  if (!account || account.deletedAt || capabilitiesFor(doc, ctx.principal, account, now).size === 0) problem = 'unavailable';
-  else if (account.status === 'closed') problem = 'closed';
-  else if (account.currency !== rec.currency) problem = 'currency';
-  else if (!can(doc, ctx.principal, account, 'create', now) || live.some((t) => !canChangeRecord(doc, ctx.principal, account, t, 'edit', now))) problem = 'rights';
-  if (problem) {
-    if (!strict) return false;
+  const targetId = targetOf(doc, rec, member.subject);
+  const desired = targetId ? groups.desiredEntries(rec, type, selfRef(member)) : [];
+  const live = liveEntries(doc, rec, type, member.subject);
+  const onTarget = live.filter((t) => t.accountId === targetId);
+  const elsewhere = live.filter((t) => t.accountId !== targetId);
+  const matches = sameEntries(onTarget, desired);
+  if (matches && !elsewhere.length) return 'same';
+  const toReverse = matches ? elsewhere : live;
+  const toAdd = matches ? [] : desired;
+  const touched = [...new Set([...toReverse.map((t) => t.accountId), ...(toAdd.length ? [targetId] : [])])];
+  for (const id of touched) {
+    const account = (doc.accounts || []).find((a) => a.id === id);
+    let problem = null;
+    if (!account || account.deletedAt || capabilitiesFor(doc, ctx.principal, account, now).size === 0) problem = 'unavailable';
+    else if (account.status === 'closed') problem = 'closed';
+    else if (account.currency !== rec.currency) problem = 'currency';
+    else if (!can(doc, ctx.principal, account, 'create', now) || toReverse.some((t) => t.accountId === id && !canChangeRecord(doc, ctx.principal, account, t, 'edit', now))) problem = 'rights';
+    if (!problem) continue;
+    if (!strict) return problem;
     if (problem === 'unavailable') throw notFound('Unknown account.');
     if (problem === 'closed') throw conflict(`${account.name} is closed. Reopen it on the Accounts page to update its entries.`, 'account_closed');
     if (problem === 'currency') throw badRequest(`${account.name} is in ${account.currency}, not ${rec.currency}.`, 'currency_mismatch');
     throw forbidden('You cannot change the entries on this account.');
   }
   const key = LINK_KEY[type];
-  for (const t of live) {
+  for (const t of toReverse) {
     const rev = entries.reverseEntry(doc, t, { by: member.subject, at: nowIso, reason, links: { [key]: rec.id } });
-    audit.record(doc, { actor: member.subject, action: 'transaction.reverse', targetType: 'transaction', targetId: t.id, scope: `account:${account.id}`, at: nowIso });
-    audit.record(doc, { actor: member.subject, action: 'transaction.create', targetType: 'transaction', targetId: rev.id, scope: `account:${account.id}`, at: nowIso });
+    audit.record(doc, { actor: member.subject, action: 'transaction.reverse', targetType: 'transaction', targetId: t.id, scope: `account:${t.accountId}`, at: nowIso });
+    audit.record(doc, { actor: member.subject, action: 'transaction.create', targetType: 'transaction', targetId: rev.id, scope: `account:${t.accountId}`, at: nowIso });
   }
-  for (const d of desired) {
-    const t = entries.newEntry({ accountId: account.id, currency: account.currency, kind: d.kind, amountMinor: d.amountMinor, date: d.date, categoryId: d.categoryId, notes: noteFor(rec, d.kind), links: { [key]: rec.id }, by: member.subject, at: nowIso });
+  for (const d of toAdd) {
+    const t = entries.newEntry({ accountId: targetId, currency: rec.currency, kind: d.kind, amountMinor: d.amountMinor, date: d.date, categoryId: d.categoryId, notes: NOTES[d.kind](rec), links: { [key]: rec.id }, by: member.subject, at: nowIso });
     doc.transactions = [...(doc.transactions || []), t];
-    audit.record(doc, { actor: member.subject, action: 'transaction.create', targetType: 'transaction', targetId: t.id, scope: `account:${account.id}`, at: nowIso });
+    audit.record(doc, { actor: member.subject, action: 'transaction.create', targetType: 'transaction', targetId: t.id, scope: `account:${targetId}`, at: nowIso });
   }
   ledger.assertLedgerInRange(doc);
-  return true;
+  return 'updated';
 }
 
-// Starts recording a record on one of the caller's accounts (or moves it to another one).
-function linkLedger(ctx, doc, member, rec, type, accountId) {
-  const now = ctx.now();
-  const nowIso = ctx.nowIso();
-  const ref = selfRef(member);
-  if (type === 'expense' && !(rec.payers || []).some((p) => p.ref === ref)) throw badRequest('Only someone who paid can record this expense on their own account.', 'not_a_payer');
-  if (type === 'settlement' && rec.to !== ref) throw badRequest('Only the person who received this payment can record it on their own account.', 'not_recipient');
-  const account = (doc.accounts || []).find((a) => a.id === accountId && !a.deletedAt);
-  if (!account || capabilitiesFor(doc, ctx.principal, account, now).size === 0) throw notFound('Unknown account.');
-  if (!can(doc, ctx.principal, account, 'create', now)) throw forbidden('You cannot add entries to this account.');
-  if (account.status === 'closed') throw conflict(`${account.name} is closed. Choose an open account.`, 'account_closed');
-  if (account.currency !== rec.currency) throw badRequest(`${account.name} is in ${account.currency}, but this is in ${rec.currency}. Choose an account in ${rec.currency}.`, 'currency_mismatch');
-  const current = activeLink(rec, member.subject);
-  if (current && current.accountId === account.id) return current;
-  if (current) {
-    current.endedAt = nowIso;
-    syncLedger(ctx, doc, member, rec, type, current, { reason: 'Recorded on another account instead', strict: true });
+const reasonFor = (rec, type, fallback) => (rec.voidedAt ? `${type === 'expense' ? 'Shared expense' : 'Repayment'} voided: ${rec.voidReason || ''}`.trim() : fallback);
+
+// Every record in one currency, for the caller. Records whose entries sit on an account the caller
+// cannot change now are left as they are (they stay "needs review") and counted.
+function syncCurrency(ctx, doc, member, currency, reason) {
+  const out = { updated: 0, blocked: 0 };
+  for (const [type, list] of [['expense', doc.groupExpenses || []], ['settlement', doc.groupSettlements || []]]) {
+    for (const rec of list) {
+      if (rec.currency !== currency) continue;
+      const r = syncRecord(ctx, doc, member, rec, type, { reason: reasonFor(rec, type, reason), strict: false });
+      if (r === 'updated') out.updated += 1;
+      else if (r !== 'same') out.blocked += 1;
+    }
   }
-  const link = { subject: member.subject, accountId: account.id, linkedAt: nowIso, endedAt: null };
-  // The link list is the owner's private bookkeeping: it never changes the shared record's revision.
-  rec.ledgerLinks = [...(rec.ledgerLinks || []), link];
-  audit.record(doc, { actor: member.subject, action: 'group.ledger.link', targetType: type === 'expense' ? 'group-expense' : 'group-settlement', targetId: rec.id, scope: `self:${member.subject}`, at: nowIso });
-  return link;
+  return out;
 }
 
-// After the caller changes or voids a record, their own entries follow in the same write when they can.
+function checkOwnAccount(ctx, doc, member, accountId, currency) {
+  const account = (doc.accounts || []).find((a) => a.id === accountId && !a.deletedAt);
+  if (!account || capabilitiesFor(doc, ctx.principal, account, ctx.now()).size === 0) throw notFound('Unknown account.');
+  if (!ownPrivateAccount(doc, account.id, member.subject)) throw badRequest('Choose a private account of your own. Shared accounts and other people\'s accounts cannot be used, because only you may see which account your shared expenses are recorded on.', 'not_own_account');
+  if (account.status === 'closed') throw conflict(`${account.name} is closed. Choose an open account.`, 'account_closed');
+  if (account.currency !== currency) throw badRequest(`${account.name} is in ${account.currency}, but this is in ${currency}. Choose an account in ${currency}.`, 'currency_mismatch');
+  return account;
+}
+
+function endRecordLinks(doc, member, currency, nowIso, why) {
+  for (const rec of [...(doc.groupExpenses || []), ...(doc.groupSettlements || [])]) {
+    if (rec.currency !== currency) continue;
+    const l = recordLink(rec, member.subject);
+    if (l) { l.endedAt = nowIso; l.endReason = why; }
+  }
+}
+
+// Records all of the caller's part in one currency on one of their own private accounts (or moves it
+// there), ending any per-record links of increment 1 in that currency, and brings it all up to date.
+function linkCurrency(ctx, doc, member, currency, accountId) {
+  const nowIso = ctx.nowIso();
+  const account = checkOwnAccount(ctx, doc, member, accountId, currency);
+  const current = groupLink(doc, member.subject, currency);
+  if (!current || current.accountId !== account.id) {
+    if (current) { current.endedAt = nowIso; current.endReason = 'Recorded on another account instead'; }
+    endRecordLinks(doc, member, currency, nowIso, 'Replaced by one account for every shared expense');
+    const link = { id: newId('gld'), subject: member.subject, currency, accountId: account.id, linkedAt: nowIso, endedAt: null };
+    // The caller's private bookkeeping: it never changes a shared record's revision.
+    doc.groupLedgers = [...(doc.groupLedgers || []), link];
+    audit.record(doc, { actor: member.subject, action: 'group.ledger.link', targetType: 'group-ledger', targetId: link.id, scope: `self:${member.subject}`, at: nowIso });
+  }
+  return syncCurrency(ctx, doc, member, currency, 'Shared expenses');
+}
+
+// Stops recording in one currency: the link is kept as ended and every entry it made is reversed.
+function unlinkCurrency(ctx, doc, member, currency) {
+  const nowIso = ctx.nowIso();
+  const current = groupLink(doc, member.subject, currency);
+  if (current) {
+    const account = (doc.accounts || []).find((a) => a.id === current.accountId);
+    if (account && !account.deletedAt && account.status === 'closed') throw conflict(`${account.name} is closed. Reopen it on the Accounts page first, so its entries can be reversed.`, 'account_closed');
+    current.endedAt = nowIso;
+    current.endReason = 'Stopped recording';
+    audit.record(doc, { actor: member.subject, action: 'group.ledger.unlink', targetType: 'group-ledger', targetId: current.id, scope: `self:${member.subject}`, at: nowIso });
+  }
+  endRecordLinks(doc, member, currency, nowIso, 'Stopped recording');
+  return syncCurrency(ctx, doc, member, currency, 'No longer recorded from Shared expenses');
+}
+
+// After the caller adds, changes or voids a record, their own entries follow in the same write when they can.
 function followOwnLink(ctx, doc, member, rec, type, reason) {
-  const link = activeLink(rec, member.subject);
-  if (link) syncLedger(ctx, doc, member, rec, type, link, { reason, strict: false });
+  syncRecord(ctx, doc, member, rec, type, { reason, strict: false });
 }
 
-function myLedger(ctx, doc, member, rec, type) {
-  const link = activeLink(rec, member.subject);
-  if (!link) return null;
-  const account = (doc.accounts || []).find((a) => a.id === link.accountId);
-  const visible = !!account && !account.deletedAt && capabilitiesFor(doc, ctx.principal, account, ctx.now()).size > 0;
-  const live = liveLinked(doc, rec, type, link.accountId);
+// What the caller has recorded for one record, shown only to them.
+function myLedger(ctx, doc, member, rec, type, entriesFor = entryIndex(doc, member.subject)) {
+  const targetId = targetOf(doc, rec, member.subject);
+  const live = entriesFor(rec, type);
+  const desired = targetId ? groups.desiredEntries(rec, type, selfRef(member)) : [];
+  if (!live.length && !desired.length) return null;
+  const now = ctx.now();
+  const sees = (id) => { const a = (doc.accounts || []).find((x) => x.id === id); return a && !a.deletedAt && capabilitiesFor(doc, ctx.principal, a, now).size > 0 ? a : null; };
+  const account = targetId ? sees(targetId) : null;
   return {
-    accountId: visible ? account.id : null, accountName: visible ? account.name : null, accountUnavailable: !visible,
-    needsReview: !sameEntries(live, groups.desiredEntries(rec, type, selfRef(member))),
-    entries: visible ? live.map((t) => ({ id: t.id, kind: t.kind, amount: money.toDecimal(t.amountMinor, t.currency) })) : [],
+    accountId: account ? account.id : null, accountName: account ? account.name : null, accountUnavailable: !!targetId && !account,
+    needsReview: live.some((t) => t.accountId !== targetId) || !sameEntries(live.filter((t) => t.accountId === targetId), desired),
+    entries: live.filter((t) => sees(t.accountId)).map((t) => ({ id: t.id, kind: t.kind, amount: money.toDecimal(t.amountMinor, t.currency) })),
   };
+}
+
+// The caller's current links, one per currency, with how many records need updating.
+function myLedgers(ctx, doc, member, entriesFor) {
+  const now = ctx.now();
+  return (doc.groupLedgers || []).filter((l) => l.subject === member.subject && !l.endedAt).map((l) => {
+    const a = (doc.accounts || []).find((x) => x.id === l.accountId);
+    const visible = !!a && !a.deletedAt && capabilitiesFor(doc, ctx.principal, a, now).size > 0;
+    let reviewCount = 0;
+    for (const [type, list] of [['expense', doc.groupExpenses || []], ['settlement', doc.groupSettlements || []]]) {
+      for (const rec of list) {
+        if (rec.currency !== l.currency) continue;
+        const m = myLedger(ctx, doc, member, rec, type, entriesFor);
+        if (m && m.needsReview) reviewCount += 1;
+      }
+    }
+    return { currency: l.currency, accountId: visible ? a.id : null, accountName: visible ? a.name : null, accountUnavailable: !visible, since: l.linkedAt, reviewCount };
+  });
 }
 
 // ---- views ---------------------------------------------------------------------------------------
@@ -248,16 +369,21 @@ function expenseView(ctx, doc, member, e) {
 function settlementView(ctx, doc, member, s) {
   const me = selfRef(member);
   const toContact = s.to.startsWith('contact:');
-  const open = !s.voidedAt && writer(member);
+  const live = !s.voidedAt;
+  const open = live && writer(member);
   const out = {
     id: s.id, from: s.from, to: s.to, amount: money.toDecimal(s.amountMinor, s.currency), amountMinor: s.amountMinor, currency: s.currency,
     date: s.date, method: s.method || '', notes: s.notes || '', status: s.status, voided: !!s.voidedAt,
     voidedAt: s.voidedAt || null, voidReason: s.voidReason || '', voidedBy: s.voidedBy ? nameOf(doc, s.voidedBy) : null,
     disputeReason: s.disputeReason || '', confirmedBy: s.confirmedBy ? nameOf(doc, s.confirmedBy) : null, confirmedAt: s.confirmedAt || null,
+    // Confirmed by the manager or owner who reported it (S5); a confirmation withdrawn by a void (S6).
+    confirmedByReporter: !!s.confirmedByReporter, withdrawn: !!s.withdrawn,
     createdBy: nameOf(doc, s.createdBy), createdBySelf: s.createdBy === member.subject, createdAt: s.createdAt, revision: s.revision,
-    canConfirm: open && s.status !== 'confirmed' && (s.to === me || (toContact && isManager(member))),
-    canDispute: open && s.status === 'reported' && s.to === me,
-    canVoid: open && (s.createdBy === member.subject || isManager(member)),
+    // The payer never confirms (S5); a viewer may confirm or dispute a payment made to them (S7); once
+    // confirmed, only the receiving member or a manager or owner may withdraw it (S6).
+    canConfirm: live && s.status !== 'confirmed' && s.from !== me && (s.to === me || (toContact && open && isManager(member))),
+    canDispute: live && s.status === 'reported' && s.to === me,
+    canVoid: open && (s.status === 'confirmed' ? (s.to === me || isManager(member)) : (s.createdBy === member.subject || isManager(member))),
   };
   const mine = myLedger(ctx, doc, member, s, 'settlement');
   if (mine) out.myLedger = mine;
@@ -304,8 +430,11 @@ async function list(ctx, req) {
       participants: parts,
       expenses: [...(doc.groupExpenses || [])].sort(newestFirst).map((e) => expenseView(ctx, doc, member, e)),
       settlements: [...(doc.groupSettlements || [])].sort(newestFirst).map((s) => settlementView(ctx, doc, member, s)),
+      // The caller's own accounts for their part of the group, per currency; shown only to them, and
+      // left out when there are none (like `myLedger` on a record).
+      ...(() => { const mine = myLedgers(ctx, doc, member, entryIndex(doc, member.subject)); return mine.length ? { myLedgers: mine } : {}; })(),
       balances,
-      basis: 'Balances count confirmed payments only. Suggested and direct payments also count reported payments as made, so nobody is asked to pay twice; disputed payments are not counted.',
+      basis: 'Balances count confirmed payments only. Suggested and direct payments also count reported payments as made, so nobody is asked to pay twice; suggestions count a reported payment only up to what is owed. Disputed payments are not counted.',
     },
   };
 }
@@ -336,10 +465,10 @@ async function createExpense(ctx, req) {
     };
     doc.groupExpenses = [...(doc.groupExpenses || []), rec];
     audit.record(doc, { actor: member.subject, action: 'group.expense.create', targetType: 'group-expense', targetId: rec.id, at: nowIso });
-    if (ledgerAccountId) {
-      const link = linkLedger(ctx, doc, member, rec, 'expense', ledgerAccountId);
-      syncLedger(ctx, doc, member, rec, 'expense', link, { reason: 'Shared expense', strict: true });
-    }
+    // Recorded on the caller's own account through a new or changed link for this currency, or through
+    // the link they already have (their own write, so their entries follow at once).
+    if (ledgerAccountId) linkCurrency(ctx, doc, member, rec.currency, ledgerAccountId);
+    else followOwnLink(ctx, doc, member, rec, 'expense', 'Shared expense');
     return { expense: expenseView(ctx, doc, member, rec) };
   }, { idempotencyKey: header(req, 'idempotency-key') || undefined, idempotencyScope: 'group.expense.create', requestHash: store.requestHash({ q: wsId, body }) });
   return { status: 201, body: result };
@@ -389,7 +518,7 @@ async function createSettlement(ctx, req) {
   const { result } = await store.mutateWorkspace(ctx, wsId, (doc, member) => {
     requireWriter(member);
     const nowIso = ctx.nowIso();
-    const currency = currencyOf(doc, body.currency);
+    const currency = settlementCurrency(doc, body.currency);
     const check = groups.participantChecker(doc);
     const from = check(body.from);
     const to = check(body.to);
@@ -405,14 +534,13 @@ async function createSettlement(ctx, req) {
       history: [{ revision: 1, at: nowIso, by: member.subject, event: 'reported' }, ...(receiver ? [{ revision: 1, at: nowIso, by: member.subject, event: 'confirmed' }] : [])],
       ledgerLinks: [],
     };
-    if (ledgerAccountId && !receiver) throw badRequest('Only the person who received this payment can record it on their own account.', 'not_recipient');
     doc.groupSettlements = [...(doc.groupSettlements || []), s];
     audit.record(doc, { actor: member.subject, action: 'group.settlement.report', targetType: 'group-settlement', targetId: s.id, at: nowIso });
     if (receiver) audit.record(doc, { actor: member.subject, action: 'group.settlement.confirm', targetType: 'group-settlement', targetId: s.id, at: nowIso });
-    if (ledgerAccountId) {
-      const link = linkLedger(ctx, doc, member, s, 'settlement', ledgerAccountId);
-      syncLedger(ctx, doc, member, s, 'settlement', link, { reason: 'Repayment', strict: true });
-    }
+    // Recorded on the caller's own account through a new or changed link for this currency, or the one
+    // they already have. Anyone in the payment has a part in it; entries follow once it is confirmed.
+    if (ledgerAccountId) linkCurrency(ctx, doc, member, s.currency, ledgerAccountId);
+    else followOwnLink(ctx, doc, member, s, 'settlement', 'Repayment');
     return { settlement: settlementView(ctx, doc, member, s) };
   }, { idempotencyKey: header(req, 'idempotency-key') || undefined, idempotencyScope: 'group.settle', requestHash: store.requestHash({ q: wsId, body }) });
   return { status: 201, body: result };
@@ -426,25 +554,32 @@ function settlementChange(kind) {
     const ledgerAccountId = kind === 'confirm' ? ledgerChoice(body.ledger) : null;
     const { result } = await store.mutateWorkspace(ctx, wsId, (doc, member) => {
       const s = findSettlement(doc, id);
-      requireWriter(member);
       const me = selfRef(member);
+      // A viewer may confirm or dispute a payment made to them, and nothing else (security review S7).
+      if (s.to !== me) requireWriter(member);
       const nowIso = ctx.nowIso();
       if (kind === 'confirm') {
+        // Never the person who paid (security review S5).
+        if (s.from === me) throw forbidden('You paid this, so someone else must confirm that it arrived.');
         const allowed = s.to === me || (s.to.startsWith('contact:') && isManager(member));
         if (!allowed) throw forbidden(s.to.startsWith('contact:') ? 'Only a manager or owner can confirm a payment to a contact.' : 'Only the person who received this payment can confirm it.');
+        // Starting to record on an account is not something a viewer can do (S7).
+        if (ledgerAccountId) requireWriter(member);
         if (s.voidedAt) throw conflict('This payment is void.', 'already_void');
         if (s.status === 'confirmed') throw conflict('This payment is already confirmed.', 'already_confirmed');
         checkRevision(s, body.revision);
+        // A manager or owner confirming a contact payment they reported themselves is allowed — a group
+        // with one owner must be able to record them — but kept and shown distinctly (S5).
+        const byReporter = s.to !== me && s.createdBy === member.subject;
         s.status = 'confirmed';
         s.confirmedBy = member.subject;
         s.confirmedAt = nowIso;
+        s.confirmedByReporter = byReporter;
         s.revision += 1;
-        s.history = [...(s.history || []), { revision: s.revision, at: nowIso, by: member.subject, event: 'confirmed' }];
+        s.history = [...(s.history || []), { revision: s.revision, at: nowIso, by: member.subject, event: byReporter ? 'confirmed-by-reporter' : 'confirmed' }];
         audit.record(doc, { actor: member.subject, action: 'group.settlement.confirm', targetType: 'group-settlement', targetId: s.id, at: nowIso });
-        if (ledgerAccountId) {
-          const link = linkLedger(ctx, doc, member, s, 'settlement', ledgerAccountId);
-          syncLedger(ctx, doc, member, s, 'settlement', link, { reason: 'Repayment', strict: true });
-        } else followOwnLink(ctx, doc, member, s, 'settlement', 'Repayment');
+        if (ledgerAccountId) linkCurrency(ctx, doc, member, s.currency, ledgerAccountId);
+        else followOwnLink(ctx, doc, member, s, 'settlement', 'Repayment');
       } else {
         if (s.to !== me) throw forbidden('Only the person who received this payment can dispute it.');
         if (s.voidedAt) throw conflict('This payment is void.', 'already_void');
@@ -473,8 +608,15 @@ async function voidRecord(ctx, req) {
   const id = requireId(type === 'expense' ? body.expenseId : body.settlementId, type === 'expense' ? 'expenseId' : 'settlementId');
   const { result } = await store.mutateWorkspace(ctx, wsId, (doc, member) => {
     const rec = type === 'expense' ? findExpense(doc, id) : findSettlement(doc, id);
-    const allowed = writer(member) && (rec.createdBy === member.subject || isManager(member));
-    if (!allowed) throw forbidden(`Only the person who added this ${type === 'expense' ? 'expense' : 'payment'}, or a manager or owner, can void it.`);
+    // Once a payment is confirmed, the payer or reporter alone can no longer take it back: only its
+    // receiving member or a manager or owner may, and it is recorded as a withdrawn confirmation
+    // (security review S6). Before that, whoever reported it (or a manager or owner) may void it.
+    const confirmedPayment = type === 'settlement' && rec.status === 'confirmed';
+    const allowed = writer(member) && (confirmedPayment ? (rec.to === selfRef(member) || isManager(member)) : (rec.createdBy === member.subject || isManager(member)));
+    if (!allowed) {
+      throw forbidden(confirmedPayment ? 'Only the person who received this payment, or a manager or owner, can withdraw its confirmation.'
+        : `Only the person who added this ${type === 'expense' ? 'expense' : 'payment'}, or a manager or owner, can void it.`);
+    }
     if (rec.voidedAt) throw conflict(`This ${type === 'expense' ? 'expense' : 'payment'} is already void.`, 'already_void');
     checkRevision(rec, body.revision);
     const reason = requireReason(body.reason, 'voiding it');
@@ -483,7 +625,8 @@ async function voidRecord(ctx, req) {
     rec.voidedBy = member.subject;
     rec.voidReason = reason;
     rec.revision += 1;
-    rec.history = [...(rec.history || []), { revision: rec.revision, at: nowIso, by: member.subject, event: 'void', reason }];
+    if (confirmedPayment) rec.withdrawn = true;
+    rec.history = [...(rec.history || []), { revision: rec.revision, at: nowIso, by: member.subject, event: confirmedPayment ? 'withdrawn' : 'void', reason }];
     if (type === 'expense') rec.amendments = [...(rec.amendments || []), { revision: rec.revision, at: nowIso, by: member.subject, reason, changes: [{ field: 'status', from: 'active', to: 'void' }] }];
     audit.record(doc, { actor: member.subject, action: `group.${type}.void`, targetType: `group-${type}`, targetId: rec.id, at: nowIso });
     followOwnLink(ctx, doc, member, rec, type, `${type === 'expense' ? 'Shared expense' : 'Repayment'} voided: ${reason}`);
@@ -500,34 +643,44 @@ function pickType(body) {
 }
 
 // ---- the caller's own account --------------------------------------------------------------------
+//   { expenseId | settlementId }                   bring the caller's entries for that record up to date
+//   { expenseId | settlementId, accountId }        record the caller's part of every shared expense and
+//                                                  payment in that record's currency on their own private
+//                                                  account (or move it there) and bring it all up to date
+//   { expenseId | settlementId, accountId: null }  stop recording in that currency: entries reversed,
+//                                                  the link kept as ended
+//   { currency, accountId? }                       the same by currency; without accountId, bring every
+//                                                  record in that currency up to date
 async function ledgerAction(ctx, req) {
   const wsId = requireId(query(req, 'workspaceId'), 'workspaceId');
-  const body = fields.onlyKeys(readBody(req), ['expenseId', 'settlementId', 'accountId']);
-  const type = pickType(body);
-  const id = requireId(type === 'expense' ? body.expenseId : body.settlementId, type === 'expense' ? 'expenseId' : 'settlementId');
+  const body = fields.onlyKeys(readBody(req), ['expenseId', 'settlementId', 'currency', 'accountId']);
+  const named = ['expenseId', 'settlementId', 'currency'].filter((k) => body[k] !== undefined);
+  if (named.length !== 1) throw badRequest('Send one of expenseId, settlementId or currency.', 'missing_field');
+  const type = body.expenseId !== undefined ? 'expense' : body.settlementId !== undefined ? 'settlement' : null;
+  const id = type ? requireId(type === 'expense' ? body.expenseId : body.settlementId, type === 'expense' ? 'expenseId' : 'settlementId') : null;
+  if (!type && !money.isCurrency(body.currency)) throw badRequest('currency must be a currency code such as "EUR".', 'invalid_field');
   const choosing = Object.prototype.hasOwnProperty.call(body, 'accountId');
   const accountId = choosing && body.accountId !== null ? requireId(body.accountId, 'accountId') : null;
   const { result } = await store.mutateWorkspace(ctx, wsId, (doc, member) => {
-    requireWriter(member);
-    const rec = type === 'expense' ? findExpense(doc, id) : findSettlement(doc, id);
-    const nowIso = ctx.nowIso();
-    if (choosing && accountId === null) {
-      const link = activeLink(rec, member.subject);
-      if (link) {
-        link.endedAt = nowIso;
-        syncLedger(ctx, doc, member, rec, type, link, { reason: 'No longer recorded from Shared expenses', strict: true });
-        audit.record(doc, { actor: member.subject, action: 'group.ledger.unlink', targetType: `group-${type}`, targetId: rec.id, scope: `self:${member.subject}`, at: nowIso });
-      }
-    } else if (choosing) {
-      if (rec.voidedAt) throw conflict('This is void, so there is nothing to record.', 'already_void');
-      const link = linkLedger(ctx, doc, member, rec, type, accountId);
-      syncLedger(ctx, doc, member, rec, type, link, { reason: 'Shared expenses', strict: true });
-    } else {
-      const link = activeLink(rec, member.subject);
-      if (!link) throw conflict('This is not recorded on any account of yours. Choose an account to record it on.', 'not_linked');
-      syncLedger(ctx, doc, member, rec, type, link, { reason: rec.voidedAt ? `Voided: ${rec.voidReason || ''}`.trim() : 'Updated to match Shared expenses', strict: true });
-    }
-    return type === 'expense' ? { expense: expenseView(ctx, doc, member, rec) } : { settlement: settlementView(ctx, doc, member, rec) };
+    // Bringing one's own entries up to date, or stopping, only writes to one's own private account, so a
+    // viewer may do it too — for example after being made a viewer (security review S7). Starting or
+    // moving a link is for members, managers and owners.
+    if (choosing && accountId !== null) requireWriter(member);
+    const rec = type ? (type === 'expense' ? findExpense(doc, id) : findSettlement(doc, id)) : null;
+    const currency = rec ? rec.currency : body.currency;
+    let outcome = null;
+    if (choosing && accountId === null) outcome = unlinkCurrency(ctx, doc, member, currency);
+    else if (choosing) {
+      if (rec && rec.voidedAt) throw conflict('This is void, so there is nothing to record.', 'already_void');
+      outcome = linkCurrency(ctx, doc, member, currency, accountId);
+    } else if (rec) {
+      // One record must come up to date or say why (strict). With nothing of the caller's on it there
+      // is nothing to do, so repeating it is harmless.
+      syncRecord(ctx, doc, member, rec, type, { reason: reasonFor(rec, type, 'Updated to match Shared expenses'), strict: true });
+    } else outcome = syncCurrency(ctx, doc, member, currency, 'Updated to match Shared expenses');
+    const out = { myLedgers: myLedgers(ctx, doc, member, entryIndex(doc, member.subject)), ...(outcome ? { updated: outcome.updated, notUpdated: outcome.blocked } : {}) };
+    if (rec) out[type] = type === 'expense' ? expenseView(ctx, doc, member, rec) : settlementView(ctx, doc, member, rec);
+    return out;
   });
   return { body: result };
 }

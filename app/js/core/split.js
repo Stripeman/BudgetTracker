@@ -2,7 +2,7 @@
 // api/_shared/groups.js and api/_shared/money.js: integer minor units computed in BigInt, largest
 // remainder with ties to the first listed person, percentages to 4 decimal places that must make
 // exactly 100, fixed amounts that must make exactly the total. DOM-free. The server recomputes
-// everything and is authoritative; app/test/split.test.js keeps the two identical on generated cases.
+// everything and is authoritative; app/test/group.test.js keeps the two identical on generated cases.
 
 const ZERO = new Set("BIF CLP DJF GNF ISK JPY KMF KRW PYG RWF UGX UYI VND VUV XAF XOF XPF".split(" "));
 const THREE = new Set("BHD IQD JOD KWD LYD OMR TND".split(" "));

@@ -35,7 +35,8 @@ function groupCtx({ expenses = [], settlements = [] } = {}) {
       ],
       expenses, settlements, balances: [],
     }),
-    accounts: ready({ accounts: [{ id: "acc_cash", name: "Alice Cash", currency: "EUR", status: "open", capabilities: ["create"], icon: "wallet" }], totals: [] }),
+    // Only the person's own private accounts are offered for their part (BT-009 review S2).
+    accounts: ready({ accounts: [{ id: "acc_cash", name: "Alice Cash", currency: "EUR", status: "open", visibility: "private", ownedBySelf: true, capabilities: ["create"], icon: "wallet" }], totals: [] }),
     categories: ready({ categories: [
       { id: "cat_food", name: "Groceries", color: "#16a34a", icon: null },
       { id: "cat_fun", name: "Outings", color: "#2563eb", icon: "ticket" },
@@ -62,7 +63,7 @@ describe("BT-004-05 shared expenses: the expense dialog", () => {
     const account = pickerNamed(dialog, "Account");
     assert.equal(spoken(account), "Account: Alice Cash (EUR). Search and choose.");
     assert.equal(triggerFor(account).disabled, true, "off until the person asks to record it on their account");
-    labelled(dialog, "Also record what I paid on my account").click();
+    labelled(dialog, "Also record my part on my own account").click();
     assert.equal(triggerFor(account).disabled, false, "the view enabled it from code, and the picker followed");
   });
 
@@ -77,7 +78,7 @@ describe("BT-004-05 shared expenses: the expense dialog", () => {
     type(dialog.querySelector('input[aria-label="Shares for Alice"]'), "1");
     type(dialog.querySelector('input[aria-label="Shares for Bob"]'), "2");
     chooseByKeyboard(pickerNamed(dialog, "Category"), { type: "out" });
-    labelled(dialog, "Also record what I paid on my account").click();
+    labelled(dialog, "Also record my part on my own account").click();
     buttonNamed(dialog, "Save expense").click();
     await tick();
     assert.equal(calls.expenses.length, 1);

@@ -47,18 +47,64 @@ All changes so far only add optional fields and collections to the version-1 wor
 | Workspace `superseded[]` (records set aside by a replace restore: `collection`, `reason`, `archiveId`, `at`, `by`, whole `record`) and `restores[]` (`archiveId`, `mode`, `at`, `by`, `recoveryPoint`, `setAside`) | Nothing set aside; no restore recorded in the document (the audit log still has restore entries) |
 | Bill history `changes[]`; budget `history[]`, `deletedBy`, `archiveReason`; member `history[]`; workspace `history[]` and `lifecycle[]` | No before/after values recorded before this change (older entries keep field names only) |
 | Site document `site/icons.json` (`disabled`, `custom[]` as shape data with `status` and `history`, `audit`) | Every built-in icon offered; no custom icons |
-| Workspace `groupExpenses[]` (BT-009): `id`, `description`, `date`, `currency`, `amountMinor`, `categoryId`, `notes`, `payers[{ref, amountMinor}]`, `split{method, lines[{ref, value}]}`, `shares[{ref, amountMinor}]`, `createdBy`, `createdAt`, `updatedAt`, `updatedBy`, `revision`, `voidedAt`, `voidedBy`, `voidReason`, `history[]`, `amendments[]`, `ledgerLinks[{subject, accountId, linkedAt, endedAt}]` | No shared expenses |
+| Workspace `groupExpenses[]` (BT-009): `id`, `description`, `date`, `currency`, `amountMinor`, `categoryId`, `notes`, `payers[{ref, amountMinor}]`, `split{method, lines[{ref, value}]}`, `shares[{ref, amountMinor}]`, `createdBy`, `createdAt`, `updatedAt`, `updatedBy`, `revision`, `voidedAt`, `voidedBy`, `voidReason`, `history[]`, `amendments[]`, `ledgerLinks[{subject, accountId, linkedAt, endedAt, endReason}]` | No shared expenses |
 | Workspace `groupSettlements[]` (BT-009): `id`, `from`, `to`, `amountMinor`, `currency`, `date`, `method`, `notes`, `status` (`reported`, `confirmed`, `disputed`), `confirmedBy`, `confirmedAt`, `disputedBy`, `disputedAt`, `disputeReason`, `createdBy`, `createdAt`, `revision`, `voidedAt`, `voidedBy`, `voidReason`, `history[]`, `ledgerLinks[]` | No payments |
-| Transaction `links.groupExpenseId` / `links.groupSettlementId` (entries recorded from a shared expense or a repayment, and their reversals) | Not recorded from Shared expenses |
+| Record `ledgerLinks[]` are increment 1's per-record links. New code never creates them. One still counts for its record while that person has no link for the currency, and only when it points at their own private account; linking or stopping for the currency ends it (`endedAt`, `endReason`), and it is kept | No per-record link |
+| Workspace `groupLedgers[]` (BT-009 review, 2026-09-14): `id`, `subject`, `currency`, `accountId`, `linkedAt`, `endedAt`, `endReason`. At most one active per person and currency, always to that person's own private account; ended links are kept | Nothing recorded on personal accounts from Shared expenses (apart from increment-1 per-record links) |
+| Transaction kinds `payable` (positive, moves no money: a share of an expense someone else paid) and `repayment` (negative: a repayment made). Neither is spending or income | Not used. Older code classifies them as `other`, and their signs pass the older direction check |
+| Transactions summary `payables`, `repayments`, `receivable` (= advances − reimbursements − payables + repayments, signed) | Not reported |
+| Transaction `links.groupExpenseId` / `links.groupSettlementId` (entries recorded from a shared expense or a repayment, and their reversals). Server-only: the transactions route refuses them | Not recorded from Shared expenses |
 | Backup manifest `counts.groupExpenses` / `counts.groupSettlements`, present only when the workspace has those arrays | Archive made before BT-009 (its manifest still verifies) |
 
-### Shared expenses (BT-009, increment 1)
+### Shared expenses (BT-009, increment 1 and its review fixes)
 
-- **One currency per workspace for now.** New expenses and payments must be in the workspace's reporting currency; balances are nevertheless computed per currency, so records kept after a change of reporting currency never mix.
-- **Split and rounding.** `split.lines[].value` is `null` (equal), a whole number of shares, a canonical percentage string (4 decimals, total exactly 100) or minor units (amounts, total exactly the expense). `shares` is exactly `groups.computeShares(amountMinor, split)` — largest remainder, ties to the first listed person — and the backup integrity check recomputes it. A person reference is `member:<id>` or `contact:<id>`; private contacts never.
-- **Net sign convention.** net = paid − share − received + paid out, counting confirmed payments only. Positive: the group owes the person; negative: they owe the group. Nets of one currency add up to zero. Reported payments are pending and disputed ones separate; suggestions and the direct view count reported payments as made (not disputed ones).
-- **Personal ledger link.** Only the link's subject writes to the linked account. Entries: `expense` = min(paid, share), `advance` = paid − that; a confirmed repayment to the subject = `reimbursement`. Corrections are reversals plus new entries (never edits); "needs review" is derived by comparing the live linked entries with what the record now needs. The link list never changes the record's `revision`.
-- **Restores.** Group records are owner scope. Create-new keeps the restorer's archived member id and is blocked when group records name other members; replace is blocked when it would change a group record that is linked to an account outside the caller's scope.
+- **Currencies.** New expenses are in the workspace's reporting currency. Payments may also be in any currency that still has an open balance, so a balance left from before a change can always be cleared. The reporting currency cannot change while any shared balance is open (`409 group_balances_open`, naming the currency). Balances are kept per currency, and the view and dashboard show every currency with an open balance (financial review finding 3).
+- **Split and rounding.** `split.lines[].value` is one of:
+  - `null` (equal);
+  - a whole number of shares from 1 to 1000;
+  - a canonical percentage string (4 decimals, total exactly 100);
+  - positive minor units (amounts, total exactly the expense).
+
+  `shares` is exactly `groups.computeShares(amountMinor, split)`: largest remainder, ties to the first listed person. The backup integrity check applies these same rules to the stored split and recomputes the shares (finding 6). A person reference is `member:<id>` or `contact:<id>`, never a private contact.
+- **Net sign convention.** net = paid − share − received + paid out, counting confirmed payments only. Positive means the group owes the person; negative means they owe the group. Nets of one currency add up to zero. Reported payments are pending, and disputed ones are shown separately.
+- **Suggestions.** The suggestion basis counts a reported payment as made, but only up to what its payer still owes and its receiver is still owed. Payments are taken in date, then report-time, then id order, so a pending claim never turns a creditor into a debtor (finding 5). Fewest payments first pairs exact opposite balances (creditors largest first, ties in participant order), then applies greedy. The result is deterministic, zero-sum and at most n − 1 payments (finding 7). The direct view counts reported payments in full between the two people.
+- **Personal ledger: Terry's model (2026-09-14, financial review finding 2).**
+  - **What is recorded.** Anyone in a group may record their own part of it on one account per currency (`groupLedgers`). On that account, per group and currency, the entries satisfy:
+    - (a) cash effect = −(what they paid for active expenses) + (confirmed repayments received) − (confirmed repayments made);
+    - (b) spending (`expense` entries, in the expense's category) = the sum of their shares of every active expense, whoever paid;
+    - (c) outstanding = advances − reimbursements − payables + repayments = their group net, confirmed payments only.
+  - **Entries per record.**
+    - An expense gives `expense` = −share, plus `advance` = −(paid − share) when they paid more than their share, or `payable` = +(share − paid) when they paid less.
+    - A confirmed payment gives `reimbursement` = +amount to the receiver and `repayment` = −amount to the payer.
+    - Reported, disputed and voided records want no entries.
+  - **Hand-computed walkthrough** (`api/test/group-review.test.js`).
+    - **Setup.** Alice pays dinner 300.00 split four ways, and Bob pays a taxi 100.00 split with Alice. Both record on their own cash accounts, opening at 500.00.
+    - **Before any payment.**
+
+      | | Cash | Spending | Outstanding |
+      |---|---|---|---|
+      | Alice | 200.00 | 125.00 | +175.00 |
+      | Bob | 400.00 | 125.00 | −25.00 |
+
+    - **After netting.** Frank 75.00, Dana 75.00 and Bob 25.00 pay Alice. Alice: 375.00 / 125.00 / 0.00. Bob: 375.00 / 125.00 / 0.00. Every net is 0.00.
+    - **Then a void and a correction.** After Bob voids the taxi, Bob is 475.00 / 75.00 / −50.00 and Alice 375.00 / 75.00 / +50.00. After the dinner is corrected to 320.00, Alice is 355.00 / 80.00 / +65.00 and Bob 475.00 / 80.00 / −55.00.
+  - **Link and ownership.** The link must be the person's own private account (security review S2). It is visible only to them and lives in `groupLedgers`, never on a shared record, so it never changes a record's `revision`.
+    - Entries belong to the person whose server-set `createdBy` they carry. Only those are compared, counted or reversed (finding 1), and the transactions route refuses group link keys (finding 4 / S3).
+    - A person's own add, change or void updates their entries in the same write. Anyone else's change leaves them "needs review" (derived, never stored) until they update with `?action=ledger`.
+    - Corrections are reversals plus new entries. Stopping reverses every entry in that currency and keeps the link as ended. Moving to another account reverses entries there and records them on the new account.
+- **Settlement rules (security review S5–S7, Terry 2026-09-14).**
+  - **Confirming.** The payer (`from`) never confirms their own payment. The receiving member confirms, or a manager or owner when the receiver is a contact. A manager or owner confirming a contact payment they reported themselves is allowed but recorded as `confirmedByReporter` with the history event `confirmed-by-reporter`, and shown as "confirmed by the person who reported it". A consequence: an owner of a one-owner group who pays a contact cannot confirm that payment alone.
+  - **Voiding.** Before confirmation, the reporter or a manager or owner may void a payment. Once it is confirmed, only the receiving member or a manager or owner may. That void is recorded as `withdrawn` (history event `withdrawn`, with the reason) and shown as "Confirmation withdrawn".
+  - **Viewers.** A viewer may confirm or dispute payments made to them and may update or stop their own ledger link, which only writes to their own private account. They cannot add, change or void anything, report payments, or start a link.
+- **Restores.** Group records are owner scope.
+  - **Links never come from an archive (S1).** Replace and merge give every record they bring in the links it has now, or none; the per-currency links in `groupLedgers` are never restored.
+  - **Create-new (S4).** It keeps the restorer's archived member id and is blocked when group records name other members. On the records it carries, every other subject becomes `former-member` (shown as "Former member"), and member references in earlier values become `member:former`. It keeps only the restorer's own links to accounts that come along, and entries lose links to records that do not come along.
+  - **Replace blocker.** Replace is blocked when it would change what another member's entries should be for a record they record on an account outside the caller's scope.
+  - **Integrity check (S8).** The backup and restore integrity check refuses:
+    - links whose person is not a member (current or former);
+    - links whose account is missing or in another currency;
+    - duplicate active links;
+    - entries naming a missing expense or payment. Records set aside by a replace still count, because they are kept.
 
 Any change that renames, removes or reinterprets a field needs a real migration (in `api/_shared/schema.js`) and a `schemaVersion` bump before release.
 

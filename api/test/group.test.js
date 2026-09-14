@@ -161,19 +161,24 @@ describe('BT-009-06 personal and group accounting: the EUR 300 dinner', () => {
     assert.deepEqual(v.expenses.map((e) => e.amount), ['300.00'], 'still one group expense');
   });
 
-  test('only a payer can record an expense on their account, and only on an account in the same currency they may add to', async () => {
+  // Terry's model (2026-09-14, financial review finding 2): anyone who shares an expense records their
+  // share, not only a payer; the account must be their own, in the same currency.
+  test('the account must be the caller\'s own and in the same currency; a refused choice leaves nothing behind', async () => {
     const h = harness();
     const f = await groupFixture(h);
     const usd = ok(await h.call('accounts', 'POST', { as: 'alice', query: f.q, body: { name: 'Alice Dollars', type: 'cash', currency: 'USD' } }), 201).account;
     const eurAcc = ok(await h.call('accounts', 'POST', { as: 'alice', query: f.q, body: { name: 'Alice Euros', type: 'cash', currency: 'EUR' } }), 201).account;
     const body = { description: 'Fictional tickets', amount: '20.00', payers: [{ ref: f.refs.bob }], split: equal(f.refs.alice, f.refs.bob) };
-    assert.equal((await G(h, f, 'alice', 'POST', { body: { ...body, ledger: { accountId: eurAcc.id } } })).body.error.code, 'not_a_payer');
-    const paid = { ...body, payers: [{ ref: f.refs.alice }] };
-    assert.equal((await G(h, f, 'alice', 'POST', { body: { ...paid, ledger: { accountId: usd.id } } })).body.error.code, 'currency_mismatch');
+    assert.equal((await G(h, f, 'alice', 'POST', { body: { ...body, ledger: { accountId: usd.id } } })).body.error.code, 'currency_mismatch');
     // Bob cannot use Alice's private account: it does not exist for him.
     assert.equal((await G(h, f, 'bob', 'POST', { body: { ...body, ledger: { accountId: eurAcc.id } } })).status, 404);
     // A refused ledger choice leaves no expense behind.
     assert.deepEqual((await view(h, f)).expenses, []);
+    // Alice shared but did not pay: her 10.00 share is spending and owed to Bob; no money moves.
+    await addExpense(h, f, 'alice', { ...body, ledger: { accountId: eurAcc.id } });
+    assert.equal(await accountBalance(h, f, 'alice', eurAcc.id), '0.00');
+    const s = await summaryOf(h, f, 'alice', eurAcc.id);
+    assert.deepEqual([s.gross, s.payables, s.receivable], ['10.00', '10.00', '-10.00']);
   });
 });
 
@@ -259,10 +264,9 @@ describe('BT-009-07 another person\'s private account is never exposed', () => {
     // Syncing again changes nothing.
     ok(await G(h, f, 'bob', 'POST', { query: { action: 'ledger' }, body: { expenseId: e.id } }));
     assert.equal(ok(await h.call('transactions', 'GET', { as: 'bob', query: { ...f.q, accountId: wallet.id } })).total, 6);
-    // Another member cannot record Bob's payment on any account at all: they did not pay.
-    const notPayer = await G(h, f, 'alice', 'POST', { query: { action: 'ledger' }, body: { expenseId: e.id, accountId: wallet.id } });
-    assert.equal(notPayer.status, 400);
-    assert.equal(notPayer.body.error.code, 'not_a_payer');
+    // Another member cannot record anything on Bob's private account: it does not exist for them.
+    const notTheirs = await G(h, f, 'alice', 'POST', { query: { action: 'ledger' }, body: { expenseId: e.id, accountId: wallet.id } });
+    assert.equal(notTheirs.status, 404);
     // Syncing a private account never changes the shared record's revision, so nobody else's edit is
     // refused as stale because of it. A manager's void leaves Bob's account for Bob; his sync reverses
     // what is left.
@@ -286,8 +290,9 @@ describe('BT-009-07 another person\'s private account is never exposed', () => {
     assert.equal(await accountBalance(h, f, 'alice', cash.id), '50.00');
     assert.equal((await view(h, f)).expenses[0].myLedger, undefined);
     const { value: doc } = await h.storage.getJson(`workspaces/${f.ws.id}/workspace.json`);
-    assert.equal(doc.groupExpenses[0].ledgerLinks.length, 1);
-    assert.ok(doc.groupExpenses[0].ledgerLinks[0].endedAt, 'ended, not removed');
+    // One link per person and currency (Terry, 2026-09-14), kept as ended, never removed.
+    assert.equal(doc.groupLedgers.length, 1);
+    assert.ok(doc.groupLedgers[0].endedAt, 'ended, not removed');
   });
 });
 
@@ -317,14 +322,17 @@ describe('BT-009-04 settlements: reported, confirmed, disputed, void', () => {
     assert.equal((await act('alice', 'dispute', { settlementId: s.id, revision: 3, reason: 'x' })).body.error.code, 'not_disputable');
     assert.equal((await act('alice', 'confirm', { settlementId: s.id, revision: 3 })).body.error.code, 'already_confirmed');
     assert.equal((await act('carol', 'void', { settlementId: s.id, revision: 3, reason: 'x' })).status, 403);
-    const voided = ok(await act('bob', 'void', { settlementId: s.id, revision: 3, reason: 'Paid the wrong person' })).settlement;
-    assert.deepEqual([voided.voided, voided.voidReason, voided.status], [true, 'Paid the wrong person', 'confirmed']);
+    // Once confirmed, the payer and reporter alone can no longer void it; the receiver withdraws the
+    // confirmation (security review S6, Terry 2026-09-14).
+    assert.equal((await act('bob', 'void', { settlementId: s.id, revision: 3, reason: 'Paid the wrong person' })).status, 403);
+    const voided = ok(await act('alice', 'void', { settlementId: s.id, revision: 3, reason: 'Paid the wrong person' })).settlement;
+    assert.deepEqual([voided.voided, voided.voidReason, voided.status, voided.withdrawn], [true, 'Paid the wrong person', 'confirmed', true]);
     v = await view(h, f);
     assert.equal(row(v, f.refs.alice).net, '30.00', 'a void takes the payment out again');
     assert.equal(v.settlements.length, 1, 'still listed');
-    assert.equal((await act('bob', 'void', { settlementId: s.id, revision: 4, reason: 'x' })).body.error.code, 'already_void');
+    assert.equal((await act('alice', 'void', { settlementId: s.id, revision: 4, reason: 'x' })).body.error.code, 'already_void');
     const hist = ok(await G(h, f, 'bob', 'GET', { query: { action: 'history', settlementId: s.id } }));
-    assert.deepEqual(hist.history.map((x) => x.event), ['reported', 'disputed', 'confirmed', 'void']);
+    assert.deepEqual(hist.history.map((x) => x.event), ['reported', 'disputed', 'confirmed', 'withdrawn']);
   });
 
   test('a payment to a contact is confirmed by a manager or owner, not a plain member; bad payments are refused', async () => {

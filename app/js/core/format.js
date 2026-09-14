@@ -52,4 +52,7 @@ export const MERCHANT_TYPE_LABELS = Object.freeze({
 export const KIND_LABELS = Object.freeze({
   expense: "Expense", income: "Income", transfer: "Transfer", refund: "Refund", fee: "Fee",
   reimbursement: "Reimbursement received", advance: "Advance (lent)", adjustment: "Adjustment", interest: "Interest",
+  // Shared expenses (BT-009): a share of an expense someone else paid (owed, no money moved yet) and a
+  // repayment made to someone who paid for you. Neither is spending or income.
+  payable: "Owed to others", repayment: "Repayment made",
 });

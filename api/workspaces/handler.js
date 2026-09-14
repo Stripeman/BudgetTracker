@@ -6,7 +6,7 @@
 //   PATCH ?id=       rename / shared settings (owner or manager)
 //   DELETE ?id=      archive (owner) — recoverable, never a permanent delete
 //   POST ?id=&action=restore   unarchive (owner)
-const { readBody, query, header, badRequest, forbidden, notFound } = require('../_shared/http');
+const { readBody, query, header, badRequest, forbidden, notFound, conflict } = require('../_shared/http');
 const { newId, requireId, isIdempotencyKey } = require('../_shared/ids');
 const { PreconditionFailed } = require('../_shared/storage');
 const { readDocument } = require('../_shared/schema');
@@ -16,6 +16,7 @@ const model = require('../_shared/workspace-model');
 const fields = require('../_shared/fields');
 const money = require('../_shared/money');
 const audit = require('../_shared/audit');
+const groups = require('../_shared/groups');
 
 async function list(ctx) {
   const user = await store.ensureUser(ctx);
@@ -99,7 +100,15 @@ async function patch(ctx, req) {
     if (body.name !== undefined) { const v = fields.text(body.name, { field: 'Name', max: 80, required: true }); set('name', doc.name, v, () => { doc.name = v; }); }
     if (body.settings !== undefined) {
       const s = fields.onlyKeys(body.settings || {}, ['reportingCurrency', 'budgetPeriod', 'weekStart']);
-      if (s.reportingCurrency !== undefined) { money.precisionOf(s.reportingCurrency); set('settings.reportingCurrency', doc.settings.reportingCurrency, s.reportingCurrency, () => { doc.settings.reportingCurrency = s.reportingCurrency; }); }
+      if (s.reportingCurrency !== undefined) {
+        money.precisionOf(s.reportingCurrency);
+        // New shared expenses use the reporting currency, so it cannot change while anyone's shared
+        // balance is open: that balance would be left in a currency the group no longer uses
+        // (financial review finding 3). Confirmed payments only, like the balances themselves.
+        const open = s.reportingCurrency !== doc.settings.reportingCurrency ? groups.openCurrencies(doc) : [];
+        if (open.length) throw conflict(`Shared expenses are not settled up in ${open.join(', ')}. Settle up first, then change the reporting currency.`, 'group_balances_open');
+        set('settings.reportingCurrency', doc.settings.reportingCurrency, s.reportingCurrency, () => { doc.settings.reportingCurrency = s.reportingCurrency; });
+      }
       if (s.budgetPeriod !== undefined) { const v = fields.oneOf(s.budgetPeriod, ['weekly', 'biweekly', 'monthly', 'custom'], 'Budget period'); set('settings.budgetPeriod', doc.settings.budgetPeriod, v, () => { doc.settings.budgetPeriod = v; }); }
       if (s.weekStart !== undefined) { if (![0, 1, 6].includes(s.weekStart)) throw badRequest('Week start must be 0, 1 or 6.', 'invalid_field'); set('settings.weekStart', doc.settings.weekStart, s.weekStart, () => { doc.settings.weekStart = s.weekStart; }); }
     }

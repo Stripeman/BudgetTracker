@@ -26,7 +26,7 @@ test('card purchase is spending; paying the card is a transfer, not spending aga
   assert.deepEqual(pay.body.transactions.map((t) => t.amount), ['-120.00', '120.00']);
   assert.deepEqual(await balances(h, f.q), { Checking: '1380.00', Card: '0.00', 'Travel Yen': '0' });
   const summary = (await h.call('transactions', 'GET', { as: 'alice', query: f.q })).body.summary;
-  assert.deepEqual(summary, [{ currency: 'EUR', count: 1, gross: '120.00', refunds: '0.00', net: '120.00', income: '0.00', adjustments: '0.00', advances: '0.00', reimbursements: '0.00' }]);
+  assert.deepEqual(summary, [{ currency: 'EUR', count: 1, gross: '120.00', refunds: '0.00', net: '120.00', income: '0.00', adjustments: '0.00', advances: '0.00', reimbursements: '0.00', payables: '0.00', repayments: '0.00', receivable: '0.00' }]);
 });
 
 test('cross-currency transfer keeps rate context and exact converted amount', async () => {

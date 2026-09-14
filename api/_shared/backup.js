@@ -31,6 +31,11 @@ const groups = require('./groups');
 const GROUP_MEMBERS_BLOCKER = 'Shared expenses in this backup name other members. A new workspace starts with only you, so who paid and who shared could not be kept. Restore into this workspace with Merge or Replace instead.';
 const GROUP_LEDGER_BLOCKER = 'This restore would change or set aside shared expenses or payments that another member also recorded on their own account, which this restore cannot change. Their entries would no longer match. That member can first stop recording them on their account, or a recovery operator can perform a full restore.';
 
+// What another member's identity becomes in a create-new restore (security review S4): no workspace
+// member has this subject or id, so it is shown as "Former member" and grants nothing.
+const FORMER_SUBJECT = 'former-member';
+const FORMER_REF = 'member:former';
+
 const invalidData = (detail) => Object.assign(new HttpError(422, 'backup_invalid', `The workspace data failed an integrity check (${detail}). Nothing has been changed.`), { detail });
 const sha256 = (b) => createHash('sha256').update(b).digest('hex');
 
@@ -296,11 +301,41 @@ function plan({ current, archived, mode, principal, member, nowIso, newWorkspace
   let next;
   if (mode === 'create-new') {
     const keepAccounts = new Set(arc.accounts.map((a) => a.id));
-    const txns = arc.transactions.map((t) => {
+    // Entries recorded from a shared expense or payment that does not come along lose that link, so
+    // nothing points at a record the new workspace does not have (BT-009, S8).
+    const carriedGroup = new Set([...arc.groupExpenses, ...arc.groupSettlements].map((r) => r.id));
+    const withoutLostGroupLinks = (t) => {
+      const l = t.links || {};
+      if ((!l.groupExpenseId || carriedGroup.has(l.groupExpenseId)) && (!l.groupSettlementId || carriedGroup.has(l.groupSettlementId))) return t;
+      const links = { ...l };
+      if (links.groupExpenseId && !carriedGroup.has(links.groupExpenseId)) delete links.groupExpenseId;
+      if (links.groupSettlementId && !carriedGroup.has(links.groupSettlementId)) delete links.groupSettlementId;
+      return { ...t, links };
+    };
+    const txns = arc.transactions.map(withoutLostGroupLinks).map((t) => {
       if (!t.transferId) return t;
       const counterpartIncluded = keepAccounts.has(t.counterpartAccountId);
       return counterpartIncluded ? t : { ...t, counterpartExcluded: true };
     });
+    // Another member's identity never enters the new workspace (security review S4): on shared
+    // expenses and payments every other subject becomes a former member (shown as "Former member"),
+    // references to other members inside earlier values become one former member, and only the
+    // restorer's own ledger links to accounts that come along are kept.
+    const otherMemberIds = new Set((archived.members || []).filter((m) => m.subject !== principal.subject).map((m) => m.id));
+    const mapSubject = (s) => (typeof s === 'string' && s !== principal.subject ? FORMER_SUBJECT : s);
+    const mapRefs = (v) => {
+      if (Array.isArray(v)) return v.map(mapRefs);
+      if (v && typeof v === 'object') return Object.fromEntries(Object.entries(v).map(([k, x]) => [k, mapRefs(x)]));
+      return typeof v === 'string' && v.startsWith('member:') && otherMemberIds.has(v.slice(7)) ? FORMER_REF : v;
+    };
+    const scrub = (r) => {
+      const out = { ...r };
+      for (const k of ['createdBy', 'updatedBy', 'voidedBy', 'confirmedBy', 'disputedBy']) if (out[k]) out[k] = mapSubject(out[k]);
+      if (Array.isArray(r.history)) out.history = r.history.map((x) => ({ ...x, by: mapSubject(x.by) }));
+      if (Array.isArray(r.amendments)) out.amendments = r.amendments.map((a) => ({ ...a, by: mapSubject(a.by), changes: (a.changes || []).map((ch) => ({ ...ch, from: mapRefs(ch.from), to: mapRefs(ch.to) })) }));
+      if (Object.prototype.hasOwnProperty.call(r, 'ledgerLinks')) out.ledgerLinks = (r.ledgerLinks || []).filter((l) => l.subject === principal.subject && keepAccounts.has(l.accountId)).map((l) => ({ ...l }));
+      return out;
+    };
     // A savings commitment into an account that is not restored would move money nowhere.
     const carriedBills = arc.recurring.filter((r) => r.kind !== 'transfer' || keepAccounts.has(r.toAccountId));
     // Merchants used by carried entries and bills come along, so nothing points at a missing one (SEC-B1).
@@ -319,11 +354,25 @@ function plan({ current, archived, mode, principal, member, nowIso, newWorkspace
       categories: archived.categories || [], transactions: txns, audit: [], idempotency: {}, restoredFrom: null,
       recurring: carriedBills,
       budgets: arc.budgets,
-      groupExpenses: arc.groupExpenses,
-      groupSettlements: arc.groupSettlements,
+      groupExpenses: arc.groupExpenses.map(scrub),
+      groupSettlements: arc.groupSettlements.map(scrub),
+      groupLedgers: (archived.groupLedgers || []).filter((l) => l.subject === principal.subject && keepAccounts.has(l.accountId)).map((l) => ({ ...l })),
     };
     if ([...groups.memberIds(next)].some((id) => id !== memberId)) blockers.push(GROUP_MEMBERS_BLOCKER);
   } else {
+    // Personal ledger links are each member's own current state and never come from an archive
+    // (security review S1): a record that replace or merge brings in keeps the links it has now, or
+    // none; `groupLedgers` is not a restored collection, so it always stays as it is now.
+    for (const c of ['groupExpenses', 'groupSettlements']) {
+      const nowById = new Map((current[c] || []).map((r) => [r.id, r]));
+      arc[c] = arc[c].map((r) => {
+        const now = nowById.get(r.id);
+        const out = { ...r };
+        if (now && Object.prototype.hasOwnProperty.call(now, 'ledgerLinks')) out.ledgerLinks = structuredClone(now.ledgerLinks);
+        else delete out.ledgerLinks;
+        return out;
+      });
+    }
     const cur = inScope(current, scopeNow);
     next = structuredClone(current);
     if (mode === 'replace') {
@@ -412,14 +461,27 @@ function plan({ current, archived, mode, principal, member, nowIso, newWorkspace
       if (inside.some((l) => nowById.get(l.id) !== JSON.stringify(l))) { blockers.push(crossScope); break; }
     }
   }
-  // A shared expense or payment that a member also recorded on an account outside the caller's scope
-  // must not be changed or set aside: their entries would stand alone (BT-009). Merge never changes an
-  // existing record, so only replace can do this.
+  // A shared expense or payment that another member records on an account outside the caller's scope
+  // must not change in a way that changes what their entries should be: their entries would no longer
+  // match and only they can change them (BT-009). Merge never changes an existing record, so only
+  // replace can do this. Checked for every record replace adds, changes or sets aside.
   if (mode === 'replace' && !blockers.length) {
-    const nextById = new Map([...(next.groupExpenses || []), ...(next.groupSettlements || [])].map((r) => [r.id, JSON.stringify(r)]));
-    for (const r of [...(current.groupExpenses || []), ...(current.groupSettlements || [])]) {
-      const outside = (r.ledgerLinks || []).some((l) => !l.endedAt && !scopeNow.accountIds.has(l.accountId));
-      if (outside && nextById.get(r.id) !== JSON.stringify(r)) { blockers.push(GROUP_LEDGER_BLOCKER); break; }
+    const byId = (d) => new Map([...(d.groupExpenses || []).map((r) => [r.id, ['expense', r]]), ...(d.groupSettlements || []).map((r) => [r.id, ['settlement', r]])]);
+    const nowRecs = byId(current);
+    const nextRecs = byId(next);
+    const others = (current.members || []).filter((m) => m.subject !== principal.subject);
+    outer: for (const id of new Set([...nowRecs.keys(), ...nextRecs.keys()])) {
+      const a = nowRecs.get(id);
+      const b = nextRecs.get(id);
+      if (a && b && JSON.stringify(a[1]) === JSON.stringify(b[1])) continue;
+      const [type, rec] = a || b;
+      for (const m of others) {
+        if (!groups.recordedOutside(current, rec, type, m.subject, scopeNow.accountIds)) continue;
+        const ref = `member:${m.id}`;
+        const before = a ? groups.desiredEntries(a[1], type, ref) : [];
+        const after = b ? groups.desiredEntries(b[1], type, ref) : [];
+        if (JSON.stringify(before) !== JSON.stringify(after)) { blockers.push(GROUP_LEDGER_BLOCKER); break outer; }
+      }
     }
   }
   // Only attachments referenced by records the caller restores are written (security review

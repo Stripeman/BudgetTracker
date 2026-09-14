@@ -102,7 +102,7 @@ function fakeCtx({ accounts = [], participants } = {}) {
 const shareTexts = (dialog) => dialog.querySelectorAll(".split-row__share").map((n) => n.textContent);
 // The own-account checkbox, found through its visible label.
 const ledgerBoxOf = (dialog) => {
-  const label = dialog.querySelectorAll("label").find((l) => l.textContent === "Also record what I paid on my account");
+  const label = dialog.querySelectorAll("label").find((l) => l.textContent === "Also record my part on my own account");
   return dialog.querySelector(`#${label.getAttribute("for")}`);
 };
 const shareRow = (dialog, name) => dialog.querySelectorAll(".split-row").find((r) => r.querySelector(".split-row__share") && r.querySelector("label").textContent.startsWith(name));
@@ -172,8 +172,8 @@ describe("BT-009-10 Add shared expense dialog", () => {
 
   test("several payers must add up; the own-account choice appears only for a payer with an account in that currency", async () => {
     const { ctx, calls } = fakeCtx({ accounts: [
-      { id: "acc_cash", name: "Alice Cash", currency: "EUR", status: "open", capabilities: ["create"] },
-      { id: "acc_usd", name: "Alice Dollars", currency: "USD", status: "open", capabilities: ["create"] },
+      { id: "acc_cash", name: "Alice Cash", currency: "EUR", status: "open", visibility: "private", ownedBySelf: true, capabilities: ["create"] },
+      { id: "acc_usd", name: "Alice Dollars", currency: "USD", status: "open", visibility: "private", ownedBySelf: true, capabilities: ["create"] },
     ] });
     const dialog = openGroupExpense(ctx).element;
     type(dialog.querySelector('input[placeholder="For example: Dinner at the harbour"]'), "Cabin");
@@ -197,10 +197,13 @@ describe("BT-009-10 Add shared expense dialog", () => {
     assert.deepEqual(calls[0].body.payers, [{ ref: "member:a", amount: "80.00" }, { ref: "member:b", amount: "40.00" }]);
     assert.deepEqual(calls[0].body.ledger, { accountId: "acc_cash" });
     assert.deepEqual(calls.refresh, ["group", "accounts", "transactions"]);
-    // Alice no longer paying hides the choice.
+    // Anyone who shares records their share (Terry, 2026-09-14): Alice sharing without paying keeps the
+    // choice; neither paying nor sharing hides it.
     const again = openGroupExpense(ctx).element;
     const firstPayer = again.querySelectorAll(".split-row").filter((r) => !r.querySelector(".split-row__share"))[0];
     firstPayer.querySelector('input[type="checkbox"]').click();
+    assert.equal(ledgerBoxOf(again).closest("fieldset").hidden, false, "Alice still shares");
+    shareRow(again, "Alice").querySelector('input[type="checkbox"]').click();
     assert.equal(ledgerBoxOf(again).closest("fieldset").hidden, true);
   });
 });

@@ -23,7 +23,8 @@ export const METHOD_LABELS = Object.freeze({ equal: "Equally", amounts: "By amou
 const VALUE_LABELS = { amounts: "Amount for", percentages: "Percent for", shares: "Shares for" };
 const VALUE_HINTS = { amounts: "0.00", percentages: "%", shares: "1" };
 const STATUS_LABELS = { reported: "Reported", confirmed: "Confirmed", disputed: "Disputed" };
-const EVENT_LABELS = { create: "Added", update: "Corrected", void: "Voided", reported: "Reported as paid", confirmed: "Confirmed as received", disputed: "Disputed" };
+const EVENT_LABELS = { create: "Added", update: "Corrected", void: "Voided", reported: "Reported as paid", confirmed: "Confirmed as received", disputed: "Disputed",
+  "confirmed-by-reporter": "Confirmed by the person who reported it", withdrawn: "Confirmation withdrawn" };
 const FIELD_LABELS = { description: "Description", date: "Date", amountMinor: "Amount", categoryId: "Category", notes: "Notes", payers: "Paid by", split: "Split", shares: "Shares", status: "Status" };
 
 const titled = (id, iconId, text) => el("h2", { class: "card__title", id }, [withIcon(iconId, text)]);
@@ -38,11 +39,11 @@ const stampOf = (iso) => String(iso || "").replace("T", " ").slice(0, 16);
 // The arrow for the person looking: in (up) or out (down), never both ways (Terry, 2026-09-13).
 const arrow = (dir) => el("span", { class: `dir dir--${dir}` }, [icon(dir)]);
 
-// Accounts where this person may record a shared expense or repayment: open, their right to add
-// entries, and in the same currency.
+// Accounts where this person may record their part of the group: their OWN PRIVATE accounts only
+// (security review S2 — nobody else sees which account), open, and in the same currency.
 export function ledgerAccounts(state, currency) {
   const data = sliceFor(state, "accounts").data;
-  return ((data && data.accounts) || []).filter((a) => !a.deletedAt && a.status !== "closed" && a.capabilities.includes("create") && a.currency === currency);
+  return ((data && data.accounts) || []).filter((a) => a.ownedBySelf && !a.deletedAt && a.status !== "closed" && a.capabilities.includes("create") && a.currency === currency);
 }
 
 // The balance of one person in words, with the arrow for money coming to them or going from them.
@@ -55,6 +56,17 @@ export function balanceLabel(row, currency, fmt, { self = false, subject = "" } 
   const amount = fmt(String(row.net).replace(/^-/, ""), currency);
   const verb = gets ? (self ? "get back" : "gets back") : (self ? "owe" : "owes");
   return el("span", { class: "amount-dir" }, [arrow(gets ? "money-in" : "money-out"), el("span", { text: `${lead}${verb} ${amount}` })]);
+}
+
+// The balance tables to show: the reporting currency's, then every other currency in which someone's
+// balance is still open, so a balance left from before a change of reporting currency is never hidden
+// behind "settled up" (financial review finding 3).
+export function shownTables(data) {
+  const open = (b) => b.rows.some((r) => !isZero(r.net));
+  const reporting = data.balances.filter((b) => b.currency === data.currency);
+  const others = data.balances.filter((b) => b.currency !== data.currency && open(b));
+  const out = [...reporting, ...others];
+  return out.length ? out : data.balances.slice(0, 1);
 }
 
 export function createView(ctx) {
@@ -101,24 +113,26 @@ export function createView(ctx) {
     mount(needs, review.length ? el("section", { class: "notice notice--warning", "aria-labelledby": "grp-review" }, [
       titled("grp-review", "alert", "Your account needs updating"),
       el("ul", { class: "stack" }, review.map(([type, r]) => el("li", { class: "row" }, [
-        el("span", { text: `${type === "expense" ? `“${r.description}”` : "A payment you received"} changed after you recorded it on ${r.myLedger.accountName}.` }),
+        el("span", { text: `${type === "expense" ? `“${r.description}”` : "A payment"} is not yet up to date on ${r.myLedger.accountName || "your account"}.` }),
         button("Update my account", () => void syncMine(ctx, type, r), { small: true, attrs: { "aria-label": `Update my account for ${type === "expense" ? r.description : "this payment"}` } }),
       ]))),
     ]) : null);
 
-    const table = data.balances.find((b) => b.currency === data.currency) || data.balances[0];
-    renderBalances(table, data, fmt, nameOf);
-    renderSettle(table, data, fmt, nameOf, me);
+    const tables = shownTables(data);
+    renderBalances(tables, data, fmt, nameOf);
+    renderSettle(tables, data, fmt, nameOf, me);
     renderExpenses(data, fmt, nameOf, me, effective.dateFormat, state);
     renderPayments(data, fmt, nameOf, me, effective.dateFormat, state);
   }
 
-  function renderBalances(table, data, fmt, nameOf) {
+  // One table per currency shown (the reporting currency, then any other with an open balance).
+  function renderBalances(tables, data, fmt, nameOf) {
     const active = new Set(data.participants.filter((p) => p.active).map((p) => p.ref));
-    const rows = table ? table.rows.filter((r) => active.has(r.ref) || !isZero(r.paid) || !isZero(r.share) || !isZero(r.net)) : [];
-    if (!rows.length) { mount(balancesBox, el("div", { class: "state", text: "No one is in this group yet." })); return; }
-    const c = table.currency;
+    const blocks = tables.map((table) => [table, table.rows.filter((r) => active.has(r.ref) || !isZero(r.paid) || !isZero(r.share) || !isZero(r.net))]).filter(([, rows]) => rows.length);
+    if (!blocks.length) { mount(balancesBox, el("div", { class: "state", text: "No one is in this group yet." })); return; }
     mount(balancesBox,
+      ...blocks.flatMap(([table, rows]) => { const c = table.currency; return [
+      blocks.length > 1 ? el("h3", { class: "section-title", text: `In ${c}` }) : null,
       el("div", { class: "table-wrap" }, [el("table", { class: "table table--cards" }, [
         el("caption", { class: "sr-only", text: `Balances in ${c}. Paid minus share, plus payments made, minus payments received.` }),
         el("thead", {}, [el("tr", {}, ["Person", "Paid", "Share", "Paid back", "Received", "Balance", "Not counted yet"].map((h, i) => el("th", { scope: "col", class: i && i < 6 ? "num" : "", text: h })))]),
@@ -141,25 +155,29 @@ export function createView(ctx) {
             el("td", { "data-label": "Not counted yet", class: "small" }, [pending.length ? el("span", { class: "muted", text: pending.join("; ") }) : el("span", { class: "muted", text: "—" })]),
           ]);
         })),
-      ])]),
+      ])])]; }),
       el("p", { class: "card__meta", text: "Balance = paid − share + payments made − payments received. Only confirmed payments count." }),
     );
   }
 
-  function renderSettle(table, data, fmt, nameOf, me) {
-    const c = table ? table.currency : data.currency;
+  // Suggested or direct payments for every currency shown; each is recorded in its own currency.
+  function renderSettle(tables, data, fmt, nameOf, me) {
     const toggle = (value, label) => el("button", { type: "button", class: "btn btn--small", "aria-pressed": mode === value ? "true" : "false", text: label, onClick: () => { mode = value; update(ctx.store.getState()); } });
-    const list = table ? (mode === "suggested" ? table.suggestions : table.direct) : [];
+    const lists = tables.map((t) => [t, mode === "suggested" ? t.suggestions : t.direct]).filter(([, list]) => list.length);
+    const labelled = lists.length > 1 || lists.some(([t]) => t.currency !== data.currency);
     mount(settleBox,
       el("div", { class: "seg", role: "group", "aria-label": "How to settle" }, [toggle("suggested", "Fewest payments"), toggle("direct", "Keep who owes whom")]),
       el("p", { class: "muted small", text: mode === "suggested" ? "The fewest payments that settle everyone." : "Each person pays back the people who paid for them, without passing debts along." }),
-      list.length ? el("ul", { class: "stack" }, list.map((s) => el("li", { class: "row" }, [
-        s.from === me ? arrow("money-out") : s.to === me ? arrow("money-in") : null,
-        el("span", { text: `${nameOf(s.from)} ${s.from === me ? "pay" : "pays"} ${s.to === me ? "you" : nameOf(s.to)}` }),
-        el("span", { class: "app__spacer" }),
-        amountText(s.amount, c),
-        data.permissions.canAdd ? button("Record payment", () => openRecordPayment(ctx, { from: s.from, to: s.to, amount: s.amount }), { small: true, attrs: { "aria-label": `Record payment of ${fmt(s.amount, c)} from ${nameOf(s.from)} to ${nameOf(s.to)}` } }) : null,
-      ]))) : el("div", { class: "state", text: "Everyone is settled up." }),
+      ...(lists.length ? lists.flatMap(([t, list]) => { const c = t.currency; return [
+        labelled ? el("h3", { class: "section-title", text: `In ${c}` }) : null,
+        el("ul", { class: "stack" }, list.map((s) => el("li", { class: "row" }, [
+          s.from === me ? arrow("money-out") : s.to === me ? arrow("money-in") : null,
+          el("span", { text: `${nameOf(s.from)} ${s.from === me ? "pay" : "pays"} ${s.to === me ? "you" : nameOf(s.to)}` }),
+          el("span", { class: "app__spacer" }),
+          amountText(s.amount, c),
+          data.permissions.canAdd ? button("Record payment", () => openRecordPayment(ctx, { from: s.from, to: s.to, amount: s.amount, currency: c }), { small: true, attrs: { "aria-label": `Record payment of ${fmt(s.amount, c)} from ${nameOf(s.from)} to ${nameOf(s.to)}` } }) : null,
+        ]))),
+      ]; }) : [el("div", { class: "state", text: "Everyone is settled up." })]),
       el("p", { class: "card__meta", text: data.basis }),
     );
   }
@@ -191,7 +209,8 @@ export function createView(ctx) {
           el("td", { "data-label": "" }, [el("div", { class: "row-actions" }, [
             e.canEdit ? button("Edit", () => openGroupExpense(ctx, { expense: e }), { small: true, attrs: { "aria-label": `Edit ${e.description}` } }) : null,
             e.canVoid ? button("Void", () => openVoid(ctx, "expense", e), { small: true, variant: "danger", attrs: { "aria-label": `Void ${e.description}` } }) : null,
-            !void_ && paidByMe && !e.myLedger && mineAccounts.length && data.permissions.canAdd ? button("Record on my account", () => openLedgerChoice(ctx, "expense", e), { small: true, attrs: { "aria-label": `Record ${e.description} on my account` } }) : null,
+            // Anyone who pays or shares may record their part, once per currency (their own account only).
+            !void_ && (paidByMe || myShare) && !e.myLedger && !(data.myLedgers || []).some((l) => l.currency === e.currency) && ledgerAccounts(state, e.currency).length && data.permissions.canAdd ? button("Record on my account", () => openLedgerChoice(ctx, "expense", e), { small: true, attrs: { "aria-label": `Record ${e.description} on my account` } }) : null,
             e.amendmentCount || void_ ? button("History", () => void openHistory(ctx, "expense", e), { small: true, attrs: { "aria-label": `History of ${e.description}` } }) : null,
           ])]),
         ]);
@@ -208,7 +227,10 @@ export function createView(ctx) {
       el("tbody", {}, data.settlements.map((s) => {
         const label = `${nameOf(s.from)} paid ${s.to === me ? "you" : nameOf(s.to)}`;
         const status = s.voided ? badge("Voided", "closed") : badge(STATUS_LABELS[s.status] || s.status, s.status === "disputed" ? "overdue" : "");
-        const detail = s.voided ? `Voided: ${s.voidReason}` : s.status === "reported" ? `Waiting for ${s.to === me ? "you" : nameOf(s.to)} to confirm it arrived.` : s.status === "disputed" ? `Disputed: ${s.disputeReason}` : null;
+        // A confirmation withdrawn afterwards, and one given by the person who reported the payment, are
+        // said as such (security review S5, S6).
+        const detail = s.voided ? `${s.withdrawn ? "Confirmation withdrawn" : "Voided"}: ${s.voidReason}` : s.status === "reported" ? `Waiting for ${s.to === me ? "you" : nameOf(s.to)} to confirm it arrived.`
+          : s.status === "disputed" ? `Disputed: ${s.disputeReason}` : s.confirmedByReporter ? "Confirmed by the person who reported it." : null;
         return el("tr", { class: s.voided ? "row--void" : "" }, [
           el("th", { scope: "row", "data-label": "Date", text: formatDate(s.date, dateFormat) }),
           el("td", { "data-label": "Payment" }, [el("span", { text: label }), s.method ? el("div", { class: "muted small", text: s.method }) : null]),
@@ -218,7 +240,8 @@ export function createView(ctx) {
           el("td", { "data-label": "" }, [el("div", { class: "row-actions" }, [
             s.canConfirm ? button("Confirm", () => openConfirm(ctx, s, nameOf), { small: true, variant: "primary", attrs: { "aria-label": `Confirm ${label}` } }) : null,
             s.canDispute ? button("Dispute", () => openDispute(ctx, s, nameOf), { small: true, attrs: { "aria-label": `Dispute ${label}` } }) : null,
-            !s.voided && s.status === "confirmed" && s.to === me && !s.myLedger && mineAccounts.length && data.permissions.canAdd ? button("Record on my account", () => openLedgerChoice(ctx, "settlement", s), { small: true, attrs: { "aria-label": `Record ${label} on my account` } }) : null,
+            // Whoever paid or received a confirmed payment may record their part, once per currency.
+            !s.voided && s.status === "confirmed" && (s.to === me || s.from === me) && !s.myLedger && !(data.myLedgers || []).some((l) => l.currency === s.currency) && ledgerAccounts(state, s.currency).length && data.permissions.canAdd ? button("Record on my account", () => openLedgerChoice(ctx, "settlement", s), { small: true, attrs: { "aria-label": `Record ${label} on my account` } }) : null,
             s.canVoid ? button("Void", () => openVoid(ctx, "settlement", s), { small: true, variant: "danger", attrs: { "aria-label": `Void ${label}` } }) : null,
             button("History", () => void openHistory(ctx, "settlement", s), { small: true, attrs: { "aria-label": `History of ${label}` } }),
           ])]),
@@ -290,15 +313,22 @@ export function openGroupExpense(ctx, { expense = null } = {}) {
   const preview = el("div", { class: "split-preview", "aria-live": "polite" });
   const problems = el("ul", { class: "split-problems error-text", "aria-live": "polite" });
 
-  // Optionally also on the person's own account (never when correcting; that has its own action).
-  const mine = editing ? [] : ledgerAccounts(state, currency);
+  // Optionally also on the person's own private account (never when correcting; that has its own
+  // action). Anyone who pays or shares has a part to record. Once they record their part of the group
+  // in a currency, every expense they take part in follows there, so the choice is not offered again.
+  const linked = (data.myLedgers || []).find((l) => l.currency === currency && !l.accountUnavailable) || null;
+  const mine = editing || linked ? [] : ledgerAccounts(state, currency);
   const ledgerBox = el("input", { type: "checkbox", id: `${key}-ledger` });
   const ledgerAccount = pickerSelect(mine.map((a) => ({ value: a.id, label: `${a.name} (${a.currency})` })), (mine[0] || {}).id, {}, { badgeOf: iconBadges(mine) });
+  const ledgerChoice = el("div", { class: "stack" }, [
+    el("div", { class: "field--inline" }, [ledgerBox, el("label", { for: ledgerBox.id, text: "Also record my part on my own account" })]),
+    field("Account", ledgerAccount),
+    el("p", { class: "field__help", text: "Your share is recorded as spending. What you paid beyond it is money you lent; a share you did not pay is money you owe. Your other shared expenses and payments in this currency follow on the same account. Only you see which account." }),
+  ]);
+  const ledgerNote = el("p", { class: "field__help" });
   const ledgerField = el("fieldset", { class: "plain-fieldset field--wide" }, [
     el("legend", { class: "field__label", text: "Your own account (optional)" }),
-    el("div", { class: "field--inline" }, [ledgerBox, el("label", { for: ledgerBox.id, text: "Also record what I paid on my account" })]),
-    field("Account", ledgerAccount),
-    el("p", { class: "field__help", text: "What you paid is taken from this account: your share as spending, the rest as money you lent, which the others owe you back. Only you see which account." }),
+    ledgerChoice, ledgerNote,
   ]);
 
   function computedAmount() {
@@ -343,8 +373,13 @@ export function openGroupExpense(ctx, { expense = null } = {}) {
     else if (m === "amounts" && pv.totalMinor && pv.leftMinor) text = pv.leftMinor > 0 ? `${money(pv.leftMinor)} still to share out.` : `${money(-pv.leftMinor)} more than the expense.`;
     mount(preview, text ? el("p", { class: "field__help", text }) : null);
     mount(problems, ...pv.errors.map((t) => el("li", { text: t })));
-    const iPay = payerRows.some((r) => r.p.ref === me && r.box.checked);
-    ledgerField.hidden = !(mine.length && iPay);
+    // Anyone who pays or shares has a part to record on their own account.
+    const involved = payerRows.some((r) => r.p.ref === me && r.box.checked) || splitRows.some((r) => r.p.ref === me && r.box.checked);
+    ledgerField.hidden = !involved;
+    ledgerChoice.hidden = !mine.length;
+    ledgerNote.textContent = linked ? `Your part is recorded on ${linked.accountName}, with your other shared expenses in ${currency}.`
+      : mine.length ? "" : "Add a private account of your own on the Accounts page to record this there.";
+    ledgerNote.hidden = !ledgerNote.textContent;
     ledgerAccount.disabled = !ledgerBox.checked;
   }
   commitOnConfirm(method, () => refresh());
@@ -403,7 +438,7 @@ export function openGroupExpense(ctx, { expense = null } = {}) {
     modal.setBusy(true);
     const out = editing
       ? await ctx.store.actions.write((ws) => ctx.api.updateGroupExpense(ws, { expenseId: expense.id, revision: expense.revision, reason: reason.value.trim(), ...body }), REFRESH)
-      : await ctx.store.actions.write((ws) => ctx.api.createGroupExpense(ws, body, key), withLedger ? REFRESH : ["group"]);
+      : await ctx.store.actions.write((ws) => ctx.api.createGroupExpense(ws, body, key), withLedger || linked ? REFRESH : ["group"]);
     modal.setBusy(false);
     if (!out.ok) { modal.setError(out.error); return; }
     announce(editing ? "Correction saved. The earlier values stay in the history." : "Shared expense added.");
@@ -418,10 +453,13 @@ export function openGroupExpense(ctx, { expense = null } = {}) {
 // Recording a payment never moves money: it records that someone says they paid. The receiver
 // confirms it (a manager or owner for a contact); someone recording money they received themselves
 // is the confirmation.
-export function openRecordPayment(ctx, { from = null, to = null, amount: preset = "" } = {}) {
+export function openRecordPayment(ctx, { from = null, to = null, amount: preset = "", currency: presetCurrency = null } = {}) {
   const state = ctx.store.getState();
   const data = groupData(state);
   if (!data) { announce("Shared expenses are still loading. Try again in a moment."); void ctx.store.actions.refreshGroup(); return null; }
+  // A suggested payment in an earlier currency with an open balance is recorded in that currency
+  // (financial review finding 3); otherwise the reporting currency.
+  const currency = presetCurrency || data.currency;
   const me = data.permissions.selfRef;
   const people = data.participants.filter((p) => p.active);
   const options = people.map((p) => ({ value: p.ref, label: `${p.name}${p.self ? " (you)" : ""}${p.type === "contact" ? " · contact" : ""}` }));
@@ -432,7 +470,9 @@ export function openRecordPayment(ctx, { from = null, to = null, amount: preset 
   const amount = input({ inputmode: "decimal", autocomplete: "off", required: true, placeholder: "0.00", value: preset });
   const date = input({ type: "date", value: todayIso() });
   const methodText = input({ maxlength: "60", autocomplete: "off", placeholder: "Cash, bank transfer…" });
-  const mine = ledgerAccounts(state, data.currency);
+  // Once the viewer's part in this currency is recorded on an account, a payment to them follows there.
+  const linked = (data.myLedgers || []).some((l) => l.currency === currency);
+  const mine = linked ? [] : ledgerAccounts(state, currency);
   const ledgerBox = el("input", { type: "checkbox", id: `${key}-ledger` });
   const ledgerAccount = pickerSelect(mine.map((a) => ({ value: a.id, label: `${a.name} (${a.currency})` })), (mine[0] || {}).id, {}, { badgeOf: iconBadges(mine) });
   const ledgerField = el("div", { class: "field--wide stack" }, [
@@ -452,7 +492,7 @@ export function openRecordPayment(ctx, { from = null, to = null, amount: preset 
   const formId = `${key}-form`;
   const save = el("button", { type: "submit", class: "btn btn--primary", text: "Record payment", form: formId });
   const form = el("form", { class: "form-grid", novalidate: true, id: formId }, [
-    field("From", fromSel), field("To", toSel), field(`Amount (${data.currency})`, amount), field("Date", date),
+    field("From", fromSel), field("To", toSel), field(`Amount (${currency})`, amount), field("Date", date),
     field("How it was paid (optional)", methodText, { wide: true }), note, ledgerField,
   ]);
   const modal = openModal({ title: "Record a payment", body: [form], actions: [button("Cancel", () => modal.close()), save] });
@@ -461,16 +501,16 @@ export function openRecordPayment(ctx, { from = null, to = null, amount: preset 
     modal.setError("");
     amount.removeAttribute("aria-invalid");
     const raw = amount.value.trim();
-    const value = isPlainAmount(raw) ? raw : evaluateAmount(raw, precisionOf(data.currency));
-    const minor = value ? parseAmount(value, data.currency) : null;
+    const value = isPlainAmount(raw) ? raw : evaluateAmount(raw, precisionOf(currency));
+    const minor = value ? parseAmount(value, currency) : null;
     if (!minor) { amount.setAttribute("aria-invalid", "true"); amount.setAttribute("aria-errormessage", modal.errorId); modal.setError("Enter the amount paid, more than zero."); amount.focus(); return; }
     if (fromSel.value === toSel.value) { modal.setError("A payment needs two different people."); return; }
-    const body = { from: fromSel.value, to: toSel.value, amount: formatMinor(minor, data.currency), date: date.value };
+    const body = { from: fromSel.value, to: toSel.value, amount: formatMinor(minor, currency), currency, date: date.value };
     if (methodText.value.trim()) body.method = methodText.value.trim();
     const withLedger = !ledgerField.hidden && ledgerBox.checked && ledgerAccount.value;
     if (withLedger) body.ledger = { accountId: ledgerAccount.value };
     modal.setBusy(true);
-    const out = await ctx.store.actions.write((ws) => ctx.api.groupAction(ws, "settle", body, key), withLedger ? REFRESH : ["group"]);
+    const out = await ctx.store.actions.write((ws) => ctx.api.groupAction(ws, "settle", body, key), withLedger || (linked && body.to === me) ? REFRESH : ["group"]);
     modal.setBusy(false);
     if (!out.ok) { modal.setError(out.error); return; }
     announce(body.to === me ? "Payment recorded and confirmed." : "Payment recorded. It counts once it is confirmed.");
@@ -487,7 +527,9 @@ function openConfirm(ctx, s, nameOf) {
   const me = data.permissions.selfRef;
   const fmt = fmtFor(state);
   const receiving = s.to === me;
-  const mine = receiving ? ledgerAccounts(state, s.currency) : [];
+  // Once the viewer's part in this currency is recorded on an account, the payment follows there.
+  const linked = (data.myLedgers || []).some((l) => l.currency === s.currency);
+  const mine = receiving && !linked ? ledgerAccounts(state, s.currency) : [];
   const ledgerBox = el("input", { type: "checkbox", id: uid("ledger") });
   const ledgerAccount = pickerSelect(mine.map((a) => ({ value: a.id, label: `${a.name} (${a.currency})` })), (mine[0] || {}).id, {}, { badgeOf: iconBadges(mine) });
   ledgerAccount.disabled = true;
@@ -509,7 +551,7 @@ function openConfirm(ctx, s, nameOf) {
     const body = { settlementId: s.id, revision: s.revision };
     if (ledgerBox.checked && ledgerAccount.value) body.ledger = { accountId: ledgerAccount.value };
     modal.setBusy(true);
-    const out = await ctx.store.actions.write((ws) => ctx.api.groupAction(ws, "confirm", body), body.ledger ? REFRESH : ["group"]);
+    const out = await ctx.store.actions.write((ws) => ctx.api.groupAction(ws, "confirm", body), body.ledger || (receiving && linked) ? REFRESH : ["group"]);
     modal.setBusy(false);
     if (!out.ok) { modal.setError(out.error); return; }
     announce("Payment confirmed.");
@@ -569,7 +611,7 @@ function openLedgerChoice(ctx, type, rec) {
   const modal = openModal({
     title: "Record on my account",
     body: [
-      el("p", { text: type === "expense" ? "What you paid is taken from this account: your share as spending, the rest as money you lent. Only you see which account." : "The payment is added to this account as a repayment, which clears money you lent. It is not income." }),
+      el("p", { text: `Your part of every shared expense and payment in ${rec.currency} is recorded on this account: your shares as spending, what you paid for others as money you lent, shares you did not pay as money you owe, and repayments once they are confirmed. None of it is income. Only you see which account.` }),
       field("Account", account),
     ],
     actions: [button("Cancel", () => modal.close()), button("Record", () => void go(), { variant: "primary" })],
