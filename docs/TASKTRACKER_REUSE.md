@@ -160,6 +160,34 @@ too"* and *"i want all my apps to have the same look and feel"*.
 - **Left native:** none. After step 2 the only select created outside the views is the header
   workspace picker's, enhanced in step 1.
 
+### Accessibility and UX review fixes (BT-004-07, reviews of be25017, 2026-09-14)
+
+Branch `fix/picker-a11y`. The look is TaskTracker's: the same classes, trigger, panel, rows, marks
+and colours. What changed is behaviour and semantics, plus three small look fixes (U4, U5 and the
+key hints on short screens). Each item says whether it would apply equally to TaskTracker's picker
+(`T:` `main` `fb24a41`), so it can be ported there later. TaskTracker was not modified.
+
+| Fix | BudgetTracker (deviation from TaskTracker) | Applies to TaskTracker? |
+|---|---|---|
+| A8 (a11y 4) | Inside an `aria-modal` dialog the panel is appended to the dialog, not the body (still `position: fixed`). The dialog's Tab trap leaves Tab inside an open panel to the panel (`modal.js`) | Yes, wherever its picker opens in a modal dialog |
+| A9 (a11y 2) | A press outside that lands on something that cannot take focus (a dialog title, the backdrop, text inside `<main tabindex=-1>`) returns focus to the trigger after the press's default action, and only if the panel held focus. A press on another control still moves focus there. The field's own label counts as inside. `popup.js` passes the pressed target to `close()` and still never moves focus itself | Yes |
+| A10 (a11y 3) | A visually hidden polite status region in the panel says "3 results", "1 result" or "Nothing matches “x”." once typing pauses (400 ms), and "Nothing to choose from." for an empty list | Yes |
+| A11 (a11y 1) | `core/popover.js` rule 6: a caller's `minUseful` height (the search row and about 2.5 rows). When neither side has that much room, the panel spans the viewport height. The key hints are hidden on screens under 30rem high. The CSS fallback cap is `none`, not `70vh` | Yes (the same popover, CSS and 70vh fallback) |
+| A12 (a11y 5, U1) | While open, the panel is placed again on scroll (capture), window resize and visual-viewport resize or scroll; the list's own scroll is ignored. It closes, with focus on the trigger (`preventScroll`), when the trigger leaves the viewport or a clipping ancestor | Yes |
+| A13 (a11y 6) | The trigger is `role="combobox"` (a `<button>`), named by its field's `<label for>` (or its own `aria-label` when it has none), with its value in a visually hidden span. Instructions ("Search and choose." / "Choose.") are a hidden element referenced by `aria-describedby`, after the field's help and, while invalid, the error text. `aria-required`, `aria-invalid` and `aria-errormessage` are read from the select; `aria-controls` names the panel. TaskTracker's trigger is a plain button whose `aria-label` holds field, value and instructions. The header workspace picker keeps `aria-label="Workspace"`, because its visible label is drawn in capitals and a name computed from it reads "WORKSPACE" (seen in Edge's accessibility tree) | Yes; its header label has the same `text-transform` |
+| A14 (a11y 7, U3) | ArrowUp and Alt+arrows open from the closed trigger. A letter on the closed trigger opens it and searches or type-aheads. Type-ahead takes several letters (500 ms window). PageUp/PageDown move ten options. Space chooses in a list without a search box. Home/End in the search box stay with the text | Yes |
+| A15 (U2) | The adapter's default is `search: "auto"`: a box only above twelve options, decided at each open, so a list filled later gets one when long. `search: true` forces one (the header workspace picker). On a coarse pointer a searched list opens with focus on the list, so no on-screen keyboard appears unasked; typing moves to the box | The coarse-pointer rule, yes. TaskTracker already chooses `search: false` field by field; the automatic default is a BudgetTracker choice |
+| Placement flicker (found by `npm run e2e`) | `.cmdpick__panel { transition-property: none }`. `base.css`'s reduced-motion rule gives every element a 0.01 ms transition, which starts on the next frame, so the panel, first styled at its 50 % fallback while being measured, was drawn for one frame mid-screen and then jumped | Yes, if its base CSS has the same reduced-motion rule |
+| U4 | Inside a `.field`, the icon, theme and colour pickers' toggle uses the command-picker trigger's height, padding, text size, border, surface and small caret. `.field__label` has no margin (the icon picker's label is a `<p>`) | Only if TaskTracker puts its theme picker in form rows (it has no icon picker) |
+| U5 | A disabled trigger hides its ⌕/▾ hint (`visibility: hidden`) | Yes |
+| U6 | Natural placeholders on fields that can be empty ("Choose an account…"), instead of the label-built "Choose to account…" | Yes in principle (same fallback) |
+| U7 | `focusFirst()` skips `.cmdpick__native` and `aria-hidden` subtrees, and uses `Array.from` (a browser's NodeList has no `find`; the first version crashed every view in Edge and was caught before push) | TaskTracker's hidden select is a tab stop, not `tabindex -1`, so the same bug needs checking there |
+
+Test double: `app/test/domdouble.js` gained `insertBefore()`. The harness session
+(`scripts/dev/harness/session.mjs`) gained PageUp/PageDown and the accessibility tree's value,
+description, invalid and required. Its dropdown scenario (`scripts/dev/e2e/dropdown.mjs`) checks the
+fixes with real input.
+
 ## Rich text editor (Tiptap) — BT-011-02
 
 Detailed archaeology, gaps and the reduced schema and plan: `docs/reviews/2026-09-13-editor-archaeology.md` (2026-09-13, `T:` `main` `a1ec150`). Key points: ProseMirror JSON in a versioned envelope, never HTML; rendering through `el()`; the vendored bundle needs a registered-bundle exemption in `scripts/validate.cjs`; keep the MIT notices (TaskTracker's build strips them); BudgetTracker's server validator must be stricter (content model, undeclared keys, text checks, canonical `href`, tight limits).
