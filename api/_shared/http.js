@@ -20,8 +20,8 @@ const forbidden = (message) => new HttpError(403, 'forbidden', message || 'You d
 // authorization, so a response never confirms that another workspace or record exists.
 const notFound = (message) => new HttpError(404, 'not_found', message || 'Not found.');
 const methodNotAllowed = () => new HttpError(405, 'method_not_allowed', 'That method is not supported here.');
-const conflict = (message, code = 'conflict') =>
-  new HttpError(409, code, message || 'That changed while you were editing it. Reload and try again.');
+const conflict = (message, code = 'conflict', details) =>
+  new HttpError(409, code, message || 'That changed while you were editing it. Reload and try again.', details);
 const tooLarge = (message) => new HttpError(413, 'too_large', message || 'That is too large.');
 const unavailable = (code, message) => new HttpError(503, code, message || 'The service is temporarily unavailable.');
 

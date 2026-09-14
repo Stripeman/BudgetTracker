@@ -60,9 +60,11 @@ const siteSettings = require('../_shared/site');
 const workspaceSettings = require('../_shared/workspace-settings');
 const { readDocument } = require('../_shared/schema');
 
-const CREATE_KEYS = ['description', 'date', 'amount', 'currency', 'categoryId', 'notes', 'payers', 'split', 'ledger'];
+// `confirmBackdated` accompanies `ledger` wherever both may appear: it answers the FA-1 warning (below)
+// when starting to record on an account would backdate confirmed cash the caller has not yet seen.
+const CREATE_KEYS = ['description', 'date', 'amount', 'currency', 'categoryId', 'notes', 'payers', 'split', 'ledger', 'confirmBackdated'];
 const PATCH_KEYS = ['expenseId', 'revision', 'reason', 'description', 'date', 'amount', 'categoryId', 'notes', 'payers', 'split'];
-const SETTLE_KEYS = ['from', 'to', 'amount', 'currency', 'date', 'method', 'notes', 'ledger'];
+const SETTLE_KEYS = ['from', 'to', 'amount', 'currency', 'date', 'method', 'notes', 'ledger', 'confirmBackdated'];
 // Every correction keeps the before and after values of these fields.
 const TRACKED = ['description', 'date', 'amountMinor', 'categoryId', 'notes', 'payers', 'split', 'shares'];
 const LINK_KEY = Object.freeze({ expense: 'groupExpenseId', settlement: 'groupSettlementId' });
@@ -379,6 +381,28 @@ function checkOwnAccount(ctx, doc, member, accountId, currency) {
   return account;
 }
 
+// Confirmed cash entries (advance, reimbursement, repayment — never the non-cash expense-share or
+// payable entries, which never move real money) that a FIRST link in this currency would create out of
+// nowhere, because they have been waiting since before the person ever had an account linked: nothing
+// of theirs is recorded for that record yet (financial recheck of 41494d1, FA-1). Backdating these
+// silently would change the newly linked account's balance the instant the link is made, with no
+// warning, so the caller must see and confirm the amount first — unlike an ordinary relink or refresh,
+// where the entries already exist somewhere and are only being moved or brought up to date. `exceptId`
+// leaves out the one record this same request is creating or confirming (an expense or settlement made
+// with `ledger` in the same call): its own amount is already right there in the request, so it is the
+// caller's own current action, not a surprise about earlier activity they were not shown.
+function pendingBackdatedCash(doc, member, currency, exceptId = null) {
+  const out = [];
+  for (const [type, list] of [['expense', doc.groupExpenses || []], ['settlement', doc.groupSettlements || []]]) {
+    for (const rec of list) {
+      if (rec.currency !== currency || rec.voidedAt || rec.id === exceptId) continue;
+      if (liveEntries(doc, rec, type, member.subject).length) continue;
+      for (const d of groups.desiredEntries(rec, type, selfRef(member))) if (CASH_KINDS.has(d.kind)) out.push(d);
+    }
+  }
+  return out;
+}
+
 function endRecordLinks(doc, member, currency, nowIso, why) {
   for (const rec of [...(doc.groupExpenses || []), ...(doc.groupSettlements || [])]) {
     if (rec.currency !== currency) continue;
@@ -389,10 +413,24 @@ function endRecordLinks(doc, member, currency, nowIso, why) {
 
 // Records all of the caller's part in one currency on one of their own private accounts (or moves it
 // there), ending any per-record links of increment 1 in that currency, and brings it all up to date.
-function linkCurrency(ctx, doc, member, currency, accountId) {
+// `exceptId` is the record this same request is creating or confirming (see pendingBackdatedCash).
+function linkCurrency(ctx, doc, member, currency, accountId, { confirmBackdated = false, exceptId = null } = {}) {
   const nowIso = ctx.nowIso();
   const account = checkOwnAccount(ctx, doc, member, accountId, currency);
   const current = groupLink(doc, member.subject, currency);
+  // A FIRST link in this currency (FA-1): warn before silently backdating confirmed cash entries.
+  if (!current) {
+    const pending = pendingBackdatedCash(doc, member, currency, exceptId);
+    if (pending.length && confirmBackdated !== true) {
+      const total = money.sum(pending.map((d) => d.amountMinor));
+      const noun = pending.length === 1 ? 'entry' : 'entries';
+      throw conflict(
+        `Linking this account will add ${pending.length} cash ${noun} totaling ${money.toDecimal(total, currency)}, because you have confirmed activity in this group with no account linked yet.`,
+        'confirm_backdated',
+        { count: pending.length, amount: money.toDecimal(total, currency), amountMinor: total, currency },
+      );
+    }
+  }
   if (!current || current.accountId !== account.id) {
     if (current) { current.endedAt = nowIso; current.endReason = 'Recorded on another account instead'; }
     endRecordLinks(doc, member, currency, nowIso, 'Replaced by one account for every shared expense');
@@ -668,7 +706,7 @@ async function createExpense(ctx, req) {
     audit.record(doc, { actor: member.subject, action: 'group.expense.create', targetType: 'group-expense', targetId: rec.id, at: nowIso });
     // Recorded on the caller's own account through a new or changed link for this currency, or through
     // the link they already have (their own write, so their entries follow at once).
-    if (ledgerAccountId) linkCurrency(ctx, doc, member, rec.currency, ledgerAccountId);
+    if (ledgerAccountId) linkCurrency(ctx, doc, member, rec.currency, ledgerAccountId, { confirmBackdated: body.confirmBackdated === true, exceptId: rec.id });
     else followOwnLink(ctx, doc, member, rec, 'expense', 'Shared expense');
     return { expense: expenseView(ctx, doc, member, rec) };
   }, { idempotencyKey: header(req, 'idempotency-key') || undefined, idempotencyScope: 'group.expense.create', requestHash: store.requestHash({ q: wsId, body }) });
@@ -748,7 +786,7 @@ async function createSettlement(ctx, req) {
     if (receiver) audit.record(doc, { actor: member.subject, action: 'group.settlement.confirm', targetType: 'group-settlement', targetId: s.id, at: nowIso, ...(earlier ? { fields: ['overDispute'] } : {}) });
     // Recorded on the caller's own account through a new or changed link for this currency, or the one
     // they already have. Anyone in the payment has a part in it; entries follow once it is confirmed.
-    if (ledgerAccountId) linkCurrency(ctx, doc, member, s.currency, ledgerAccountId);
+    if (ledgerAccountId) linkCurrency(ctx, doc, member, s.currency, ledgerAccountId, { confirmBackdated: body.confirmBackdated === true, exceptId: s.id });
     else followOwnLink(ctx, doc, member, s, 'settlement', 'Repayment');
     return { settlement: settlementView(ctx, doc, member, s) };
   }, { idempotencyKey: header(req, 'idempotency-key') || undefined, idempotencyScope: 'group.settle', requestHash: store.requestHash({ q: wsId, body }) });
@@ -758,7 +796,7 @@ async function createSettlement(ctx, req) {
 function settlementChange(kind) {
   return async (ctx, req) => {
     const wsId = requireId(query(req, 'workspaceId'), 'workspaceId');
-    const body = fields.onlyKeys(readBody(req), kind === 'confirm' ? ['settlementId', 'revision', 'ledger'] : ['settlementId', 'revision', 'reason']);
+    const body = fields.onlyKeys(readBody(req), kind === 'confirm' ? ['settlementId', 'revision', 'ledger', 'confirmBackdated'] : ['settlementId', 'revision', 'reason']);
     const id = requireId(body.settlementId, 'settlementId');
     const ledgerAccountId = kind === 'confirm' ? ledgerChoice(body.ledger) : null;
     const { result } = await store.mutateWorkspace(ctx, wsId, (doc, member) => {
@@ -802,7 +840,9 @@ function settlementChange(kind) {
         s.revision += 1;
         s.history = [...(s.history || []), { revision: s.revision, at: nowIso, by: member.subject, event: overDispute ? 'confirmed-over-dispute' : byReporter ? 'confirmed-by-reporter' : 'confirmed' }];
         audit.record(doc, { actor: member.subject, action: 'group.settlement.confirm', targetType: 'group-settlement', targetId: s.id, at: nowIso, ...(overDispute ? { fields: ['overDispute'] } : {}) });
-        if (ledgerAccountId) linkCurrency(ctx, doc, member, s.currency, ledgerAccountId);
+        // The settlement being confirmed right now is the caller's own current action, not a surprise
+        // about other, unrelated pre-existing activity (FA-1): its own amount is exempted from the check.
+        if (ledgerAccountId) linkCurrency(ctx, doc, member, s.currency, ledgerAccountId, { confirmBackdated: body.confirmBackdated === true, exceptId: s.id });
         else followOwnLink(ctx, doc, member, s, 'settlement', 'Repayment');
       } else {
         if (!canDisputePayment(doc, s, member)) {
@@ -881,7 +921,7 @@ function pickType(body) {
 //                                                  record in that currency up to date
 async function ledgerAction(ctx, req) {
   const wsId = requireId(query(req, 'workspaceId'), 'workspaceId');
-  const body = fields.onlyKeys(readBody(req), ['expenseId', 'settlementId', 'currency', 'accountId']);
+  const body = fields.onlyKeys(readBody(req), ['expenseId', 'settlementId', 'currency', 'accountId', 'confirmBackdated']);
   const named = ['expenseId', 'settlementId', 'currency'].filter((k) => body[k] !== undefined);
   if (named.length !== 1) throw badRequest('Send one of expenseId, settlementId or currency.', 'missing_field');
   const type = body.expenseId !== undefined ? 'expense' : body.settlementId !== undefined ? 'settlement' : null;
@@ -889,6 +929,7 @@ async function ledgerAction(ctx, req) {
   if (!type && !money.isCurrency(body.currency)) throw badRequest('currency must be a currency code such as "EUR".', 'invalid_field');
   const choosing = Object.prototype.hasOwnProperty.call(body, 'accountId');
   const accountId = choosing && body.accountId !== null ? requireId(body.accountId, 'accountId') : null;
+  const confirmBackdated = body.confirmBackdated === true;
   const { result } = await store.mutateWorkspace(ctx, wsId, (doc, member) => {
     // Bringing one's own entries up to date, or stopping, only writes to one's own private account, so a
     // viewer may do it too — for example after being made a viewer (security review S7). Starting or
@@ -900,7 +941,9 @@ async function ledgerAction(ctx, req) {
     if (choosing && accountId === null) outcome = unlinkCurrency(ctx, doc, member, currency);
     else if (choosing) {
       if (rec && rec.voidedAt) throw conflict('This is void, so there is nothing to record.', 'already_void');
-      outcome = linkCurrency(ctx, doc, member, currency, accountId);
+      // Naming a specific record is choosing where that one goes right now (FA-1): its own amount is
+      // exempt from the backdating check, like a create or confirm with `ledger` in the same request.
+      outcome = linkCurrency(ctx, doc, member, currency, accountId, { confirmBackdated, exceptId: rec ? rec.id : null });
     } else if (rec) {
       // One record must come up to date or say why (strict). With nothing of the caller's on it there
       // is nothing to do, so repeating it is harmless.
