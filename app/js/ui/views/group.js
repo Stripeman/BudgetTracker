@@ -20,6 +20,7 @@ import { icon, withIcon } from "../icons.js";
 import { messageFor } from "../../core/errors.js";
 // Values in words exactly as the workspace settings card shows them (eefd115).
 import { createSettingsForm, settingText } from "../settingsform.js";
+import { trackUnsaved } from "../../core/unsaved.js";
 
 // Who changes the group's settings, said once (UX/accessibility review of eefd115, findings 6 and 11).
 const INTRO_CHANGE = "These decide how everyone in this group works. Owners and managers change them. Each one starts with how Shared expenses has always worked, and every change is kept below.";
@@ -92,7 +93,11 @@ export function createView(ctx) {
   const settingsBox = el("div");
   const settingsCard = el("section", { class: "card", "aria-labelledby": "grp-settings", hidden: true }, [titled("grp-settings", "filter", "Shared expenses settings"), settingsBox]);
   let lastSettings = null;
-  const settingsForm = createSettingsForm({ id: "grp-set", storageKey: "bt.settingsGroups.group", onSave: (changes, reason) => saveGroupSettings(changes, reason) });
+  const settingsForm = createSettingsForm({
+    id: "grp-set", storageKey: "bt.settingsGroups.group", onSave: (changes, reason) => saveGroupSettings(changes, reason),
+    // Leaving the page or closing the tab with unsaved changes asks first (finding 3).
+    onDirtyChange: (dirty) => trackUnsaved("group-settings", "Shared expenses settings", dirty),
+  });
   mount(settingsBox, settingsForm.element);
   // Each person's own right to confirm payments, from the server (Terry, 2026-09-14).
   const myRight = el("p", { class: "muted small", hidden: true });
@@ -382,7 +387,8 @@ export function createView(ctx) {
     ])]));
   }
 
-  return { element, update };
+  // Leaving the page (the shell asked first) forgets the card's unsaved mark.
+  return { element, update, destroy: () => settingsForm.destroy() };
 }
 
 const REFRESH = ["group", "accounts", "transactions"];

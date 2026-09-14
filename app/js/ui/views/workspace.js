@@ -5,6 +5,7 @@
 import { el, mount, announce } from "../dom.js";
 import { pageHead, stateView, field, input, pickerSelect, controlElement, button, badge, commitOnConfirm, categoryLabel } from "../components.js";
 import { createSettingsForm, settingText } from "../settingsform.js";
+import { trackUnsaved } from "../../core/unsaved.js";
 import { createThemePicker } from "../themepicker.js";
 import { colourEntries } from "../../core/categories.js";
 import { openModal, confirmModal } from "../modal.js";
@@ -96,6 +97,8 @@ export function createView(ctx) {
   // shared with the group settings (app/js/ui/settingsform.js; UX/accessibility review of eefd115).
   const form = createSettingsForm({
     id: "ws-set", storageKey: "bt.settingsGroups.workspace",
+    // Leaving the page or closing the tab with unsaved changes asks first (finding 3).
+    onDirtyChange: (dirty) => trackUnsaved("workspace-settings", "Workspace settings", dirty),
     onSave: async (changes, reason) => {
       const body = { settings: changes, ...(reason ? { reason } : {}) };
       const out = await store.actions.write((ws) => api.request("workspaces", { method: "PATCH", query: { id: ws }, body }), []);
@@ -470,7 +473,8 @@ export function createView(ctx) {
     // A removal, role change or rejoin changes the members list; the former members reload with it.
     if (members.data !== lastMembers) { lastMembers = members.data; void loadFormer(); }
   }
-  return { element, update };
+  // Leaving the page (the shell asked first) forgets the card's unsaved mark.
+  return { element, update, destroy: () => form.destroy() };
 }
 
 function openRestore(ctx, wsId, archive) {

@@ -32,6 +32,8 @@ import * as join from "./views/join.js";
 import * as group from "./views/group.js";
 import { renderLanding, createOnboarding, openNewWorkspace } from "./views/landing.js";
 import { messageFor } from "../core/errors.js";
+import { confirmModal } from "./modal.js";
+import { unsavedNames, clearUnsaved } from "../core/unsaved.js";
 
 const VIEWS = { dashboard, group, transactions, bills, planning, accounts, payees, settings, workspace, join };
 
@@ -65,6 +67,22 @@ export function createShell({ mountPoint, store, router, theme, api }) {
   let navigated = false;
   let menu = null;
   let wsPicker = null;
+
+  // Leaving a page with unsaved changes asks first (UX/accessibility review of eefd115, finding 3); the
+  // browser asks on its own when the tab is closed or reloaded (main.js).
+  if (router.setGuard) {
+    router.setGuard((hash) => {
+      const names = unsavedNames();
+      if (!names.length) return true;
+      confirmModal({
+        title: "Leave without saving?",
+        message: `You have unsaved changes in ${names.join(" and ")}. If you leave this page now, they are lost.`,
+        confirmLabel: "Leave without saving", danger: true,
+        onConfirm: () => { clearUnsaved(); if (router.go) router.go(hash); },
+      });
+      return false;
+    });
+  }
 
   // The skip link targets #main; with hash routing it must move focus, not navigate (A11Y-003).
   document.addEventListener("click", (event) => {

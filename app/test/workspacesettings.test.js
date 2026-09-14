@@ -13,6 +13,7 @@ import { createView as createDashboard } from "../js/ui/views/dashboard.js";
 import { navRoutes } from "../js/core/router.js";
 import { createShell } from "../js/ui/shell.js";
 import { createThemeController } from "../js/ui/theme.js";
+import { unsavedNames, clearUnsaved } from "../js/core/unsaved.js";
 
 let dom;
 beforeEach(() => { dom = installDom(); });
@@ -172,6 +173,24 @@ describe("Settings card (shared by the workspace and group settings; UX review o
     assert.deepEqual([unsaved.hidden, undo.disabled, card.querySelector('[role="status"]').textContent], [true, true, "Changes undone."]);
     assert.ok(document.activeElement === buttonNamed(card, "Save settings"), "focus moves to Save, not lost with the disabled Undo");
     assert.deepEqual(calls.patches, []);
+  });
+
+  test("unsaved edits are registered by the card's name, so leaving asks first; Undo, Save and leaving the page clear them (finding 3)", async () => {
+    clearUnsaved();
+    const { card, view } = await open();
+    assert.deepEqual(unsavedNames(), []);
+    chooseOption(pickerNamed(card, "Weeks start on"), "Sunday");
+    assert.deepEqual(unsavedNames(), ["Workspace settings"]);
+    buttonNamed(card, "Undo changes").click();
+    assert.deepEqual(unsavedNames(), []);
+    chooseOption(pickerNamed(card, "Weeks start on"), "Saturday");
+    buttonNamed(card, "Save settings").click();
+    await settle();
+    assert.deepEqual(unsavedNames(), [], "saved");
+    chooseOption(pickerNamed(settingsCard(view.element), "Weeks start on"), "Monday");
+    assert.deepEqual(unsavedNames(), ["Workspace settings"]);
+    view.destroy();
+    assert.deepEqual(unsavedNames(), [], "the page is left");
   });
 
   test("Save with nothing changed sends nothing and says so", async () => {
