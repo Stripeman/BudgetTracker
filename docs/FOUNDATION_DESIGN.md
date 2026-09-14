@@ -92,7 +92,19 @@ All changes so far only add optional fields and collections to the version-1 wor
     - Entries belong to the person whose server-set `createdBy` they carry. Only those are compared, counted or reversed (finding 1), and the transactions route refuses group link keys (finding 4 / S3).
     - A person's own add, change or void updates their entries in the same write. Anyone else's change leaves them "needs review" (derived, never stored) until they update with `?action=ledger`.
     - Corrections are reversals plus new entries. Stopping reverses every entry in that currency and keeps the link as ended. Moving to another account reverses entries there and records them on the new account.
-- **Restores.** Group records are owner scope. Create-new keeps the restorer's archived member id and is blocked when group records name other members. Replace is blocked when it would change what another member's entries should be for a record they record on an account outside the caller's scope.
+- **Settlement rules (security review S5–S7, Terry 2026-09-14).**
+  - **Confirming.** The payer (`from`) never confirms their own payment. The receiving member confirms, or a manager or owner when the receiver is a contact. A manager or owner confirming a contact payment they reported themselves is allowed but recorded as `confirmedByReporter` with the history event `confirmed-by-reporter`, and shown as "confirmed by the person who reported it". A consequence: an owner of a one-owner group who pays a contact cannot confirm that payment alone.
+  - **Voiding.** Before confirmation, the reporter or a manager or owner may void a payment. Once it is confirmed, only the receiving member or a manager or owner may. That void is recorded as `withdrawn` (history event `withdrawn`, with the reason) and shown as "Confirmation withdrawn".
+  - **Viewers.** A viewer may confirm or dispute payments made to them and may update or stop their own ledger link, which only writes to their own private account. They cannot add, change or void anything, report payments, or start a link.
+- **Restores.** Group records are owner scope.
+  - **Links never come from an archive (S1).** Replace and merge give every record they bring in the links it has now, or none; the per-currency links in `groupLedgers` are never restored.
+  - **Create-new (S4).** It keeps the restorer's archived member id and is blocked when group records name other members. On the records it carries, every other subject becomes `former-member` (shown as "Former member"), and member references in earlier values become `member:former`. It keeps only the restorer's own links to accounts that come along, and entries lose links to records that do not come along.
+  - **Replace blocker.** Replace is blocked when it would change what another member's entries should be for a record they record on an account outside the caller's scope.
+  - **Integrity check (S8).** The backup and restore integrity check refuses:
+    - links whose person is not a member (current or former);
+    - links whose account is missing or in another currency;
+    - duplicate active links;
+    - entries naming a missing expense or payment. Records set aside by a replace still count, because they are kept.
 
 Any change that renames, removes or reinterprets a field needs a real migration (in `api/_shared/schema.js`) and a `schemaVersion` bump before release.
 
