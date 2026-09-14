@@ -96,6 +96,29 @@ export async function run(h, t) {
     actual: { addExpense: carolAdd, status: (await api("carol").ok("group", { query: q })).settlements.find((s) => s.id === s2.id).status },
   });
 
+  // ---- F1: a disputed payment is settled by its receiver only (the default), even with anyone able to confirm
+  const sD = (await api("bob").ok("group", { method: "POST", query: { ...q, action: "settle" }, body: { from: B, to: A, amount: "9.00" } })).settlement;
+  await api("alice").ok("group", { method: "POST", query: { ...q, action: "dispute" }, body: { settlementId: sD.id, revision: sD.revision, reason: "E2E never arrived" } });
+  await Promise.all([fresh(b.alice, "group"), fresh(b.bob, "group")]);
+  const disputedRow = `[...document.querySelectorAll('${PAYMENTS} tr')].find((x) => x.innerText.includes('Disputed: E2E never arrived'))`;
+  const rowButtons = (s) => s.evaluate(`(() => { const r = ${disputedRow}; return r ? [...r.querySelectorAll('button')].map((x) => x.textContent.trim()) : null; })()`);
+  const bobRowButtons = await rowButtons(b.bob);
+  const aliceRowButtons = await rowButtons(b.alice);
+  const bobOverDispute = (await api("bob").request("group", { method: "POST", query: { ...q, action: "confirm" }, body: { settlementId: sD.id, revision: sD.revision + 1 } })).status;
+  // Alice confirms it over her own dispute, in her browser, with a real click in that row.
+  const confirmAt = await b.alice.evaluate(`(() => { const r = ${disputedRow}; const c = r && [...r.querySelectorAll('button')].find((x) => x.textContent.trim() === 'Confirm'); if (!c) return null; c.scrollIntoView({ block: 'center' }); const q = c.getBoundingClientRect(); return { x: q.left + q.width / 2, y: q.top + q.height / 2 }; })()`);
+  if (confirmAt) {
+    await b.alice.mouseClick(confirmAt.x, confirmAt.y);
+    await b.alice.waitFor("!!document.querySelector('.modal')", { what: "Alice's Confirm payment dialog for the disputed payment" });
+    await b.alice.click({ role: "button", name: "Confirm", scope: ".modal" });
+    await b.alice.waitFor("!document.querySelector('.modal')", { what: "Alice's dialog to close" });
+  }
+  await fresh(b.bob, "group");
+  t.check("F1: with anyone able to confirm, Bob's browser offers no Confirm on the payment Alice disputed and the API refuses him; Alice's does, and after she confirms it Bob reads 'Confirmed over a dispute by Alice Fictional.'", {
+    expected: { bobOffered: false, aliceOffered: true, bobDirect: 403, bobReads: true },
+    actual: { bobOffered: (bobRowButtons || []).includes("Confirm"), aliceOffered: (aliceRowButtons || []).includes("Confirm"), bobDirect: bobOverDispute, bobReads: (await b.bob.text(PAYMENTS)).includes("Confirmed over a dispute by Alice Fictional.") },
+  });
+
   // ---- B per person: the group setting is on; Alice sets Bob to No in her card ------------------
   // Bob loses Confirm on his own payment (the API refuses him too); Carol still confirms one made to her.
   const s3 = (await api("bob").ok("group", { method: "POST", query: { ...q, action: "settle" }, body: { from: B, to: A, amount: "10.00" } })).settlement;
@@ -184,6 +207,24 @@ export async function run(h, t) {
     size: (() => { const s = r.querySelector('svg[data-icon="no-money-moved"]'); if (!s) return null; const q = s.getBoundingClientRect(); return [Math.round(q.width), Math.round(q.height)]; })(),
   })))()`);
   t.check("N2: Bob's owed entry offers Edit, but no Reverse or Delete", { expected: [["Edit"]], actual: rows.map((r) => r.buttons) });
+  // L4 (Terry's arrow rule): his share of the dinner Alice paid shows the |==| mark and "Paid by someone
+  // else"; each repayment he really made keeps one money-out arrow.
+  // The list shows each row's account, amount and (for kinds other than a plain expense) its kind label.
+  const walletRows = await b.bob.evaluate(`(() => [...document.querySelectorAll('tbody tr')].filter((r) => ((r.querySelector('td[data-label="Account"]') || {}).innerText || '').includes('Bob Wallet')).map((r) => ({
+    amount: ((r.querySelector('td[data-label="Amount"]') || {}).innerText || '').replace(/\\s+/g, ' ').trim(),
+    kind: ((r.querySelector('td[data-label="Status"]') || {}).innerText || ''),
+    marks: [...r.querySelectorAll('svg[data-icon]')].map((s) => s.getAttribute('data-icon')).filter((i) => ['no-money-moved', 'money-in', 'money-out'].includes(i)),
+  })))()`);
+  const shareRows = walletRows.filter((r) => r.amount.includes("Paid by someone else"));
+  const repaidRows = walletRows.filter((r) => r.kind.includes("Repayment made"));
+  const outArrows = walletRows.filter((r) => r.marks.includes("money-out"));
+  t.check("L4: on Bob Wallet his 30.00 share of the dinner Alice paid shows the |==| mark with 'Paid by someone else' and no arrow; every money-out arrow there is a repayment he really made", {
+    expected: { share: [{ thirty: true, marks: ["no-money-moved"] }], arrowsAreRepayments: true, anyRepaid: true },
+    actual: {
+      share: shareRows.map((r) => ({ thirty: r.amount.includes("30.00"), marks: r.marks })),
+      arrowsAreRepayments: outArrows.length === repaidRows.length && repaidRows.every((r) => r.marks.join() === "money-out"), anyRepaid: repaidRows.length > 0,
+    },
+  });
   t.check("D: it shows the |==| mark (and no arrow) beside 'EUR 30.00 No money moved'", {
     expected: [{ marks: ["no-money-moved"], amount: "EUR 30.00 No money moved", visible: true }],
     actual: rows.map((r) => ({ marks: r.marks, amount: r.amount, visible: !!r.size && r.size[0] > 0 && r.size[1] > 0 })),
@@ -226,9 +267,25 @@ export async function run(h, t) {
   await api("bob").ok("group", { method: "POST", query: { ...q, action: "ledger" }, body: { currency: "EUR" } });
   const bobGroup = await api("bob").ok("group", { query: q });
   await fresh(b.bob, "group");
-  t.check("R1: after Bob shares his wallet in his browser, Alice's taxi and Bob's update write nothing there and no link remains", {
-    expected: { share: 200, entriesAfter: beforeShare, link: undefined, notice: false },
-    actual: { share: shared, entriesAfter: await walletEntries(), link: bobGroup.myLedgers, notice: (await b.bob.text("body")).includes("Your account needs updating") },
+  const bobBody = await b.bob.text("body");
+  t.check("R1 and F2: after Bob shares his wallet, Alice's taxi and Bob's update write nothing there and no link remains; his browser says his part is on an account that is now shared and offers to choose another", {
+    expected: { share: 200, entriesAfter: beforeShare, link: undefined, notice: true, says: true, choose: true },
+    actual: {
+      share: shared, entriesAfter: await walletEntries(), link: bobGroup.myLedgers, notice: bobBody.includes("Your account needs updating"), says: bobBody.includes("which is now shared"),
+      choose: await b.bob.evaluate("[...document.querySelectorAll('button')].some((x) => x.textContent.trim() === 'Choose my account')"),
+    },
+  });
+  // F2: Bob chooses a new private account. His own entries on the shared wallet are reversed there (it is
+  // back to its 100.00 opening balance), his whole part is recorded on the new account, his page has
+  // nothing left to update, and that account's outstanding equals his balance in the group.
+  const spare = firstRecord(await api("bob").ok("accounts", { method: "POST", query: q, body: { name: "E2E Bob Spare", type: "cash", currency: "EUR", openingBalance: "50.00" } }));
+  await api("bob").ok("group", { method: "POST", query: { ...q, action: "ledger" }, body: { currency: "EUR", accountId: spare.id } });
+  await fresh(b.bob, "group");
+  const bobNet = (await api("bob").ok("group", { query: q })).balances.find((x) => x.currency === "EUR").rows.find((r) => r.ref === B).net;
+  const spareSummary = (await api("bob").ok("transactions", { query: { ...q, accountId: spare.id } })).summary.find((s) => s.currency === "EUR");
+  t.check("F2: once Bob chooses E2E Bob Spare his browser shows nothing to update, the shared wallet is back to 100.00, and the spare's outstanding equals his group balance", {
+    expected: { notice: false, wallet: "100.00", outstanding: bobNet },
+    actual: { notice: (await b.bob.text("body")).includes("Your account needs updating"), wallet: (await api("bob").ok("accounts", { query: q })).accounts.find((a) => a.id === wallet.id).balance, outstanding: spareSummary ? spareSummary.receivable : null },
   });
 
   // ---- E: parallel requests against the file-backed dev server ------------------------------------
