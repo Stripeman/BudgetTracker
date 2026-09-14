@@ -22,9 +22,10 @@ import * as guards from "./guards.mjs";
 import * as dropdown from "./dropdown.mjs";
 import * as staging from "./staging.mjs";
 import * as recheck from "./recheck.mjs";
+import * as settings from "./settings.mjs";
 
-const SCENARIOS = [privacy, shared, concurrency, guards, dropdown, staging, recheck];
-const ALIASES = { group: "shared", "shared-expenses": "shared", picker: "dropdown", dropdowns: "dropdown", "route-guards": "guards", "staging-link": "staging" };
+const SCENARIOS = [privacy, shared, concurrency, guards, dropdown, staging, recheck, settings];
+const ALIASES = { group: "shared", "shared-expenses": "shared", picker: "dropdown", dropdowns: "dropdown", "route-guards": "guards", "staging-link": "staging", "workspace-settings": "settings" };
 const rel = (p) => path.relative(ROOT, p).replace(/\\/g, "/");
 
 let args;
