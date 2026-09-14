@@ -251,6 +251,60 @@ export async function run(h, t) {
   await fresh(b.alice, "group");
   t.note(`screenshot of Alice's settings card: ${await b.alice.shot("settings-card")}`);
 
+  // ---- Settings b, c and e across browsers (Terry, 2026-09-14: "build all 10") -----------------------
+  // (c) Alice lets any member who can add expenses correct them: Bob, who could not before, corrects the
+  // ferry Alice added, in his browser, with a reason.
+  const EXPENSES = '[aria-labelledby="grp-expenses"]';
+  const ferryId = afterB.expenses.find((x) => x.description === "E2E ferry").id;
+  const ferryEdit = (s) => s.evaluate(`(() => { const r = [...document.querySelectorAll('${EXPENSES} tr')].find((x) => x.innerText.includes('E2E ferry')); return !!r && [...r.querySelectorAll('button')].some((x) => x.textContent.trim() === 'Edit'); })()`);
+  await fresh(b.bob, "group");
+  const bobCouldEdit = await ferryEdit(b.bob);
+  await fresh(b.alice, "group");
+  await b.alice.click({ label: "Any member who can add expenses", scope: SETTINGS });
+  await saveSettings(b.alice);
+  await fresh(b.bob, "group");
+  const bobCanEdit = await ferryEdit(b.bob);
+  if (bobCanEdit) {
+    await b.bob.click({ role: "button", name: "Edit E2E ferry", scope: EXPENSES });
+    await b.bob.waitFor("!!document.querySelector('.modal')", { what: "Bob's correction dialog" });
+    await b.bob.fill({ label: "Description", scope: ".modal" }, "E2E ferry (Bob's correction)");
+    await b.bob.fill({ label: "Reason for this correction", scope: ".modal" }, "Right name");
+    await b.bob.click({ role: "button", name: "Save correction", scope: ".modal" });
+    await b.bob.waitFor("!document.querySelector('.modal')", { what: "Bob's correction dialog to close" });
+  }
+  const ferryNow = (await api("alice").ok("group", { query: q })).expenses.find((e) => e.id === ferryId);
+  t.check("Setting c: Bob has no Edit on the ferry Alice added until she chooses 'Any member who can add expenses' in her card; then he corrects it in his browser", {
+    expected: { before: false, after: true, description: "E2E ferry (Bob's correction)" }, actual: { before: bobCouldEdit, after: bobCanEdit, description: ferryNow ? ferryNow.description : null },
+  });
+
+  // (b) and (e) Bob's own defaults: only him sharing a new expense, and balances as "Keep who owes whom".
+  // Alice keeps the group's defaults: everyone shares, and the fewest payments.
+  const MINE = '[aria-labelledby="grp-mine"]';
+  await b.bob.choose("Who shares by default", "Only me", { scope: MINE });
+  await b.bob.choose("Balances shown as", "Keep who owes whom", { scope: MINE });
+  await b.bob.evaluate("(() => { const r = document.getElementById('a11y-live'); if (r) r.textContent = ''; })()");
+  await b.bob.click({ role: "button", name: "Save my defaults", scope: MINE });
+  await b.bob.waitFor("(() => { const r = document.getElementById('a11y-live'); return !!r && r.textContent.startsWith('Your defaults are saved'); })()", { what: "Bob's defaults to be saved" });
+  await Promise.all([fresh(b.bob, "group"), fresh(b.alice, "group")]);
+  // Who is ticked to share in a new expense: the split rows after the payer rows (one row per person each).
+  const tickedToShare = async (s) => {
+    await s.click({ role: "button", name: "Add expense", scope: ".page-head" });
+    await s.waitFor("!!document.querySelector('.modal')", { what: "the Add shared expense dialog" });
+    const names = await s.evaluate("(() => { const rows = [...document.querySelectorAll('.modal .split-row')]; return rows.slice(rows.length / 2).filter((r) => r.querySelector('input').checked).map((r) => r.querySelector('label').textContent); })()");
+    await s.press("Escape");
+    await s.waitFor("!document.querySelector('.modal')", { what: "the dialog to close" });
+    return names;
+  };
+  const bobTicked = await tickedToShare(b.bob);
+  const aliceTicked = await tickedToShare(b.alice);
+  t.check("Settings b and e: Bob's own defaults apply only to him: his new expense has only him sharing and his balances show who owes whom; Alice's has everyone and the fewest payments", {
+    expected: { bobTicked: ["Bob Fictional (you)"], aliceTicked: ["Alice Fictional (you)", "Bob Fictional", "Carol Fictional"], bobDirect: true, aliceFewest: true },
+    actual: {
+      bobTicked, aliceTicked,
+      bobDirect: (await b.bob.text("body")).includes("Each person pays back the people who paid for them"), aliceFewest: (await b.alice.text("body")).includes("The fewest payments that settle everyone."),
+    },
+  });
+
   // ---- R1: Bob shares his wallet; recording on it stops, and his browser shows nothing to update -----
   // The Accounts page offers no way to make an existing account shared (only per-member grants), so the
   // share itself is Bob's API request, as the server's confirmation flow expects; the evidence in his
