@@ -28,6 +28,14 @@ const freezeAll = (o) => Object.freeze(Object.fromEntries(Object.entries(o).map(
 
 // `group` orders the list in the interface; `changedBy` is the lowest role that may change the key.
 const SETTINGS = freezeAll({
+  // (a) Shared expenses (BT-009) per workspace. Today: the section is shown for group, trip and
+  // household workspaces and left out of personal ones, so that is the default by kind. The site
+  // administrator's module switch is the upper bound: off for the site is off everywhere.
+  sharedExpenses: {
+    group: 'Shared expenses', type: 'boolean', default: (doc) => !doc || doc.kind !== 'personal', changedBy: 'manager',
+    label: 'Shared expenses',
+    explanation: 'Split costs with the people in this workspace and see who owes whom. When it is off, the Shared expenses page and its dashboard summary are hidden and nobody can add to it; nothing already recorded is removed, and it all comes back when it is turned on again. It starts on for groups, trips and households and off for personal workspaces.',
+  },
   // (f) Changing other members' entries on shared accounts (api/_shared/authz.js canChangeRecord).
   // Today a plain member changes only records they created there.
   memberEditsOthers: {
@@ -164,6 +172,14 @@ function changesFor(doc, changes, member) {
 
 // ---- rules used by the handlers ------------------------------------------------------------------
 
+// (a) Shared expenses: the site administrator's module switch is the upper bound, then the workspace.
+const siteAllowsSharedExpenses = (site) => !(site && site.modules && site.modules.sharedExpenses === false);
+const sharedExpensesOn = (doc, site) => siteAllowsSharedExpenses(site) && get(doc, 'sharedExpenses') === true;
+function assertSharedExpenses(doc, site) {
+  if (!siteAllowsSharedExpenses(site)) throw new HttpError(403, 'shared_expenses_off', 'Shared expenses are turned off for this site by the site administrator. Nothing recorded has been removed.');
+  if (get(doc, 'sharedExpenses') !== true) throw new HttpError(403, 'shared_expenses_off', 'Shared expenses are turned off in this workspace. An owner or manager can turn them on in Workspace settings; nothing recorded has been removed.');
+}
+
 // (f) A plain member may change another member's entry or bill on a shared account.
 const membersChangeOthers = (doc) => get(doc, 'memberEditsOthers') === 'any';
 
@@ -187,7 +203,8 @@ function defaultBudgetStart(doc, period, today) {
 }
 
 // What a member sees: every setting from the one list with its value and whether they may change it.
-function view(doc, member) {
+// `site` supplies the site-wide Shared expenses switch (`offForSite` when the site has it off).
+function view(doc, member, site) {
   const v = values(doc);
   return KEYS.map((k) => {
     const s = SETTINGS[k];
@@ -196,6 +213,7 @@ function view(doc, member) {
       changedBy: s.changedBy, canChange: mayChange(k, member),
       ...(s.options ? { options: s.options.map((o) => ({ ...o })) } : {}),
       ...(s.type === 'integer' ? { min: s.min, max: s.max } : {}),
+      ...(k === 'sharedExpenses' && !siteAllowsSharedExpenses(site) ? { offForSite: true } : {}),
     };
   });
 }
@@ -214,4 +232,5 @@ function problem(doc) {
   return null;
 }
 
-module.exports = { SETTINGS, KEYS, MEMBER_RESTORES_MAX, values, get, valid, mayChange, parseChanges, changesFor, view, problem, defaultBudgetStart, membersChangeOthers, managesSharedLists };
+module.exports = { SETTINGS, KEYS, MEMBER_RESTORES_MAX, values, get, valid, mayChange, parseChanges, changesFor, view, problem, defaultBudgetStart, membersChangeOthers, managesSharedLists,
+  siteAllowsSharedExpenses, sharedExpensesOn, assertSharedExpenses };

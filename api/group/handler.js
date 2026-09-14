@@ -56,6 +56,8 @@ const groups = require('../_shared/groups');
 const groupSettings = require('../_shared/group-settings');
 const entries = require('../_shared/entries');
 const model = require('../_shared/workspace-model');
+const siteSettings = require('../_shared/site');
+const workspaceSettings = require('../_shared/workspace-settings');
 
 const CREATE_KEYS = ['description', 'date', 'amount', 'currency', 'categoryId', 'notes', 'payers', 'split', 'ledger'];
 const PATCH_KEYS = ['expenseId', 'revision', 'reason', 'description', 'date', 'amount', 'categoryId', 'notes', 'payers', 'split'];
@@ -779,4 +781,15 @@ async function post(ctx, req) {
   return ACTIONS[action](ctx, req);
 }
 
-module.exports = { GET: list, POST: post, PATCH: patchExpense };
+// Shared expenses may be turned off for the whole site by its administrator or for this workspace by
+// its owners and managers (workspace settings, Terry 2026-09-14). Then every route here is refused with
+// a clear message — after the membership check, so someone outside the workspace still gets not found —
+// and nothing recorded is touched; it all comes back when it is turned on again.
+async function sharedExpensesGate(ctx, req) {
+  const { doc } = await store.loadWorkspace(ctx, requireId(query(req, 'workspaceId'), 'workspaceId'));
+  const { site } = await siteSettings.readSite(ctx.storage);
+  workspaceSettings.assertSharedExpenses(doc, site);
+}
+const gated = (fn) => async (ctx, req) => { await sharedExpensesGate(ctx, req); return fn(ctx, req); };
+
+module.exports = { GET: gated(list), POST: gated(post), PATCH: gated(patchExpense) };

@@ -1,12 +1,15 @@
 // Hash routing: deep links work on Static Web Apps without server rewrites, and the router is
 // DOM-free apart from the injected location adapter.
 
-// `kinds` limits a section to workspaces of those kinds in the nav (the route itself still opens).
-// Shared expenses (BT-009) belong to groups and trips, and to households, where couples and
-// housemates split costs too; a personal workspace has one member, so the section is left out there.
+import { sharedExpensesOn } from "./workspacesettings.js";
+
+// `feature` shows a section only while that feature is on for the workspace. Shared expenses (BT-009)
+// follow the workspace setting (Terry, 2026-09-14), bounded by the site's module switch; without a
+// setting, today's rule by kind: groups, trips and households, where couples and housemates split costs
+// too, and not personal workspaces. When it is off the page says so and the server refuses its routes.
 export const ROUTES = Object.freeze([
   { id: "dashboard", path: "/dashboard", label: "Dashboard" },
-  { id: "group", path: "/group", label: "Shared expenses", kinds: Object.freeze(["group", "trip", "household"]) },
+  { id: "group", path: "/group", label: "Shared expenses", feature: "sharedExpenses" },
   { id: "transactions", path: "/transactions", label: "Transactions" },
   { id: "bills", path: "/bills", label: "Bills" },
   { id: "planning", path: "/planning", label: "Planning" },
@@ -17,9 +20,10 @@ export const ROUTES = Object.freeze([
   { id: "join", path: "/join", label: "Join", hidden: true },
 ]);
 
-// The sections shown in the nav for a workspace of this kind.
-export function navRoutes(kind) {
-  return ROUTES.filter((r) => !r.hidden && (!r.kinds || r.kinds.includes(kind)));
+// The sections shown in the nav for this workspace (a workspace summary, or just its kind) and site.
+export function navRoutes(workspace, site) {
+  const ws = typeof workspace === "string" ? { kind: workspace } : workspace || null;
+  return ROUTES.filter((r) => !r.hidden && (r.feature !== "sharedExpenses" || sharedExpensesOn(ws, site)));
 }
 
 export function parseHash(hash) {

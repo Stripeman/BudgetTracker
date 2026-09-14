@@ -18,6 +18,7 @@ const money = require('../_shared/money');
 const audit = require('../_shared/audit');
 const groups = require('../_shared/groups');
 const workspaceSettings = require('../_shared/workspace-settings');
+const siteSettings = require('../_shared/site');
 
 async function list(ctx) {
   const user = await store.ensureUser(ctx);
@@ -38,7 +39,8 @@ async function get(ctx, req) {
   const { doc, etag, member } = await store.loadWorkspace(ctx, id);
   // Every workspace setting from the one list, with whether this member may change it (Terry,
   // 2026-09-14). Values only; nothing financial.
-  const workspace = { ...model.summary(doc, member), settings: doc.settings, settingsList: workspaceSettings.view(doc, member) };
+  const { site } = await siteSettings.readSite(ctx.storage);
+  const workspace = { ...model.summary(doc, member), settings: doc.settings, settingsList: workspaceSettings.view(doc, member, site) };
   if (roleAtLeast(member.role, 'manager')) {
     const names = new Map((doc.members || []).map((m) => [m.subject, m.name || 'Member']));
     const named = (list) => (list || []).map((h) => ({ ...h, by: names.get(h.by) || 'Former member' }));

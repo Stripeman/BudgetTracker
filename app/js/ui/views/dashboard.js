@@ -10,12 +10,15 @@ import { warningText } from "./planning.js";
 import { formatAmount } from "../../core/format.js";
 import { icon, withIcon } from "../icons.js";
 import { openGroupExpense, balanceLabel, shownTables } from "./group.js";
+import { sharedExpensesOn } from "../../core/workspacesettings.js";
 
 // A card title with its icon (BT-011-05); the words name the card, the icon is decoration.
 const titled = (id, iconId, text, tag = "h2") => el(tag, { class: "card__title", id }, [withIcon(iconId, text)]);
 
 // A shared-expense group or a trip needs no account (Terry, 2026-09-14; BT-009): its dashboard leads
-// to Shared expenses and shows the person's balance there, instead of asking for an account.
+// to Shared expenses, instead of asking for an account. The balance card follows the one rule for
+// Shared expenses (the workspace setting, bounded by the site), so a household sees it too — the page
+// and its dashboard summary are shown or hidden together (workspace settings, Terry 2026-09-14).
 const SHARED_KINDS = new Set(["group", "trip"]);
 const workspaceOf = (state) => (state.workspaces || []).find((w) => w.id === state.selectedWorkspaceId) || null;
 
@@ -39,12 +42,20 @@ export function createView(ctx) {
   void ctx.store.actions.refreshTransactions({ limit: 8 });
   void ctx.store.actions.refreshBills();
   void ctx.store.actions.refreshForecast({ horizon: "30" });
-  const first = workspaceOf(ctx.state || ctx.store.getState());
-  if (first && SHARED_KINDS.has(first.kind)) void ctx.store.actions.refreshGroup();
+  // Shared expenses are loaded once while they are on, including when they are turned on later.
+  let groupRequested = false;
+  const loadGroup = (state) => {
+    if (groupRequested || !sharedExpensesOn(workspaceOf(state), state.site)) return;
+    groupRequested = true;
+    void ctx.store.actions.refreshGroup();
+  };
+  loadGroup(ctx.state || ctx.store.getState());
 
   function update(state) {
     const ws = workspaceOf(state);
-    const sharedKind = !!ws && SHARED_KINDS.has(ws.kind);
+    const groupOn = !!ws && sharedExpensesOn(ws, state.site);
+    loadGroup(state);
+    const sharedKind = groupOn && SHARED_KINDS.has(ws.kind);
     const prefs = state.preferences;
     const dateFormat = prefs && prefs.effective && prefs.effective.dateFormat;
     // Needs attention (BT-008): overdue and due-soon bills, and 30-day cash-flow warnings.
@@ -66,14 +77,14 @@ export function createView(ctx) {
         ? button("Add expense", () => openQuickEntry(ctx), { variant: "primary" })
         : addEntriesBlocked(state));
     }
-    if (sharedKind) {
+    if (groupOn) {
       const g = sliceFor(state, "group");
       const data = g.data;
       // The viewer's balance in every currency where it is open, not only the reporting currency
       // (financial review finding 3).
       const mine = data ? shownTables(data).map((t) => [t, t.rows.find((r) => r.ref === data.permissions.selfRef)]).filter(([, r]) => r && !/^-?0(\.0+)?$/.test(String(r.net))) : [];
       mount(shared, el("section", { class: "card", "aria-labelledby": "dash-shared" }, [
-        titled("dash-shared", "users", "Your balance in this group"),
+        titled("dash-shared", "users", SHARED_KINDS.has(ws.kind) ? "Your balance in this group" : "Your balance in Shared expenses"),
         data ? el("div", { class: "card__value" }, mine.length ? mine.map(([t, r]) => el("div", {}, [balanceLabel(r, t.currency, fmt, { self: true, subject: "You" })])) : [el("span", { class: "muted", text: "You are settled up" })]) : stateView(g),
         data ? el("p", { class: "card__meta" }, [`${data.expenses.filter((e) => e.status !== "void").length} shared expenses recorded. `, el("a", { href: "#/group", text: "Open Shared expenses" })]) : null,
       ]));

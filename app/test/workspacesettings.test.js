@@ -9,6 +9,8 @@ import { nativeDropdowns, pickerLabels, pickerNamed, chooseOption, offeredOption
 import { createView as createWorkspace, settingText } from "../js/ui/views/workspace.js";
 import { createView as createPlanning, defaultBudgetStart, backdateProblem } from "../js/ui/views/planning.js";
 import { openBillEditor } from "../js/ui/views/bills.js";
+import { createView as createDashboard } from "../js/ui/views/dashboard.js";
+import { navRoutes } from "../js/core/router.js";
 
 let dom;
 beforeEach(() => { dom = installDom(); });
@@ -206,6 +208,48 @@ describe("Workspace settings card", () => {
     assert.deepEqual(scopesFor("member", { sharedListManagers: "members" }), both);
     assert.deepEqual(scopesFor("manager", { sharedListManagers: "managers" }), both);
     assert.equal(scopesFor("viewer", { sharedListManagers: "members" }), "no Add budget", "a viewer adds no budget at all, whatever the setting");
+  });
+
+  test("(a) the nav shows Shared expenses by the workspace setting, bounded by the site; without a setting, today's rule by kind", () => {
+    const shows = (ws, site) => navRoutes(ws, site).some((r) => r.id === "group");
+    assert.equal(shows({ kind: "household" }), true);
+    assert.equal(shows({ kind: "personal" }), false);
+    assert.equal(shows({ kind: "household", settingValues: { sharedExpenses: false } }), false);
+    assert.equal(shows({ kind: "personal", settingValues: { sharedExpenses: true } }), true);
+    assert.equal(shows({ kind: "group", settingValues: { sharedExpenses: true } }, { modules: { sharedExpenses: false } }), false, "the site switch wins");
+    assert.equal(shows({ kind: "group", settingValues: { sharedExpenses: true } }, { modules: { sharedExpenses: true } }), true);
+    assert.equal(shows(null), false, "no workspace, no section");
+    assert.equal(shows("trip"), true, "a kind alone still works");
+  });
+
+  test("(a) the dashboard summary follows the same rule as the page: a household sees its balance; off hides it and loads nothing", () => {
+    const dash = (settingValues, site) => {
+      let refreshed = 0;
+      const state = {
+        selectedWorkspaceId: "ws_1", preferences: null, site: site || null,
+        workspaces: [{ id: "ws_1", name: "Fictional household", kind: "household", role: "member", ...(settingValues ? { settingValues } : {}) }],
+        group: { workspaceId: "ws_1", status: "ready", error: null, data: { currency: "EUR", permissions: { canAdd: true, selfRef: "member:a", role: "member" }, participants: [], expenses: [], settlements: [], balances: [] } },
+      };
+      const store = { getState: () => state, actions: { refreshGroup: async () => { refreshed += 1; }, refreshTransactions: async () => {}, refreshBills: async () => {}, refreshForecast: async () => {} } };
+      const view = createDashboard({ store, api: {}, state });
+      dom.body.appendChild(view.element);
+      view.update(state);
+      view.update(state);
+      const text = view.element.textContent;
+      dom.body.removeChild(view.element);
+      return { text, refreshed };
+    };
+    const on = dash({ sharedExpenses: true });
+    assert.match(on.text, /Your balance in Shared expenses/);
+    assert.equal(on.refreshed, 1, "loaded once");
+    const legacy = dash(undefined);
+    assert.match(legacy.text, /Your balance in Shared expenses/, "a household with no setting stored: on, as its page always was");
+    const off = dash({ sharedExpenses: false });
+    assert.doesNotMatch(off.text, /Your balance/);
+    assert.equal(off.refreshed, 0);
+    const siteOff = dash({ sharedExpenses: true }, { modules: { sharedExpenses: false } });
+    assert.doesNotMatch(siteOff.text, /Your balance/);
+    assert.equal(siteOff.refreshed, 0);
   });
 
   test("settingText writes each kind of value in words", () => {

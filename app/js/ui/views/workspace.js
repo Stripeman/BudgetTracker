@@ -250,11 +250,13 @@ export function createView(ctx) {
   // setting this person may not change is shown as text with who can. Save sends only what changed.
   function settingControl(s) {
     const who = s.changedBy === "owner" ? "Only owners change this." : "Owners and managers change this.";
+    // Shared expenses switched off for the whole site stay off here, whatever the workspace says.
+    const siteNote = s.offForSite ? " The site administrator has turned this off for the whole site, so it stays off here for now." : "";
     if (!s.canChange) {
       return { s, read: () => s.value, node: el("div", { class: "field field--wide" }, [
         el("p", { class: "field__label", text: s.label }),
         el("p", { text: settingText(s, s.value) }),
-        el("p", { class: "field__help", text: `${s.explanation} ${who}` }),
+        el("p", { class: "field__help", text: `${s.explanation}${siteNote} ${who}` }),
       ]) };
     }
     if (s.type === "set") {
@@ -272,7 +274,7 @@ export function createView(ctx) {
     const read = () => (s.type === "boolean" ? pick.value === "true"
       : s.type === "integer" ? Number(pick.value)
         : ((s.options || []).find((o) => String(o.value) === pick.value) || { value: s.value }).value);
-    return { s, read, node: field(s.label, pick, { help: s.explanation, wide: true }) };
+    return { s, read, node: field(s.label, pick, { help: `${s.explanation}${siteNote}`, wide: true }) };
   }
 
   function renderSettings(workspace, { saved = false } = {}) {

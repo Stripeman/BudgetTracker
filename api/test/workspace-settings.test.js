@@ -113,6 +113,73 @@ describe('Workspace settings: one list, today\'s behaviour by default', () => {
   });
 });
 
+// ---- (a) shared expenses on or off -----------------------------------------------------------------
+const groupGet = (h, as, id, extra = {}) => h.call('group', 'GET', { as, query: { workspaceId: id, ...extra } });
+const sharedValue = async (h, id) => valueOf(ok(await getWs(h, 'alice', id)).workspace, 'sharedExpenses');
+
+describe('(a) Shared expenses on or off', () => {
+  test('by default on for households, groups and trips and off for personal workspaces, as the app showed it; off means the routes refuse', async () => {
+    const { h, id } = await setup();
+    assert.equal(await sharedValue(h, id), true, 'household');
+    ok(await groupGet(h, 'bob', id));
+    for (const [kind, on] of [['group', true], ['trip', true], ['personal', false]]) {
+      const ws = ok(await h.call('workspaces', 'POST', { as: 'alice', body: { name: `Fictional ${kind}`, kind, reportingCurrency: 'EUR' } }), 201).workspace;
+      assert.equal(ws.settingValues.sharedExpenses, on, kind);
+      assert.equal((await groupGet(h, 'alice', ws.id)).status, on ? 200 : 403, kind);
+    }
+  });
+
+  test('turned off: every group route refuses with a clear message and nothing is removed; turned on again it all comes back', async () => {
+    const { h, f, id } = await setup();
+    const [A, B] = [`member:${f.memberId('Alice')}`, `member:${f.memberId('Bob')}`];
+    const expense = ok(await h.call('group', 'POST', { as: 'alice', query: f.q, body: { description: 'Fictional dinner', amount: '60.00', payers: [{ ref: A }], split: { method: 'equal', lines: [{ ref: A }, { ref: B }] } } }), 201).expense;
+    ok(await patchSettings(h, 'alice', id, { sharedExpenses: false }, 'We settle up elsewhere'));
+    const tries = {
+      get: await groupGet(h, 'bob', id),
+      balances: await groupGet(h, 'bob', id, { action: 'balances' }),
+      history: await groupGet(h, 'bob', id, { action: 'history', expenseId: expense.id }),
+      add: await h.call('group', 'POST', { as: 'alice', query: f.q, body: { description: 'Fictional taxi', amount: '10.00', payers: [{ ref: A }], split: { method: 'equal', lines: [{ ref: A }] } } }),
+      correct: await h.call('group', 'PATCH', { as: 'alice', query: f.q, body: { expenseId: expense.id, revision: expense.revision, reason: 'x', amount: '61.00' } }),
+      settle: await h.call('group', 'POST', { as: 'bob', query: { ...f.q, action: 'settle' }, body: { from: B, to: A, amount: '30.00' } }),
+      viewer: await groupGet(h, 'carol', id),
+    };
+    for (const [name, res] of Object.entries(tries)) {
+      assert.equal(res.status, 403, name);
+      assert.equal(res.body.error.code, 'shared_expenses_off', name);
+    }
+    assert.match(tries.get.body.error.message, /turned off in this workspace.*nothing recorded has been removed/);
+    // Someone outside the workspace learns nothing new: still not found.
+    assert.equal((await groupGet(h, 'eve', id)).status, 404);
+    assert.equal((await groupGet(h, 'dave', id)).status, 404);
+    const doc = await readDoc(h, id);
+    assert.deepEqual(doc.groupExpenses.map((e) => [e.id, e.description, e.amountMinor]), [[expense.id, 'Fictional dinner', 6000]], 'kept as it was');
+    ok(await patchSettings(h, 'alice', id, { sharedExpenses: true }));
+    const back = ok(await groupGet(h, 'bob', id));
+    assert.deepEqual(back.expenses.map((e) => [e.id, e.description]), [[expense.id, 'Fictional dinner']]);
+  });
+
+  test('a personal workspace can turn Shared expenses on; members cannot change the setting', async () => {
+    const { h, id } = await setup();
+    const personal = ok(await h.call('workspaces', 'POST', { as: 'alice', body: { name: 'Fictional side', kind: 'personal', reportingCurrency: 'EUR' } }), 201).workspace;
+    ok(await patchSettings(h, 'alice', personal.id, { sharedExpenses: true }));
+    ok(await groupGet(h, 'alice', personal.id));
+    assert.equal((await patchSettings(h, 'bob', id, { sharedExpenses: false })).status, 403);
+  });
+
+  test('the site administrator\'s switch is the upper bound: off for the site is off in every workspace; the workspace value is kept', async () => {
+    const { h, id } = await setup();
+    ok(await h.call('site-settings', 'PUT', { as: 'dave', body: { modules: { sharedExpenses: false } } }));
+    const refused = await groupGet(h, 'alice', id);
+    assert.equal(refused.status, 403);
+    assert.match(refused.body.error.message, /turned off for this site by the site administrator/);
+    const s = ok(await getWs(h, 'alice', id)).workspace.settingsList.find((x) => x.key === 'sharedExpenses');
+    assert.deepEqual([s.value, s.offForSite], [true, true]);
+    ok(await h.call('site-settings', 'PUT', { as: 'dave', body: { modules: { sharedExpenses: true } } }));
+    ok(await groupGet(h, 'alice', id));
+    assert.equal(ok(await getWs(h, 'alice', id)).workspace.settingsList.find((x) => x.key === 'sharedExpenses').offForSite, undefined);
+  });
+});
+
 // ---- (f) changing other members' entries on shared accounts --------------------------------------
 // Fixture: Alice (owner) recorded "Fictional Grocer" 82.40 on the shared Joint account; Bob is a member,
 // Carol a viewer; Alice Savings is Alice's private account.
