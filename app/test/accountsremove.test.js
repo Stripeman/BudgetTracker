@@ -21,6 +21,9 @@ const USED = { id: "acc_used", name: "Everyday", type: "checking", currency: "EU
 const JOINT = { id: "acc_joint", name: "Joint", type: "checking", currency: "EUR", visibility: "shared", access: "shared", ownedBySelf: false, status: "open", capabilities: ["create", "view-transactions"], hasEntries: true, balance: "90.00", revision: 1 };
 const GRANTED = { id: "acc_g", name: "Alice Savings", type: "savings", currency: "EUR", visibility: "private", access: "granted", ownerName: "Alice", ownedBySelf: false, status: "open", capabilities: ["view-balances"], balance: "5.00", revision: 1 };
 const GONE = { id: "acc_gone", name: "Old mistake", type: "cash", currency: "EUR", visibility: "private", access: "own", ownedBySelf: true, status: "open", capabilities: ["create", "view-transactions"], hasEntries: false, deletedAt: "2026-09-12T10:00:00.000Z", revision: 2 };
+// A currently linked account (financial recheck of 41494d1, FA-2): the server returns groupLedgerLinked
+// only to its own owner, and only while the link is active.
+const LINKED = { id: "acc_linked", name: "Bob Wallet", type: "cash", currency: "EUR", visibility: "private", access: "own", ownedBySelf: true, status: "open", capabilities: ["create", "view-transactions"], hasEntries: true, groupLedgerLinked: true, balance: "40.00", revision: 2 };
 
 function page({ role = "owner", accounts = [EMPTY, USED, JOINT, GRANTED], removedCount = 0, removeFails = null } = {}) {
   const calls = { removed: [], actions: [], listed: [] };
@@ -115,6 +118,19 @@ describe("BT-006-05 Remove on the Accounts page", () => {
     buttonNamed(dialog, "Remove account").click();
     await tick();
     assert.deepEqual(calls.removed[0].body, { accountId: "acc_used", reason: "Moved everything to Joint" });
+  });
+
+  test("an account currently linked in Shared expenses: the dialog adds that it will be recorded elsewhere next time; one with entries but no active link does not say that", async () => {
+    const { view } = open({ accounts: [EMPTY, USED, JOINT, GRANTED, LINKED] });
+    labelled(view.element, "Remove Bob Wallet").click();
+    const dialog = dom.body.querySelector(".modal");
+    assert.match(dialog.textContent, /This account has entries\./, "still the entries wording");
+    assert.match(dialog.textContent, /This account is linked in Shared expenses\. If you record your part there again, it will be recorded on a different account\./);
+    buttonNamed(dialog, "Cancel").click();
+    await tick();
+    labelled(view.element, "Remove Everyday").click();
+    const other = dom.body.querySelector(".modal");
+    assert.doesNotMatch(other.textContent, /linked in Shared expenses/);
   });
 
   test("Close instead opens the Close dialog for that account", () => {

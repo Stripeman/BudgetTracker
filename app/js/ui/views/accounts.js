@@ -144,6 +144,10 @@ export function createView(ctx) {
 // so an empty account whose reason was cleared is still sent with the ready-made one.
 const MISTAKE = "Created by mistake";
 const HAS_ENTRIES_TEXT = "This account has entries. Removing it takes it out of your account lists, pickers and totals, but nothing is erased: its entries are kept and can still be found under Transactions, and you can bring it back from Removed accounts. To stop using it but keep it visible, close it instead.";
+// Financial recheck of 41494d1, FA-2: a currently linked account keeps recording after it is removed
+// (Shared expenses does not know), so the next time the person records their part there it lands on a
+// different account instead — said explicitly, in addition to the usual entries wording.
+const GROUP_LINKED_TEXT = "This account is linked in Shared expenses. If you record your part there again, it will be recorded on a different account.";
 
 function openRemove(ctx, account, onRemoved = () => {}) {
   // When the server did not say (it tells only people who can see the entries), the stricter dialog.
@@ -174,6 +178,7 @@ function openRemove(ctx, account, onRemoved = () => {}) {
     title: `Remove ${account.name}?`,
     body: [
       el("p", { text: empty ? "This account has no entries. It will be removed from your lists. You can bring it back from Removed accounts." : HAS_ENTRIES_TEXT }),
+      account.groupLedgerLinked ? el("p", { text: GROUP_LINKED_TEXT }) : null,
       el("div", { class: "form-grid" }, [field("Reason", reason, { wide: true, help: empty ? "Kept with the account's history. Change it if you like." : "Required. It is kept with the account's history." })]),
     ],
     actions: [button("Cancel", () => modal.close()), closeInstead, confirm].filter(Boolean),

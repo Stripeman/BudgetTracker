@@ -393,6 +393,38 @@ export function createView(ctx) {
 
 const REFRESH = ["group", "accounts", "transactions"];
 
+// FA-1 (financial recheck of 41494d1): starting to record on an account for the first time can
+// backdate confirmed cash the person has not yet seen (an advance, reimbursement or repayment waiting
+// from before any account was linked), changing its balance the instant the link is made. `attempt`
+// performs the write for a given confirmBackdated flag; on the server's 409 confirm_backdated this
+// shows its own message (the amount and count) and asks before retrying with the flag set — mirroring
+// confirmShare when sharing an account. Declining leaves the calling dialog exactly as it was: no
+// error, since nothing failed, the person simply said no.
+function writeConfirmingBackdate(attempt) {
+  return new Promise((resolve) => {
+    void (async () => {
+      const first = await attempt(false);
+      if (first.ok || !first.error || first.error.code !== "confirm_backdated") { resolve(first); return; }
+      let settled = false;
+      const finish = (out) => { if (!settled) { settled = true; resolve(out); } };
+      const confirmBtn = button("Link anyway", async () => {
+        dialog.setBusy(true);
+        const out = await attempt(true);
+        dialog.setBusy(false);
+        if (!out.ok) { dialog.setError(out.error); return; }
+        finish(out);
+        dialog.close();
+      }, { variant: "primary" });
+      const dialog = openModal({
+        title: "Link this account",
+        body: [el("p", { text: messageFor(first.error) })],
+        actions: [button("Cancel", () => dialog.close()), confirmBtn],
+        onClose: () => finish({ ok: false, error: null }),
+      });
+    })();
+  });
+}
+
 async function syncMine(ctx, type, rec) {
   const out = await ctx.store.actions.write((ws) => ctx.api.groupAction(ws, "ledger", type === "expense" ? { expenseId: rec.id } : { settlementId: rec.id }), REFRESH);
   announce(out.ok ? "Your account now matches." : messageFor(out.error));
@@ -581,7 +613,7 @@ export function openGroupExpense(ctx, { expense = null } = {}) {
     modal.setBusy(true);
     const out = editing
       ? await ctx.store.actions.write((ws) => ctx.api.updateGroupExpense(ws, { expenseId: expense.id, revision: expense.revision, reason: reason.value.trim(), ...body }), REFRESH)
-      : await ctx.store.actions.write((ws) => ctx.api.createGroupExpense(ws, body, key), withLedger || linked ? REFRESH : ["group"]);
+      : await writeConfirmingBackdate((confirmBackdated) => ctx.store.actions.write((ws) => ctx.api.createGroupExpense(ws, confirmBackdated ? { ...body, confirmBackdated: true } : body, key), withLedger || linked ? REFRESH : ["group"]));
     modal.setBusy(false);
     if (!out.ok) { modal.setError(out.error); return; }
     announce(editing ? "Correction saved. The earlier values stay in the history." : "Shared expense added.");
@@ -654,7 +686,7 @@ export function openRecordPayment(ctx, { from = null, to = null, amount: preset 
     const withLedger = !ledgerField.hidden && ledgerBox.checked && ledgerAccount.value;
     if (withLedger) body.ledger = { accountId: ledgerAccount.value };
     modal.setBusy(true);
-    const out = await ctx.store.actions.write((ws) => ctx.api.groupAction(ws, "settle", body, key), withLedger || (linked && body.to === me) ? REFRESH : ["group"]);
+    const out = await writeConfirmingBackdate((confirmBackdated) => ctx.store.actions.write((ws) => ctx.api.groupAction(ws, "settle", confirmBackdated ? { ...body, confirmBackdated: true } : body, key), withLedger || (linked && body.to === me) ? REFRESH : ["group"]));
     modal.setBusy(false);
     if (!out.ok) { modal.setError(out.error); return; }
     announce(body.to === me ? "Payment recorded and confirmed." : "Payment recorded. It counts once it is confirmed.");
@@ -695,7 +727,7 @@ function openConfirm(ctx, s, nameOf) {
     const body = { settlementId: s.id, revision: s.revision };
     if (ledgerBox.checked && ledgerAccount.value) body.ledger = { accountId: ledgerAccount.value };
     modal.setBusy(true);
-    const out = await ctx.store.actions.write((ws) => ctx.api.groupAction(ws, "confirm", body), body.ledger || (receiving && linked) ? REFRESH : ["group"]);
+    const out = await writeConfirmingBackdate((confirmBackdated) => ctx.store.actions.write((ws) => ctx.api.groupAction(ws, "confirm", confirmBackdated ? { ...body, confirmBackdated: true } : body), body.ledger || (receiving && linked) ? REFRESH : ["group"]));
     modal.setBusy(false);
     if (!out.ok) { modal.setError(out.error); return; }
     announce("Payment confirmed.");
@@ -764,7 +796,7 @@ function openLedgerChoice(ctx, type, rec) {
     modal.setError("");
     modal.setBusy(true);
     const body = { [type === "expense" ? "expenseId" : "settlementId"]: rec.id, accountId: account.value };
-    const out = await ctx.store.actions.write((ws) => ctx.api.groupAction(ws, "ledger", body), REFRESH);
+    const out = await writeConfirmingBackdate((confirmBackdated) => ctx.store.actions.write((ws) => ctx.api.groupAction(ws, "ledger", confirmBackdated ? { ...body, confirmBackdated: true } : body), REFRESH));
     modal.setBusy(false);
     if (!out.ok) { modal.setError(out.error); return; }
     announce("Recorded on your account.");

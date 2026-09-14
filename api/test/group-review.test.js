@@ -358,7 +358,12 @@ describe('finding 2: shares of other people\'s expenses and repayments are recor
     const bCash = await account(h, f, 'bob', { name: 'Bob Cash', type: 'cash', currency: 'EUR', openingBalance: '500.00' });
     // 100.00 paid 30.00 by Alice and 70.00 by Bob, shared equally (50.00 each).
     await addExpense(h, f, 'alice', { description: 'Fictional groceries', amount: '100.00', payers: [{ ref: f.refs.alice, amount: '30.00' }, { ref: f.refs.bob, amount: '70.00' }], split: equal(f.refs.alice, f.refs.bob), ledger: { accountId: aCash.id } });
-    ok(await act(h, f, 'bob', 'ledger', { currency: 'EUR', accountId: bCash.id }));
+    // Bob already paid his 70.00 before linking, so this first link would backdate a confirmed cash
+    // entry (financial recheck FA-1): refused until he confirms it.
+    const refused = await act(h, f, 'bob', 'ledger', { currency: 'EUR', accountId: bCash.id });
+    assert.equal(refused.status, 409);
+    assert.equal(refused.body.error.code, 'confirm_backdated');
+    ok(await act(h, f, 'bob', 'ledger', { currency: 'EUR', accountId: bCash.id, confirmBackdated: true }));
     // Alice: cash −30; spending 50; owes 20. Bob: cash −70; spending 50; owed 20.
     assert.deepEqual(await ledgerOf(h, f, 'alice', aCash.id), { cash: '470.00', spent: '50.00', advances: '0.00', payables: '20.00', reimbursed: '0.00', repaid: '0.00', receivable: '-20.00' });
     assert.deepEqual(await ledgerOf(h, f, 'bob', bCash.id), { cash: '430.00', spent: '50.00', advances: '20.00', payables: '0.00', reimbursed: '0.00', repaid: '0.00', receivable: '20.00' });
@@ -396,7 +401,12 @@ describe('finding 2: shares of other people\'s expenses and repayments are recor
     const { value: doc } = await h.storage.getJson(`workspaces/${f.ws.id}/workspace.json`);
     assert.equal(doc.groupLedgers.length, 1);
     assert.ok(doc.groupLedgers[0].endedAt, 'ended, not removed');
-    ok(await act(h, f, 'bob', 'ledger', { currency: 'EUR', accountId: cash.id }));
+    // Linking again is treated as a first link too (the earlier one ended): the milk advance is
+    // confirmed, pending cash again (financial recheck FA-1), so it needs confirming once more.
+    const refused = await act(h, f, 'bob', 'ledger', { currency: 'EUR', accountId: cash.id });
+    assert.equal(refused.status, 409);
+    assert.equal(refused.body.error.code, 'confirm_backdated');
+    ok(await act(h, f, 'bob', 'ledger', { currency: 'EUR', accountId: cash.id, confirmBackdated: true }));
     assert.equal((await ledgerOf(h, f, 'bob', cash.id)).cash, '46.00');
   });
 });
@@ -604,7 +614,12 @@ describe('S4: create-new carries no other member\'s identifiers', () => {
     // Bob adds and records a hostel paid by him for Alice and Dana; Alice corrects the payer to herself.
     const e = await addExpense(h, f, 'bob', { description: 'Fictional hostel', amount: '30.00', payers: [{ ref: f.refs.bob }], split: equal(f.refs.alice, f.refs.dana), ledger: { accountId: wallet.id } });
     ok(await G(h, f, 'alice', 'PATCH', { body: { expenseId: e.id, revision: e.revision, reason: 'Alice paid', payers: [{ ref: f.refs.alice }] } }));
-    ok(await act(h, f, 'alice', 'ledger', { currency: 'EUR', accountId: cash.id }));
+    // Alice is now the corrected payer of the hostel, confirmed cash she already paid before linking
+    // (financial recheck FA-1): her first link needs confirming.
+    const refused = await act(h, f, 'alice', 'ledger', { currency: 'EUR', accountId: cash.id });
+    assert.equal(refused.status, 409);
+    assert.equal(refused.body.error.code, 'confirm_backdated');
+    ok(await act(h, f, 'alice', 'ledger', { currency: 'EUR', accountId: cash.id, confirmBackdated: true }));
     const b0 = await backupNow(h, f);
     const res = await restoreAs(h, f, b0, 'create-new');
     const { value: doc } = await h.storage.getJson(`workspaces/${res.workspace.id}/workspace.json`);

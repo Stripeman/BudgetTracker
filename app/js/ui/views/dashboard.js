@@ -66,6 +66,14 @@ export function createView(ctx) {
     if (billData && billData.summary.overdue) items.push(el("li", { class: "iconlabel" }, [icon("alert"), el("span", {}, [el("a", { href: "#/bills", text: `${billData.summary.overdue} overdue bill payment${billData.summary.overdue === 1 ? "" : "s"}` }), " — review and record or skip."])]));
     if (billData && billData.summary.dueSoon) items.push(el("li", { class: "iconlabel" }, [icon("clock"), el("a", { href: "#/bills", text: `${billData.summary.dueSoon} bill payment${billData.summary.dueSoon === 1 ? "" : "s"} due soon` })]));
     if (forecast) for (const w of forecast.forecast.warnings) items.push(el("li", { class: "iconlabel" }, [icon("chart-line"), el("a", { href: "#/planning", text: warningText(w, fmt, dateFormat) })]));
+    // A shared expense corrected or voided while the viewer's own linked account could not be written to
+    // (for example it is closed) leaves their part needing review, without telling them beyond the
+    // passive banner on Shared expenses itself (financial recheck of 41494d1, FA-3: correcting stays
+    // allowed either way — the corrector must never learn anything about another person's account).
+    const groupDataForAlert = groupOn ? sliceFor(state, "group").data : null;
+    if (groupDataForAlert && (groupDataForAlert.myLedgers || []).some((l) => l.reviewCount > 0)) {
+      items.push(el("li", { class: "iconlabel" }, [icon("users"), el("a", { href: "#/group", text: "Shared expenses needs your attention" })]));
+    }
     mount(alerts, items.length ? el("section", { class: "notice notice--warning", "aria-labelledby": "dash-alerts" }, [titled("dash-alerts", "bell", "Needs attention"), el("ul", { class: "stack" }, items)]) : null);
     const accounts = sliceFor(state, "accounts");
     const txns = sliceFor(state, "transactions");
