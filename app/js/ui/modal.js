@@ -77,9 +77,12 @@ export function openModal({ title, body, actions = [], onClose = () => {} }) {
     if (target && typeof target.focus === "function") target.focus();
   }
 
-  // Excludes controls inside a hidden ancestor, not only hidden controls themselves.
+  // Excludes controls inside a hidden ancestor, not only hidden controls themselves, and the inside of
+  // an open command-picker panel: it lives in the dialog (so aria-modal never hides it) but is part of
+  // its trigger, and it handles Tab itself.
+  const inPanel = (n) => !!(n && n.closest && n.closest(".cmdpick__panel"));
   function focusables() {
-    return Array.from(dialog.querySelectorAll(FOCUSABLE)).filter((n) => !n.disabled && n.getAttribute("tabindex") !== "-1" && !(n.closest && n.closest("[hidden]")));
+    return Array.from(dialog.querySelectorAll(FOCUSABLE)).filter((n) => !n.disabled && n.getAttribute("tabindex") !== "-1" && !(n.closest && n.closest("[hidden]")) && !inPanel(n));
   }
 
   function onKey(event) {
@@ -87,6 +90,8 @@ export function openModal({ title, body, actions = [], onClose = () => {} }) {
     if (event.key === "Escape" && escapeBelongsToControl(event.target)) return;
     if (event.key === "Escape") { event.preventDefault(); close(); return; }
     if (event.key !== "Tab") return;
+    // Tab at an open panel's edge closes it and continues from its trigger (commandpicker.js A6).
+    if (inPanel(event.target)) return;
     const items = focusables();
     if (!items.length) return;
     const first = items[0];

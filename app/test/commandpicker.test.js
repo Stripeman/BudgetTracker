@@ -199,12 +199,73 @@ describe("BT-004-04 KEYBOARD", () => {
 });
 
 describe("BT-004-04 ACCESSIBILITY", () => {
-  test("the trigger names the field AND its current value, and says whether it is open", () => {
+  test("the trigger is a select-only combobox: named by the field, its value spoken, how to use it described, open or not (a11y review finding 6)", () => {
     const { picker } = mount({ value: "rent" });
-    assert.equal(trigger(picker).getAttribute("aria-label"), "Category: Rent and housing. Search and choose.");
-    assert.equal(trigger(picker).getAttribute("aria-expanded"), "false");
+    const t = trigger(picker);
+    assert.equal(t.tagName, "BUTTON");
+    assert.equal(t.getAttribute("role"), "combobox");
+    assert.equal(t.getAttribute("aria-label"), "Category", "the name is the field alone, no value and no instructions");
+    assert.equal(picker.element.querySelector(".cmdpick__spoken").textContent, "Rent and housing", "the value, in the trigger's text");
+    assert.equal(picker.element.querySelector(".cmdpick__value").getAttribute("aria-hidden"), "true", "the visible copy is not read twice");
+    const how = picker.element.querySelector(`#${t.id}-how`);
+    assert.equal(how.textContent, "Search and choose.");
+    assert.ok(how.hasAttribute("hidden"), "read as a description only, never in browse mode");
+    assert.equal(t.getAttribute("aria-describedby"), `${t.id}-how`);
+    assert.equal(t.getAttribute("aria-haspopup"), "dialog");
+    assert.equal(t.getAttribute("aria-expanded"), "false");
     open(picker);
-    assert.equal(trigger(picker).getAttribute("aria-expanded"), "true");
+    assert.equal(t.getAttribute("aria-expanded"), "true");
+    assert.equal(t.getAttribute("aria-controls"), panel().id, "it names the panel it opened");
+  });
+
+  test("with a visible <label for> naming it, the trigger carries no aria-label of its own (the label is its name)", () => {
+    const labelled = mount({ labelVisible: true });
+    assert.equal(trigger(labelled.picker).hasAttribute("aria-label"), false);
+    const fielded = mount();
+    fielded.picker.setLabel("Spending category"); // what components.js field() does, beside its <label for>
+    assert.equal(trigger(fielded.picker).hasAttribute("aria-label"), false);
+    const unlabelled = mount();
+    unlabelled.picker.setLabel("Role for Bob Fictional", { visible: false });
+    assert.equal(trigger(unlabelled.picker).getAttribute("aria-label"), "Role for Bob Fictional");
+  });
+
+  test("a list without a search box is described as Choose.", () => {
+    const { picker } = mount({ search: false });
+    const t = trigger(picker);
+    assert.equal(picker.element.querySelector(`#${t.id}-how`).textContent, "Choose.");
+  });
+
+  test("the spoken value is the full description when there is one, and the badge is not read on its own", () => {
+    const { picker } = mount({
+      value: "rent",
+      describeOf: (v) => (v === "rent" ? "Rent and housing — shared" : null),
+      badgeOf: () => { const b = document.createElement("span"); b.setAttribute("role", "img"); b.setAttribute("aria-label", "Shared"); return b; },
+    });
+    assert.equal(picker.element.querySelector(".cmdpick__spoken").textContent, "Rent and housing — shared");
+    assert.equal(picker.element.querySelector(".cmdpick__badge").getAttribute("aria-hidden"), "true");
+    picker.element.querySelector("select").value = "food";
+    picker.refresh();
+    assert.equal(picker.element.querySelector(".cmdpick__spoken").textContent, "Food", "no description: the label");
+  });
+
+  test("required, invalid and the error text reach the trigger from the select; the error is described only while invalid", () => {
+    const { picker, select } = mount();
+    const t = trigger(picker);
+    select.required = true;
+    select.setAttribute("aria-describedby", "help-1");
+    select.setAttribute("aria-invalid", "true");
+    select.setAttribute("aria-errormessage", "err-1");
+    picker.refresh();
+    assert.equal(t.getAttribute("aria-required"), "true");
+    assert.equal(t.getAttribute("aria-invalid"), "true");
+    assert.equal(t.getAttribute("aria-errormessage"), "err-1");
+    assert.equal(t.getAttribute("aria-describedby"), `help-1 err-1 ${t.id}-how`, "help, then the error, then how to use it");
+    select.removeAttribute("aria-invalid");
+    select.required = false;
+    picker.refresh();
+    assert.equal(t.hasAttribute("aria-invalid"), false);
+    assert.equal(t.hasAttribute("aria-required"), false);
+    assert.equal(t.getAttribute("aria-describedby"), `help-1 ${t.id}-how`, "the error text goes with the invalid mark");
   });
 
   test("the list is a listbox of options, and the search box is its combobox (A2)", () => {
@@ -305,6 +366,11 @@ describe("BT-004-04 THE CLASSES IT EMITS ACTUALLY EXIST (TaskTracker shipped the
     const rule = /\.cmdpick__panel\s*\{([^}]*)\}/.exec(css);
     assert.match(rule[1], /var\(--pop-top/);
     assert.match(rule[1], /var\(--pop-left/);
+  });
+
+  test("the panel never transitions into place: with reduced motion it drew one frame at its 50 % fallback (found by npm run e2e)", () => {
+    const rule = /\.cmdpick__panel\s*\{([^}]*)\}/.exec(css);
+    assert.match(rule[1], /transition-property:\s*none/);
   });
 });
 
@@ -412,21 +478,43 @@ describe("BT-004-04 THE PINNED CREATE ACTION (adaptation A3)", () => {
 });
 
 describe("BT-004-04 PLACEMENT (through custom properties; real layout is checked in a browser)", () => {
-  // The double has no layout, so every element is given a fixed rectangle: the panel's natural size
-  // and the trigger's position. Only the arithmetic and the CSS variables are asserted.
-  function withGeometry({ panelHeight, viewportHeight, anchorTop = 10 }) {
+  // The double has no layout, so every element is given a fixed rectangle: the panel's natural size,
+  // its list (the panel less its search row and hints, `chrome`), one option row, and the trigger's
+  // position. Only the arithmetic and the CSS variables are asserted.
+  function withGeometry({ panelHeight, viewportHeight, anchorTop = 10, chrome = 86, rowHeight = 36, viewportWidth = 390 }) {
     const create = document.createElement;
+    const box = (width, height) => ({ top: 0, left: 0, width, height, bottom: height, right: width });
     document.createElement = (tag) => {
       const node = create(tag);
       node.getBoundingClientRect = function () {
-        return this.classList.contains("cmdpick__panel")
-          ? { top: 0, left: 0, width: 352, height: panelHeight, bottom: panelHeight, right: 352 }
-          : { top: anchorTop, left: 40, width: 200, height: 36, bottom: anchorTop + 36, right: 240 };
+        if (this.classList.contains("cmdpick__panel")) return box(352, panelHeight);
+        if (this.classList.contains("cmdpick__list")) return box(352, panelHeight - chrome);
+        if (this.classList.contains("cmdpick__opt")) return box(340, rowHeight);
+        return { top: anchorTop, left: 40, width: 200, height: 36, bottom: anchorTop + 36, right: 240 };
       };
       return node;
     };
-    document.defaultView = { innerWidth: 390, innerHeight: viewportHeight };
+    document.defaultView = { innerWidth: viewportWidth, innerHeight: viewportHeight };
   }
+
+  test("AT 400 % ZOOM (320 × 256) the panel spans the viewport and keeps at least 2.5 rows readable (a11y review finding 1)", () => {
+    // Trigger 110–146; below = 256 - 146 - 12 = 98, above = 110 - 12 = 98. Useful minimum = search row
+    // 46 + 2.5 × 38 = 141, more than either side, so it spans: min(294, 256 - 16) = 240 high, top 8.
+    withGeometry({ panelHeight: 294, viewportHeight: 256, viewportWidth: 320, anchorTop: 110, chrome: 46, rowHeight: 38 });
+    const { picker } = mount();
+    open(picker);
+    assert.equal(panel().style.getPropertyValue("--pop-max-height"), "240px");
+    assert.equal(panel().style.getPropertyValue("--pop-top"), "8px");
+    assert.equal(panel().style.getPropertyValue("--pop-left"), "8px", "pulled inside the 320 px viewport");
+    assert.ok(240 - 46 >= 2.5 * 38, "the list keeps 194 px: five 38 px rows");
+  });
+
+  test("the key hints give their room to the list on short screens, and there is no hidden 70vh cap", () => {
+    const css = fs.readFileSync(fileURLToPath(new URL("../styles/components.css", import.meta.url)), "utf8");
+    assert.match(css, /@media\s*\(max-height:\s*30rem\)\s*\{\s*\.cmdpick__foot\s*\{\s*display:\s*none;?\s*\}/);
+    const rule = /\.cmdpick__panel\s*\{([^}]*)\}/.exec(css)[1];
+    assert.match(rule, /max-height:\s*var\(--pop-max-height,\s*none\)/);
+  });
 
   test("below the trigger, inside the viewport, with no height cap when it fits", () => {
     withGeometry({ panelHeight: 167.6, viewportHeight: 844 });
@@ -443,6 +531,384 @@ describe("BT-004-04 PLACEMENT (through custom properties; real layout is checked
     const { picker } = mount();
     open(picker);
     assert.equal(panel().style.getPropertyValue("--pop-max-height"), "242px", "300 - 46 - 4 - 8");
+  });
+});
+
+describe("BT-004-05 THE KEYS A NATIVE SELECT HAS (a11y review finding 7, UX review U3)", () => {
+  const TYPES = ["Cash", "Checking", "Credit card", "Loan", "Mobile wallet", "Mortgage", "Savings"].map((label) => ({ value: label.toLowerCase().replace(/\s+/g, "-"), label }));
+  const keyOn = (node, key, extra = {}) => { const e = Object.assign(new DomEvent("keydown", { bubbles: true, key }), extra); node.dispatchEvent(e); return e; };
+  const activeLabel = () => {
+    const holder = document.activeElement;
+    const row = rows().find((r) => r.id === holder.getAttribute("aria-activedescendant"));
+    return row ? labelOf(row) : null;
+  };
+
+  test("the closed trigger opens on ArrowUp, Alt+ArrowUp and Alt+ArrowDown as well", () => {
+    for (const [key, extra] of [["ArrowUp", {}], ["ArrowUp", { altKey: true }], ["ArrowDown", { altKey: true }]]) {
+      const { picker } = mount({ value: "rent" });
+      const e = keyOn(trigger(picker), key, extra);
+      assert.ok(panel(), `${key}${extra.altKey ? " with Alt" : ""} opens it`);
+      assert.equal(e.defaultPrevented, true, "and the page does not scroll");
+      assert.equal(activeLabel(), "Rent and housing", "on the chosen option");
+      picker.destroy();
+    }
+  });
+
+  test("a letter on the closed trigger of a searched list opens it and starts the search with that letter", () => {
+    const { picker } = mount({ search: true });
+    const e = keyOn(trigger(picker), "h");
+    assert.ok(panel());
+    assert.equal(e.defaultPrevented, true);
+    const box = panel().querySelector(".cmdpick__search");
+    same(document.activeElement, box);
+    assert.equal(box.value, "h");
+    assert.deepEqual(rows().map(labelOf), ["Rent and housing"], "already filtered");
+  });
+
+  test("a letter on the closed trigger of a short list opens it on the first match, choosing nothing", () => {
+    const { picker, select } = mount({ options: TYPES, value: "cash", search: false });
+    keyOn(trigger(picker), "l");
+    assert.ok(panel());
+    assert.equal(activeLabel(), "Loan");
+    assert.equal(select.value, "cash", "type-ahead moves, it does not choose");
+  });
+
+  test("a Ctrl or Alt letter on the closed trigger does nothing", () => {
+    const { picker } = mount();
+    keyOn(trigger(picker), "c", { ctrlKey: true });
+    keyOn(trigger(picker), "c", { altKey: true });
+    none(panel());
+  });
+
+  test("multi-character type-ahead: m-o-r reaches Mortgage past Mobile wallet, and a pause starts over", (t) => {
+    t.mock.timers.enable({ apis: ["setTimeout"] });
+    const { picker } = mount({ options: TYPES, value: "cash", search: false });
+    open(picker);
+    keyOn(panel(), "m");
+    assert.equal(activeLabel(), "Mobile wallet");
+    keyOn(panel(), "o");
+    assert.equal(activeLabel(), "Mobile wallet", "“mo” still matches the current row, so it stays");
+    keyOn(panel(), "r");
+    assert.equal(activeLabel(), "Mortgage");
+    t.mock.timers.tick(500);
+    keyOn(panel(), "l");
+    assert.equal(activeLabel(), "Loan", "after the pause a letter starts a new search");
+  });
+
+  test("repeating one letter cycles through the options that start with it", (t) => {
+    t.mock.timers.enable({ apis: ["setTimeout"] });
+    const { picker } = mount({ options: TYPES, value: "cash", search: false });
+    open(picker);
+    keyOn(panel(), "c");
+    assert.equal(activeLabel(), "Checking");
+    keyOn(panel(), "c");
+    assert.equal(activeLabel(), "Credit card");
+    keyOn(panel(), "c");
+    assert.equal(activeLabel(), "Cash", "and wraps");
+  });
+
+  test("Space chooses in a list without a search box, but is part of a name while typing ahead", (t) => {
+    t.mock.timers.enable({ apis: ["setTimeout"] });
+    const first = mount({ options: TYPES, value: "cash", search: false });
+    open(first.picker);
+    keyOn(panel(), "ArrowDown");
+    const e = keyOn(panel(), " ");
+    assert.equal(e.defaultPrevented, true);
+    assert.equal(first.select.value, "checking", "Space took the active option");
+    none(panel(), "and closed the list");
+    open(first.picker);
+    for (const key of ["c", "r", "e", "d", "i", "t", " ", "c"]) keyOn(panel(), key);
+    assert.ok(panel(), "the space inside “credit c” did not choose");
+    assert.equal(activeLabel(), "Credit card");
+    assert.equal(first.select.value, "checking");
+  });
+
+  test("PageDown and PageUp move ten options at a time, stopping at the ends", () => {
+    const many = Array.from({ length: 30 }, (_, i) => ({ value: `v${i}`, label: `Option ${String(i).padStart(2, "0")}` }));
+    const { picker } = mount({ options: many, value: "v0" });
+    open(picker);
+    keyOn(panel(), "PageDown");
+    assert.equal(activeLabel(), "Option 10");
+    keyOn(panel(), "PageDown");
+    keyOn(panel(), "PageDown");
+    assert.equal(activeLabel(), "Option 29", "not past the last");
+    const e = keyOn(panel(), "PageUp");
+    assert.equal(activeLabel(), "Option 19");
+    assert.equal(e.defaultPrevented, true);
+  });
+
+  test("Home and End in the search box move the text cursor, not the list", () => {
+    const { picker } = mount({ value: "rent", search: true });
+    open(picker);
+    const box = panel().querySelector(".cmdpick__search");
+    for (const key of ["Home", "End"]) {
+      const e = keyOn(box, key);
+      assert.equal(e.defaultPrevented, false, `${key} is left to the text box`);
+      assert.equal(activeLabel(), "Rent and housing", "the active option did not move");
+    }
+  });
+});
+
+describe("BT-004-05 ON A TOUCH SCREEN NO KEYBOARD POPS UP UNASKED (UX review U2)", () => {
+  // A coarse pointer (a phone or tablet), as matchMedia("(pointer: coarse)") reports it.
+  const pointer = (coarse) => { document.defaultView = { innerWidth: 390, innerHeight: 844, matchMedia: (query) => ({ matches: coarse && query === "(pointer: coarse)" }) }; };
+  const keyOn = (node, key) => { const e = new DomEvent("keydown", { bubbles: true, key }); node.dispatchEvent(e); return e; };
+
+  test("with a coarse pointer a searched list opens with focus on the list, the search box still there", () => {
+    pointer(true);
+    const { picker } = mount({ search: true, value: "rent" });
+    open(picker);
+    const list = panel().querySelector(".cmdpick__list");
+    const box = panel().querySelector(".cmdpick__search");
+    assert.ok(box, "the search box is offered");
+    same(document.activeElement, list, "focus is on the list, so no on-screen keyboard until the box is tapped");
+    assert.equal(list.getAttribute("tabindex"), "-1", "the list can hold focus without becoming a tab stop");
+    assert.equal(labelOf(rows().find((r) => r.id === list.getAttribute("aria-activedescendant"))), "Rent and housing", "the active option is named on the list that holds focus");
+    assert.equal(box.hasAttribute("aria-activedescendant"), false, "and not on the box that does not");
+    keyOn(list, "ArrowDown");
+    assert.equal(labelOf(rows().find((r) => r.id === list.getAttribute("aria-activedescendant"))), "Travel", "the arrows work from the list");
+  });
+
+  test("typing while the list holds focus goes to the search box (a keyboard attached to a tablet)", () => {
+    pointer(true);
+    const { picker } = mount({ search: true });
+    open(picker);
+    const list = panel().querySelector(".cmdpick__list");
+    const box = panel().querySelector(".cmdpick__search");
+    const e = keyOn(list, "t");
+    assert.equal(e.defaultPrevented, true);
+    same(document.activeElement, box);
+    assert.equal(box.value, "t");
+    assert.deepEqual(rows().map(labelOf), ["Rent and housing", "Travel"], "filtered by what was typed");
+    assert.ok(box.getAttribute("aria-activedescendant"), "the active option now named on the box");
+    assert.equal(list.hasAttribute("aria-activedescendant"), false);
+  });
+
+  test("tapping the search box moves the active-option reference onto it", () => {
+    pointer(true);
+    const { picker } = mount({ search: true });
+    open(picker);
+    const box = panel().querySelector(".cmdpick__search");
+    box.focus();
+    box.dispatchEvent(new DomEvent("focus", {}));
+    assert.ok(box.getAttribute("aria-activedescendant"));
+    assert.equal(panel().querySelector(".cmdpick__list").hasAttribute("aria-activedescendant"), false);
+  });
+
+  test("with a fine pointer a searched list opens on its search box, as before", () => {
+    pointer(false);
+    const { picker } = mount({ search: true });
+    open(picker);
+    same(document.activeElement, panel().querySelector(".cmdpick__search"));
+  });
+
+  test("a letter on the closed trigger still starts the search, even on a touch screen (it was typed)", () => {
+    pointer(true);
+    const { picker } = mount({ search: true });
+    keyOn(trigger(picker), "h");
+    same(document.activeElement, panel().querySelector(".cmdpick__search"));
+    assert.equal(panel().querySelector(".cmdpick__search").value, "h");
+  });
+});
+
+describe("BT-004-05 RESULTS ARE ANNOUNCED (a11y review finding 3, WCAG 4.1.3)", () => {
+  const status = () => panel().querySelector(".cmdpick__status");
+
+  test("a polite, visually hidden status region in the panel, outside the listbox", () => {
+    const { picker } = mount();
+    open(picker);
+    assert.ok(status(), "present");
+    assert.equal(status().getAttribute("role"), "status");
+    assert.equal(status().getAttribute("aria-live"), "polite");
+    assert.equal(status().getAttribute("aria-atomic"), "true");
+    assert.ok(status().classList.contains("sr-only"), "visually hidden");
+    same(status().parentNode, panel(), "not inside the listbox, which may hold only options");
+    assert.equal(status().textContent, "", "silent on opening a list that has options");
+  });
+
+  test("after typing pauses it says how many results, or that nothing matches", (t) => {
+    t.mock.timers.enable({ apis: ["setTimeout"] });
+    const { picker } = mount();
+    open(picker);
+    const box = panel().querySelector(".cmdpick__search");
+    type(box, "o"); // Food, Rent and housing
+    assert.equal(status().textContent, "", "not while typing");
+    t.mock.timers.tick(399);
+    assert.equal(status().textContent, "", "not before the pause");
+    t.mock.timers.tick(1);
+    assert.equal(status().textContent, "2 results");
+    type(box, "tra");
+    t.mock.timers.tick(400);
+    assert.equal(status().textContent, "1 result");
+    type(box, "euzzz");
+    t.mock.timers.tick(400);
+    assert.equal(status().textContent, "Nothing matches “euzzz”.");
+  });
+
+  test("typing again before the pause restarts the wait, so only the last count is spoken", (t) => {
+    t.mock.timers.enable({ apis: ["setTimeout"] });
+    const { picker } = mount();
+    open(picker);
+    const box = panel().querySelector(".cmdpick__search");
+    type(box, "r"); // Rent and housing, Travel
+    t.mock.timers.tick(300);
+    type(box, "re"); // Rent and housing
+    t.mock.timers.tick(300);
+    assert.equal(status().textContent, "", "the first count was never spoken");
+    t.mock.timers.tick(100);
+    assert.equal(status().textContent, "1 result");
+  });
+
+  test("an empty list says so when it opens", (t) => {
+    t.mock.timers.enable({ apis: ["setTimeout"] });
+    const { picker } = mount({ options: [], value: "" });
+    open(picker);
+    t.mock.timers.tick(400);
+    assert.equal(status().textContent, "Nothing to choose from.");
+  });
+
+  test("closing cancels a pending announcement", (t) => {
+    t.mock.timers.enable({ apis: ["setTimeout"] });
+    const { picker } = mount();
+    open(picker);
+    const region = status();
+    type(panel().querySelector(".cmdpick__search"), "tra");
+    press(panel(), "Escape");
+    t.mock.timers.tick(400);
+    assert.equal(region.textContent, "", "nothing is announced for a list that is gone");
+  });
+});
+
+describe("BT-004-05 THE PANEL FOLLOWS ITS TRIGGER (a11y review finding 5, UX review U1)", () => {
+  // A window and a visual viewport that can be resized and fired at, as a browser's are.
+  function eventTarget(props = {}) {
+    const listeners = new Map();
+    return Object.assign({
+      addEventListener(type, fn) { if (!listeners.has(type)) listeners.set(type, []); listeners.get(type).push(fn); },
+      removeEventListener(type, fn) { listeners.set(type, (listeners.get(type) || []).filter((f) => f !== fn)); },
+      fire(type) { for (const fn of [...(listeners.get(type) || [])]) fn({ type, target: this }); },
+      count(type) { return (listeners.get(type) || []).length; },
+    }, props);
+  }
+  // Rectangles read from `geo` at the moment they are asked for, so a test can "scroll" by moving the
+  // trigger. `.scroller` stands for a dialog body with overflow:auto; `clip` is its visible box.
+  let geo;
+  function withLayout(initial = {}) {
+    geo = { anchorTop: 10, anchorLeft: 40, panelHeight: 167.6, chrome: 86, rowHeight: 36, clip: null, ...initial };
+    const create = document.createElement;
+    const box = (top, left, width, height) => ({ top, left, width, height, bottom: top + height, right: left + width });
+    document.createElement = (tag) => {
+      const node = create(tag);
+      node.getBoundingClientRect = function () {
+        if (this.classList.contains("cmdpick__panel")) return box(0, 0, 352, geo.panelHeight);
+        if (this.classList.contains("cmdpick__list")) return box(0, 0, 352, geo.panelHeight - geo.chrome);
+        if (this.classList.contains("cmdpick__opt")) return box(0, 0, 340, geo.rowHeight);
+        if (this.classList.contains("scroller")) return geo.clip || box(0, 0, 10000, 10000);
+        return box(geo.anchorTop, geo.anchorLeft, 200, 36);
+      };
+      return node;
+    };
+    const view = eventTarget({
+      innerWidth: 1280,
+      innerHeight: 900,
+      getComputedStyle: (n) => (n.classList && n.classList.contains("scroller") ? { overflowX: "hidden", overflowY: "auto" } : { overflowX: "visible", overflowY: "visible" }),
+    });
+    document.defaultView = view;
+    return view;
+  }
+  function mountInScroller() {
+    const scroller = document.createElement("div");
+    scroller.classList.add("scroller");
+    dom.body.appendChild(scroller);
+    const select = selectOf(OPTIONS, "food");
+    const picker = createCommandPicker({ select, label: "Category" });
+    scroller.appendChild(picker.element);
+    return { picker, scroller };
+  }
+  const scrolled = (target) => document.dispatchEvent(new DomEvent("scroll", { target }));
+  const top = () => panel().style.getPropertyValue("--pop-top");
+  const left = () => panel().style.getPropertyValue("--pop-left");
+
+  test("when a dialog body or the page scrolls, the open panel moves with its trigger", () => {
+    withLayout();
+    const { picker, scroller } = mountInScroller();
+    open(picker);
+    assert.equal(top(), "50px", "10 + 36 + 4");
+    geo.anchorTop = 210;
+    scrolled(scroller);
+    assert.equal(top(), "250px", "210 + 36 + 4: it followed the dialog body");
+    geo.anchorTop = 110;
+    scrolled(document);
+    assert.equal(top(), "150px", "and the page");
+  });
+
+  test("the list's own scrolling does not move the panel", () => {
+    withLayout();
+    const { picker } = mountInScroller();
+    open(picker);
+    geo.anchorTop = 300;
+    scrolled(panel().querySelector(".cmdpick__list"));
+    assert.equal(top(), "50px");
+  });
+
+  test("after a window resize it is placed again inside the new width", () => {
+    const view = withLayout({ anchorLeft: 600 });
+    const { picker } = mountInScroller();
+    open(picker);
+    assert.equal(left(), "600px", "600 + 352 fits in 1280 - 8");
+    view.innerWidth = 820;
+    view.fire("resize");
+    // The trigger (600–800) is still in the window; 600 + 352 - (820 - 8) = 140 past the edge, so 460.
+    assert.equal(left(), "460px", "pulled back inside the narrower window");
+  });
+
+  test("when the on-screen keyboard shrinks the visual viewport, the panel is capped to what is still visible", () => {
+    const view = withLayout({ panelHeight: 400, anchorTop: 300 });
+    view.innerWidth = 390;
+    view.innerHeight = 844;
+    view.visualViewport = eventTarget({ width: 390, height: 844, offsetTop: 0, offsetLeft: 0 });
+    const { picker } = mountInScroller();
+    open(picker);
+    assert.equal(panel().style.getPropertyValue("--pop-max-height"), "", "fits below at first: 844 - 336 - 12 = 496");
+    view.visualViewport.height = 500;
+    view.visualViewport.fire("resize");
+    // below = 500 - 336 - 12 = 152; above = 300 - 12 = 288: above, capped at 288, top 8.
+    assert.equal(panel().style.getPropertyValue("--pop-max-height"), "288px");
+    assert.equal(top(), "8px");
+  });
+
+  test("when the trigger scrolls out of the dialog body's visible area, the list closes and focus stays on the trigger", () => {
+    withLayout({ anchorTop: 200, clip: { top: 100, left: 0, width: 1280, height: 400, bottom: 500, right: 1280 } });
+    const { picker, scroller } = mountInScroller();
+    open(picker);
+    assert.ok(panel());
+    geo.anchorTop = 520; // under the dialog body's visible bottom (500), though still inside the window
+    scrolled(scroller);
+    none(panel(), "closed");
+    same(document.activeElement, trigger(picker), "focus is on the trigger, not lost with the panel");
+  });
+
+  test("and when it leaves the window entirely", () => {
+    withLayout();
+    const { picker } = mountInScroller();
+    open(picker);
+    geo.anchorTop = -80;
+    scrolled(document);
+    none(panel());
+    same(document.activeElement, trigger(picker));
+  });
+
+  test("closing stops following: no listeners are left on the window or the visual viewport", () => {
+    const view = withLayout();
+    view.visualViewport = eventTarget({ width: 1280, height: 900, offsetTop: 0, offsetLeft: 0 });
+    const { picker } = mountInScroller();
+    open(picker);
+    assert.equal(view.count("resize"), 1);
+    assert.equal(view.visualViewport.count("resize"), 1);
+    press(panel(), "Escape");
+    assert.equal(view.count("resize"), 0);
+    assert.equal(view.visualViewport.count("resize"), 0);
+    assert.equal(view.visualViewport.count("scroll"), 0);
   });
 });
 

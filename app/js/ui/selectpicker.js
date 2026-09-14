@@ -31,9 +31,9 @@ import { createCommandPicker } from "./commandpicker.js";
 
 const handles = new WeakMap();
 
-// Attributes a view sets on the select that must describe the trigger instead.
-const MIRRORED = ["aria-describedby", "aria-invalid", "aria-errormessage"];
-const PROPERTIES = ["value", "selectedIndex", "disabled", "hidden"];
+// The hints, errors and required mark a view sets on the select are read from it by the command picker
+// on every refresh (a11y review finding 6), so the adapter only has to notice the change.
+const PROPERTIES = ["value", "selectedIndex", "disabled", "hidden", "required"];
 const METHODS = ["setAttribute", "removeAttribute", "toggleAttribute", "appendChild", "append", "prepend", "replaceChildren", "removeChild", "insertBefore"];
 
 /** The picker over this select, or null when it is a plain select. */
@@ -58,7 +58,10 @@ export function controlElement(control) {
  * @param {Function} [options.describeOf]  value → the row's spoken name when the label is not all of it
  * @param {object} [options.create]        a pinned create action ({ label, onPick(term) })
  */
-export function enhanceSelect(select, { label = null, search = true, placeholder = "", colorOf = null, badgeOf = null, describeOf = null, create = null } = {}) {
+// `search` defaults to "auto": a search box only above the command picker's threshold of twelve options,
+// so a short data list opens like a native list with no on-screen keyboard (UX review U2). `true`
+// always offers one.
+export function enhanceSelect(select, { label = null, search = "auto", placeholder = "", colorOf = null, badgeOf = null, describeOf = null, create = null } = {}) {
   if (!select || select.tagName !== "SELECT") throw new Error("enhanceSelect needs a select element.");
   const existing = handles.get(select);
   if (existing) return existing;
@@ -86,11 +89,7 @@ export function enhanceSelect(select, { label = null, search = true, placeholder
       trigger.disabled = off;
       if (off) picker.close();
       element.hidden = !!(select.hidden || select.hasAttribute("hidden"));
-      for (const name of MIRRORED) {
-        const value = select.getAttribute(name);
-        if (value === null) trigger.removeAttribute(name);
-        else trigger.setAttribute(name, value);
-      }
+      // Hints, errors and the required mark are read from the select by the picker (commandpicker A13).
       picker.refresh();
     } finally {
       syncing = false;

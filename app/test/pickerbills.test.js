@@ -16,7 +16,9 @@ afterEach(() => dom.teardown());
 
 const tick = () => new Promise((resolve) => setTimeout(resolve, 0));
 const buttonNamed = (root, text) => root.querySelectorAll("button").find((b) => b.textContent === text);
-const spoken = (select) => triggerFor(select).getAttribute("aria-label");
+import { spokenOf } from "./pickerassert.js";
+// What a screen reader announces: the field's name, the value and how to use it (a11y review finding 6).
+const spoken = (select) => spokenOf(triggerFor(select));
 const ancestorWith = (node, cls) => { let n = node; while (n && !(n.classList && n.classList.contains(cls))) n = n.parentNode; return n; };
 
 const RENT = {
@@ -55,6 +57,17 @@ function billsCtx() {
   return { ctx: { store, api }, state, calls };
 }
 
+describe("BT-004-05 bills: an empty field reads naturally (UX review U6)", () => {
+  test("a new bill's empty To account says “Choose an account…”, not “Choose to account…”", () => {
+    const { ctx } = billsCtx();
+    openBillEditor(ctx);
+    const root = dom.body.querySelector(".modal");
+    const to = pickerNamed(root, "To account");
+    assert.equal(to.value, "", "nothing chosen yet");
+    assert.equal(triggerFor(to).querySelector(".cmdpick__value").textContent, "Choose an account…");
+  });
+});
+
 describe("BT-004-05 bills: the bill editor", () => {
   test("every dropdown is a picker; the short lists have no search box; people load into Responsible person", async () => {
     const { ctx } = billsCtx();
@@ -64,12 +77,12 @@ describe("BT-004-05 bills: the bill editor", () => {
     assert.deepEqual(pickerLabels(root), ["Type", "Direction", "Account", "To account", "Amount is", "Repeats", "Unit", "Category", "Responsible person"]);
     assert.equal(spoken(pickerNamed(root, "Type")), "Type: Rent or mortgage. Choose.");
     assert.equal(spoken(pickerNamed(root, "Direction")), "Direction: Money out. Choose.");
-    assert.equal(spoken(pickerNamed(root, "Account")), "Account: Fictional joint (EUR). Search and choose.");
+    assert.equal(spoken(pickerNamed(root, "Account")), "Account: Fictional joint (EUR). Choose.");
     assert.equal(spoken(pickerNamed(root, "Amount is")), "Amount is: Always the same. Choose.");
     assert.equal(spoken(pickerNamed(root, "Repeats")), "Repeats: Monthly. Choose.");
     assert.equal(spoken(pickerNamed(root, "Unit")), "Unit: months. Choose.");
-    assert.equal(spoken(pickerNamed(root, "Category")), "Category: Uncategorized. Search and choose.");
-    assert.equal(spoken(pickerNamed(root, "Responsible person")), "Responsible person: Nobody in particular. Search and choose.");
+    assert.equal(spoken(pickerNamed(root, "Category")), "Category: Uncategorized. Choose.");
+    assert.equal(spoken(pickerNamed(root, "Responsible person")), "Responsible person: Nobody in particular. Choose.");
     await tick();
     assert.deepEqual(offeredOptions(pickerNamed(root, "Responsible person")), ["Nobody in particular", "Bob Fictional (workspace member)", "Dana Fictional (contact)"], "the people loaded after the dialog opened are offered");
     triggerFor(pickerNamed(root, "Type")).click();

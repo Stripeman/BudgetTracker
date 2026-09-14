@@ -184,7 +184,7 @@ async function openWhoCanSee(ctx, account) {
     const members = ((ctx.store.getState().members.data || {}).members || []).filter((m) => !m.self);
     const active = data.grants.filter((g) => !g.revokedAt);
     // People are searched, as in TaskTracker's people pickers (BT-004-05).
-    const memberSel = pickerSelect(members.map((m) => ({ value: m.id, label: m.name })), (members[0] || {}).id);
+    const memberSel = pickerSelect(members.map((m) => ({ value: m.id, label: m.name })), (members[0] || {}).id, {}, { placeholder: "Choose a member…" });
     const boxes = GRANTABLE.map(([value, label]) => { const c = el("input", { type: "checkbox", value }); if (value === "view-balances" || value === "view-transactions") c.checked = true; return el("label", { class: "field--inline" }, [c, label]); });
     const expires = input({ type: "date" });
     const grant = button("Share", async () => {

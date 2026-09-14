@@ -15,6 +15,7 @@ import { installDom, DomEvent } from "./domdouble.js";
 import { enhanceSelect, pickerOf, controlElement } from "../js/ui/selectpicker.js";
 import { field, pickerSelect, commitOnConfirm } from "../js/ui/components.js";
 import { openModal } from "../js/ui/modal.js";
+import { spokenOf } from "./pickerassert.js";
 
 let dom;
 beforeEach(() => { dom = installDom(); });
@@ -120,16 +121,22 @@ describe("BT-004-05 programmatic changes keep the trigger in step", () => {
   test("descriptions, invalid marks and error links set on the select are carried by the trigger", () => {
     const { select } = mounted();
     const trigger = triggerOf(select);
+    const how = `${trigger.id}-how`;
     select.setAttribute("aria-describedby", "hint-a hint-b");
     select.setAttribute("aria-invalid", "true");
     select.setAttribute("aria-errormessage", "modal-error-1");
-    assert.equal(trigger.getAttribute("aria-describedby"), "hint-a hint-b");
+    // Help first, then the error text while it is invalid, then how to use the control (finding 6).
+    assert.equal(trigger.getAttribute("aria-describedby"), `hint-a hint-b modal-error-1 ${how}`);
     assert.equal(trigger.getAttribute("aria-invalid"), "true");
     assert.equal(trigger.getAttribute("aria-errormessage"), "modal-error-1");
     select.setAttribute("aria-describedby", "hint-b");
     select.removeAttribute("aria-invalid");
-    assert.equal(trigger.getAttribute("aria-describedby"), "hint-b", "a hint that goes away leaves the description");
+    assert.equal(trigger.getAttribute("aria-describedby"), `hint-b ${how}`, "a hint that goes away leaves the description, and so does the error with the invalid mark");
     assert.equal(trigger.hasAttribute("aria-invalid"), false);
+    select.required = true;
+    assert.equal(trigger.getAttribute("aria-required"), "true", "a required select makes a required combobox");
+    select.required = false;
+    assert.equal(trigger.hasAttribute("aria-required"), false);
   });
 
   test("focusing the select focuses the trigger, which is what people use", () => {
@@ -152,18 +159,19 @@ describe("BT-004-05 the field label names the trigger", () => {
     const { select, node } = mounted(PERIODS, "weekly", {}, {}, "Budget period");
     const label = node.querySelector("label");
     assert.equal(label.getAttribute("for"), triggerOf(select).id);
-    assert.equal(triggerOf(select).getAttribute("aria-label"), "Budget period: Weekly. Search and choose.");
+    assert.equal(triggerOf(select).hasAttribute("aria-label"), false, "the visible label is the name (a11y review finding 6)");
+    assert.equal(spokenOf(triggerOf(select)), "Budget period: Weekly. Choose.", "three periods: no search box (UX review U2)");
   });
 
   test("the field's help text describes the trigger", () => {
     const { select, node } = mounted(PERIODS, "monthly", {}, {}, "Period", { help: "How often the budget starts again." });
     const help = node.querySelector(".field__help");
     assert.ok(help.id);
-    assert.equal(triggerOf(select).getAttribute("aria-describedby"), help.id);
+    assert.equal(triggerOf(select).getAttribute("aria-describedby"), `${help.id} ${triggerOf(select).id}-how`, "the help, then how to use the control");
   });
 
   test("the panel, its list and its search box are named after the field", () => {
-    const { select } = mounted(PERIODS, "monthly", {}, {}, "Currency");
+    const { select } = mounted(PERIODS, "monthly", {}, { search: true }, "Currency");
     triggerOf(select).click();
     assert.equal(panel().getAttribute("aria-label"), "Currency");
     assert.equal(panel().querySelector(".cmdpick__list").getAttribute("aria-label"), "Currency");
@@ -174,7 +182,8 @@ describe("BT-004-05 the field label names the trigger", () => {
   test("a select placed without a field is named by its own aria-label", () => {
     const select = pickerSelect(PERIODS, "monthly", { "aria-label": "Role for Bob Fictional" }, { search: false });
     dom.body.appendChild(controlElement(select));
-    assert.equal(triggerOf(select).getAttribute("aria-label"), "Role for Bob Fictional: Monthly. Choose.", "a list without a search box is not called searchable");
+    assert.equal(triggerOf(select).getAttribute("aria-label"), "Role for Bob Fictional", "the name alone (a11y review finding 6)");
+    assert.equal(spokenOf(triggerOf(select)), "Role for Bob Fictional: Monthly. Choose.", "a list without a search box is not called searchable");
   });
 });
 
@@ -222,7 +231,9 @@ describe("BT-004-05 change semantics the views rely on", () => {
 });
 
 describe("BT-004-05 inside a modal dialog", () => {
-  function inModal(picker = {}) {
+  // These dialog tests are about the searched variant unless they say otherwise (`search: false`); a
+  // three-option list has no search box by default since UX review U2.
+  function inModal(picker = { search: true }) {
     const select = pickerSelect(PERIODS, "monthly", {}, picker);
     const modal = openModal({ title: "Add budget", body: [field("Period", select)] });
     return { select, modal };
@@ -271,13 +282,51 @@ describe("BT-004-05 inside a modal dialog", () => {
   });
 
   test("Tab from the search box moves on to a pinned create action inside the panel", () => {
-    const select = pickerSelect(PERIODS, "monthly", {}, { create: { label: "New period", onPick() {} } });
+    const select = pickerSelect(PERIODS, "monthly", {}, { search: true, create: { label: "New period", onPick() {} } });
     dom.body.appendChild(field("Period", select));
     triggerOf(select).click();
     press(panel().querySelector(".cmdpick__search"), "Tab");
     assert.ok(panel(), "still open: the create action is the next stop");
     press(panel().querySelector(".cmdpick__create"), "Tab");
     none(panel(), "Tab from the last stop leaves");
+  });
+
+  // One event, offered to the document's capture listeners (the modal) and then to the element, as in
+  // a browser — so what the modal did to it (preventDefault) is visible to the assertions.
+  const keyThrough = (node, key, extra = {}) => {
+    const e = Object.assign(new DomEvent("keydown", { bubbles: true, key, target: node }), extra);
+    document.dispatchEvent(e);
+    if (!e.propagationStopped) node.dispatchEvent(e);
+    return e;
+  };
+
+  test("the open panel is inside the dialog, so aria-modal never hides its options (a11y review finding 4)", () => {
+    const { select } = inModal();
+    const dialog = dom.body.querySelector(".modal");
+    triggerOf(select).click();
+    assert.ok(panel(), "open");
+    assert.ok(dialog.contains(panel()), "the panel is in the aria-modal dialog's subtree");
+    assert.equal(panel().getAttribute("role"), "dialog");
+    // Still dismissed by a press outside it, even though it now lives inside the dialog.
+    document.dispatchEvent(new DomEvent("mousedown", { bubbles: true, target: dialog.querySelector("h2") }));
+    none(panel(), "a press on the dialog's own title closes the panel");
+    assert.ok(dialogOpen(), "and not the dialog");
+  });
+
+  test("outside a dialog the panel still floats on the body (TaskTracker's placement)", () => {
+    const { select } = mounted();
+    triggerOf(select).click();
+    same(panel().parentNode, dom.body);
+  });
+
+  test("the dialog's Tab trap leaves Tab inside an open panel to the panel, even when the picker is the dialog's last control", () => {
+    const select = pickerSelect(PERIODS, "monthly", {}, { search: true });
+    openModal({ title: "Choose a period", body: [field("Period", select)] });
+    triggerOf(select).click();
+    const e = keyThrough(panel().querySelector(".cmdpick__search"), "Tab");
+    none(panel(), "Tab left the panel");
+    same(document.activeElement, triggerOf(select), "focus is back on the trigger, where the browser's Tab continues");
+    assert.equal(e.defaultPrevented, false, "the dialog did not wrap focus to its first control");
   });
 
   test("closing the dialog closes a panel opened from it", () => {
@@ -294,6 +343,90 @@ describe("BT-004-05 inside a modal dialog", () => {
     dom.body.removeChild(node);
     document.dispatchEvent(new DomEvent("mousedown", { bubbles: true, target: dom.body }));
     none(panel());
+  });
+});
+
+describe("BT-004-05 a data list offers a search box only when it is long (UX review U2)", () => {
+  const numbered = (n) => Array.from({ length: n }, (_, i) => ({ value: `v${i}`, label: `Option ${String(i + 1).padStart(2, "0")}` }));
+
+  test("twelve or fewer options: no search box, the list takes the keyboard, described as Choose.", () => {
+    const { select } = mounted(numbered(12), "v0");
+    assert.equal(triggerOf(select).querySelector(".cmdpick__hint").textContent, "▾", "a chevron promises a list");
+    assert.equal(spokenOf(triggerOf(select)), "Period: Option 01. Choose.");
+    triggerOf(select).click();
+    none(panel().querySelector(".cmdpick__search"), "no box, so no on-screen keyboard");
+    assert.ok(panel().classList.contains("cmdpick__panel--nosearch"));
+    same(document.activeElement, panel().querySelector(".cmdpick__list"));
+  });
+
+  test("thirteen or more options: the search box, focused, described as Search and choose.", () => {
+    const { select } = mounted(numbered(13), "v0");
+    assert.equal(triggerOf(select).querySelector(".cmdpick__hint").textContent, "⌕");
+    assert.equal(spokenOf(triggerOf(select)), "Period: Option 01. Search and choose.");
+    triggerOf(select).click();
+    same(document.activeElement, panel().querySelector(".cmdpick__search"));
+    assert.equal(panel().classList.contains("cmdpick__panel--nosearch"), false);
+  });
+
+  test("decided again at each open: a list filled after it was built gets the box once it is long, and loses it when short again", () => {
+    const { select } = mounted([], "");
+    select.replaceChildren(...numbered(13).map((o) => option(o.value, o.label)));
+    assert.equal(spokenOf(triggerOf(select)), "Period: Choose period…. Search and choose.", "the closed trigger already says so");
+    triggerOf(select).click();
+    assert.ok(panel().querySelector(".cmdpick__search"), "long now: the box");
+    press(panel().querySelector(".cmdpick__search"), "Escape");
+    select.replaceChildren(option("a", "Alpha"), option("b", "Beta"));
+    triggerOf(select).click();
+    none(panel().querySelector(".cmdpick__search"), "short again: no box");
+    same(document.activeElement, panel().querySelector(".cmdpick__list"));
+  });
+
+  test("a field may still ask for the box on a short list (search: true), as the header workspace picker does", () => {
+    const { select } = mounted(PERIODS, "monthly", {}, { search: true });
+    triggerOf(select).click();
+    same(document.activeElement, panel().querySelector(".cmdpick__search"));
+  });
+});
+
+describe("BT-004-05 focus after navigation skips the hidden select (UX review U7)", () => {
+  // A browser's querySelectorAll returns a NodeList (no find, map or filter); the double returns an
+  // array, which hid a crash in the first version of this fix. The view here answers like a browser.
+  function asNodeLists(node) {
+    const real = node.querySelectorAll.bind(node);
+    node.querySelectorAll = (selector) => {
+      const found = real(selector);
+      return { length: found.length, item: (i) => found[i] || null, forEach: (fn) => found.forEach(fn), [Symbol.iterator]: () => found[Symbol.iterator]() };
+    };
+    return node;
+  }
+
+  test("focusFirst lands on the heading even when a dropdown comes first in the view", async () => {
+    const { focusFirst } = await import("../js/ui/dom.js");
+    const view = asNodeLists(document.createElement("div"));
+    const select = pickerSelect(PERIODS, "monthly");
+    view.appendChild(field("Show", select));
+    const heading = document.createElement("h1");
+    heading.textContent = "Merchants";
+    view.appendChild(heading);
+    dom.body.appendChild(view);
+    focusFirst(view);
+    same(document.activeElement, heading, "not the hidden select (tabindex -1), and not its trigger");
+  });
+
+  test("focusFirst skips anything inside an aria-hidden subtree", async () => {
+    const { focusFirst } = await import("../js/ui/dom.js");
+    const view = document.createElement("div");
+    const decoy = document.createElement("div");
+    decoy.setAttribute("aria-hidden", "true");
+    const hiddenTarget = document.createElement("span");
+    hiddenTarget.setAttribute("tabindex", "-1");
+    decoy.appendChild(hiddenTarget);
+    view.appendChild(decoy);
+    const heading = document.createElement("h2");
+    view.appendChild(heading);
+    dom.body.appendChild(view);
+    focusFirst(view);
+    same(document.activeElement, heading);
   });
 });
 
@@ -314,6 +447,32 @@ describe("BT-004-05 nothing is cut off (real layout is checked in a browser)", (
     triggerOf(select).click();
     assert.equal(panel().style.getPropertyValue("--pop-min-width"), "310px");
     assert.equal(panel().hasAttribute("style"), false);
+  });
+
+  test("an icon or colour picker inside a form field looks like the command-picker trigger beside it (UX review U4)", () => {
+    const css = fs.readFileSync(fileURLToPath(new URL("../styles/components.css", import.meta.url)), "utf8");
+    const block = (selector) => {
+      const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      const m = new RegExp(`(?:^|\\})\\s*${escaped}\\s*\\{([^}]*)\\}`, "m").exec(css);
+      return m ? m[1] : "";
+    };
+    const field = block(".field .themepick__toggle");
+    const trigger = block(".cmdpick__trigger");
+    // The same tokens as the command-picker trigger, so a row of fields lines up (Add bill, Add account).
+    for (const token of ["min-height: var(--control-height)", "padding: var(--control-padding-y) var(--control-padding-x)", "font-size: var(--control-font-size)", "border: 1px solid var(--control-border)", "border-radius: var(--control-radius)", "background: var(--control-surface)"]) {
+      assert.ok(trigger.includes(token), `the command-picker trigger uses ${token}`);
+      assert.ok(field.includes(token), `an icon picker in a field uses ${token}`);
+    }
+    assert.match(block(".field .themepick__caret"), /font-size:\s*var\(--text-xs\)/, "the caret is the trigger's small ▾");
+    assert.match(block(".field .themepick__toggle .icon"), /width:\s*1\.15em/, "the icon is text-sized, as on the trigger");
+    // The icon picker's field label is a <p>: without this its control sits a paragraph margin lower.
+    assert.match(block(".field__label"), /margin:\s*0/, "field labels have no margin, whatever their element");
+  });
+
+  test("a locked (disabled) trigger shows no search or list hint, since it cannot open (UX review U5)", () => {
+    const css = fs.readFileSync(fileURLToPath(new URL("../styles/components.css", import.meta.url)), "utf8");
+    // Hidden, not removed, so a locked field keeps the same width as its neighbours.
+    assert.match(css, /\.cmdpick__trigger:disabled\s+\.cmdpick__hint\s*\{\s*visibility:\s*hidden;?\s*\}/);
   });
 
   test("the stylesheet honours that width and lets long option names wrap instead of hiding them", () => {

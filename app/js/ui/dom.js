@@ -81,9 +81,13 @@ export function announce(message) {
 }
 
 // Moves keyboard focus to a newly rendered region without scrolling the page.
+// Never a command picker's hidden select (it is tabindex -1 but is not what people use) or anything
+// hidden from assistive technology (UX review U7).
+const skipped = (node) => (node.classList && node.classList.contains("cmdpick__native")) || !!(node.closest && node.closest('[aria-hidden="true"]'));
 export function focusFirst(container) {
   if (!container) return;
-  const target = container.querySelector("[autofocus], h1, h2, [tabindex='-1']") || container;
+  // Array.from: a browser's querySelectorAll returns a NodeList, which has no find().
+  const target = Array.from(container.querySelectorAll("[autofocus], h1, h2, [tabindex='-1']")).find((n) => !skipped(n)) || container;
   if (typeof target.focus === "function") {
     if (!target.hasAttribute("tabindex") && !/^(A|BUTTON|INPUT|SELECT|TEXTAREA)$/.test(target.tagName)) target.setAttribute("tabindex", "-1");
     target.focus({ preventScroll: true });
