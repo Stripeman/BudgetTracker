@@ -15,6 +15,7 @@ import { installDom, DomEvent } from "./domdouble.js";
 import { enhanceSelect, pickerOf, controlElement } from "../js/ui/selectpicker.js";
 import { field, pickerSelect, commitOnConfirm } from "../js/ui/components.js";
 import { openModal } from "../js/ui/modal.js";
+import { spokenOf } from "./pickerassert.js";
 
 let dom;
 beforeEach(() => { dom = installDom(); });
@@ -120,16 +121,22 @@ describe("BT-004-05 programmatic changes keep the trigger in step", () => {
   test("descriptions, invalid marks and error links set on the select are carried by the trigger", () => {
     const { select } = mounted();
     const trigger = triggerOf(select);
+    const how = `${trigger.id}-how`;
     select.setAttribute("aria-describedby", "hint-a hint-b");
     select.setAttribute("aria-invalid", "true");
     select.setAttribute("aria-errormessage", "modal-error-1");
-    assert.equal(trigger.getAttribute("aria-describedby"), "hint-a hint-b");
+    // Help first, then the error text while it is invalid, then how to use the control (finding 6).
+    assert.equal(trigger.getAttribute("aria-describedby"), `hint-a hint-b modal-error-1 ${how}`);
     assert.equal(trigger.getAttribute("aria-invalid"), "true");
     assert.equal(trigger.getAttribute("aria-errormessage"), "modal-error-1");
     select.setAttribute("aria-describedby", "hint-b");
     select.removeAttribute("aria-invalid");
-    assert.equal(trigger.getAttribute("aria-describedby"), "hint-b", "a hint that goes away leaves the description");
+    assert.equal(trigger.getAttribute("aria-describedby"), `hint-b ${how}`, "a hint that goes away leaves the description, and so does the error with the invalid mark");
     assert.equal(trigger.hasAttribute("aria-invalid"), false);
+    select.required = true;
+    assert.equal(trigger.getAttribute("aria-required"), "true", "a required select makes a required combobox");
+    select.required = false;
+    assert.equal(trigger.hasAttribute("aria-required"), false);
   });
 
   test("focusing the select focuses the trigger, which is what people use", () => {
@@ -152,14 +159,15 @@ describe("BT-004-05 the field label names the trigger", () => {
     const { select, node } = mounted(PERIODS, "weekly", {}, {}, "Budget period");
     const label = node.querySelector("label");
     assert.equal(label.getAttribute("for"), triggerOf(select).id);
-    assert.equal(triggerOf(select).getAttribute("aria-label"), "Budget period: Weekly. Search and choose.");
+    assert.equal(triggerOf(select).hasAttribute("aria-label"), false, "the visible label is the name (a11y review finding 6)");
+    assert.equal(spokenOf(triggerOf(select)), "Budget period: Weekly. Search and choose.");
   });
 
   test("the field's help text describes the trigger", () => {
     const { select, node } = mounted(PERIODS, "monthly", {}, {}, "Period", { help: "How often the budget starts again." });
     const help = node.querySelector(".field__help");
     assert.ok(help.id);
-    assert.equal(triggerOf(select).getAttribute("aria-describedby"), help.id);
+    assert.equal(triggerOf(select).getAttribute("aria-describedby"), `${help.id} ${triggerOf(select).id}-how`, "the help, then how to use the control");
   });
 
   test("the panel, its list and its search box are named after the field", () => {
@@ -174,7 +182,8 @@ describe("BT-004-05 the field label names the trigger", () => {
   test("a select placed without a field is named by its own aria-label", () => {
     const select = pickerSelect(PERIODS, "monthly", { "aria-label": "Role for Bob Fictional" }, { search: false });
     dom.body.appendChild(controlElement(select));
-    assert.equal(triggerOf(select).getAttribute("aria-label"), "Role for Bob Fictional: Monthly. Choose.", "a list without a search box is not called searchable");
+    assert.equal(triggerOf(select).getAttribute("aria-label"), "Role for Bob Fictional", "the name alone (a11y review finding 6)");
+    assert.equal(spokenOf(triggerOf(select)), "Role for Bob Fictional: Monthly. Choose.", "a list without a search box is not called searchable");
   });
 });
 

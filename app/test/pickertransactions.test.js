@@ -15,7 +15,9 @@ afterEach(() => dom.teardown());
 
 const tick = () => new Promise((resolve) => setTimeout(resolve, 0));
 const buttonNamed = (root, text) => root.querySelectorAll("button").find((b) => b.textContent === text);
-const spoken = (select) => triggerFor(select).getAttribute("aria-label");
+import { spokenOf } from "./pickerassert.js";
+// What a screen reader announces: the field's name, the value and how to use it (a11y review finding 6).
+const spoken = (select) => spokenOf(triggerFor(select));
 const key = (node, k) => node.dispatchEvent(new DomEvent("keydown", { bubbles: true, key: k }));
 
 function txCtx({ params = {} } = {}) {
@@ -162,12 +164,16 @@ describe("BT-004-05 transactions: quick entry", () => {
     const account = pickerNamed(root, "Account");
     assert.equal(spoken(category), "Category: Fun. Search and choose.");
     assert.equal(spoken(account), "Account: Fictional wallet (EUR). Search and choose.");
-    const categoryHint = root.querySelector(`#${triggerFor(category).getAttribute("aria-describedby")}`);
+    // The trigger's description is the suggestion's reason, followed by how to use the control (the
+    // instructions moved from its name into its description, a11y review finding 6).
+    const idsOf = (select) => String(triggerFor(select).getAttribute("aria-describedby") || "").split(/\s+/).filter(Boolean);
+    const hintOf = (select) => idsOf(select).map((id) => root.querySelector(`#${id}`)).find((n) => n && n.classList.contains("suggestion")) || null;
+    const categoryHint = hintOf(category);
     assert.ok(categoryHint, "the trigger is described by the suggestion");
     assert.match(categoryHint.textContent, /Your usual category here\./);
-    assert.match(root.querySelector(`#${triggerFor(account).getAttribute("aria-describedby")}`).textContent, /Your last entry at this merchant\./);
+    assert.match(hintOf(account).textContent, /Your last entry at this merchant\./);
     chooseOption(category, "Groceries");
-    assert.equal(triggerFor(category).hasAttribute("aria-describedby"), false, "the reason no longer applies once the person chose");
+    assert.deepEqual(idsOf(category), [`${triggerFor(category).id}-how`], "the reason no longer applies once the person chose; only how to use it remains");
     assert.equal(categoryHint.hidden, true);
   });
 

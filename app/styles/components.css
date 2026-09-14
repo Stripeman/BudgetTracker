@@ -424,6 +424,8 @@ fieldset.budget-line { margin: 0; padding: var(--space-3); border: 1px solid var
 .cmdpick__trigger:disabled { cursor: not-allowed; opacity: var(--control-disabled-opacity); }
 .field .cmdpick__trigger:disabled { opacity: 1; background: var(--surface-sunken); color: var(--text-subtle); }
 .cmdpick__value { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* The value a screen reader hears (a11y review finding 6), visually hidden through .sr-only. */
+.cmdpick__spoken { white-space: nowrap; }
 .cmdpick--empty .cmdpick__value { color: var(--text-muted); }
 .cmdpick__hint { flex: none; color: var(--text-muted); font-size: var(--text-xs); }
 /* A locked field cannot open, so it promises no search and no list (UX review U5). Hidden rather than

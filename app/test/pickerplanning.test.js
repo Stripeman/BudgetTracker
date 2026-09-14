@@ -15,7 +15,9 @@ afterEach(() => dom.teardown());
 
 const tick = () => new Promise((resolve) => setTimeout(resolve, 0));
 const buttonNamed = (root, text) => root.querySelectorAll("button").find((b) => b.textContent === text);
-const spoken = (select) => triggerFor(select).getAttribute("aria-label");
+import { spokenOf } from "./pickerassert.js";
+// What a screen reader announces: the field's name, the value and how to use it (a11y review finding 6).
+const spoken = (select) => spokenOf(triggerFor(select));
 const fieldOf = (select) => { let n = triggerFor(select); while (n && !(n.classList && n.classList.contains("field"))) n = n.parentNode; return n; };
 
 function planningCtx() {

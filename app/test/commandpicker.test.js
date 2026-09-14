@@ -199,12 +199,73 @@ describe("BT-004-04 KEYBOARD", () => {
 });
 
 describe("BT-004-04 ACCESSIBILITY", () => {
-  test("the trigger names the field AND its current value, and says whether it is open", () => {
+  test("the trigger is a select-only combobox: named by the field, its value spoken, how to use it described, open or not (a11y review finding 6)", () => {
     const { picker } = mount({ value: "rent" });
-    assert.equal(trigger(picker).getAttribute("aria-label"), "Category: Rent and housing. Search and choose.");
-    assert.equal(trigger(picker).getAttribute("aria-expanded"), "false");
+    const t = trigger(picker);
+    assert.equal(t.tagName, "BUTTON");
+    assert.equal(t.getAttribute("role"), "combobox");
+    assert.equal(t.getAttribute("aria-label"), "Category", "the name is the field alone, no value and no instructions");
+    assert.equal(picker.element.querySelector(".cmdpick__spoken").textContent, "Rent and housing", "the value, in the trigger's text");
+    assert.equal(picker.element.querySelector(".cmdpick__value").getAttribute("aria-hidden"), "true", "the visible copy is not read twice");
+    const how = picker.element.querySelector(`#${t.id}-how`);
+    assert.equal(how.textContent, "Search and choose.");
+    assert.ok(how.hasAttribute("hidden"), "read as a description only, never in browse mode");
+    assert.equal(t.getAttribute("aria-describedby"), `${t.id}-how`);
+    assert.equal(t.getAttribute("aria-haspopup"), "dialog");
+    assert.equal(t.getAttribute("aria-expanded"), "false");
     open(picker);
-    assert.equal(trigger(picker).getAttribute("aria-expanded"), "true");
+    assert.equal(t.getAttribute("aria-expanded"), "true");
+    assert.equal(t.getAttribute("aria-controls"), panel().id, "it names the panel it opened");
+  });
+
+  test("with a visible <label for> naming it, the trigger carries no aria-label of its own (the label is its name)", () => {
+    const labelled = mount({ labelVisible: true });
+    assert.equal(trigger(labelled.picker).hasAttribute("aria-label"), false);
+    const fielded = mount();
+    fielded.picker.setLabel("Spending category"); // what components.js field() does, beside its <label for>
+    assert.equal(trigger(fielded.picker).hasAttribute("aria-label"), false);
+    const unlabelled = mount();
+    unlabelled.picker.setLabel("Role for Bob Fictional", { visible: false });
+    assert.equal(trigger(unlabelled.picker).getAttribute("aria-label"), "Role for Bob Fictional");
+  });
+
+  test("a list without a search box is described as Choose.", () => {
+    const { picker } = mount({ search: false });
+    const t = trigger(picker);
+    assert.equal(picker.element.querySelector(`#${t.id}-how`).textContent, "Choose.");
+  });
+
+  test("the spoken value is the full description when there is one, and the badge is not read on its own", () => {
+    const { picker } = mount({
+      value: "rent",
+      describeOf: (v) => (v === "rent" ? "Rent and housing — shared" : null),
+      badgeOf: () => { const b = document.createElement("span"); b.setAttribute("role", "img"); b.setAttribute("aria-label", "Shared"); return b; },
+    });
+    assert.equal(picker.element.querySelector(".cmdpick__spoken").textContent, "Rent and housing — shared");
+    assert.equal(picker.element.querySelector(".cmdpick__badge").getAttribute("aria-hidden"), "true");
+    picker.element.querySelector("select").value = "food";
+    picker.refresh();
+    assert.equal(picker.element.querySelector(".cmdpick__spoken").textContent, "Food", "no description: the label");
+  });
+
+  test("required, invalid and the error text reach the trigger from the select; the error is described only while invalid", () => {
+    const { picker, select } = mount();
+    const t = trigger(picker);
+    select.required = true;
+    select.setAttribute("aria-describedby", "help-1");
+    select.setAttribute("aria-invalid", "true");
+    select.setAttribute("aria-errormessage", "err-1");
+    picker.refresh();
+    assert.equal(t.getAttribute("aria-required"), "true");
+    assert.equal(t.getAttribute("aria-invalid"), "true");
+    assert.equal(t.getAttribute("aria-errormessage"), "err-1");
+    assert.equal(t.getAttribute("aria-describedby"), `help-1 err-1 ${t.id}-how`, "help, then the error, then how to use it");
+    select.removeAttribute("aria-invalid");
+    select.required = false;
+    picker.refresh();
+    assert.equal(t.hasAttribute("aria-invalid"), false);
+    assert.equal(t.hasAttribute("aria-required"), false);
+    assert.equal(t.getAttribute("aria-describedby"), `help-1 ${t.id}-how`, "the error text goes with the invalid mark");
   });
 
   test("the list is a listbox of options, and the search box is its combobox (A2)", () => {

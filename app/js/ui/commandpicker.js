@@ -90,7 +90,7 @@ const ANNOUNCE_DELAY = 400;
  * @param {(value: string) => (string|null)} [options.describeOf]
  *        the row's spoken name, when the visible label is not the whole fact ("Family — Manager").
  */
-export function createCommandPicker({ select, label = "Choose", placeholder = "", colorOf = null, badgeOf = null, describeOf = null, create = null, search: wantSearch = true } = {}) {
+export function createCommandPicker({ select, label = "Choose", placeholder = "", colorOf = null, badgeOf = null, describeOf = null, create = null, search: wantSearch = true, labelVisible = false } = {}) {
   if (!select) throw new Error("createCommandPicker needs the select that holds the value.");
 
   const id = `cmdpick-${++counter}`;
@@ -115,17 +115,30 @@ export function createCommandPicker({ select, label = "Choose", placeholder = ""
   }
 
   const swatch = el("span", { class: "cmdpick__swatch", "aria-hidden": "true" });
-  // Where the caller's mark sits on the closed trigger; empty and hidden when there is none.
-  const badgeSlot = el("span", { class: "cmdpick__badge", hidden: true });
-  const valueText = el("span", { class: "cmdpick__value" });
+  // Where the caller's mark sits on the closed trigger; empty and hidden when there is none. Hidden from
+  // assistive technology as well (A13): what it means is in the spoken value ("Family budget — Owner").
+  const badgeSlot = el("span", { class: "cmdpick__badge", hidden: true, "aria-hidden": "true" });
+  // A13 — the value is drawn once and read once: sighted people see `valueText`, a screen reader hears
+  // `spoken`, which is the full value (the description when there is one).
+  const valueText = el("span", { class: "cmdpick__value", "aria-hidden": "true" });
+  const spoken = el("span", { class: "cmdpick__spoken sr-only" });
+  // A13 — how to use it is a description of the control, never part of its name.
+  const howId = `${id}-how`;
+  const how = el("span", { id: howId, hidden: true });
+  const panelId = `${id}-panel`;
   const trigger = el("button", {
     class: "cmdpick__trigger",
     type: "button",
     id,
+    // A13 — A SELECT-ONLY COMBOBOX, the ARIA pattern for a custom select: named by its field's label,
+    // its value in its text, required and invalid supported (a button carries neither), and a popup
+    // it controls. TaskTracker's trigger is a plain button whose name held the value and instructions.
+    role: "combobox",
     "aria-haspopup": "dialog",
     "aria-expanded": "false",
+    "aria-controls": panelId,
     onClick: () => (open ? close() : show()),
-  }, [swatch, badgeSlot, valueText, el("span", { class: "cmdpick__hint", "aria-hidden": "true", text: hintGlyph() })]);
+  }, [swatch, badgeSlot, valueText, spoken, el("span", { class: "cmdpick__hint", "aria-hidden": "true", text: hintGlyph() })]);
 
   // A MAGNIFIER PROMISES SEARCH; a chevron promises a list.
   function hintGlyph() {
@@ -170,7 +183,7 @@ export function createCommandPicker({ select, label = "Choose", placeholder = ""
   // listbox) says "3 results" or "Nothing matches “x”." once typing pauses.
   const status = el("div", { class: "cmdpick__status sr-only", role: "status", "aria-live": "polite", "aria-atomic": "true" });
 
-  const panel = el("div", { class: ["cmdpick__panel", searchable ? "" : "cmdpick__panel--nosearch"], role: "dialog", "aria-label": label }, [
+  const panel = el("div", { class: ["cmdpick__panel", searchable ? "" : "cmdpick__panel--nosearch"], id: panelId, role: "dialog", "aria-label": label }, [
     searchable
       ? el("div", { class: "cmdpick__searchrow" }, [
           el("span", { class: "cmdpick__icon", "aria-hidden": "true", text: "⌕" }),
@@ -190,7 +203,7 @@ export function createCommandPicker({ select, label = "Choose", placeholder = ""
   ].filter(Boolean));
   panel.setAttribute("hidden", "");
 
-  const element = el("div", { class: "cmdpick" }, [trigger, select]);
+  const element = el("div", { class: "cmdpick" }, [trigger, select, how]);
 
   // THE SHARED DISMISSAL CONTRACT (ui/popup.js). The trigger counts as inside, or clicking it would
   // close and immediately re-open the panel — and so does the field's own label (A9), whose click is
@@ -248,9 +261,33 @@ export function createCommandPicker({ select, label = "Choose", placeholder = ""
     else element.style.removeProperty("--swatch");
     // The spoken value is the full description when there is one ("Family — Manager"), so the
     // closed control never says less than the open list.
-    const spoken = hit && describeOf ? describeOf(hit.value) || valueText.textContent : valueText.textContent;
-    // A6 — a list without a search box is not announced as searchable.
-    trigger.setAttribute("aria-label", `${label}: ${spoken}. ${searchable ? "Search and choose." : "Choose."}`);
+    spoken.textContent = hit && describeOf ? describeOf(hit.value) || valueText.textContent : valueText.textContent;
+    // A13 — the field names the combobox: its visible <label for>, or `label` when there is none.
+    if (labelVisible) trigger.removeAttribute("aria-label");
+    else trigger.setAttribute("aria-label", label);
+    // A6 — a list without a search box is not described as searchable.
+    how.textContent = searchable ? "Search and choose." : "Choose.";
+    describeFromSelect();
+  }
+
+  // A13 — REQUIRED, INVALID AND THE ERROR TEXT COME FROM THE SELECT, the state views write to (a button
+  // supports none of them; a combobox supports all three). The error text is described only while the
+  // field is marked invalid: after the field's own help, before how to use it.
+  function describeFromSelect() {
+    const required = select.required === true || select.hasAttribute("required") || select.getAttribute("aria-required") === "true";
+    if (required) trigger.setAttribute("aria-required", "true");
+    else trigger.removeAttribute("aria-required");
+    const invalid = select.getAttribute("aria-invalid");
+    const isInvalid = !!invalid && invalid !== "false";
+    if (isInvalid) trigger.setAttribute("aria-invalid", invalid);
+    else trigger.removeAttribute("aria-invalid");
+    const errorId = select.getAttribute("aria-errormessage");
+    if (errorId) trigger.setAttribute("aria-errormessage", errorId);
+    else trigger.removeAttribute("aria-errormessage");
+    const ids = String(select.getAttribute("aria-describedby") || "").split(/\s+/).filter(Boolean);
+    if (isInvalid && errorId && !ids.includes(errorId)) ids.push(errorId);
+    ids.push(howId);
+    trigger.setAttribute("aria-describedby", ids.join(" "));
   }
 
   // AN OPTION THAT CANNOT BE CHOSEN IS STILL SHOWN, with its reason in its label.
@@ -691,10 +728,13 @@ export function createCommandPicker({ select, label = "Choose", placeholder = ""
       paintTrigger();
       if (open) paintList();
     },
-    // A4 — the field that hosts the picker names it; every accessible name follows.
-    setLabel(text) {
+    // A4 — the field that hosts the picker names it; every accessible name follows. `visible` (the
+    // default, as components.js field() puts a <label for> beside it) means that label is the
+    // trigger's name, so the trigger carries no aria-label of its own (A13).
+    setLabel(text, { visible = true } = {}) {
       if (!text) return;
       label = String(text);
+      labelVisible = !!visible;
       search.setAttribute("aria-label", `Search ${label.toLowerCase()}`);
       search.setAttribute("placeholder", `Search ${label.toLowerCase()}…`);
       list.setAttribute("aria-label", label);
