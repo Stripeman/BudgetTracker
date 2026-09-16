@@ -588,3 +588,157 @@ since it was not part of this task's scope. Whether `deploy.ps1`'s optional `-Su
 file's shape more strictly (e.g. reject extra unknown keys) — left permissive, matching this
 repository's existing "tolerant of unknown well-formed values" convention elsewhere
 (`docs/FOUNDATION_DESIGN.md`, findings L-1/L-2/L-3).
+
+## Checkpoint T — BT-013 Design Gallery: 20 layout-theme concepts for Terry's review (2026-09-16)
+
+**Terry's design brief (2026-09-16, verbatim in the task).** A 20-concept, genuinely-distinct
+workspace layout gallery for his review, from which he will choose 10 to permanently implement.
+Explicit separation: this checkpoint is the REVIEW deliverable, not the permanent 10-layout
+implementation — "wait for my selection before permanently adding the chosen 10." Layout, palette
+and appearance mode stay three independent settings; palette and mode reuse the existing
+themepicker/daynight controls verbatim; the Gallery must never expose real financial data and must
+not be reachable as an unprotected surface. Built by an agent in the isolated worktree
+`.claude/worktrees/agent-a3aaecdbb0a7ae8cf`, branch `feature/layout-gallery`, based on
+`origin/feature/project-foundation` at `3a79693`, merged with the branch's later tip (`1ddc2c7`,
+the deploy-consolidation work) before this checkpoint.
+
+**Architecture (the point of the exercise: reusable, not 20 mockups).** `api/_shared/layouts.js`
+holds the 20 concept manifests as METADATA AND COMPOSITION PARAMETERS ONLY (name, tagline,
+direction, what is genuinely distinct, audience, strengths, tradeoffs, accessibility notes, and
+five composition axes: `navStyle` top/rail/sidebar/sidebar-right/command, `density`
+spacious/comfortable/compact/ultra-compact, `dashboardPattern` one of twelve, `cardStyle`,
+`chartEmphasis`) plus `REAL_LAYOUT_OPTIONS` (today's one real, selectable layout, `classic` — none
+of the 20 are in it). `app/js/ui/gallery/compose.js` is the ONE shared renderer every concept goes
+through: the Dashboard gets one of twelve genuinely distinct hero compositions (metric-grid,
+chart-first, table-first, timeline, card-stack, goal-progress, merchant-feed, envelope-grid,
+command-console, split-focus, story-flow, adaptive — each a real function, reused across the
+concepts that choose it, never duplicated per concept); the other six required pages (Transactions,
+Bills, Budget, Shared expenses, Trips, Settings) share one responsive template driven by the
+concept's own nav/density/card parameters. Both reuse the real shared components (`money`,
+`categoryLabel`, `icon`/`withIcon`, `badge`) and one canonical fictional fixture set
+(`app/js/ui/gallery/fixtures.js`) — the Gallery calls no workspace API, so it structurally cannot
+expose a real workspace's data.
+
+**Site-admin surface.** `GET/PATCH /api/design-gallery` (`api/_shared/gallery.js` +
+`api/design-gallery/handler.js`, new document `site/gallery.json`, same schema-refusal rules as
+every other document): serves the 20 manifests merged with a site-admin catalog (approve/retire —
+retiring needs a replacement concept or an explanatory note, "a replacement path for retired
+layouts" — and safe name/description overrides) and Terry's recorded implementation picks, both
+audited atomically, before/after, in the same write. `app/js/ui/views/gallery.js` is the Gallery
+page: gated exactly like Usage (BT-012-01) — fetches and renders nothing for anyone who is not a
+site administrator, both server-side (401/403) and in the client (no nav/account-menu entry). Live
+thumbnails (real rendered frames, never a static image) for all 20 concepts, a full preview with a
+page/viewport switch, Compare mode (two concepts side by side), a comparison-matrix table sourced
+from the same API response, per-concept "Mark for implementation" checkboxes, and the palette/mode
+controls reused verbatim.
+
+**Workspace `layoutId` setting — the real plumbing, deliberately not wired to the 20 concepts yet.**
+Added to `api/_shared/workspace-settings.js` following the EXACT existing model (stable id, default
+= today's behaviour, owners/managers change it, audited with before/after, returned in the workspace
+GET, tolerant of a future unknown value on restore) — no new mechanism. Its `options` are
+`REAL_LAYOUT_OPTIONS` (today just `classic`), so the full schema/API/audit/permission mechanism is
+proven and testable now, while no Gallery concept is selectable on any real workspace until Terry
+picks the 10 to keep — matching his explicit instruction.
+
+**Real multi-user browser verification (BT-004-06).** `scripts/dev/e2e/gallery.mjs`: the permission
+matrix, all 20 cards render with live thumbnails and no console errors, a sample deep walk across
+every distinct `navStyle` family through all 7 required pages, Compare mode, 320px/834px widths with
+no horizontal overflow, a sampled light/dark × 3-palette contrast check (reusing
+`scripts/dev/e2e/login.mjs`'s pattern), reduced motion, and the workspace `layoutId` setting shown
+for real. Two real defects found and fixed, each verified by a clean rerun: Focus Mode's manifest
+said `navStyle: 'top'` while its own description called for `command` (never exercised until this
+scenario walked it — fixed in `layouts.js`); a genuine, reproducible contrast-check false positive
+diagnosed with a throwaway script (setting theme/mode attributes and reading computed contrast in
+two separate CDP round-trips sometimes read the scaled preview thumbnails' deeply nested,
+custom-property-driven background before Edge finished recomputing style — fixed by combining the
+attribute change and the contrast read into one `evaluate()` call with an explicit layout flush; a
+test-methodology fix, not a product change, confirmed by 3 clean reruns afterward). Also fixed, found
+from a screenshot: the Trips page showed each trip's name twice.
+
+**Evidence.** `npm test` on the merged tree: 39/39 repository (25 of these are the just-merged
+deploy-engine tests, not this checkpoint's), 579/579 API, 431/431 app, exit 0. `npm run validate`
+ok, 24 routes. `npm run e2e -- --only gallery`: 106 passed, 0 failed, 0 skipped, exit 0, confirmed on
+4 separate runs (2 before the last product fix, 2 clean after), full cleanup verified every time. A
+full `npm run e2e` (all 15 scenarios): 467/468 checks pass; the one failure (`accounts`, `409
+workspace_rate`) is the pre-existing, already-documented artifact from Checkpoint R (alice's daily
+10-new-workspace limit shared across scenarios in one isolated server); `accounts` runs before
+`gallery` in the registration order, so this addition did not cause it; confirmed by rerunning
+`accounts` alone (5/5 pass). Screenshots (ignored, not committed) under the last kept run's
+`.local/e2e/<run>/shots/`: the full 20-concept grid, a complete 7-page walk-through of Executive
+Ledger (the table-first/sidebar flagship), Compare mode, 320px and 834px widths, and four
+palette/mode combinations (midnight and forest, light and dark).
+
+**Recommended top 10 (this session's judgement, for Terry's actual decision — marked
+`recommended: true` in the manifests and shown as a label in the Gallery, changes nothing
+server-side):** Executive Ledger, Modern Banking, Financial Command Center, Calm Budget, Wealth
+Overview, Cash-Flow Studio, Envelope Planner, Travel Ledger, Analyst Workspace, Sidebar Pro. Seven of
+these (Executive Ledger, Modern Banking, Financial Command Center, Calm Budget, Wealth Overview,
+Analyst Workspace, Sidebar Pro) are also `fidelity: 'flagship'` — they and Precision Grid received no
+extra hand-tuning beyond the shared template in this session; "flagship" here means their Dashboard
+composition was designed first and used to validate the pattern the others reuse, not that they have
+additional bespoke pages. Every concept, flagship or not, gets a real composed Dashboard and the
+real shared template on the other six required pages — see BT-013-02's test evidence (140
+concept×page combinations render without throwing) and the honesty note below.
+
+**Honest fully-realized-vs-inherited accounting (asked for explicitly in the task).** Dashboard: all
+20 concepts get a genuinely distinct, hand-designed composition (one of twelve real functions, never
+a recolour). Transactions/Bills/Budget/Shared expenses/Trips/Settings: all 20 concepts render
+through ONE shared, real, responsive template whose nav position, density and card treatment come
+from that concept's own parameters — a real structural difference (confirmed in the browser: sidebar
+vs rail vs top vs sidebar-right vs command all render distinctly), but not individually hand-tuned
+page-by-page content per concept. Nothing here is a static mockup or a placeholder image at any
+level. Trips is explicitly illustrative (BT-010 is not a real feature yet), stated in the page
+itself.
+
+**Not done / explicitly out of reach this session.**
+- **No deploy.** `scripts/deploy/deploy.ps1 -Environment preview` was not run: this worktree has no
+  `.local/deploy-target.json` (absent here; it is a machine/session-specific ignored file this
+  worktree was never given), and Terry's/AGENTS.md's rule against inferring a deployment target from
+  ambient Azure CLI state means this is a hard stop, not a judgement call — the agent will not guess
+  tenant/subscription ids. Terry's brief conditionally authorized a preview deploy once the gate is
+  green; the gate IS green (see Evidence above), but the deploy step itself needs that file, which
+  this worktree does not have.
+- **No independent security or financial review** of this branch. The new surface is read-only about
+  fictional data (site-admin gated, no financial field ever in the response — tested), and the new
+  workspace setting changes nothing financial (tested: byte-identical accounts before/after), but
+  this repository's own convention runs security/financial review at "major milestones and before
+  release" (AGENTS.md/CLAUDE.md §8); recommended before Terry's eventual selection is wired to real
+  workspaces (BT-013-01/02 note this in the register).
+- **Not exhaustive, by design and stated honestly in the register:** 5 of 20 concepts walked through
+  all 7 pages in a real browser (the rest verified headlessly against the same composition engine,
+  140/140 combinations, no throw); 3 of 8 palettes contrast-sampled in the browser (all 8 are used by
+  every concept through the same token system already verified elsewhere in this repository, e.g.
+  `app/test/appearance.test.js`); no real screen reader, Windows High Contrast or physical touch
+  device check.
+- **A new open item for Terry** (not added to "Waiting on Terry" above — this checkpoint is
+  append-only per this session's instructions; a future session should move it there): please review
+  the 20 concepts in the Gallery (site-admin sign-in required, `#/gallery`) and record your picks
+  (or tell the agent which 10, and it will record them for you) — see the recommended top 10 above
+  for a starting point, not a decision.
+
+**Files touched/added.** New: `api/_shared/layouts.js`, `api/_shared/gallery.js`,
+`api/design-gallery/{function.json,handler.js,index.js}`, `app/js/ui/gallery/{compose.js,
+fixtures.js}`, `app/js/ui/views/gallery.js`, `app/styles/gallery.css`, `scripts/dev/e2e/gallery.mjs`,
+`api/test/layouts.test.js`, `api/test/design-gallery.test.js`, `app/test/gallery.test.js`. Edited:
+`api/_shared/{schema.js,store.js,workspace-settings.js,routes.js}`, `app/js/core/{api.js,router.js}`,
+`app/js/ui/shell.js`, `index.html`, `scripts/dev/e2e/run.mjs`, `README.md`, `docs/REQUIREMENTS.md`
+(BT-013 summary row and four child rows), this file.
+
+**Branch state.** `feature/layout-gallery`, 6 commits, already merged with
+`origin/feature/project-foundation` at `1ddc2c7` (clean auto-merge, no conflicts — the deploy-
+consolidation branch touched entirely different regions of the shared files). Not yet pushed to
+`origin/feature/project-foundation`; not merged to `main`; nothing deployed. Because this environment
+has no Git CLI access outside the agent's own tool calls, Terry's local Git output remains
+authoritative for whether/when this lands on `origin/feature/project-foundation`.
+
+**Exact next steps.**
+1. [agent or Terry] Push `feature/layout-gallery`'s current tip to `origin/feature/project-foundation`
+   (a fast-forward; re-fetch and re-merge first if it has moved again) — or open it as its own
+   reviewable unit, Terry's choice.
+2. [Terry] Sign in as a site administrator and review the Gallery (`#/gallery`); record picks.
+3. [agent, once Terry has picked] Wire the chosen concepts' ids into `REAL_LAYOUT_OPTIONS`
+   (`api/_shared/layouts.js`) and `layoutId`'s options (`api/_shared/workspace-settings.js`) — no
+   schema change, per BT-013-03's design; run independent security/financial review at that point,
+   per house convention.
+4. [Terry] Run `scripts/deploy/deploy.ps1 -Environment preview` from a checkout that has
+   `.local/deploy-target.json`, once satisfied with the merged tree, to see the Gallery on Preview.
