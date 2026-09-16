@@ -271,7 +271,7 @@ const CONCEPTS = Object.freeze([
     strengths: ['Fastest path to the single most common action (Add expense).', 'Lowest chance of feeling overwhelmed on open.', 'Every section still fully reachable — nothing is actually removed, only de-emphasised.'],
     tradeoffs: ['Weakest overview of any concept — a poor fit for anyone who wants a dashboard.', 'Needs a clear, discoverable way to the rest of the app (a visible "More" / full nav toggle, always present, never hidden behind a gesture).'],
     accessibilityNotes: ['The "more" control is a real, labelled, always-present link/button, never a swipe-only affordance.', 'Reduced navigation never reduces the number of landmarks below one nav + one main.'],
-    density: 'spacious', navStyle: 'top', dashboardPattern: 'story-flow', cardStyle: 'soft-shadow', chartEmphasis: 'line',
+    density: 'spacious', navStyle: 'command', dashboardPattern: 'story-flow', cardStyle: 'soft-shadow', chartEmphasis: 'line',
     fidelity: 'standard', recommended: false,
   }),
   c({

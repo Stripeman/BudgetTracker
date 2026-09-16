@@ -1,0 +1,195 @@
+// BT-013 Design Gallery, verified in real headless Edge (never a static screenshot claim): the
+// Gallery is reachable only by a site administrator (401/403/hidden nav for everyone else); every
+// one of the 20 concepts renders a live thumbnail with no console errors; a sample walk across
+// distinct navStyle/dashboardPattern families renders every required page; desktop/tablet/mobile
+// widths with no horizontal overflow at 320px; light/dark and a palette sample with the same
+// pageContrast/pageBorderContrast pattern login.mjs already established; reduced motion; and the
+// workspace `layoutId` setting's real plumbing (schema/API/audit/permissions), shown in a real
+// browser even though it is not yet wired to any of the 20 concepts.
+export const name = "gallery";
+export const title = "BT-013 Design Gallery: site-admin only, all 20 concepts render, sampled pages/viewports/palettes/modes, no 320px overflow, reduced motion, layoutId setting plumbing";
+export const needsBrowser = true;
+
+// The same contrast primitives as scripts/dev/e2e/login.mjs (serialized with toString(), so each
+// must stay self-contained) — reused rather than reinvented, applied to the Gallery's own real text.
+function pageContrast(selectors) {
+  function relLuminance([r, g, b]) {
+    const chan = (c) => { const v = c / 255; return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4; };
+    return 0.2126 * chan(r) + 0.7152 * chan(g) + 0.0722 * chan(b);
+  }
+  function parseRgb(str) {
+    const m = /rgba?\(([^)]+)\)/.exec(str || "");
+    if (!m) return null;
+    const p = m[1].split(",").map((x) => parseFloat(x));
+    return { r: p[0], g: p[1], b: p[2], a: p.length > 3 ? p[3] : 1 };
+  }
+  function effectiveBg(el) {
+    for (let node = el; node; node = node.parentElement) {
+      const bg = parseRgb(getComputedStyle(node).backgroundColor);
+      if (bg && bg.a > 0.99) return bg;
+    }
+    return { r: 255, g: 255, b: 255 };
+  }
+  function ratio(fg, bg) {
+    const l1 = relLuminance([fg.r, fg.g, fg.b]) + 0.05;
+    const l2 = relLuminance([bg.r, bg.g, bg.b]) + 0.05;
+    return l1 > l2 ? l1 / l2 : l2 / l1;
+  }
+  const out = {};
+  for (const sel of selectors) {
+    const els = [...document.querySelectorAll(sel)].slice(0, 3);
+    out[sel] = els.map((el) => { const fg = parseRgb(getComputedStyle(el).color); return fg ? Math.round(ratio(fg, effectiveBg(el)) * 100) / 100 : null; });
+  }
+  return out;
+}
+
+const PALETTES_SAMPLE = ["midnight", "forest", "rose"]; // 3 of the 8 (login.mjs checks all 8 for its own smaller page; the Gallery is much larger, so this session sampled 3 spanning light/mid/dark accent hues — see the handoff report for why)
+const CONTRAST_SELECTORS = [".gcard-outer h3", ".gcard-outer p.muted", ".gcard__title", ".gmetric__value", ".gnav__item"];
+
+const toMs = (css) => { const s = String(css).trim(); return s.endsWith("ms") ? parseFloat(s) : s.endsWith("s") ? parseFloat(s) * 1000 : NaN; };
+
+export async function run(h, t) {
+  // ---- API: only a site administrator may read or change the Gallery -----------------------------
+  for (const as of ["alice", "bob", "carol"]) {
+    const res = await h.api(as).request("design-gallery");
+    t.check(`${as} (not a site admin): GET /api/design-gallery is refused`, { expected: 403, actual: res.status });
+  }
+  const asEve = await h.api("eve").request("design-gallery");
+  t.check("eve (outsider): GET /api/design-gallery is refused", { expected: 403, actual: asEve.status });
+  const asAnon = await fetch(`${h.base}/api/design-gallery`);
+  t.check("anonymous: GET /api/design-gallery is refused", { expected: 401, actual: asAnon.status });
+  const daveGet = await h.api("dave").ok("design-gallery");
+  t.check("dave (site admin): sees all 20 concepts and the 7 required pages", { expected: { concepts: 20, pages: 7 }, actual: { concepts: daveGet.concepts.length, pages: daveGet.requiredPages.length } });
+  const alicePatch = await h.api("alice").request("design-gallery", { method: "PATCH", body: { picks: { selectedIds: ["executive-ledger"] } } });
+  t.check("alice: PATCH /api/design-gallery (picks) is refused", { expected: 403, actual: alicePatch.status });
+
+  // ---- browsers: alice (non-admin) and dave (site admin) -----------------------------------------
+  const { alice, dave } = await h.browsers(["alice", "dave"], { prefix: "gallery-" });
+
+  await alice.open("dashboard");
+  t.check("alice: no 'Design Gallery' entry anywhere in her DOM", { expected: false, actual: await alice.exists('a[href="#/gallery"]') });
+  await alice.goto("gallery");
+  const aliceText = await alice.text();
+  t.check("alice: opening #/gallery directly shows no concept data, only the refusal sentence", {
+    expected: { hasData: false, hasRefusal: true },
+    actual: { hasData: /All 20 concepts/.test(aliceText), hasRefusal: /only shown to site administrators/.test(aliceText) },
+  });
+  t.check("alice: no exceptions or console errors", { expected: [], actual: alice.problems({ allowHttp: [{ status: 403, path: /\/api\/design-gallery$/ }] }) });
+
+  await dave.open("dashboard");
+  t.check("dave: a 'Design Gallery' entry pointing at #/gallery exists in the DOM", { expected: true, actual: await dave.exists('a[href="#/gallery"]') });
+  await dave.goto("gallery");
+  await dave.waitForText("All 20 concepts");
+  const cardCount = await dave.evaluate("document.querySelectorAll('.gcard-outer').length");
+  t.check("dave: all 20 concept cards render", { expected: 20, actual: cardCount });
+  const thumbCount = await dave.evaluate("document.querySelectorAll('.gcard-outer .gframe').length");
+  t.check("dave: every card carries a live rendered preview thumbnail (never a static image)", { expected: 20, actual: thumbCount });
+  const navFamilies = await dave.evaluate("[...new Set([...document.querySelectorAll('.gcard-outer .gframe')].map((f) => f.dataset.nav))].sort()");
+  t.check("dave: the loaded concepts show at least 4 distinct navigation families (genuine structural variety)", { expected: true, actual: navFamilies.length >= 4 });
+  await dave.shot("grid-all-20");
+  t.check("dave: no console errors/exceptions loading and rendering all 20 concepts at once", { expected: [], actual: dave.problems() });
+
+  // ---- sample deep walk: 5 concepts spanning distinct nav styles, every required page -------------
+  // Sampled (not all 20 x 7 in the browser): the composition-engine unit tests
+  // (app/test/gallery.test.js) already render all 20 x 7 = 140 combinations headlessly without a
+  // browser and assert no exception; this real-browser walk instead proves the ones a person would
+  // actually navigate render correctly with real layout/CSS, covering every distinct navStyle family
+  // (sidebar, top, rail, sidebar-right, command) at least once.
+  const sample = [
+    { id: "executive-ledger", nav: "sidebar" },
+    { id: "financial-command-center", nav: "rail" },
+    { id: "analyst-workspace", nav: "sidebar-right" },
+    { id: "focus-mode", nav: "command" },
+    { id: "modern-banking", nav: "top" },
+  ];
+  const pages = ["dashboard", "transactions", "bills", "budget", "shared", "trips", "settings"];
+  for (const { id, nav } of sample) {
+    await dave.click({ role: "button", text: "Preview this concept", scope: `[data-concept="${id}"]` });
+    for (const page of pages) {
+      await dave.choose("Preview page", { dashboard: "Dashboard", transactions: "Transactions", bills: "Bills", budget: "Budget", shared: "Shared expenses", trips: "Trips", settings: "Settings" }[page]);
+      const frameNav = await dave.evaluate("(() => { const f = document.querySelector('.gpreview-pane .gframe'); return f ? f.dataset.nav : null; })()");
+      t.check(`${id}/${page}: the preview frame's own navStyle matches the concept (${nav})`, { expected: nav, actual: frameNav });
+      const hasContent = await dave.evaluate("(() => { const m = document.querySelector('.gpreview-pane .gframe__main'); return !!m && m.textContent.trim().length > 20; })()");
+      t.check(`${id}/${page}: the page has real rendered content`, { expected: true, actual: hasContent });
+      // One full 7-page walk-through in screenshots, for the flagship concept most representative
+      // of the "table-first, sidebar" family (Terry's report quotes exact paths for all of these).
+      if (id === "executive-ledger") await dave.shot(`page-${page}`);
+    }
+    t.check(`${id}: no console errors/exceptions after walking all 7 required pages`, { expected: [], actual: dave.problems() });
+  }
+  await dave.shot("preview-sample");
+
+  // ---- Compare mode: two concepts side by side --------------------------------------------------
+  await dave.click({ role: "button", text: "Preview this concept", scope: '[data-concept="executive-ledger"]' });
+  await dave.click({ role: "button", text: "Compare with current preview", scope: '[data-concept="modern-banking"]' });
+  const compareFrames = await dave.evaluate("document.querySelectorAll('.gcompare .gframe').length");
+  t.check("Compare mode shows two live frames side by side", { expected: 2, actual: compareFrames });
+  const ids = await dave.evaluate("(() => { const all = [...document.querySelectorAll('[id]')].map((n) => n.id); return { total: all.length, unique: new Set(all).size }; })()");
+  t.check("Compare mode: no duplicate element ids on the page (two concepts sharing card titles still get unique heading ids)", { expected: ids.total, actual: ids.unique });
+  await dave.shot("compare");
+  t.check("dave: no console errors/exceptions after Compare mode", { expected: [], actual: dave.problems() });
+
+  // ---- desktop / tablet / mobile widths, no horizontal overflow at 320px -------------------------
+  const { dave: narrow } = await h.browsers(["dave"], { prefix: "gallery-320-", width: 320, height: 720 });
+  await narrow.open("gallery");
+  await narrow.waitForText("All 20 concepts");
+  const overflow320 = await narrow.evaluate("document.documentElement.scrollWidth - window.innerWidth");
+  t.check("320px width: no horizontal page overflow", { expected: true, actual: overflow320 <= 1 });
+  await narrow.shot("320px");
+  t.check("320px: no console errors/exceptions", { expected: [], actual: narrow.problems() });
+
+  const { dave: tablet } = await h.browsers(["dave"], { prefix: "gallery-834-", width: 834, height: 900 });
+  await tablet.open("gallery");
+  await tablet.waitForText("All 20 concepts");
+  const overflow834 = await tablet.evaluate("document.documentElement.scrollWidth - window.innerWidth");
+  t.check("834px (tablet) width: no horizontal page overflow", { expected: true, actual: overflow834 <= 1 });
+  await tablet.shot("834px");
+
+  // ---- light/dark and a palette sample (3 of 8), reusing the login page's contrast pattern -------
+  // The attribute change and the contrast read are ONE evaluate() call (found by direct
+  // diagnosis): across two separate CDP round-trips, a deeply nested custom-property-driven
+  // background (inside the scaled preview frames) was sometimes read before Edge finished
+  // recomputing style for the new attribute, giving a false near-1:1 ratio; querying computed
+  // style for the SAME element twice in the same script (forcing one recalculation first) always
+  // read correctly, which is what combining the two steps into one call does structurally.
+  for (const themeId of PALETTES_SAMPLE) {
+    for (const mode of ["light", "dark"]) {
+      const ratios = await dave.evaluate(`(() => {
+        const r = document.documentElement;
+        r.setAttribute('data-theme', ${JSON.stringify(themeId)});
+        r.setAttribute('data-mode', ${JSON.stringify(mode)});
+        r.setAttribute('data-color-scheme', ${JSON.stringify(mode)});
+        void document.body.offsetHeight; // force a style/layout flush before reading computed style
+        return (${pageContrast.toString()})(${JSON.stringify(CONTRAST_SELECTORS)});
+      })()`);
+      const failing = Object.entries(ratios).flatMap(([sel, list]) => list.map((r, i) => (r === null || r < 4.5) ? `${sel}[${i}]: ${r}` : null)).filter(Boolean);
+      t.check(`${themeId}/${mode}: sampled Gallery text is >= 4.5:1 against its effective background`, { expected: [], actual: failing });
+      if (themeId === "midnight" || themeId === "forest") await dave.shot(`palette-${themeId}-${mode}`);
+    }
+  }
+  await dave.evaluate("(() => { const r = document.documentElement; r.setAttribute('data-theme', 'midnight'); r.setAttribute('data-mode', 'light'); r.setAttribute('data-color-scheme', 'light'); })()");
+
+  // ---- reduced motion: the harness already emulates prefers-reduced-motion for every session; the
+  // Gallery introduces no new transition, so the existing site-wide near-zero transition policy
+  // (base.css) must still hold on a Gallery-specific element. -------------------------------------
+  const navDuration = await dave.evaluate("getComputedStyle(document.querySelector('.gnav__item')).transitionDuration");
+  t.check("reduced motion: a Gallery nav item's own transition duration is effectively zero (the site-wide reduced-motion rule applies here too)", { expected: true, actual: toMs(navDuration) <= 1 });
+
+  // ---- the workspace layoutId setting's real plumbing, in a real browser (not yet wired to any of
+  // the 20 concepts — only "Classic" is a real, selectable option today) ---------------------------
+  await alice.useWorkspace("Fictional Household");
+  await alice.goto("workspace");
+  // The settings card groups its settings under collapsible headings, only the first open by
+  // default (settingsform.js) — "Appearance" (layoutId's group) is not the first, so it is opened
+  // the way a person would: pressing its own heading toggle.
+  await alice.waitForText("Appearance");
+  await alice.click({ role: "button", text: "Appearance" });
+  await alice.waitForText("Layout theme");
+  const workspaceText = await alice.text();
+  t.check("alice (owner): the Workspace settings page shows the real 'Layout theme' setting with today's one real option", {
+    expected: true, actual: /Layout theme/.test(workspaceText) && /Classic \(current\)/.test(workspaceText),
+  });
+  t.check("alice: no console errors/exceptions on Workspace settings", { expected: [], actual: alice.problems() });
+
+  t.check("dave: no console errors/exceptions across the whole scenario", { expected: [], actual: dave.problems() });
+}

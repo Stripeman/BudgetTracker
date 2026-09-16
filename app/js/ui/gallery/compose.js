@@ -293,10 +293,14 @@ function renderShared() {
   ]);
 }
 
-function tripCard(t) {
+// `withName` is left on for heroSplitFocus, where the surrounding gcard's own title is generic
+// ("Active trip") and the trip's own name is not shown anywhere else; renderTrips() below gives
+// each trip its own gcard titled with the trip's name already, so it turns this off there — never
+// showing the same name twice in one card.
+function tripCard(t, { withName = true } = {}) {
   const pct = Math.min(100, Math.round((Number(t.spent) / Number(t.budget)) * 100));
   return [
-    withIcon(t.icon, t.name),
+    withName ? withIcon(t.icon, t.name) : null,
     el("p", { class: "muted small", text: t.dateRange }),
     el("div", { class: "gmeter" }, [el("div", { class: "gmeter__fill", vars: { "--pct": `${pct}%` } })]),
     el("p", { class: "small", text: `${t.spent} of ${t.budget} ${t.currency} spent` }),
@@ -308,7 +312,7 @@ function renderTrips() {
   return el("div", { class: "gpage gpage--list" }, [
     pageTitle("trips"),
     el("p", { class: "field__help", text: "Illustrative only: Trip planning (BT-010) is not yet a real BudgetTracker feature. This page previews how the layout concept would present it." }),
-    el("div", { class: "ggrid ggrid--metrics" }, fx.trips.map((t) => gcard(t.name, t.icon, tripCard(t)))),
+    el("div", { class: "ggrid ggrid--metrics" }, fx.trips.map((t) => gcard(t.name, t.icon, tripCard(t, { withName: false })))),
   ]);
 }
 
