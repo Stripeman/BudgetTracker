@@ -31,12 +31,13 @@ import * as workspace from "./views/workspace.js";
 import * as join from "./views/join.js";
 import * as group from "./views/group.js";
 import * as analytics from "./views/analytics.js";
+import * as gallery from "./views/gallery.js";
 import { renderLanding, createOnboarding, openNewWorkspace } from "./views/landing.js";
 import { messageFor } from "../core/errors.js";
 import { confirmModal } from "./modal.js";
 import { unsavedNames, clearUnsaved } from "../core/unsaved.js";
 
-const VIEWS = { dashboard, group, transactions, bills, planning, accounts, payees, settings, workspace, join, analytics };
+const VIEWS = { dashboard, group, transactions, bills, planning, accounts, payees, settings, workspace, join, analytics, gallery };
 
 // Shared expenses turned off (workspace settings, Terry 2026-09-14): the page says so and loads nothing;
 // the server refuses /api/group as well. Nothing recorded is removed. The message follows the current
@@ -164,6 +165,9 @@ export function createShell({ mountPoint, store, router, theme, api }) {
         // case: site administration is configuration, never membership) would otherwise have no way
         // to reach it at all, found in real-browser testing (BT-004-06).
         user.siteAdmin ? el("a", { class: "menu__item", href: "#/analytics", text: "Usage" }) : null,
+        // Design Gallery (BT-013): site administrators only, same reasoning as "Usage" directly above
+        // (a site administrator usually has no workspace of their own to reach a section nav from).
+        user.siteAdmin ? el("a", { class: "menu__item", href: "#/gallery", text: "Design Gallery" }) : null,
         el("a", { class: "menu__item", href: AUTH.logout, text: "Sign out" }),
       ]),
     );
@@ -241,6 +245,9 @@ export function createShell({ mountPoint, store, router, theme, api }) {
     if (state.auth.user && state.auth.user.siteAdmin) {
       const usageRoute = ROUTES.find((r) => r.id === "analytics");
       items.push(el("a", { href: `#${usageRoute.path}`, "aria-current": route.id === "analytics" ? "page" : null, text: usageRoute.label }));
+      // Design Gallery (BT-013): not a workspace section either, same reasoning as Usage above.
+      const galleryRoute = ROUTES.find((r) => r.id === "gallery");
+      items.push(el("a", { href: `#${galleryRoute.path}`, "aria-current": route.id === "gallery" ? "page" : null, text: galleryRoute.label }));
     }
     mount(nav, ...items);
   }
@@ -300,10 +307,10 @@ export function createShell({ mountPoint, store, router, theme, api }) {
     renderFooter(state);
     // Without a workspace there are no sections to navigate, so the nav is hidden (UX-011). My
     // settings stays reachable from the account menu: personal preferences, and for a site
-    // administrator the icon catalogue (BT-011-05), need no workspace. Usage (BT-012-01) is the
-    // same: it is about the whole site, not any one workspace.
-    const onboarding = !openWorkspaces(state).length && route.id !== "join" && route.id !== "settings" && route.id !== "analytics";
-    nav.hidden = onboarding || (!openWorkspaces(state).length && (route.id === "settings" || route.id === "analytics"));
+    // administrator the icon catalogue (BT-011-05), need no workspace. Usage (BT-012-01) and the
+    // Design Gallery (BT-013) are the same: both are about the whole site, not any one workspace.
+    const onboarding = !openWorkspaces(state).length && route.id !== "join" && route.id !== "settings" && route.id !== "analytics" && route.id !== "gallery";
+    nav.hidden = onboarding || (!openWorkspaces(state).length && (route.id === "settings" || route.id === "analytics" || route.id === "gallery"));
     if (onboarding) {
       if (viewKey !== "onboarding") { viewKey = "onboarding"; view = createOnboarding(ctx()); mount(main, view.element); document.title = "Create a workspace · BudgetTracker"; }
       return;

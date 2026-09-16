@@ -125,5 +125,9 @@ export function createApiClient({ fetchImpl = globalThis.fetch.bind(globalThis),
     savePreferences: (body) => request("preferences", { method: "PUT", body }),
     // Site usage (BT-012-01): site administrators only. Never financial data.
     analytics: () => request("analytics"),
+    // Design Gallery (BT-013): site administrators only. Never financial data; never a real
+    // workspace's data.
+    designGallery: () => request("design-gallery"),
+    saveDesignGallery: (body) => request("design-gallery", { method: "PATCH", body }),
   };
 }
