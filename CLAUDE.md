@@ -110,6 +110,12 @@ assumptions.
   storage, identities, secrets and data are fully separate; Staging uses fictional data.
 - Tie every release to a commit and application version and show version and environment in
   the app. Deployment success is not application validation; verify separately.
+- There is exactly one supported way to deploy code: `.\deploy.ps1 -Environment preview|production`
+  (`scripts/deploy/deploy.ps1`, a thin interface over `scripts/deploy/engine.mjs`, BT-003-05). Never
+  invoke the engine, `az`, `npx swa`, GitHub Actions, or another script to deploy directly, and
+  never instruct anyone else to. `scripts/deploy/provision.ps1` and
+  `scripts/deploy/configure-settings.ps1` are separate, occasional infrastructure/settings scripts,
+  not alternate deployment routes; `scripts/recovery/*` is a different, recovery-operator concern.
 - Hosting (Terry, 2026-09-13): one dedicated Azure Static Web App for BudgetTracker
   (`budget-tracker`, resource group `budget-tracker`, East US 2) with its own settings, secrets,
   authentication, storage, logs, backups and restore scope; feature builds go only to its named

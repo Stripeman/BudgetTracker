@@ -480,3 +480,111 @@ Checkpoints B–N are done or in progress (see above). Keep the CI job names `se
 4. **BT-009 shared expenses and settlement, BT-010 trips and currency** (icons for trips and trip accounts follow), debt planning, goals and alerts.
 5. **BT-012 reports and exports** (icons in reports, legends and exports follow), site settings UI, offline, rate limiting, scheduled backups and Key Vault, the remaining 13 TaskTracker palettes.
 6. **Needs Terry:** signed-in checks on the preview need Terry's own Google sign-in (the redirect URI is added); any Production, DNS or Staging decision.
+
+## Checkpoint S — deployment process consolidation (BT-003-05, 2026-09-16)
+
+**Terry's instruction (2026-09-16):** one supported deployment entry point, `.\deploy.ps1`, adapted
+from TaskTracker's proven structure; no other script, CLI command or workflow may bypass it; do not
+deploy Production while implementing this; Preview may be exercised once all gates pass, to prove
+the consolidated path works end to end. Built by an agent in an isolated worktree
+(`.claude/worktrees/agent-aff6b4659f1315364`, branch `feature/deploy-consolidation`, based on
+`origin/feature/project-foundation` at `3a79693`).
+
+**Found (before changing anything).** BudgetTracker's `deploy.ps1` (72 lines) had every rule
+inline — tenant check, clean-tree/branch checks, the typed production confirmation, the
+`npm test`/`npm run validate` gate, the artifact build and the `swa deploy` call — with nothing
+separately invocable or unit-testable, no automated post-deploy health check (it said "now verify
+the running application separately" and stopped), no secret-scan step in the deploy path itself,
+and no structured receipt. `-SubscriptionId`/`-TenantId` were Mandatory PowerShell parameters, so
+every documented `deploy.ps1 -Environment preview` command line in this file and in
+`docs/REQUIREMENTS.md` was already incomplete — real deploys always also passed the ids, supplied
+by hand. TaskTracker's own `deploy.ps1` is a thin wrapper over a Node engine
+(`scripts/deploy/engine/`, `cli.js`, `operations.js`, `environments.js`, `gateevidence.js`, …) that
+enforces every rule identically whether called via `deploy.ps1` or the engine's CLI directly — read
+read-only via `git -C T:/repos/TaskTracker show main:<path>`, nothing copied. Full inventory of
+every pre-existing path that could reach Azure (`deploy.ps1` itself; manual `az`/`swa` commands by
+an operator with Azure access, which no script can close; `build-artifact.mjs` + a manual `swa
+deploy`; `provision.ps1`/`configure-settings.ps1`, which never ship code but were not clearly
+distinguished from "the deployment process" in prose; no CI deploy path) is recorded in
+`docs/DEPLOYMENT.md`, "Deployment path inventory and TaskTracker comparison".
+
+**Built.** `scripts/deploy/engine.mjs` (new): the sole implementation of every deployment rule —
+`resolveTarget` (explicit flags, else the gitignored `.local/deploy-target.json`, else fail closed:
+no environment default, nothing inferred from ambient `az` context), `checkGitState` (clean tree,
+named branch, production only on `main` equal to `origin/main`), `checkProductionConfirmation`
+(typed Static Web App name, required every time, never suspended — a deliberate divergence from
+TaskTracker's own `deploy.ps1`, which currently suspends its interactive prompt "for the beta
+development phase"; recorded as a "do not copy" in `docs/TASKTRACKER_REUSE.md`), `verifyIsolatedSettings`
+(the target environment's application settings are complete and its data/backup connection strings
+differ), `evaluateHealth` (the live `/version.json` and `/api/site-settings` must report the exact
+deployed commit and the target environment before a deploy counts as healthy), and the `runDeploy`
+orchestrator tying them to real `git`/`az`/`npm`/`swa`/`fetch` calls through an injectable `io`
+adapter — real by default, faked in tests, so the tests never touch a real subscription, the real
+Git remote or the network. `scripts/deploy/deploy.ps1` is now a ~55-line interface: it parses
+PowerShell flags, resolves `.local/deploy-target.json` for anything not passed explicitly, and
+delegates to `node scripts/deploy/engine.mjs`, returning its exit code unchanged (interactive
+production confirmation happens inside the engine via `readline`, sharing the console PowerShell
+already gives the child process). No flag anywhere skips a gate — there is no `-SkipTests` or
+`-SkipLiveCheck`, unlike TaskTracker, because Terry's instruction requires the complete gate every
+time. `scripts/scan-staged.cjs` now exports `gitleaksBinary` (previously internal) so the engine's
+deploy-time secret scan (`gitleaks dir` over the **built artifact**, not just the staged diff) uses
+the same binary discovery as the pre-commit hook; preview warns and proceeds if gitleaks is not
+installed locally (CI's `secret-scan` job remains the enforced layer), **production refuses
+outright** if gitleaks is unavailable. `scripts/deploy/provision.ps1`,
+`scripts/deploy/configure-settings.ps1` and `scripts/build-artifact.mjs` gained a one-line "NOT A
+DEPLOYMENT SCRIPT" note each; their behavior is unchanged.
+
+**Guards against another path, and the tests proving them (`scripts/deploy/test/engine.test.mjs`,
+25 tests, added to `npm run test:repo`).** Structural: `scripts/deploy/engine.mjs` is asserted to be
+the only tracked, non-documentation file containing the SWA CLI's `"swa", "deploy"` invocation
+(grepped over `git ls-files`); `deploy.ps1` is asserted to contain no `az`/`swa` calls of its own,
+only the delegation; no `npm` script in `package.json` performs a deploy; the engine's Git adapter
+is asserted to expose no `push`/`merge`/`commit` capability. Behavioral: production without
+`-AuthorizedProduction`, or with a wrong typed confirmation, is refused before the fake
+`deployArtifact`/`test`/`setCommit` are ever called; preview never prompts for or checks a
+production confirmation, and passing `-AuthorizedProduction` on a preview deploy has no effect
+(Preview authorization is never Production authorization); a dirty tree, a non-`main` production
+branch, HEAD not equal to `origin/main`, a tenant mismatch, a missing Azure resource, incomplete or
+non-isolated application settings, a failing test/validate/build gate, and a secret-scan finding
+each refuse before upload, with the fakes proving no Azure call happened; a full successful run
+calls the gates and the upload exactly once and produces a receipt; an upload that succeeds while
+the health check fails is reported as `uploaded: true, healthy: false` (exit code `2`), never
+folded into a single false "success".
+
+**Evidence.** `npm test`: **39/39 repository tests** (was 14; +25 new engine tests), **554/554 API
+tests**, **417/417 app tests**, exit 0. `npm run validate`: ok, 23 routes, exit 0. Staged-content
+scan (`node scripts/scan-staged.cjs`) over the 5 changed/added files: clean (gitleaks itself is not
+installed on this machine — `.local/bin` and PATH both checked — so only the custom path/content
+rules ran; CI's `secret-scan` job remains the enforced layer for the actual commit). `git config
+core.hooksPath` confirmed set to `.githooks`.
+
+**Not run: a real Preview deploy.** Exercising `.\deploy.ps1 -Environment preview` end to end needs
+either `.local/deploy-target.json` or explicit `-SubscriptionId`/`-TenantId`. This agent's role
+instructions say not to inspect credentials or local configuration, and `.local/deploy-target.json`
+lives only in Terry's own checkout (confirmed to exist there by directory listing only — its
+contents were never read). No subscription or tenant id was read or used. **Terry or the
+coordinator should run `.\deploy.ps1 -Environment preview` from a normal checkout** (not an agent
+worktree) to prove the consolidated path against the real preview environment; expect the new
+target block, the automated health check against the live site, and the deployment receipt in the
+output, in addition to everything the old script already showed.
+
+**Files touched.** New: `scripts/deploy/engine.mjs`, `scripts/deploy/test/engine.test.mjs`.
+Rewritten: `scripts/deploy/deploy.ps1` (thin wrapper). Small edits: `scripts/scan-staged.cjs`
+(export `gitleaksBinary`), `scripts/deploy/provision.ps1`, `scripts/deploy/configure-settings.ps1`,
+`scripts/build-artifact.mjs` (one-line "not a deployment script" notes), `package.json`
+(`test:repo` glob). Docs: `docs/DEPLOYMENT.md` (new "Deployment path inventory and TaskTracker
+comparison" section; rewrote "Deployment procedure"; updated "Residual risks"), `docs/REQUIREMENTS.md`
+(BT-003-05 row), `docs/TASKTRACKER_REUSE.md` (new "Deployment: thin interface over a shared engine"
+section), `README.md` ("Development and release", "Deployment" bullet), `CLAUDE.md` (§6),
+`AGENTS.md` ("Never" list), this file. `docs/RECOVERY_RUNBOOK.md` was read and left unchanged — it
+documents `scripts/recovery/*` (a different, recovery-operator concern) and never referenced
+`deploy.ps1`.
+
+**Not done / left for Terry.** The Preview run above. A pre-existing, unrelated defect noticed while
+reading `docs/REQUIREMENTS.md`: two different rows are both labelled `BT-003-05` (the release
+decisions row and the deployment-workflow row); not touched here, flagged for a future cleanup pass
+since it was not part of this task's scope. Whether `deploy.ps1`'s optional `-SubscriptionId`/
+`-TenantId` parameters (now falling back to `.local/deploy-target.json`) should also validate the
+file's shape more strictly (e.g. reject extra unknown keys) — left permissive, matching this
+repository's existing "tolerant of unknown well-formed values" convention elsewhere
+(`docs/FOUNDATION_DESIGN.md`, findings L-1/L-2/L-3).

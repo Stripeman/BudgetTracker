@@ -6,7 +6,7 @@
   "description": "Privacy-first budgeting service with accounts, debt tracking, forecasting, trip planning, shared expenses, and multiple currencies.",
   "scripts": {
     "test": "npm run test:repo && npm run test:api && npm run test:app",
-    "test:repo": "node --test test/*.test.cjs",
+    "test:repo": "node --test test/*.test.cjs scripts/deploy/test/*.test.mjs",
     "test:api": "npm --prefix api test",
     "test:app": "node --test --test-concurrency=1 app/test/*.test.js",
     "dev": "node scripts/dev/server.mjs",

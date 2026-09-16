@@ -3,6 +3,10 @@
   Provisions BudgetTracker's own Azure resources. Idempotent; never deletes or modifies anything
   it did not create, and never touches other applications' resources.
 
+  NOT A DEPLOYMENT SCRIPT. This never ships application code; it creates infrastructure only, run
+  rarely and by hand before scripts/deploy/deploy.ps1 can target a new environment. Ship code only
+  through .\deploy.ps1 (see docs/DEPLOYMENT.md, "Deployment path inventory").
+
 .DESCRIPTION
   Target selection is EXPLICIT: subscription and tenant are mandatory and have no defaults, and the
   tenant is verified before any write. Nothing is inferred from ambient `az` context.
