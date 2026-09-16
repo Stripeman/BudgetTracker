@@ -31,7 +31,8 @@ Reuse the verified TaskTracker stack and components after inspecting its reposit
 
 Feature branch → the BudgetTracker Static Web App's isolated `preview` environment → Terry’s review → approved Git merge → controlled Production release. A separate Staging app will be added later; Production and the `budget.remsik.org` DNS change only with Terry's explicit authorization.
 
-Agents must not push to main, merge, or deploy Production. Local commands are below.
+Agents must not push to main, merge, or deploy Production. There is exactly one supported way to
+deploy code (`.\deploy.ps1`, see "Deployment" below); local commands are below.
 
 ## Public repository and private data
 
@@ -74,7 +75,14 @@ Never connect any of this to real financial data.
 
 **Remote controls.** `main` is protected: a PR is required, the `secret-scan` and `foundation-tests` checks must pass, the rule is enforced for admins, and force-push and deletion are blocked. Dependabot security updates are enabled.
 
-**Deployment.** See [Deployment](docs/DEPLOYMENT.md): one BudgetTracker Static Web App with an isolated preview environment. Production and the `budget.remsik.org` DNS require Terry's explicit authorization.
+**Deployment.** One BudgetTracker Static Web App with an isolated preview environment. Production and the `budget.remsik.org` DNS require Terry's explicit authorization. Exactly one supported entry point ships code (BT-003-05):
+
+```powershell
+.\deploy.ps1 -Environment preview
+.\deploy.ps1 -Environment production -AuthorizedProduction   # only with Terry's current, explicit authorization
+```
+
+`deploy.ps1` is a thin interface over `scripts/deploy/engine.mjs`, which validates the target, branch, commit, clean tree, Azure resource, application settings and storage isolation; runs the complete test/validate/build/secret-scan gate (no flag skips any of it); requires a typed production confirmation that is never suspended; uploads; verifies the deployed version and health endpoints; and prints a deployment receipt. It is the only file in the repository that calls the SWA CLI's deploy command (`scripts/deploy/test/engine.test.mjs` proves this and the gating rules). `scripts/deploy/provision.ps1` and `scripts/deploy/configure-settings.ps1` are separate, occasional infrastructure/settings scripts — never alternate ways to ship code. See [Deployment](docs/DEPLOYMENT.md) for the full procedure and the inventory of every path that can reach Azure.
 
 **Local runtime (fictional data only).**
 

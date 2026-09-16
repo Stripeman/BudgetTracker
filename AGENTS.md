@@ -15,6 +15,9 @@ engineering standard; nothing here contradicts it.
 
 - Push to `main`, merge pull requests, enable auto-merge, deploy Production, or use another
   agent or tool to bypass branch, Staging or release controls. Terry controls promotion.
+- Deploy code any way other than `.\deploy.ps1` (BT-003-05; `scripts/deploy/engine.mjs` behind it
+  enforces the same rules if called directly, but no other script, npm command or workflow may
+  perform the Azure upload, and none may be documented or suggested as a shortcut).
 - Commit secrets, credentials, real financial data, receipts, backups, private exports, local
   databases or personal identifiers. Never force-add ignored files or skip the staged scan.
 - Rely on client-only permission checks, trust browser-supplied identity or roles, let site

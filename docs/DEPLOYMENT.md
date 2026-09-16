@@ -9,6 +9,71 @@ Terry's decisions (2026-09-13):
 
 TaskTracker's resources, settings, secrets and data are never touched or copied.
 
+## Deployment path inventory and TaskTracker comparison (BT-003-05, 2026-09-16)
+
+Terry's instruction (2026-09-16): one supported deployment entry point, adapted from TaskTracker's
+proven structure, never bypassed by another script, CLI command or workflow. Before this
+consolidation:
+
+- **TaskTracker** ships a thin `deploy.ps1` that only parses arguments and prompts for the
+  (currently suspended) production confirmation; every rule — gate ordering, production
+  confirmation, environment resolution, secret handling, the health check, the receipt — lives in
+  a Node engine under `scripts/deploy/engine/` (`cli.js`, `operations.js`, `environments.js`,
+  `gateevidence.js`, …), plus a guided browser Setup Wizard and a `--ci` token-authenticated mode.
+  Its own documentation states the point precisely: "this CLI and the browser Setup Wizard enforce
+  exactly the same things and cannot drift apart" — calling the engine's CLI directly is exactly as
+  safe as `deploy.ps1`, because the rules live in one place.
+- **BudgetTracker (before this change)** had every rule inline in one 72-line
+  `scripts/deploy/deploy.ps1`: the tenant check, clean-tree/branch checks, the typed production
+  confirmation, the `npm test`/`npm run validate` gate, the artifact build and the `swa deploy`
+  call were one PowerShell script, with nothing separately invocable or unit-testable. There was
+  no automated post-deploy health check (it printed "now verify the running application
+  separately" and stopped), no secret-scan step in the deploy path itself (only in the pre-commit
+  hook and CI), and no structured receipt beyond a few `Write-Host` lines. `docs/REQUIREMENTS.md`
+  and `PROJECT_STATE.md` documented every real deploy as `deploy.ps1 -Environment preview`, yet
+  `-SubscriptionId`/`-TenantId` were Mandatory PowerShell parameters with no fallback — every
+  invocation actually also passed them, supplied by an operator or agent from memory or from
+  `.local/deploy-target.json` by hand, a step the documented command line never showed.
+
+**Every path that could reach Azure before this change, and its disposition now:**
+
+1. `scripts/deploy/deploy.ps1 -Environment preview|production` — the documented, actually-used
+   path. **Kept as the one supported entry point**, now a thin interface over
+   `scripts/deploy/engine.mjs`.
+2. Manually running the same `az`/`npx swa deploy` commands by hand, with a token fetched via
+   `az staticwebapp secrets list` — always technically possible for anyone with the `az` CLI and
+   Azure access (true of TaskTracker's engine too: access to the subscription is the real trust
+   boundary, not which script is used) and was not gated by any repository rule. **Cannot be
+   closed by software**; it is now explicitly documented as unsupported everywhere it used to be
+   implied, and every actual gate (tests, validate, secret scan, confirmation, health check) lives
+   only in the engine an operator would be bypassing.
+3. `node scripts/build-artifact.mjs` (`npm run build:artifact`) followed by a manual
+   `npx swa deploy` — the build step never touched Azure by itself, but nothing stopped an
+   operator from building the artifact once and deploying it outside every gate. **Unaffected in
+   raw capability** (same caveat as path 2), but a structural test
+   (`scripts/deploy/test/engine.test.mjs`) now asserts `scripts/deploy/engine.mjs` is the only
+   tracked file that invokes the SWA CLI's `deploy` command, so no second in-repo path can be
+   added silently, and no `npm` script performs a deploy.
+4. `scripts/deploy/provision.ps1` and `scripts/deploy/configure-settings.ps1` — these never ship
+   application code (they create infrastructure and set application settings), so they are not
+   deployment paths, but were not clearly distinguished from "the deployment process" in prose.
+   **Kept as separate, occasional operator scripts**, each already independently requiring
+   explicit tenant verification and, for production, a typed confirmation; now explicitly labelled
+   as a different concern in their own headers and here.
+5. No CI workflow deploys anything (`.github/workflows/security.yml` only runs `secret-scan` and
+   `foundation-tests`); `scripts/recovery/*.ps1`/`*.cjs` (drill, escrow) are a separate
+   recovery-operator concern (`docs/RECOVERY_RUNBOOK.md`) and never touch the SWA deploy path.
+   **Unchanged**, and explicitly noted as out of scope here.
+
+**Deliberate differences from TaskTracker's engine shape** (read-only inspected via
+`git -C T:/repos/TaskTracker show main:<path>`; structure adapted, nothing copied): no Setup
+Wizard, no `--ci` token-authenticated mode, and no `--skip-tests`/`--skip-live-check` flags —
+Terry's instruction requires the complete gate (test, validate, build, secret-scan, health check)
+on every deploy, with nothing to weaken it. The typed production confirmation is never suspended:
+TaskTracker currently suspends its own interactive prompt "for the beta development phase", which
+this repository's rules call a historical deployment exception and say not to copy
+(`docs/TASKTRACKER_REUSE.md`).
+
 ## Target (explicitly selected; never inferred from `az` context)
 
 | Dimension | Value |
@@ -84,13 +149,33 @@ The custom domain belongs to the **production** environment. Preview keeps its g
 
 ## Deployment procedure
 
+**The one supported entry point (BT-003-05, 2026-09-16):**
+
+```powershell
+.\deploy.ps1 -Environment preview
+.\deploy.ps1 -Environment production -AuthorizedProduction   # only with Terry's current, explicit authorization
+```
+
+`deploy.ps1` is a thin interface over `scripts/deploy/engine.mjs`. Every rule below lives in the
+engine, so `node scripts/deploy/engine.mjs --environment ...` enforces exactly the same things —
+there is no weaker path, only an unsupported one (see the inventory above). Agents and
+documentation must never instruct anyone to call the engine, `az`, `npx swa`, GitHub Actions, or
+any other script directly instead of `deploy.ps1`.
+
 - **Artifact.** Built from an allowlist (the site shell, `app/`, `staticwebapp.config.json`, `version.json`, and the API without tests). Tooling, docs, tests and local data are never published.
-- **Preview deploys.** Run locally by the implementation agent through `scripts/deploy/deploy.ps1 -Environment preview` (added with the frontend). The SWA deployment token is read from `az` at run time, held in memory only and never printed or stored. It is not placed in GitHub secrets, because the single token can deploy to every environment of the app.
-- **Production deploys.** Refused unless Terry explicitly authorizes the exact commit. The script then additionally requires `-AuthorizedProduction`, a clean tree on `main` equal to `origin/main`, and a typed confirmation.
-- **After any deploy.** Verify the running app separately (`/version.json`, `/api/me` environment and commit, sign-in, permission smoke checks) and report deployment and verification as separate claims.
-- **A deploy without the SWA CLI's final "Project deployed" line has failed**, whatever the exit code (2026-09-13: a preview deploy exited 0 without it; the frontend changed but the API kept running older code). Redeploy. The API now reports the commit stamped into the artifact by `scripts/build-artifact.mjs` (`api/build.json`), not the `BT_COMMIT` setting, so `/api/site-settings` `app.commit` names the code actually running; compare it with the commit you deployed.
-- **Runtime.** The API runs on Node 22 (`staticwebapp.config.json` `apiRuntime`, `deploy.ps1 --api-version`; Terry, 2026-09-13), matching the local and test runtime.
+- **Target resolution.** `-SubscriptionId`/`-TenantId`/`-ResourceGroup`/`-SwaName` are optional; when omitted they are read from the gitignored `.local/deploy-target.json` (keys: `subscriptionId`, `tenantId`, `resourceGroup`, `swaName`). Missing subscription or tenant configuration fails closed with a clear message — nothing is ever inferred from ambient `az` context.
+- **Validation, in order, before anything is built or uploaded:** the working tree is clean and HEAD is a named branch (not detached); for production, the branch must be `main` and HEAD must equal `origin/main`; the target Static Web App, resource group, environment, branch, commit and app version are printed; for production, the operator must pass `-AuthorizedProduction` AND type the exact Static Web App name when prompted (never suspended, never inferred from a previous run — see "Deliberate differences" above); the subscription's tenant is verified; the Static Web App is confirmed to exist in the named resource group; the target environment's application settings are read and checked for completeness (`BT_ENVIRONMENT`, `BT_STORAGE_CONNECTION_STRING`, `BT_BACKUP_CONNECTION_STRING`, `BT_BACKUP_KEYS`, `BT_BACKUP_ACTIVE_KEY`, `BT_SITE_ADMINS`), for storage isolation (data and backup connection strings must differ) and for a matching `BT_ENVIRONMENT` value.
+- **Gates, all required, none skippable.** `npm test`, `npm run validate`, the allowlisted artifact build (`scripts/build-artifact.mjs`), then a secret scan of the BUILT ARTIFACT with gitleaks (`gitleaks dir`, the same binary discovery as the pre-commit hook, exported from `scripts/scan-staged.cjs`). Preview proceeds with a recorded warning if gitleaks is not installed locally (CI's `secret-scan` job remains the enforced layer for the repository); **production refuses outright if gitleaks is unavailable.**
+- **Upload.** The SWA deployment token is read from `az staticwebapp secrets list` at run time, held in memory only, and never printed, logged or placed in GitHub secrets (one token can deploy every environment of the app). `BT_COMMIT` is set on the target environment after a successful upload.
+- **Post-deploy verification (now automatic).** The engine fetches the deployed `/version.json` and `/api/site-settings` and refuses to call the deploy healthy unless the live `app.commit` equals the exact commit just deployed and `app.environment` equals the target environment. This directly supersedes the earlier "a deploy without the SWA CLI's final 'Project deployed' line has failed, whatever the exit code" heuristic (2026-09-13 incident, kept below for history): the health check now verifies the ACTUAL running commit rather than trusting the CLI's own text output. A successful upload with a failed health check exits with code `2`, and the receipt says `UPLOADED, NOT VERIFIED HEALTHY` — upload success and live verification are always reported as separate, truthful claims. This is still only a SURFACE check (version, commit, environment); it is not application validation — Terry's own sign-in and permission smoke checks remain separate and manual (see PROJECT_STATE.md, "Waiting on Terry").
+- **Deployment receipt.** Printed at the end of every completed run: target (Static Web App / resource group / environment), URL, deployed SHA, app version, the ordered list of gate results, and the final result (`SUCCESS` or `UPLOADED, NOT VERIFIED HEALTHY`).
+- **Runtime.** The API runs on Node 22 (`staticwebapp.config.json` `apiRuntime`, the engine's `--api-version` argument to `swa deploy`; Terry, 2026-09-13), matching the local and test runtime.
 - **Shared with preview (Terry, 2026-09-13: "share both for now").** Production uses the same Application Insights resource and the same Google OAuth client as preview; the Production redirect URI is added to that client. Separating them later needs only new settings.
+- **Bypass guards.** `scripts/deploy/engine.mjs` is the only file in the repository that calls `swa deploy` (enforced by a structural test); `deploy.ps1` itself contains no `az`/`swa` calls (only delegation); no `npm` script performs a deploy; `scripts/deploy/provision.ps1` and `scripts/deploy/configure-settings.ps1` are separate, occasional infrastructure/settings scripts, not alternate ways to ship code, and each already independently requires explicit tenant verification and, for production, a typed confirmation; `scripts/recovery/*.ps1`/`*.cjs` are a different, recovery-operator concern (`docs/RECOVERY_RUNBOOK.md`) and never deploy code. `scripts/deploy/test/engine.test.mjs` proves both the gating rules (production confirmation, clean tree, branch, tenant, isolated settings, gate ordering) and the "only one deploy path" structural claim; it runs with the rest of the suite via `npm test`.
+
+### Historical incident (kept for context)
+
+The first preview deploy was labelled `386543c` but included an uncommitted `platform.apiRuntime` line in `staticwebapp.config.json` (2026-09-13). The clean-tree check existed even then; this is why it stays non-negotiable in the engine today.
 
 ## Rollback and schema compatibility
 
@@ -116,8 +201,8 @@ Record every rollback — cause, commit, steps and verification — in `PROJECT_
 ## Residual risks (recorded, not hidden)
 
 - **Dev tooling vulnerabilities.** `@azure/static-web-apps-cli` 2.0.10 (the same pin TaskTracker uses) pulls in `adm-zip` and `tmp`, which `npm audit` flags as high severity, plus `devcert` as low. They affect only the local deploy tooling on the operator's machine and are never published; the API's production dependencies audit clean. Revisit when a patched CLI is released.
-- **Deployment from a dirty tree (2026-09-13).** The first preview deploy was labelled `386543c`, but it included an uncommitted `platform.apiRuntime` line in `staticwebapp.config.json`. `deploy.ps1` now refuses a dirty tree for every environment. Preview was then redeployed from a clean commit.
-
+- **Deployment from a dirty tree (2026-09-13).** See "Historical incident" under Deployment procedure above; the clean-tree check has applied to every environment since, and is unconditional in the engine.
+- **Direct `az`/`swa` invocation remains technically possible.** Anyone with `az` CLI access to the subscription could run the same commands `scripts/deploy/engine.mjs` runs, by hand, bypassing every gate. This cannot be closed by software — the real trust boundary is Azure access, not which script is used (true of TaskTracker's engine as well). The mitigation is that no repository-supported path other than `deploy.ps1` performs the upload (enforced by `scripts/deploy/test/engine.test.mjs`), and every document that could be read as inviting a shortcut now says explicitly not to.
 - **One deployment token.** A Static Web App has one deployment token for all its environments. Anyone holding it could deploy production. It is fetched only at run time and never stored. A separate production SWA or token rotation after use would remove this risk.
 - **Agent credentials.** Agents operate with Terry's Azure and GitHub admin credentials. Instructions, not identities, currently restrict them from production and settings changes. A dedicated least-privilege deployment identity is recommended before production.
 - **Connection strings.** SWA managed functions cannot use managed identity or Key Vault references, so storage access uses connection strings kept in app settings, as TaskTracker does. Rotate the storage keys to revoke access.

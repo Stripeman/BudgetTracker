@@ -2,6 +2,10 @@
 .SYNOPSIS
   Configures application settings for ONE environment of BudgetTracker's Static Web App.
 
+  NOT A DEPLOYMENT SCRIPT. This never ships application code; it sets settings only, run rarely
+  and by hand after scripts/deploy/provision.ps1 and before the first deploy to a new environment.
+  Ship code only through .\deploy.ps1 (see docs/DEPLOYMENT.md, "Deployment path inventory").
+
 .DESCRIPTION
   Secrets (storage connection strings, Application Insights connection string, backup keys) are
   read from Azure and piped straight into the settings; they are never printed, logged or written
