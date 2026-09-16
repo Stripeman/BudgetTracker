@@ -77,6 +77,7 @@ export function createShell({ mountPoint, store, router, theme, api }) {
   let navigated = false;
   let menu = null;
   let wsPicker = null;
+  let landingEl = null;
 
   // Leaving a page with unsaved changes asks first (UX/accessibility review of eefd115, finding 3); the
   // browser asks on its own when the tab is closed or reloaded (main.js).
@@ -284,10 +285,16 @@ export function createShell({ mountPoint, store, router, theme, api }) {
       return;
     }
     if (!state.auth.user) {
-      clear(mountPoint); mountPoint.appendChild(renderLanding()); menu = null;
+      // Built once and reused across renders while signed out (the same reasoning as the account
+      // menu: rebuilding it on every commit would resubscribe the day/night control and refetch the
+      // footer's public version/channel for nothing).
+      if (!landingEl) landingEl = renderLanding({ theme, api });
+      if (!mountPoint.contains(landingEl)) { clear(mountPoint); mountPoint.appendChild(landingEl); }
+      menu = null;
       if (wsPicker) { wsPicker.destroy(); wsPicker = null; }
       document.title = "BudgetTracker — sign in"; return;
     }
+    landingEl = null;
     if (!mountPoint.contains(main)) mount(mountPoint, header, nav, main, footer);
     renderHeader(state);
     renderFooter(state);
