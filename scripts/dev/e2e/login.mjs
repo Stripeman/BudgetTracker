@@ -61,6 +61,49 @@ const CONTRAST_SELECTORS = [
   ".login__previewlabel", ".login__widget .card__title", ".login__widget .card__meta", ".menu__heading",
 ];
 
+// Non-text contrast (WCAG 1.4.11): each preview card's own border against the surface it sits on.
+// Independent accessibility review of BT-011-08 found the plain `--border` token unreadable here (in
+// light mode `--surface`/`--surface-raised` are the same white, so the border was the only thing
+// separating a card from its background, at ~1.3:1) and not covered by CONTRAST_SELECTORS above,
+// which only checks text. Fixed with `--control-border`, the token tokens.css itself documents as
+// meeting 3:1 (A11Y-009); this check guards it stays that way in every palette and mode.
+const BORDER_CONTRAST_SELECTORS = [".login__panel--preview", ".login__widget"];
+function pageBorderContrast(selectors) {
+  function relLuminance([r, g, b]) {
+    const chan = (c) => { const v = c / 255; return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4; };
+    return 0.2126 * chan(r) + 0.7152 * chan(g) + 0.0722 * chan(b);
+  }
+  function parseRgb(str) {
+    const m = /rgba?\(([^)]+)\)/.exec(str || "");
+    if (!m) return null;
+    const p = m[1].split(",").map((x) => parseFloat(x));
+    return { r: p[0], g: p[1], b: p[2], a: p.length > 3 ? p[3] : 1 };
+  }
+  function effectiveBg(el) {
+    for (let node = el; node; node = node.parentElement) {
+      const bg = parseRgb(getComputedStyle(node).backgroundColor);
+      if (bg && bg.a > 0.99) return bg;
+    }
+    return { r: 255, g: 255, b: 255 };
+  }
+  function ratio(fg, bg) {
+    const l1 = relLuminance([fg.r, fg.g, fg.b]) + 0.05;
+    const l2 = relLuminance([bg.r, bg.g, bg.b]) + 0.05;
+    return l1 > l2 ? l1 / l2 : l2 / l1;
+  }
+  const out = {};
+  for (const sel of selectors) {
+    const el = document.querySelector(sel);
+    if (!el) { out[sel] = null; continue; }
+    const border = parseRgb(getComputedStyle(el).borderTopColor);
+    // The colour immediately outside the border (the parent's own effective background), not the
+    // element's own — a border exists to separate the element from what surrounds it.
+    const outside = el.parentElement ? effectiveBg(el.parentElement) : effectiveBg(el);
+    out[sel] = border ? Math.round(ratio(border, outside) * 100) / 100 : null;
+  }
+  return out;
+}
+
 const toMs = (css) => { const s = String(css).trim(); return s.endsWith("ms") ? parseFloat(s) : s.endsWith("s") ? parseFloat(s) * 1000 : NaN; };
 const transitionDuration = (s, css) => s.evaluate(`getComputedStyle(document.querySelector(${JSON.stringify(css)})).transitionDuration`);
 
@@ -128,6 +171,9 @@ export async function run(h, t) {
       const ratios = await alice.evaluate(`(${pageContrast.toString()})(${JSON.stringify(CONTRAST_SELECTORS)})`);
       const failing = Object.entries(ratios).filter(([, r]) => r === null || r < 4.5).map(([sel, r]) => `${sel}: ${r}`);
       t.check(`${themeId}/${mode}: every checked text is >= 4.5:1 against its effective background`, { expected: [], actual: failing });
+      const borderRatios = await alice.evaluate(`(${pageBorderContrast.toString()})(${JSON.stringify(BORDER_CONTRAST_SELECTORS)})`);
+      const failingBorders = Object.entries(borderRatios).filter(([, r]) => r === null || r < 3).map(([sel, r]) => `${sel}: ${r}`);
+      t.check(`${themeId}/${mode}: every preview card border is >= 3:1 against its surroundings (WCAG 1.4.11)`, { expected: [], actual: failingBorders });
       if (shotPalettes.has(themeId)) await alice.shot(`2-palette-${themeId}-${mode}`);
     }
   }
