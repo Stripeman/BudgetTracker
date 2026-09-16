@@ -9,7 +9,7 @@
 const { badRequest } = require('./http');
 const money = require('./money');
 const fields = require('./fields');
-const { capabilitiesFor } = require('./authz');
+const { capabilitiesFor, can } = require('./authz');
 const icons = require('./icons');
 
 const ACCOUNT_TYPES = Object.freeze(['checking', 'savings', 'cash', 'credit-card', 'loan', 'mortgage',
@@ -137,6 +137,28 @@ function maskedNumber(value) {
   return value;
 }
 
+// True once the account has a reconciled entry: BT-006 locks opening balance/date at that point so
+// a reconciled statement never drifts. Shared by the edit route and the account view (so the UI can
+// disable those fields up front, not only after a failed save).
+function hasReconciledEntries(doc, accountId) {
+  return (doc.transactions || []).some((t) => t.accountId === accountId && !t.deletedAt && t.status === 'reconciled');
+}
+
+// Terms are stored in minor units (creditLimitMinor, minimumPaymentMinor, principalMinor,
+// paymentMinor) because that is what the ledger sums. For display and editing they are converted
+// to decimal strings alongside the minor fields — additive, so nothing that reads the minor fields
+// breaks — using the same field names `validateTerms` accepts back (creditLimit, minimumPayment,
+// principal, payment).
+function termsView(terms, currency) {
+  if (!terms) return {};
+  const out = { ...terms };
+  if (terms.creditLimitMinor != null) out.creditLimit = money.toDecimal(terms.creditLimitMinor, currency);
+  if (terms.minimumPaymentMinor != null) out.minimumPayment = money.toDecimal(terms.minimumPaymentMinor, currency);
+  if (terms.principalMinor != null) out.principal = money.toDecimal(terms.principalMinor, currency);
+  if (terms.paymentMinor != null) out.payment = money.toDecimal(terms.paymentMinor, currency);
+  return out;
+}
+
 // Added exactly with money.sum (BigInt), so a partial total never loses a minor unit whatever the
 // order of the entries (FIN-R15).
 function balanceOf(doc, account) {
@@ -156,6 +178,18 @@ function accessOf(account, principal) {
   return account.ownerSubject === principal.subject ? 'own' : 'granted';
 }
 
+// Whether anything was ever recorded against an account (BT-006-05): an entry (deleted or reversed ones
+// too, because they are kept), a bill from or into it, a grant given on it, or a Shared-expenses link
+// to it. An account with none of these was most likely created by mistake.
+function hasEntries(doc, account) {
+  const id = account.id;
+  if ((doc.transactions || []).some((t) => t.accountId === id || t.counterpartAccountId === id)) return true;
+  if ((doc.recurring || []).some((r) => r.accountId === id || r.toAccountId === id)) return true;
+  if ((doc.grants || []).some((g) => g.resourceId === id)) return true;
+  if ((doc.groupLedgers || []).some((l) => l.accountId === id)) return true;
+  return [...(doc.groupExpenses || []), ...(doc.groupSettlements || [])].some((rec) => (rec.ledgerLinks || []).some((l) => l.accountId === id));
+}
+
 function accountView(doc, principal, account, now) {
   const caps = capabilitiesFor(doc, principal, account, now);
   const access = accessOf(account, principal);
@@ -171,12 +205,23 @@ function accountView(doc, principal, account, now) {
     capabilities: [...caps].sort(), notes: account.notes || '', revision: account.revision || 1,
     ...icons.effective('account', account, doc),
   };
+  // Only to people who can see its entries: to anyone else even "nothing recorded" says too much.
+  if (caps.has('view-transactions')) out.hasEntries = hasEntries(doc, account);
+  // Whether Shared expenses currently records this person's part here (financial recheck of 41494d1,
+  // FA-2): only to the account's own owner — nobody else may know which account, or even whether one,
+  // is linked (security review S2) — and only while the link is active, not merely once used.
+  if (out.ownedBySelf && caps.has('view-transactions')) {
+    out.groupLedgerLinked = (doc.groupLedgers || []).some((l) => l.accountId === account.id && l.subject === principal.subject && !l.endedAt);
+  }
   if (caps.has('view-balances')) {
     out.openingBalance = money.toDecimal(account.openingBalanceMinor, account.currency);
     out.openingBalanceMinor = account.openingBalanceMinor;
     out.balanceMinor = balanceOf(doc, account);
     out.balance = money.toDecimal(out.balanceMinor, account.currency);
-    out.terms = account.terms || {};
+    out.terms = termsView(account.terms || {}, account.currency);
+    // Whether opening balance/date are locked (BT-006): shown up front so an edit dialog can
+    // disable those fields instead of only failing after Save.
+    out.reconciledLocked = hasReconciledEntries(doc, account.id);
   }
   return out;
 }
@@ -218,8 +263,64 @@ function validateSplits(splits, amountMinor, currency, doc) {
   return out;
 }
 
+// Share entries offset in full by an amount owed (financial recheck of 47617b5, L4; Terry's rule: arrows
+// only for money actually in or out): the share of a shared expense someone else paid, or the spending
+// half of a hand-entered pair. No money left the account for them, so they are shown with the
+// no-money-moved mark and "Paid by someone else". A share one paid oneself, even in part, keeps its
+// arrow. Matched per person, account and record (or pair), and per state (current, reversed, reversal).
+function paidElsewhereIndex(doc) {
+  const buckets = new Map();
+  const byId = new Map((doc.transactions || []).map((t) => [t.id, t]));
+  for (const t of doc.transactions || []) {
+    if (t.kind !== 'expense' && t.kind !== 'payable') continue;
+    const l = t.links || {};
+    // A reversal belongs with the entry it reverses (a reversal of a hand-entered pair does not carry
+    // the pair's id itself).
+    const src = (l.reverses && byId.get(l.reverses)) || t;
+    const groupExpenseId = l.groupExpenseId || (src.links || {}).groupExpenseId;
+    const record = src.owedPairId ? `pair|${src.owedPairId}` : groupExpenseId ? `group|${t.createdBy}|${t.accountId}|${groupExpenseId}` : null;
+    if (!record) continue;
+    const key = `${record}|${l.reverses ? 'reversal' : t.reversedBy ? 'reversed' : 'current'}|${t.deletedAt ? 'deleted' : ''}`;
+    const b = buckets.get(key) || { expenses: [], payables: [] };
+    (t.kind === 'expense' ? b.expenses : b.payables).push(t);
+    buckets.set(key, b);
+  }
+  const out = new Set();
+  for (const { expenses, payables } of buckets.values()) {
+    for (const e of expenses) if (payables.some((p) => p.amountMinor === -e.amountMinor)) out.add(e.id);
+  }
+  return out;
+}
+
+// The links a viewer may see (security recheck R3-3): a bill's id and occurrence only to someone who can
+// see that bill (view-transactions on its account, as the bills route decides), and a shared expense's
+// or payment's id only to the owner of the entry (the person whose part it records). Other link keys
+// point at entries on the same account and stay.
+const BILL_LINKS = new Set(['recurringId', 'occurrence']);
+const GROUP_LINKS = new Set(['groupExpenseId', 'groupSettlementId']);
+function visibleLinks(doc, t, principal, now) {
+  const l = t.links || {};
+  const out = {};
+  for (const [k, v] of Object.entries(l)) if (!BILL_LINKS.has(k) && !(GROUP_LINKS.has(k) && t.createdBy !== principal.subject)) out[k] = v;
+  if (l.recurringId) {
+    const bill = (doc.recurring || []).find((r) => r.id === l.recurringId);
+    const account = bill && (doc.accounts || []).find((a) => a.id === bill.accountId && !a.deletedAt);
+    if (account && can(doc, principal, account, 'view-transactions', now)) {
+      out.recurringId = l.recurringId;
+      if (l.occurrence !== undefined) out.occurrence = l.occurrence;
+    }
+  }
+  return out;
+}
+
 function transactionView(doc, t, principal, now, lookups) {
   const account = lookups.accounts.get(t.accountId);
+  // Computed once per set of lookups (one request), after the request's own changes.
+  const paidElsewhere = lookups.paidElsewhere || (lookups.paidElsewhere = paidElsewhereIndex(doc));
+  // The other account of a transfer is identified only to someone who may see it, as a bill's
+  // destination is (SEC-B12; security recheck of 47617b5, L3); the client then says "another account".
+  const other = t.counterpartAccountId ? (doc.accounts || []).find((a) => a.id === t.counterpartAccountId) : null;
+  const counterpartAccountId = other && can(doc, principal, other, 'view-balances', now) ? other.id : null;
   return {
     id: t.id, accountId: t.accountId, accountName: account ? account.name : '', kind: t.kind,
     amountMinor: t.amountMinor, amount: money.toDecimal(t.amountMinor, t.currency), currency: t.currency,
@@ -227,8 +328,15 @@ function transactionView(doc, t, principal, now, lookups) {
     payeeId: t.payeeId || null, payeeName: t.payeeId && lookups.payees.get(t.payeeId) ? lookups.payees.get(t.payeeId).name : '',
     categoryId: t.categoryId || null, splits: (t.splits || []).map((s) => ({ ...s, amount: money.toDecimal(s.amountMinor, t.currency) })),
     tags: t.tags || [], notes: t.notes || '', responsibleRef: t.responsibleRef || null,
-    transferId: t.transferId || null, counterpartAccountId: t.counterpartAccountId || null,
-    links: t.links || {}, createdAt: t.createdAt, updatedAt: t.updatedAt || null, revision: t.revision || 1,
+    transferId: t.transferId || null, counterpartAccountId,
+    // A hand-entered amount owed and its matching share, recorded and corrected together (BT-009).
+    owedPairId: t.owedPairId || null,
+    // A share someone else paid: no money moved (L4).
+    paidBySomeoneElse: paidElsewhere.has(t.id),
+    links: visibleLinks(doc, t, principal, now),
+    // Recorded from Shared expenses: locked there (N2), said even when the link itself is not shown (R3-3).
+    fromSharedExpense: !!(t.links && (t.links.groupExpenseId || t.links.groupSettlementId)),
+    createdAt: t.createdAt, updatedAt: t.updatedAt || null, revision: t.revision || 1,
     amendmentCount: (t.amendments || []).length, reversedBy: t.reversedBy || null,
     createdBySelf: t.createdBy === principal.subject, deletedAt: t.deletedAt || null,
   };
@@ -301,5 +409,6 @@ function memberBytes(doc, member) {
 module.exports = {
   assertMemberQuota, memberBytes, memberCharge, quotaLimit, quotaExceeded,
   ACCOUNT_TYPES, LIABILITY_TYPES, TX_KINDS, OUTFLOW, INFLOW, TX_STATUSES, NEVER_POSITIVE_OPENING, validateTerms, maskedNumber,
-  balanceOf, accountView, accessOf, signedAmount, validateSplits, transactionView, visiblePayees, classify, openingBalance, assertLedgerInRange,
+  balanceOf, accountView, hasEntries, accessOf, signedAmount, validateSplits, transactionView, visiblePayees, classify, openingBalance, assertLedgerInRange,
+  hasReconciledEntries, termsView,
 };

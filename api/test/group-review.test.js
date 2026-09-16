@@ -358,7 +358,12 @@ describe('finding 2: shares of other people\'s expenses and repayments are recor
     const bCash = await account(h, f, 'bob', { name: 'Bob Cash', type: 'cash', currency: 'EUR', openingBalance: '500.00' });
     // 100.00 paid 30.00 by Alice and 70.00 by Bob, shared equally (50.00 each).
     await addExpense(h, f, 'alice', { description: 'Fictional groceries', amount: '100.00', payers: [{ ref: f.refs.alice, amount: '30.00' }, { ref: f.refs.bob, amount: '70.00' }], split: equal(f.refs.alice, f.refs.bob), ledger: { accountId: aCash.id } });
-    ok(await act(h, f, 'bob', 'ledger', { currency: 'EUR', accountId: bCash.id }));
+    // Bob already paid his 70.00 before linking, so this first link would backdate a confirmed cash
+    // entry (financial recheck FA-1): refused until he confirms it.
+    const refused = await act(h, f, 'bob', 'ledger', { currency: 'EUR', accountId: bCash.id });
+    assert.equal(refused.status, 409);
+    assert.equal(refused.body.error.code, 'confirm_backdated');
+    ok(await act(h, f, 'bob', 'ledger', { currency: 'EUR', accountId: bCash.id, confirmBackdated: true }));
     // Alice: cash −30; spending 50; owes 20. Bob: cash −70; spending 50; owed 20.
     assert.deepEqual(await ledgerOf(h, f, 'alice', aCash.id), { cash: '470.00', spent: '50.00', advances: '0.00', payables: '20.00', reimbursed: '0.00', repaid: '0.00', receivable: '-20.00' });
     assert.deepEqual(await ledgerOf(h, f, 'bob', bCash.id), { cash: '430.00', spent: '50.00', advances: '20.00', payables: '0.00', reimbursed: '0.00', repaid: '0.00', receivable: '20.00' });
@@ -372,7 +377,7 @@ describe('finding 2: shares of other people\'s expenses and repayments are recor
     const cat = ok(await h.call('categories', 'GET', { as: 'bob', query: f.q })).categories.find((c) => c.type !== 'income' && !c.archived);
     const bCash = await account(h, f, 'bob', { name: 'Bob Cash', type: 'cash', currency: 'EUR', openingBalance: '500.00' });
     ok(await act(h, f, 'bob', 'ledger', { currency: 'EUR', accountId: bCash.id }));
-    ok(await h.call('budgets', 'POST', { as: 'bob', query: f.q, body: { name: 'Bob eating out', scope: 'private', currency: 'EUR', startDate: '2026-01-01', lines: [{ categoryId: cat.id, amount: '200.00' }] } }), 201);
+    ok(await h.call('budgets', 'POST', { as: 'bob', query: f.q, body: { name: 'Bob eating out', scope: 'private', currency: 'EUR', startDate: '2026-01-01', confirmBackdate: true, lines: [{ categoryId: cat.id, amount: '200.00' }] } }), 201);
     await addExpense(h, f, 'alice', { description: 'Fictional dinner', amount: '300.00', categoryId: cat.id, payers: [{ ref: f.refs.alice }], split: equal(f.refs.alice, f.refs.bob, f.refs.frank, f.refs.dana) });
     ok(await act(h, f, 'bob', 'ledger', { currency: 'EUR' }));
     // Bob paid nothing, but 75.00 of the dinner is his spending in that category; his cash is unchanged.
@@ -396,7 +401,12 @@ describe('finding 2: shares of other people\'s expenses and repayments are recor
     const { value: doc } = await h.storage.getJson(`workspaces/${f.ws.id}/workspace.json`);
     assert.equal(doc.groupLedgers.length, 1);
     assert.ok(doc.groupLedgers[0].endedAt, 'ended, not removed');
-    ok(await act(h, f, 'bob', 'ledger', { currency: 'EUR', accountId: cash.id }));
+    // Linking again is treated as a first link too (the earlier one ended): the milk advance is
+    // confirmed, pending cash again (financial recheck FA-1), so it needs confirming once more.
+    const refused = await act(h, f, 'bob', 'ledger', { currency: 'EUR', accountId: cash.id });
+    assert.equal(refused.status, 409);
+    assert.equal(refused.body.error.code, 'confirm_backdated');
+    ok(await act(h, f, 'bob', 'ledger', { currency: 'EUR', accountId: cash.id, confirmBackdated: true }));
     assert.equal((await ledgerOf(h, f, 'bob', cash.id)).cash, '46.00');
   });
 });
@@ -456,30 +466,23 @@ describe('finding 1: each person\'s entries are theirs alone', () => {
     return { h, f, joint, e };
   }
 
-  test('a sync touches only the caller\'s own entries and never flip-flops', async () => {
+  // Security recheck R1 (Terry, 2026-09-14): nothing new is recorded on an account that is not the
+  // person's own private account. Financial recheck of 53cf181, N-1 (decision 2026-09-14): each of them
+  // paid their own share from the Joint, so their entries stay there, where the money moved; they need no
+  // review, and a sync finds them already up to date.
+  test('each person sees only their own entry; entries that moved cash on a shared account stay there and a sync writes nothing', async () => {
     const { h, f, joint, e } = await legacyJoint();
     assert.equal(await balanceOf(h, f, 'alice', joint.id), '800.00');
-    // Links to a shared account are no longer honoured (S2): each person's own entry needs review, and
-    // only their own entry is listed as theirs.
-    let mine = (await view(h, f, 'alice')).expenses[0].myLedger;
-    assert.equal(mine.needsReview, true);
-    assert.equal(mine.entries.length, 1);
-    ok(await act(h, f, 'alice', 'ledger', { expenseId: e.id }));
-    // Only Alice's 100.00 is reversed: 800 + 100 = 900. Frank's entry is untouched.
-    assert.equal(await balanceOf(h, f, 'alice', joint.id), '900.00');
-    const live = (await entriesOf(h, f, 'alice', joint.id)).filter((t) => t.links.groupExpenseId === e.id && !t.reversedBy && !t.links.reverses);
-    assert.equal(live.length, 1);
     const count = (await entriesOf(h, f, 'alice', joint.id)).length;
-    ok(await act(h, f, 'alice', 'ledger', { expenseId: e.id }));
-    assert.equal((await entriesOf(h, f, 'alice', joint.id)).length, count, 'no flip-flop');
-    assert.equal((await view(h, f, 'alice')).expenses[0].myLedger, undefined, 'nothing of Alice\'s is left');
-    mine = (await view(h, f, FRANK)).expenses[0].myLedger;
-    assert.equal(mine.needsReview, true);
-    ok(await act(h, f, FRANK, 'ledger', { expenseId: e.id }));
-    assert.equal(await balanceOf(h, f, 'alice', joint.id), '1000.00');
-    ok(await act(h, f, 'alice', 'ledger', { expenseId: e.id }));
-    // Frank's update added one entry (the reversal of his own); Alice's repeat added none: 3 + 1 = 4.
-    assert.equal((await entriesOf(h, f, 'alice', joint.id)).length, count + 1, 'only Frank\'s reversal was added');
+    for (const w of ['alice', FRANK]) {
+      const mine = (await view(h, f, w)).expenses[0].myLedger;
+      assert.deepEqual([mine.entries.length, mine.needsReview, mine.keptAccount.reason], [1, false, 'shared'], JSON.stringify(w));
+      ok(await act(h, f, w, 'ledger', { expenseId: e.id }));
+      ok(await act(h, f, w, 'ledger', { currency: 'EUR' }));
+    }
+    // Nothing written by either: 1000.00 − 100.00 − 100.00 = 800.00, the same two entries (no flip-flop).
+    assert.equal(await balanceOf(h, f, 'alice', joint.id), '800.00');
+    assert.equal((await entriesOf(h, f, 'alice', joint.id)).length, count);
   });
 
   test('a per-record link from increment 1 to the person\'s own private account keeps working until they link the group', async () => {
@@ -611,7 +614,12 @@ describe('S4: create-new carries no other member\'s identifiers', () => {
     // Bob adds and records a hostel paid by him for Alice and Dana; Alice corrects the payer to herself.
     const e = await addExpense(h, f, 'bob', { description: 'Fictional hostel', amount: '30.00', payers: [{ ref: f.refs.bob }], split: equal(f.refs.alice, f.refs.dana), ledger: { accountId: wallet.id } });
     ok(await G(h, f, 'alice', 'PATCH', { body: { expenseId: e.id, revision: e.revision, reason: 'Alice paid', payers: [{ ref: f.refs.alice }] } }));
-    ok(await act(h, f, 'alice', 'ledger', { currency: 'EUR', accountId: cash.id }));
+    // Alice is now the corrected payer of the hostel, confirmed cash she already paid before linking
+    // (financial recheck FA-1): her first link needs confirming.
+    const refused = await act(h, f, 'alice', 'ledger', { currency: 'EUR', accountId: cash.id });
+    assert.equal(refused.status, 409);
+    assert.equal(refused.body.error.code, 'confirm_backdated');
+    ok(await act(h, f, 'alice', 'ledger', { currency: 'EUR', accountId: cash.id, confirmBackdated: true }));
     const b0 = await backupNow(h, f);
     const res = await restoreAs(h, f, b0, 'create-new');
     const { value: doc } = await h.storage.getJson(`workspaces/${res.workspace.id}/workspace.json`);
@@ -695,6 +703,9 @@ describe('S5: nobody confirms their own payment; a manager confirming a payment 
   test('the payer never confirms; a manager or owner confirming a contact payment they reported is marked', async () => {
     const h = harness();
     const f = await fixture(h);
+    // The S5 rules apply when "Anyone in the group can confirm payments" is off (Terry, 2026-09-14;
+    // it is on by default, tested in group-recheck.test.js).
+    ok(await act(h, f, 'alice', 'settings', { changes: { anyoneConfirms: false } }));
     // Frank (manager) reports that Bob paid Dana (a contact) and confirms it himself: allowed, marked.
     const s1 = await settle(h, f, FRANK, { from: f.refs.bob, to: f.refs.dana, amount: '50.00' });
     const c1 = ok(await act(h, f, FRANK, 'confirm', { settlementId: s1.id, revision: s1.revision })).settlement;

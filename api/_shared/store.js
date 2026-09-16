@@ -10,6 +10,8 @@
 //   users/{sha256(subject)}.json              one person's profile, preferences, private
 //                                              contacts and derived workspace index
 //   site/settings.json                        operational site settings (no financial data)
+//   site/usage.json                           aggregate usage/activity counts for the site-admin
+//                                              Usage page (BT-012-01); no financial data
 const { update } = require('./storage');
 const { readDocument, stampDocument } = require('./schema');
 const { notFound, conflict } = require('./http');
@@ -23,6 +25,7 @@ const paths = Object.freeze({
   attachment: (wsId, sha) => `workspaces/${requireId(wsId, 'workspaceId')}/attachments/${sha}`,
   user: (subject) => `users/${userKey(subject)}.json`,
   site: () => 'site/settings.json',
+  usage: () => 'site/usage.json',
 });
 
 const IDEMPOTENCY_TTL_MS = 48 * 60 * 60 * 1000;
@@ -46,13 +49,24 @@ const maxBytes = (env) => {
 
 const sizeWithoutIdempotency = (doc) => Buffer.byteLength(JSON.stringify({ ...doc, idempotency: undefined }));
 
-// Reads a workspace for an active member. A missing workspace, an archived-and-purged one and
-// one the caller does not belong to are all the same 404 — no existence oracle.
-async function loadWorkspace(ctx, wsId) {
+// Reads a workspace for an active member. A missing workspace and one the caller does not belong to
+// are the same 404 — no existence oracle.
+//
+// A DELETED (archived) workspace is out of reach for everyone, owners included (Terry, 2026-09-14: the
+// owner deletes their own workspace; "Everyone loses access until an owner brings it back"). Its members
+// get a 404 that says so; nothing in it is erased. Only the routes that list, delete or bring back a
+// workspace pass `archived: true`, and even then only an owner gets through.
+const UNAVAILABLE = 'This workspace is not available.';
+function assertReachable(doc, member, archived) {
+  if (doc.status === 'archived' && !(archived && member.role === 'owner')) throw notFound(UNAVAILABLE);
+}
+
+async function loadWorkspace(ctx, wsId, { archived = false } = {}) {
   const { value, etag } = await ctx.storage.getJson(paths.workspace(wsId));
   const doc = readDocument('workspace', value);
   const member = doc && activeMember(doc, ctx.principal);
   if (!doc || !member) throw notFound('Unknown workspace.');
+  assertReachable(doc, member, archived);
   return { doc, etag, member };
 }
 
@@ -62,7 +76,7 @@ async function loadWorkspace(ctx, wsId) {
 // The idempotency record is bound to the person, the operation (`idempotencyScope`) and a hash of
 // the request body: a key reused for a different operation or a different body is refused with
 // 409 instead of silently replaying an unrelated result (financial review finding 9).
-async function mutateWorkspace(ctx, wsId, fn, { idempotencyKey, idempotencyScope = 'default', requestHash, expectedEtag, allowHeadroom = false } = {}) {
+async function mutateWorkspace(ctx, wsId, fn, { idempotencyKey, idempotencyScope = 'default', requestHash, expectedEtag, allowHeadroom = false, archived = false } = {}) {
   if (idempotencyKey !== undefined && idempotencyKey !== null && !isIdempotencyKey(idempotencyKey)) {
     throw conflict('The Idempotency-Key header is not valid.', 'invalid_idempotency_key');
   }
@@ -72,6 +86,7 @@ async function mutateWorkspace(ctx, wsId, fn, { idempotencyKey, idempotencyScope
     const doc = readDocument('workspace', value);
     const member = doc && activeMember(doc, ctx.principal);
     if (!doc || !member) throw notFound('Unknown workspace.');
+    assertReachable(doc, member, archived);
     const key = idempotencyKey ? `${member.subject}|${idempotencyKey}` : null;
     if (!doc.idempotency || typeof doc.idempotency !== 'object') doc.idempotency = {};
     // Expired retry records are dropped before anything is charged or replayed (security recheck L3).
@@ -186,7 +201,7 @@ function assertRoomForHeadroomWrite(ctx, doc, member, margin = 2048) {
 // Google account, so creation is bounded. Archived workspaces do not count. `BT_MAX_WORKSPACES`
 // may only lower the limit (tests).
 const MAX_WORKSPACES_PER_PERSON = 20;
-async function assertCanCreateWorkspace(ctx) {
+async function assertCanCreateWorkspace(ctx, { restoring = false } = {}) {
   const configured = Number(ctx.env && ctx.env.BT_MAX_WORKSPACES);
   const limit = Number.isSafeInteger(configured) && configured > 0 && configured < MAX_WORKSPACES_PER_PERSON ? configured : MAX_WORKSPACES_PER_PERSON;
   const user = await ensureUser(ctx);
@@ -196,7 +211,11 @@ async function assertCanCreateWorkspace(ctx) {
     const doc = readDocument('workspace', value);
     if (doc && doc.createdBy === ctx.principal.subject && doc.status !== 'archived') created += 1;
   }
-  if (created >= limit) throw conflict(`You can have up to ${limit} active workspaces that you created. Archive one you no longer use to create another.`, 'workspace_limit');
+  // The app calls archiving "Delete workspace" (Terry, 2026-09-14); a deleted one is brought back from My settings.
+  if (created >= limit) {
+    const what = `You can have up to ${limit} active workspace${limit === 1 ? '' : 's'} that you created.`;
+    throw conflict(`${what} ${restoring ? 'Delete one you no longer use, then bring this one back.' : 'Delete one you no longer use to create another.'}`, 'workspace_limit');
+  }
 }
 
 // New workspaces per person per day, counted atomically inside the mutateUser that reserves the new

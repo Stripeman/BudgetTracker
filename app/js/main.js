@@ -8,6 +8,10 @@ import { createRouter } from "./core/router.js";
 import { createShell } from "./ui/shell.js";
 import { setCatalog, setTypeIcons } from "./ui/icons.js";
 import { sliceFor } from "./core/store.js";
+import { installUnloadWarning } from "./core/unsaved.js";
+
+// Closing or reloading the tab with unsaved changes makes the browser ask (UX review of eefd115, finding 3).
+installUnloadWarning(window);
 
 const theme = browserThemeController(window);
 const api = createApiClient();

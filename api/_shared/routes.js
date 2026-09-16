@@ -27,6 +27,8 @@ const ROUTES = Object.freeze({
   restore: { methods: ['POST'] },
   'site-settings': { methods: ['GET', 'PUT'], options: { anonymous: true } },
   roles: { methods: ['POST'], options: { anonymous: true, csrfExempt: true } },
+  // Site usage/activity aggregate (BT-012-01): site administrators only, never financial data.
+  analytics: { methods: ['GET'] },
 });
 
 module.exports = { ROUTES };

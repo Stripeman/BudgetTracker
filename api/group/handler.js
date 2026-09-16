@@ -53,12 +53,18 @@ const fields = require('../_shared/fields');
 const audit = require('../_shared/audit');
 const ledger = require('../_shared/ledger');
 const groups = require('../_shared/groups');
+const groupSettings = require('../_shared/group-settings');
 const entries = require('../_shared/entries');
 const model = require('../_shared/workspace-model');
+const siteSettings = require('../_shared/site');
+const workspaceSettings = require('../_shared/workspace-settings');
+const { readDocument } = require('../_shared/schema');
 
-const CREATE_KEYS = ['description', 'date', 'amount', 'currency', 'categoryId', 'notes', 'payers', 'split', 'ledger'];
+// `confirmBackdated` accompanies `ledger` wherever both may appear: it answers the FA-1 warning (below)
+// when starting to record on an account would backdate confirmed cash the caller has not yet seen.
+const CREATE_KEYS = ['description', 'date', 'amount', 'currency', 'categoryId', 'notes', 'payers', 'split', 'ledger', 'confirmBackdated'];
 const PATCH_KEYS = ['expenseId', 'revision', 'reason', 'description', 'date', 'amount', 'categoryId', 'notes', 'payers', 'split'];
-const SETTLE_KEYS = ['from', 'to', 'amount', 'currency', 'date', 'method', 'notes', 'ledger'];
+const SETTLE_KEYS = ['from', 'to', 'amount', 'currency', 'date', 'method', 'notes', 'ledger', 'confirmBackdated'];
 // Every correction keeps the before and after values of these fields.
 const TRACKED = ['description', 'date', 'amountMinor', 'categoryId', 'notes', 'payers', 'split', 'shares'];
 const LINK_KEY = Object.freeze({ expense: 'groupExpenseId', settlement: 'groupSettlementId' });
@@ -115,21 +121,71 @@ const findSettlement = (doc, id) => {
   if (!s) throw notFound('Unknown payment.');
   return s;
 };
-const canChangeExpense = (e, member) => writer(member) && (e.createdBy === member.subject || isManager(member));
+// Who may correct or void a shared expense: the group setting "changeExpenses" (Terry, 2026-09-14).
+// Viewers never may.
+const canChangeExpense = (doc, e, member) => writer(member)
+  && (e.createdBy === member.subject || isManager(member) || groupSettings.get(doc, 'changeExpenses') === 'any-writer');
+const expenseRuleText = (doc) => (groupSettings.get(doc, 'changeExpenses') === 'any-writer'
+  ? 'Viewers can see shared expenses but cannot change them.' : 'Only the person who added this expense, or a manager or owner, can change it.');
+
+// Who may withdraw a confirmed payment (setting "withdrawPayments"): the receiver or a manager or owner
+// (default), the receiver only, or anyone who can confirm payments. For a contact, who cannot sign in, a
+// manager or owner acts as the receiver. Viewers never withdraw.
+function canWithdraw(doc, s, member) {
+  if (!writer(member)) return false;
+  const me = selfRef(member);
+  const forContact = s.to.startsWith('contact:') && isManager(member);
+  const rule = groupSettings.get(doc, 'withdrawPayments');
+  if (rule === 'receiver') return s.to === me || forContact;
+  if (rule === 'confirmers') return s.to === me || forContact || groupSettings.confirmsAny(doc, member);
+  return s.to === me || isManager(member);
+}
+const withdrawRuleText = (doc) => ({
+  receiver: 'Only the person who received this payment can withdraw its confirmation.',
+  confirmers: 'Only the person who received this payment, or someone who can confirm payments, can withdraw its confirmation.',
+}[groupSettings.get(doc, 'withdrawPayments')] || 'Only the person who received this payment, or a manager or owner, can withdraw its confirmation.');
+
+// Who may dispute a reported payment (setting "disputePayments"): its receiver, or also a manager or
+// owner. The receiver always may, a viewer included (security review S7).
+const canDisputePayment = (doc, s, member) => s.to === selfRef(member)
+  || (groupSettings.get(doc, 'disputePayments') === 'receiver-or-manager' && isManager(member));
+
+// A new expense's payer and split when the request leaves them out: the group's defaults (setting (b)).
+// The caller's own defaults win over the group's when set (personal preferences groupPaidBy,
+// groupSplitMethod, groupSplitWho), so the API and the browser start a new expense the same way
+// (financial recheck of 53cf181, personal-defaults note).
+function defaultPayers(doc, member, mine = {}) {
+  const paidBy = mine.paidBy || groupSettings.get(doc, 'paidBy');
+  if (paidBy === 'nobody' || !member) throw badRequest('Say who paid for this expense.', 'invalid_payers');
+  return [{ ref: selfRef(member) }];
+}
+function defaultSplit(doc, member, mine = {}) {
+  const method = mine.method || groupSettings.get(doc, 'splitMethod');
+  if (method !== 'equal' || !member) throw badRequest('Choose how to split this expense: the default split needs a value for each person.', 'invalid_split');
+  const refs = (mine.who || groupSettings.get(doc, 'splitWho')) === 'me' ? [selfRef(member)] : groups.participants(doc, null).filter((p) => p.active).map((p) => p.ref);
+  return { method: 'equal', lines: refs.map((ref) => ({ ref })) };
+}
+// The caller's own defaults for a new expense, from their preferences; none set means the group's.
+async function ownDefaults(ctx) {
+  const { value } = await ctx.storage.getJson(store.paths.user(ctx.principal.subject));
+  const prefs = ((readDocument('user', value) || {}).preferences) || {};
+  return { method: prefs.groupSplitMethod || null, who: prefs.groupSplitWho || null, paidBy: prefs.groupPaidBy || null };
+}
 
 // The amount, payers, split and resulting shares, from the request and (for a correction) the record.
-function expenseMoney(doc, body, rec) {
+// A new expense without payers or a split takes the group's defaults for `member`.
+function expenseMoney(doc, body, rec, member = null, mine = {}) {
   const currency = rec ? rec.currency : currencyOf(doc, body.currency);
   const check = groups.participantChecker(doc, rec ? new Set(groups.recordRefs({ groupExpenses: [rec] })) : new Set());
   const amountMinor = !rec || body.amount !== undefined ? groups.positiveAmount(body.amount, currency, 'Amount') : rec.amountMinor;
   let payers;
-  if (!rec || body.payers !== undefined) payers = groups.normalizePayers(body.payers, amountMinor, currency, check);
+  if (!rec || body.payers !== undefined) payers = groups.normalizePayers(body.payers === undefined ? defaultPayers(doc, member, mine) : body.payers, amountMinor, currency, check);
   else {
     payers = structuredClone(rec.payers);
     if (money.sum(payers.map((p) => p.amountMinor)) !== amountMinor) throw badRequest('The amount changed, so say again who paid how much.', 'payer_total');
   }
   let split;
-  if (!rec || body.split !== undefined) split = groups.normalizeSplit(body.split, amountMinor, currency, check);
+  if (!rec || body.split !== undefined) split = groups.normalizeSplit(body.split === undefined ? defaultSplit(doc, member, mine) : body.split, amountMinor, currency, check);
   else {
     split = structuredClone(rec.split);
     if (split.method === 'amounts' && money.sum(split.lines.map((l) => l.value)) !== amountMinor) throw badRequest('The amount changed, so give the split amounts again.', 'split_amount_total');
@@ -195,26 +251,88 @@ const NOTES = Object.freeze({
 // Only the entries' owner runs this. Returns 'same', 'updated' or the problem that stopped it; `strict`
 // throws the problem instead (otherwise the entries are left for the owner to review — a derived
 // "needs review", never a stored flag).
-function syncRecord(ctx, doc, member, rec, type, { reason, strict }) {
+// Why an account can no longer hold a person's part (financial recheck F2): removed, out of their
+// reach, not their own private account (for example shared), or closed. null for their own usable
+// private account.
+function formerReason(ctx, doc, member, accountId) {
+  const a = (doc.accounts || []).find((x) => x.id === accountId);
+  if (!a || a.deletedAt) return 'deleted';
+  if (capabilitiesFor(doc, ctx.principal, a, ctx.now()).size === 0) return 'unavailable';
+  if (!ownPrivateAccount(doc, accountId, member.subject)) return 'shared';
+  if (a.status === 'closed') return 'closed';
+  return null;
+}
+// What stops the person writing their entries on an account now (reversing `toReverse`, or adding).
+function writeProblem(ctx, doc, accountId, rec, toReverse) {
   const now = ctx.now();
+  const account = (doc.accounts || []).find((a) => a.id === accountId);
+  if (!account || account.deletedAt || capabilitiesFor(doc, ctx.principal, account, now).size === 0) return 'unavailable';
+  if (account.status === 'closed') return 'closed';
+  if (account.currency !== rec.currency) return 'currency';
+  if (!can(doc, ctx.principal, account, 'create', now) || toReverse.some((t) => t.accountId === accountId && !canChangeRecord(doc, ctx.principal, account, t, 'edit', now))) return 'rights';
+  return null;
+}
+// Entries that can never be reversed where they are: the account is gone or out of the person's reach.
+const unreachable = (ctx, doc, rec, t) => ['unavailable', 'rights'].includes(writeProblem(ctx, doc, t.accountId, rec, [t]));
+
+// Whether a person's entries (or the entries a record wants) for one record moved real cash (financial
+// recheck of 53cf181, N-1): money lent, repaid to them or repaid by them, or a share not fully covered by
+// an amount owed (they paid at least part of it). A share someone else paid, with its amount owed, moved
+// no cash.
+const CASH_KINDS = new Set(['advance', 'reimbursement', 'repayment']);
+function movedCash(list) {
+  if (list.some((t) => CASH_KINDS.has(t.kind))) return true;
+  const sum = (kind) => list.filter((t) => t.kind === kind).reduce((a, t) => a + t.amountMinor, 0);
+  return sum('expense') + sum('payable') !== 0;
+}
+// Where a person's part of one record belongs (N-1; decision 2026-09-14: an account's balance is always
+// the cash that really moved through it). A part that moved cash stays on the account the money used,
+// as long as the person may still write there (a closed account still counts: it asks to be reopened),
+// and corrections land there too; otherwise it goes on the account they record on now. A part that moved
+// no cash follows the account they record on now.
+function placeFor(ctx, doc, rec, live, wanted, targetId) {
+  const ids = [...new Set(live.map((t) => t.accountId))];
+  const anchorId = live.length && ids.length === 1 && movedCash(live) && [null, 'closed'].includes(writeProblem(ctx, doc, ids[0], rec, live)) ? ids[0] : null;
+  return movedCash(wanted) ? anchorId || targetId : targetId || anchorId;
+}
+
+function syncRecord(ctx, doc, member, rec, type, { reason, strict, stop = false }) {
   const nowIso = ctx.nowIso();
-  const targetId = targetOf(doc, rec, member.subject);
-  const desired = targetId ? groups.desiredEntries(rec, type, selfRef(member)) : [];
+  // Nothing new is recorded on an account that is not the person's own private account (security
+  // recheck R1). A link whose account stopped being theirs (for example shared) needs another account.
+  const link = groupLink(doc, member.subject, rec.currency);
+  if (link && !ownPrivateAccount(doc, link.accountId, member.subject)) {
+    if (strict) throw conflict('The account your shared expenses are recorded on is no longer your own private account. Choose another private account of yours in Shared expenses.', 'account_not_own');
+    return 'not_own';
+  }
   const live = liveEntries(doc, rec, type, member.subject);
+  const wanted = groups.desiredEntries(rec, type, selfRef(member));
+  // Where the part belongs (N-1): where the money moved, or the account they record on now. Stopping
+  // reverses everything the sync made.
+  const targetId = stop ? null : placeFor(ctx, doc, rec, live, wanted, targetOf(doc, rec, member.subject));
+  // Financial recheck F2 (decision 2026-09-14): without an account to record on, entries left on a
+  // former account are not touched — reversing them would record the person's part nowhere. Only
+  // stopping reverses them.
+  if (!targetId && !stop && live.some((t) => formerReason(ctx, doc, member, t.accountId))) {
+    if (strict) throw conflict('Your part of this is on an account that is no longer your own private account. Choose a private account of yours in Shared expenses to record it there.', 'account_needed');
+    return 'no_account';
+  }
+  const desired = targetId ? wanted : [];
   const onTarget = live.filter((t) => t.accountId === targetId);
   const elsewhere = live.filter((t) => t.accountId !== targetId);
+  // F2: the person's own entries elsewhere are reversed where they are (they created them; this route
+  // may do so even though the transactions route locks them) and their whole part is recorded on the
+  // current account. Where the account is gone or out of reach they cannot be reversed: they are left
+  // exactly as they are (never deleted) and shown as left on a former account.
+  const movable = elsewhere.filter((t) => !unreachable(ctx, doc, rec, t));
   const matches = sameEntries(onTarget, desired);
-  if (matches && !elsewhere.length) return 'same';
-  const toReverse = matches ? elsewhere : live;
+  if (matches && !movable.length) return 'same';
+  const toReverse = matches ? movable : [...onTarget, ...movable];
   const toAdd = matches ? [] : desired;
   const touched = [...new Set([...toReverse.map((t) => t.accountId), ...(toAdd.length ? [targetId] : [])])];
   for (const id of touched) {
     const account = (doc.accounts || []).find((a) => a.id === id);
-    let problem = null;
-    if (!account || account.deletedAt || capabilitiesFor(doc, ctx.principal, account, now).size === 0) problem = 'unavailable';
-    else if (account.status === 'closed') problem = 'closed';
-    else if (account.currency !== rec.currency) problem = 'currency';
-    else if (!can(doc, ctx.principal, account, 'create', now) || toReverse.some((t) => t.accountId === id && !canChangeRecord(doc, ctx.principal, account, t, 'edit', now))) problem = 'rights';
+    const problem = writeProblem(ctx, doc, id, rec, toReverse);
     if (!problem) continue;
     if (!strict) return problem;
     if (problem === 'unavailable') throw notFound('Unknown account.');
@@ -241,12 +359,12 @@ const reasonFor = (rec, type, fallback) => (rec.voidedAt ? `${type === 'expense'
 
 // Every record in one currency, for the caller. Records whose entries sit on an account the caller
 // cannot change now are left as they are (they stay "needs review") and counted.
-function syncCurrency(ctx, doc, member, currency, reason) {
+function syncCurrency(ctx, doc, member, currency, reason, { stop = false } = {}) {
   const out = { updated: 0, blocked: 0 };
   for (const [type, list] of [['expense', doc.groupExpenses || []], ['settlement', doc.groupSettlements || []]]) {
     for (const rec of list) {
       if (rec.currency !== currency) continue;
-      const r = syncRecord(ctx, doc, member, rec, type, { reason: reasonFor(rec, type, reason), strict: false });
+      const r = syncRecord(ctx, doc, member, rec, type, { reason: reasonFor(rec, type, reason), strict: false, stop });
       if (r === 'updated') out.updated += 1;
       else if (r !== 'same') out.blocked += 1;
     }
@@ -263,6 +381,28 @@ function checkOwnAccount(ctx, doc, member, accountId, currency) {
   return account;
 }
 
+// Confirmed cash entries (advance, reimbursement, repayment — never the non-cash expense-share or
+// payable entries, which never move real money) that a FIRST link in this currency would create out of
+// nowhere, because they have been waiting since before the person ever had an account linked: nothing
+// of theirs is recorded for that record yet (financial recheck of 41494d1, FA-1). Backdating these
+// silently would change the newly linked account's balance the instant the link is made, with no
+// warning, so the caller must see and confirm the amount first — unlike an ordinary relink or refresh,
+// where the entries already exist somewhere and are only being moved or brought up to date. `exceptId`
+// leaves out the one record this same request is creating or confirming (an expense or settlement made
+// with `ledger` in the same call): its own amount is already right there in the request, so it is the
+// caller's own current action, not a surprise about earlier activity they were not shown.
+function pendingBackdatedCash(doc, member, currency, exceptId = null) {
+  const out = [];
+  for (const [type, list] of [['expense', doc.groupExpenses || []], ['settlement', doc.groupSettlements || []]]) {
+    for (const rec of list) {
+      if (rec.currency !== currency || rec.voidedAt || rec.id === exceptId) continue;
+      if (liveEntries(doc, rec, type, member.subject).length) continue;
+      for (const d of groups.desiredEntries(rec, type, selfRef(member))) if (CASH_KINDS.has(d.kind)) out.push(d);
+    }
+  }
+  return out;
+}
+
 function endRecordLinks(doc, member, currency, nowIso, why) {
   for (const rec of [...(doc.groupExpenses || []), ...(doc.groupSettlements || [])]) {
     if (rec.currency !== currency) continue;
@@ -273,10 +413,24 @@ function endRecordLinks(doc, member, currency, nowIso, why) {
 
 // Records all of the caller's part in one currency on one of their own private accounts (or moves it
 // there), ending any per-record links of increment 1 in that currency, and brings it all up to date.
-function linkCurrency(ctx, doc, member, currency, accountId) {
+// `exceptId` is the record this same request is creating or confirming (see pendingBackdatedCash).
+function linkCurrency(ctx, doc, member, currency, accountId, { confirmBackdated = false, exceptId = null } = {}) {
   const nowIso = ctx.nowIso();
   const account = checkOwnAccount(ctx, doc, member, accountId, currency);
   const current = groupLink(doc, member.subject, currency);
+  // A FIRST link in this currency (FA-1): warn before silently backdating confirmed cash entries.
+  if (!current) {
+    const pending = pendingBackdatedCash(doc, member, currency, exceptId);
+    if (pending.length && confirmBackdated !== true) {
+      const total = money.sum(pending.map((d) => d.amountMinor));
+      const noun = pending.length === 1 ? 'entry' : 'entries';
+      throw conflict(
+        `Linking this account will add ${pending.length} cash ${noun} totaling ${money.toDecimal(total, currency)}, because you have confirmed activity in this group with no account linked yet.`,
+        'confirm_backdated',
+        { count: pending.length, amount: money.toDecimal(total, currency), amountMinor: total, currency },
+      );
+    }
+  }
   if (!current || current.accountId !== account.id) {
     if (current) { current.endedAt = nowIso; current.endReason = 'Recorded on another account instead'; }
     endRecordLinks(doc, member, currency, nowIso, 'Replaced by one account for every shared expense');
@@ -300,7 +454,7 @@ function unlinkCurrency(ctx, doc, member, currency) {
     audit.record(doc, { actor: member.subject, action: 'group.ledger.unlink', targetType: 'group-ledger', targetId: current.id, scope: `self:${member.subject}`, at: nowIso });
   }
   endRecordLinks(doc, member, currency, nowIso, 'Stopped recording');
-  return syncCurrency(ctx, doc, member, currency, 'No longer recorded from Shared expenses');
+  return syncCurrency(ctx, doc, member, currency, 'No longer recorded from Shared expenses', { stop: true });
 }
 
 // After the caller adds, changes or voids a record, their own entries follow in the same write when they can.
@@ -310,18 +464,54 @@ function followOwnLink(ctx, doc, member, rec, type, reason) {
 
 // What the caller has recorded for one record, shown only to them.
 function myLedger(ctx, doc, member, rec, type, entriesFor = entryIndex(doc, member.subject)) {
-  const targetId = targetOf(doc, rec, member.subject);
+  // A link to an account that is no longer the person's usable private account (removed, out of reach or
+  // shared) is no account to record on (financial recheck F2); a closed own account still is, and asks
+  // to be reopened.
+  const linked = targetOf(doc, rec, member.subject);
+  const current = linked && ['deleted', 'unavailable', 'shared'].includes(formerReason(ctx, doc, member, linked)) ? null : linked;
   const live = entriesFor(rec, type);
-  const desired = targetId ? groups.desiredEntries(rec, type, selfRef(member)) : [];
+  const wanted = groups.desiredEntries(rec, type, selfRef(member));
+  // The same place as the sync uses (N-1): where the money moved, or the account they record on now.
+  const targetId = placeFor(ctx, doc, rec, live, wanted, current);
+  const desired = targetId ? wanted : [];
   if (!live.length && !desired.length) return null;
   const now = ctx.now();
   const sees = (id) => { const a = (doc.accounts || []).find((x) => x.id === id); return a && !a.deletedAt && capabilitiesFor(doc, ctx.principal, a, now).size > 0 ? a : null; };
   const account = targetId ? sees(targetId) : null;
+  // A part kept where the money moved, on an account that is not (or no longer) the person's own.
+  const keptReason = targetId && targetId !== current ? formerReason(ctx, doc, member, targetId) : null;
+  const onTarget = live.filter((t) => t.accountId === targetId);
+  const elsewhere = live.filter((t) => t.accountId !== targetId);
+  // Financial recheck F2: entries on an account that is no longer the person's usable private account
+  // need review, with the reason; once their part is on a current account, entries that cannot be
+  // reversed where they are (the account is gone or out of reach) are shown as left on a former account.
+  // An account the person still sees but can no longer change is "read-only" (financial recheck N-2).
+  const former = elsewhere.map((t) => { const r = formerReason(ctx, doc, member, t.accountId); return { t, reason: r === 'shared' && unreachable(ctx, doc, rec, t) ? 'read-only' : r }; }).filter((x) => x.reason);
+  const movable = elsewhere.filter((t) => !unreachable(ctx, doc, rec, t));
+  const needsReview = targetId ? movable.length > 0 || !sameEntries(onTarget, desired) : former.length > 0;
+  const first = former[0] || null;
+  const firstAccount = first ? sees(first.t.accountId) : null;
+  const left = !!first && !!targetId && !movable.includes(first.t);
   return {
     accountId: account ? account.id : null, accountName: account ? account.name : null, accountUnavailable: !!targetId && !account,
-    needsReview: live.some((t) => t.accountId !== targetId) || !sameEntries(live.filter((t) => t.accountId === targetId), desired),
+    needsReview,
+    ...(first ? { formerAccount: { reason: first.reason, name: firstAccount ? firstAccount.name : null, left }, note: formerNote(first.reason, firstAccount ? firstAccount.name : null, { left, hasAccount: !!targetId }) }
+      : keptReason && account ? { keptAccount: { reason: keptReason, name: account.name }, note: `Your part stays on ${account.name}, where the money moved.` } : {}),
     entries: live.filter((t) => sees(t.accountId)).map((t) => ({ id: t.id, kind: t.kind, amount: money.toDecimal(t.amountMinor, t.currency) })),
   };
+}
+
+// The plain explanation that goes with a former account (F2).
+function formerNote(reason, name, { left, hasAccount }) {
+  const where = reason === 'deleted' ? 'an account that no longer exists' : reason === 'unavailable' ? 'an account you can no longer see'
+    : reason === 'closed' ? `${name || 'an account'}, which is closed` : reason === 'read-only' ? `${name || 'an account'}, which you can no longer change`
+      : `${name || 'an account'}, which is now shared`;
+  if (left) return `Your part was recorded on ${where}. Those entries are left on a former account as they were, and your whole part is recorded on your current account.`;
+  if (reason === 'closed') return `Your part was recorded on ${where}. Reopen it on the Accounts page so it can be updated.`;
+  // Until an account is chosen, a part the totals leave out (removed, out of reach, or read-only) is said
+  // to be missing from them (financial recheck of 53cf181, note on incomplete figures).
+  const leftOut = !hasAccount && ['deleted', 'unavailable', 'read-only'].includes(reason) ? ' Until you do, your totals leave this part out.' : '';
+  return `Your part was recorded on ${where}. ${hasAccount ? 'Update your account to record it on your own account instead.' : 'Choose a private account of yours to record it there.'}${leftOut}`;
 }
 
 // The caller's current links, one per currency, with how many records need updating.
@@ -338,7 +528,10 @@ function myLedgers(ctx, doc, member, entriesFor) {
         if (m && m.needsReview) reviewCount += 1;
       }
     }
-    return { currency: l.currency, accountId: visible ? a.id : null, accountName: visible ? a.name : null, accountUnavailable: !visible, since: l.linkedAt, reviewCount };
+    // A link whose account stopped being its owner's private account writes nothing until they choose
+    // another one (R1); it counts as unavailable so the choice is offered again.
+    const own = !!ownPrivateAccount(doc, l.accountId, member.subject);
+    return { currency: l.currency, accountId: visible ? a.id : null, accountName: visible ? a.name : null, accountUnavailable: !visible || !own, needsAccount: !own, since: l.linkedAt, reviewCount };
   });
 }
 
@@ -349,7 +542,7 @@ function expenseView(ctx, doc, member, e) {
   try { computed = groups.computeShares(e.amountMinor, e.split); } catch { computed = null; }
   const adjustment = (i) => (computed && computed.shares[i] && computed.shares[i].ref === e.shares[i].ref && computed.shares[i].amountMinor === e.shares[i].amountMinor ? computed.shares[i].adjustmentMinor : 0);
   const residualMinor = computed ? computed.residualMinor : 0;
-  const changeable = canChangeExpense(e, member) && !e.voidedAt;
+  const changeable = canChangeExpense(doc, e, member) && !e.voidedAt;
   const out = {
     id: e.id, description: e.description, date: e.date, currency: e.currency, amount: dec(e.amountMinor), amountMinor: e.amountMinor,
     categoryId: e.categoryId || null, notes: e.notes || '',
@@ -366,6 +559,33 @@ function expenseView(ctx, doc, member, e) {
   return out;
 }
 
+// Who may confirm a DISPUTED payment (group setting "settleDisputes", financial recheck F1): its receiver
+// (a manager or owner for a contact, who cannot sign in) by default; or also any manager or owner; or
+// anyone who can confirm payments. "Anyone in the group can confirm payments" alone never settles a
+// dispute. A viewer settles only a dispute over a payment made to them.
+function canSettleDispute(doc, s, member) {
+  const me = selfRef(member);
+  if (s.to === me) return true;
+  const rule = groupSettings.get(doc, 'settleDisputes');
+  // The person who paid never settles a dispute over their own payment, a manager or owner included,
+  // unless the group lets anyone who can confirm payments settle disputes (security recheck R3-1).
+  if (s.from === me && rule !== 'confirmers') return false;
+  const forContact = s.to.startsWith('contact:') && isManager(member);
+  if (rule === 'receiver-or-manager') return isManager(member);
+  if (rule === 'confirmers') return forContact || groupSettings.confirmsAny(doc, member);
+  return forContact;
+}
+// The earlier payment between the same two people, in the same currency, that is still disputed when a
+// new one is reported (security recheck R3-2): the new report settles that dispute, so confirming it
+// follows "Who can settle a disputed payment". Once the earlier one is resolved, nothing is open.
+const openDisputeFor = (doc, s) => (s.reportedAgainOf
+  ? (doc.groupSettlements || []).find((x) => x.id === s.reportedAgainOf && x.status === 'disputed' && !x.voidedAt) || null : null);
+const settlesDispute = (doc, s) => !s.voidedAt && (s.status === 'disputed' || (s.status === 'reported' && !!openDisputeFor(doc, s)));
+const settleDisputeText = (doc) => ({
+  'receiver-or-manager': 'This payment is disputed, so only the person who received it, or a manager or owner, can confirm it.',
+  confirmers: 'This payment is disputed, so only someone who can confirm payments can confirm it.',
+}[groupSettings.get(doc, 'settleDisputes')] || 'This payment is disputed, so only the person who received it can confirm it (a manager or owner for a contact).');
+
 function settlementView(ctx, doc, member, s) {
   const me = selfRef(member);
   const toContact = s.to.startsWith('contact:');
@@ -378,12 +598,25 @@ function settlementView(ctx, doc, member, s) {
     disputeReason: s.disputeReason || '', confirmedBy: s.confirmedBy ? nameOf(doc, s.confirmedBy) : null, confirmedAt: s.confirmedAt || null,
     // Confirmed by the manager or owner who reported it (S5); a confirmation withdrawn by a void (S6).
     confirmedByReporter: !!s.confirmedByReporter, withdrawn: !!s.withdrawn,
+    // Confirmed over its receiver's dispute (F1): always shown as such.
+    confirmedOverDispute: !!s.confirmedOverDispute,
+    // Reported again while an earlier payment between them was disputed (R3-2): the earlier one's id.
+    reportedAgainOf: s.reportedAgainOf || null,
+    // Who confirmed, relative to the payment: its receiver, the person who paid it, or someone else.
+    confirmation: s.status === 'confirmed' && s.confirmedBy ? {
+      by: nameOf(doc, s.confirmedBy),
+      relation: (() => { const m = model.memberBySubject(doc, s.confirmedBy); const ref = m ? `member:${m.id}` : null; return ref === s.to ? 'receiver' : ref === s.from ? 'payer' : 'other'; })(),
+    } : null,
     createdBy: nameOf(doc, s.createdBy), createdBySelf: s.createdBy === member.subject, createdAt: s.createdAt, revision: s.revision,
-    // The payer never confirms (S5); a viewer may confirm or dispute a payment made to them (S7); once
-    // confirmed, only the receiving member or a manager or owner may withdraw it (S6).
-    canConfirm: live && s.status !== 'confirmed' && s.from !== me && (s.to === me || (toContact && open && isManager(member))),
-    canDispute: live && s.status === 'reported' && s.to === me,
-    canVoid: open && (s.status === 'confirmed' ? (s.to === me || isManager(member)) : (s.createdBy === member.subject || isManager(member))),
+    // Confirming follows the group setting "Anyone in the group can confirm payments": any member who can
+    // add to the group, or a viewer for a payment made to them (S7); when it is off, the payer never
+    // confirms (S5). Once confirmed, only the receiving member or a manager or owner may withdraw it (S6).
+    // Per person (Terry, 2026-09-14): an owner's or manager's override for this member, otherwise the group setting.
+    // A disputed payment follows "Who can settle a disputed payment" (F1).
+    canConfirm: live && s.status !== 'confirmed' && (settlesDispute(doc, s) ? canSettleDispute(doc, s, member)
+      : s.to === me || (groupSettings.confirmsAny(doc, member) ? writer(member) : s.from !== me && toContact && open && isManager(member))),
+    canDispute: live && s.status === 'reported' && canDisputePayment(doc, s, member),
+    canVoid: open && (s.status === 'confirmed' ? canWithdraw(doc, s, member) : (s.createdBy === member.subject || isManager(member))),
   };
   const mine = myLedger(ctx, doc, member, s, 'settlement');
   if (mine) out.myLedger = mine;
@@ -392,7 +625,7 @@ function settlementView(ctx, doc, member, s) {
 
 function balancesView(doc, parts) {
   const names = new Map(parts.map((p) => [p.ref, p.name]));
-  return groups.balances(doc, parts.map((p) => p.ref), { ensureCurrency: reportingCurrency(doc) }).map((b) => {
+  return groups.balances(doc, parts.map((p) => p.ref), { ensureCurrency: reportingCurrency(doc), countReported: groupSettings.get(doc, 'countReported') }).map((b) => {
     const dec = (m) => money.toDecimal(m, b.currency);
     const pair = (x) => ({ from: x.from, to: x.to, amountMinor: x.amountMinor, amount: dec(x.amountMinor) });
     return {
@@ -426,6 +659,8 @@ async function list(ctx, req) {
   return {
     body: {
       currency: reportingCurrency(doc), kind: doc.kind,
+      // The group's settings from the one list, with who changed what (Terry, 2026-09-14).
+      groupSettings: groupSettings.view(doc, (s) => nameOf(doc, s), member, isManager(member)),
       permissions: { role: member.role, canAdd: writer(member), canManage: isManager(member), selfRef: selfRef(member) },
       participants: parts,
       expenses: [...(doc.groupExpenses || [])].sort(newestFirst).map((e) => expenseView(ctx, doc, member, e)),
@@ -434,7 +669,9 @@ async function list(ctx, req) {
       // left out when there are none (like `myLedger` on a record).
       ...(() => { const mine = myLedgers(ctx, doc, member, entryIndex(doc, member.subject)); return mine.length ? { myLedgers: mine } : {}; })(),
       balances,
-      basis: 'Balances count confirmed payments only. Suggested and direct payments also count reported payments as made, so nobody is asked to pay twice; suggestions count a reported payment only up to what is owed. Disputed payments are not counted.',
+      basis: groupSettings.get(doc, 'countReported')
+        ? 'Balances count confirmed payments only. Suggested and direct payments also count reported payments as made, so nobody is asked to pay twice; suggestions count a reported payment only up to what is owed. Disputed payments are not counted.'
+        : 'Balances count confirmed payments only. Reported payments are not counted until they are confirmed, in the suggested and direct payments too. Disputed payments are not counted.',
     },
   };
 }
@@ -451,10 +688,12 @@ async function createExpense(ctx, req) {
   const wsId = requireId(query(req, 'workspaceId'), 'workspaceId');
   const body = fields.onlyKeys(readBody(req), CREATE_KEYS);
   const ledgerAccountId = ledgerChoice(body.ledger);
-  const { result } = await store.mutateWorkspace(ctx, wsId, (doc, member) => {
+  // Read before the write, and only when the request leaves the payer or the split out.
+  const mine = body.payers === undefined || body.split === undefined ? await ownDefaults(ctx) : {};
+  const { result } = await mutateGroup(ctx, wsId, (doc, member) => {
     requireWriter(member);
     const nowIso = ctx.nowIso();
-    const m = expenseMoney(doc, body, null);
+    const m = expenseMoney(doc, body, null, member, mine);
     const rec = {
       id: newId('gex'), description: fields.text(body.description, { field: 'Description', max: 120, required: true }),
       date: fields.date(body.date, 'Date') || nowIso.slice(0, 10), currency: m.currency, amountMinor: m.amountMinor,
@@ -467,7 +706,7 @@ async function createExpense(ctx, req) {
     audit.record(doc, { actor: member.subject, action: 'group.expense.create', targetType: 'group-expense', targetId: rec.id, at: nowIso });
     // Recorded on the caller's own account through a new or changed link for this currency, or through
     // the link they already have (their own write, so their entries follow at once).
-    if (ledgerAccountId) linkCurrency(ctx, doc, member, rec.currency, ledgerAccountId);
+    if (ledgerAccountId) linkCurrency(ctx, doc, member, rec.currency, ledgerAccountId, { confirmBackdated: body.confirmBackdated === true, exceptId: rec.id });
     else followOwnLink(ctx, doc, member, rec, 'expense', 'Shared expense');
     return { expense: expenseView(ctx, doc, member, rec) };
   }, { idempotencyKey: header(req, 'idempotency-key') || undefined, idempotencyScope: 'group.expense.create', requestHash: store.requestHash({ q: wsId, body }) });
@@ -478,9 +717,9 @@ async function patchExpense(ctx, req) {
   const wsId = requireId(query(req, 'workspaceId'), 'workspaceId');
   const body = fields.onlyKeys(readBody(req), PATCH_KEYS);
   const id = requireId(body.expenseId, 'expenseId');
-  const { result } = await store.mutateWorkspace(ctx, wsId, (doc, member) => {
+  const { result } = await mutateGroup(ctx, wsId, (doc, member) => {
     const e = findExpense(doc, id);
-    if (!canChangeExpense(e, member)) throw forbidden('Only the person who added this expense, or a manager or owner, can change it.');
+    if (!canChangeExpense(doc, e, member)) throw forbidden(expenseRuleText(doc));
     if (e.voidedAt) throw conflict('This expense is void, so it cannot be changed. Add a new expense instead.', 'voided');
     checkRevision(e, body.revision);
     const reason = requireReason(body.reason, 'this correction');
@@ -515,7 +754,7 @@ async function createSettlement(ctx, req) {
   const wsId = requireId(query(req, 'workspaceId'), 'workspaceId');
   const body = fields.onlyKeys(readBody(req), SETTLE_KEYS);
   const ledgerAccountId = ledgerChoice(body.ledger);
-  const { result } = await store.mutateWorkspace(ctx, wsId, (doc, member) => {
+  const { result } = await mutateGroup(ctx, wsId, (doc, member) => {
     requireWriter(member);
     const nowIso = ctx.nowIso();
     const currency = settlementCurrency(doc, body.currency);
@@ -523,23 +762,31 @@ async function createSettlement(ctx, req) {
     const from = check(body.from);
     const to = check(body.to);
     if (from === to) throw badRequest('A payment needs two different people.', 'same_person');
-    // Someone saying they RECEIVED a payment is the confirmation itself.
-    const receiver = to === selfRef(member);
+    // Someone saying they RECEIVED a payment is the confirmation itself, unless the group turned that
+    // off (setting "receiverConfirms", default on); then it is reported and confirmed as a separate step.
+    const receiver = to === selfRef(member) && groupSettings.get(doc, 'receiverConfirms');
+    // Reported again while an earlier payment between the same two people in this currency is disputed
+    // (security recheck R3-2): still allowed — people do pay again — but marked, linked to the disputed
+    // one, and confirming it settles that dispute. The receiver recording it confirms it over the dispute.
+    const earlier = (doc.groupSettlements || []).find((x) => x.from === from && x.to === to && x.currency === currency && x.status === 'disputed' && !x.voidedAt) || null;
     const s = {
       id: newId('gst'), from, to, amountMinor: groups.positiveAmount(body.amount, currency, 'Amount'), currency,
       date: fields.date(body.date, 'Date') || nowIso.slice(0, 10),
       method: fields.text(body.method, { field: 'Payment method', max: 60 }), notes: fields.text(body.notes, { field: 'Notes', max: 500, multiline: true }),
       status: receiver ? 'confirmed' : 'reported', confirmedBy: receiver ? member.subject : null, confirmedAt: receiver ? nowIso : null,
       createdBy: member.subject, createdAt: nowIso, revision: 1, voidedAt: null,
-      history: [{ revision: 1, at: nowIso, by: member.subject, event: 'reported' }, ...(receiver ? [{ revision: 1, at: nowIso, by: member.subject, event: 'confirmed' }] : [])],
+      reportedAgainOf: earlier ? earlier.id : null,
+      ...(receiver && earlier ? { confirmedOverDispute: true } : {}),
+      history: [{ revision: 1, at: nowIso, by: member.subject, event: earlier ? 'reported-again' : 'reported', ...(earlier ? { of: earlier.id } : {}) },
+        ...(receiver ? [{ revision: 1, at: nowIso, by: member.subject, event: earlier ? 'confirmed-over-dispute' : 'confirmed' }] : [])],
       ledgerLinks: [],
     };
     doc.groupSettlements = [...(doc.groupSettlements || []), s];
-    audit.record(doc, { actor: member.subject, action: 'group.settlement.report', targetType: 'group-settlement', targetId: s.id, at: nowIso });
-    if (receiver) audit.record(doc, { actor: member.subject, action: 'group.settlement.confirm', targetType: 'group-settlement', targetId: s.id, at: nowIso });
+    audit.record(doc, { actor: member.subject, action: 'group.settlement.report', targetType: 'group-settlement', targetId: s.id, at: nowIso, ...(earlier ? { fields: ['reportedAgainAfterDispute'] } : {}) });
+    if (receiver) audit.record(doc, { actor: member.subject, action: 'group.settlement.confirm', targetType: 'group-settlement', targetId: s.id, at: nowIso, ...(earlier ? { fields: ['overDispute'] } : {}) });
     // Recorded on the caller's own account through a new or changed link for this currency, or the one
     // they already have. Anyone in the payment has a part in it; entries follow once it is confirmed.
-    if (ledgerAccountId) linkCurrency(ctx, doc, member, s.currency, ledgerAccountId);
+    if (ledgerAccountId) linkCurrency(ctx, doc, member, s.currency, ledgerAccountId, { confirmBackdated: body.confirmBackdated === true, exceptId: s.id });
     else followOwnLink(ctx, doc, member, s, 'settlement', 'Repayment');
     return { settlement: settlementView(ctx, doc, member, s) };
   }, { idempotencyKey: header(req, 'idempotency-key') || undefined, idempotencyScope: 'group.settle', requestHash: store.requestHash({ q: wsId, body }) });
@@ -549,20 +796,33 @@ async function createSettlement(ctx, req) {
 function settlementChange(kind) {
   return async (ctx, req) => {
     const wsId = requireId(query(req, 'workspaceId'), 'workspaceId');
-    const body = fields.onlyKeys(readBody(req), kind === 'confirm' ? ['settlementId', 'revision', 'ledger'] : ['settlementId', 'revision', 'reason']);
+    const body = fields.onlyKeys(readBody(req), kind === 'confirm' ? ['settlementId', 'revision', 'ledger', 'confirmBackdated'] : ['settlementId', 'revision', 'reason']);
     const id = requireId(body.settlementId, 'settlementId');
     const ledgerAccountId = kind === 'confirm' ? ledgerChoice(body.ledger) : null;
-    const { result } = await store.mutateWorkspace(ctx, wsId, (doc, member) => {
+    const { result } = await mutateGroup(ctx, wsId, (doc, member) => {
       const s = findSettlement(doc, id);
       const me = selfRef(member);
       // A viewer may confirm or dispute a payment made to them, and nothing else (security review S7).
       if (s.to !== me) requireWriter(member);
       const nowIso = ctx.nowIso();
       if (kind === 'confirm') {
-        // Never the person who paid (security review S5).
-        if (s.from === me) throw forbidden('You paid this, so someone else must confirm that it arrived.');
-        const allowed = s.to === me || (s.to.startsWith('contact:') && isManager(member));
-        if (!allowed) throw forbidden(s.to.startsWith('contact:') ? 'Only a manager or owner can confirm a payment to a contact.' : 'Only the person who received this payment can confirm it.');
+        // "Can confirm payments" (Terry, 2026-09-14): the owner's or manager's override for this person
+        // if set, otherwise the group setting "Anyone in the group can confirm payments" (on by
+        // default). When it applies, the person confirms any reported payment, their own included; a
+        // viewer never gets more than one made to them. Otherwise: never the person who paid (security
+        // review S5); the receiving member, or a manager or owner for a contact.
+        const anyone = groupSettings.confirmsAny(doc, member);
+        // Over a dispute, only as "Who can settle a disputed payment" allows (financial recheck F1): being
+        // able to confirm payments moves a reported payment to confirmed, never a disputed one on its own.
+        // A report made again while an earlier one between them is disputed settles that dispute (R3-2).
+        const overDispute = settlesDispute(doc, s);
+        if (overDispute) {
+          if (!canSettleDispute(doc, s, member)) throw forbidden(settleDisputeText(doc));
+        } else if (!anyone) {
+          if (s.from === me) throw forbidden('You paid this, so someone else must confirm that it arrived.');
+          const allowed = s.to === me || (s.to.startsWith('contact:') && isManager(member));
+          if (!allowed) throw forbidden(s.to.startsWith('contact:') ? 'Only a manager or owner can confirm a payment to a contact.' : 'Only the person who received this payment can confirm it.');
+        }
         // Starting to record on an account is not something a viewer can do (S7).
         if (ledgerAccountId) requireWriter(member);
         if (s.voidedAt) throw conflict('This payment is void.', 'already_void');
@@ -570,18 +830,24 @@ function settlementChange(kind) {
         checkRevision(s, body.revision);
         // A manager or owner confirming a contact payment they reported themselves is allowed — a group
         // with one owner must be able to record them — but kept and shown distinctly (S5).
-        const byReporter = s.to !== me && s.createdBy === member.subject;
+        // Marked only under the strict rules; when anyone may confirm, the confirmation says who it was.
+        const byReporter = !anyone && s.to !== me && s.createdBy === member.subject;
         s.status = 'confirmed';
         s.confirmedBy = member.subject;
         s.confirmedAt = nowIso;
         s.confirmedByReporter = byReporter;
+        s.confirmedOverDispute = overDispute;
         s.revision += 1;
-        s.history = [...(s.history || []), { revision: s.revision, at: nowIso, by: member.subject, event: byReporter ? 'confirmed-by-reporter' : 'confirmed' }];
-        audit.record(doc, { actor: member.subject, action: 'group.settlement.confirm', targetType: 'group-settlement', targetId: s.id, at: nowIso });
-        if (ledgerAccountId) linkCurrency(ctx, doc, member, s.currency, ledgerAccountId);
+        s.history = [...(s.history || []), { revision: s.revision, at: nowIso, by: member.subject, event: overDispute ? 'confirmed-over-dispute' : byReporter ? 'confirmed-by-reporter' : 'confirmed' }];
+        audit.record(doc, { actor: member.subject, action: 'group.settlement.confirm', targetType: 'group-settlement', targetId: s.id, at: nowIso, ...(overDispute ? { fields: ['overDispute'] } : {}) });
+        // The settlement being confirmed right now is the caller's own current action, not a surprise
+        // about other, unrelated pre-existing activity (FA-1): its own amount is exempted from the check.
+        if (ledgerAccountId) linkCurrency(ctx, doc, member, s.currency, ledgerAccountId, { confirmBackdated: body.confirmBackdated === true, exceptId: s.id });
         else followOwnLink(ctx, doc, member, s, 'settlement', 'Repayment');
       } else {
-        if (s.to !== me) throw forbidden('Only the person who received this payment can dispute it.');
+        if (!canDisputePayment(doc, s, member)) {
+          throw forbidden(groupSettings.get(doc, 'disputePayments') === 'receiver-or-manager' ? 'Only the person who received this payment, or a manager or owner, can dispute it.' : 'Only the person who received this payment can dispute it.');
+        }
         if (s.voidedAt) throw conflict('This payment is void.', 'already_void');
         if (s.status !== 'reported') throw conflict('Only a reported payment can be disputed. Void a confirmed payment instead.', 'not_disputable');
         checkRevision(s, body.revision);
@@ -606,16 +872,18 @@ async function voidRecord(ctx, req) {
   const body = fields.onlyKeys(readBody(req), ['expenseId', 'settlementId', 'revision', 'reason']);
   const type = pickType(body);
   const id = requireId(type === 'expense' ? body.expenseId : body.settlementId, type === 'expense' ? 'expenseId' : 'settlementId');
-  const { result } = await store.mutateWorkspace(ctx, wsId, (doc, member) => {
+  const { result } = await mutateGroup(ctx, wsId, (doc, member) => {
     const rec = type === 'expense' ? findExpense(doc, id) : findSettlement(doc, id);
     // Once a payment is confirmed, the payer or reporter alone can no longer take it back: only its
     // receiving member or a manager or owner may, and it is recorded as a withdrawn confirmation
     // (security review S6). Before that, whoever reported it (or a manager or owner) may void it.
     const confirmedPayment = type === 'settlement' && rec.status === 'confirmed';
-    const allowed = writer(member) && (confirmedPayment ? (rec.to === selfRef(member) || isManager(member)) : (rec.createdBy === member.subject || isManager(member)));
+    // An expense follows the group setting "changeExpenses"; a confirmed payment "withdrawPayments".
+    const allowed = type === 'expense' ? canChangeExpense(doc, rec, member)
+      : writer(member) && (confirmedPayment ? canWithdraw(doc, rec, member) : (rec.createdBy === member.subject || isManager(member)));
     if (!allowed) {
-      throw forbidden(confirmedPayment ? 'Only the person who received this payment, or a manager or owner, can withdraw its confirmation.'
-        : `Only the person who added this ${type === 'expense' ? 'expense' : 'payment'}, or a manager or owner, can void it.`);
+      throw forbidden(type === 'expense' ? expenseRuleText(doc).replace('change it', 'void it') : confirmedPayment ? withdrawRuleText(doc)
+        : 'Only the person who added this payment, or a manager or owner, can void it.');
     }
     if (rec.voidedAt) throw conflict(`This ${type === 'expense' ? 'expense' : 'payment'} is already void.`, 'already_void');
     checkRevision(rec, body.revision);
@@ -653,7 +921,7 @@ function pickType(body) {
 //                                                  record in that currency up to date
 async function ledgerAction(ctx, req) {
   const wsId = requireId(query(req, 'workspaceId'), 'workspaceId');
-  const body = fields.onlyKeys(readBody(req), ['expenseId', 'settlementId', 'currency', 'accountId']);
+  const body = fields.onlyKeys(readBody(req), ['expenseId', 'settlementId', 'currency', 'accountId', 'confirmBackdated']);
   const named = ['expenseId', 'settlementId', 'currency'].filter((k) => body[k] !== undefined);
   if (named.length !== 1) throw badRequest('Send one of expenseId, settlementId or currency.', 'missing_field');
   const type = body.expenseId !== undefined ? 'expense' : body.settlementId !== undefined ? 'settlement' : null;
@@ -661,7 +929,8 @@ async function ledgerAction(ctx, req) {
   if (!type && !money.isCurrency(body.currency)) throw badRequest('currency must be a currency code such as "EUR".', 'invalid_field');
   const choosing = Object.prototype.hasOwnProperty.call(body, 'accountId');
   const accountId = choosing && body.accountId !== null ? requireId(body.accountId, 'accountId') : null;
-  const { result } = await store.mutateWorkspace(ctx, wsId, (doc, member) => {
+  const confirmBackdated = body.confirmBackdated === true;
+  const { result } = await mutateGroup(ctx, wsId, (doc, member) => {
     // Bringing one's own entries up to date, or stopping, only writes to one's own private account, so a
     // viewer may do it too — for example after being made a viewer (security review S7). Starting or
     // moving a link is for members, managers and owners.
@@ -672,7 +941,9 @@ async function ledgerAction(ctx, req) {
     if (choosing && accountId === null) outcome = unlinkCurrency(ctx, doc, member, currency);
     else if (choosing) {
       if (rec && rec.voidedAt) throw conflict('This is void, so there is nothing to record.', 'already_void');
-      outcome = linkCurrency(ctx, doc, member, currency, accountId);
+      // Naming a specific record is choosing where that one goes right now (FA-1): its own amount is
+      // exempt from the backdating check, like a create or confirm with `ledger` in the same request.
+      outcome = linkCurrency(ctx, doc, member, currency, accountId, { confirmBackdated, exceptId: rec ? rec.id : null });
     } else if (rec) {
       // One record must come up to date or say why (strict). With nothing of the caller's on it there
       // is nothing to do, so repeating it is harmless.
@@ -711,7 +982,26 @@ async function recordHistory(ctx, req) {
   };
 }
 
-const ACTIONS = Object.freeze({ void: voidRecord, settle: createSettlement, confirm: settlementChange('confirm'), dispute: settlementChange('dispute'), ledger: ledgerAction });
+// ---- group settings -----------------------------------------------------------------------------
+// POST ?action=settings { changes: { <key>: <value> }, reason? }: owners and managers change the
+// group's settings from the one list in api/_shared/group-settings.js; every real change is kept in
+// the history (who, when, from, to, why) and audited, in the same write.
+async function settingsAction(ctx, req) {
+  const wsId = requireId(query(req, 'workspaceId'), 'workspaceId');
+  const body = fields.onlyKeys(readBody(req), ['changes', 'reason']);
+  const changes = groupSettings.parseChanges(body.changes);
+  const reason = fields.text(body.reason, { field: 'Reason', max: 200 });
+  const { result } = await mutateGroup(ctx, wsId, (doc, member) => {
+    if (!isManager(member)) throw forbidden('Only owners and managers can change the group\'s settings.');
+    const at = ctx.nowIso();
+    const changed = groupSettings.apply(doc, changes, { by: member.subject, at, reason });
+    if (changed.length) audit.record(doc, { actor: member.subject, action: 'group.settings.update', targetType: 'workspace', targetId: doc.id, at, fields: changed });
+    return { groupSettings: groupSettings.view(doc, (s) => nameOf(doc, s), member, true) };
+  });
+  return { body: result };
+}
+
+const ACTIONS = Object.freeze({ void: voidRecord, settle: createSettlement, confirm: settlementChange('confirm'), dispute: settlementChange('dispute'), ledger: ledgerAction, settings: settingsAction });
 
 async function post(ctx, req) {
   const action = query(req, 'action');
@@ -720,4 +1010,27 @@ async function post(ctx, req) {
   return ACTIONS[action](ctx, req);
 }
 
-module.exports = { GET: list, POST: post, PATCH: patchExpense };
+// Shared expenses may be turned off for the whole site by its administrator or for this workspace by
+// its owners and managers (workspace settings, Terry 2026-09-14). Then every route here is refused with
+// a clear message — after the membership check, so someone outside the workspace still gets not found —
+// and nothing recorded is touched; it all comes back when it is turned on again.
+async function sharedExpensesGate(ctx, req) {
+  const { doc } = await store.loadWorkspace(ctx, requireId(query(req, 'workspaceId'), 'workspaceId'));
+  const { site } = await siteSettings.readSite(ctx.storage);
+  workspaceSettings.assertSharedExpenses(doc, site);
+  gateSite.set(ctx, site);
+}
+
+// Every group write checks Shared expenses again on the document it is about to change, in the same
+// ETag-guarded write, so a switch-off that lands between the gate's read and the write refuses the write
+// (security review of eefd115, L-2). The site's switch is the one the gate read for this request.
+const gateSite = new WeakMap();
+function mutateGroup(ctx, wsId, fn, options) {
+  return store.mutateWorkspace(ctx, wsId, (doc, member) => {
+    workspaceSettings.assertSharedExpenses(doc, gateSite.get(ctx));
+    return fn(doc, member);
+  }, options);
+}
+const gated = (fn) => async (ctx, req) => { await sharedExpensesGate(ctx, req); return fn(ctx, req); };
+
+module.exports = { GET: gated(list), POST: gated(post), PATCH: gated(patchExpense) };

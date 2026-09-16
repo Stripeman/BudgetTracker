@@ -8,6 +8,8 @@
 //   DELETE  { transactionId, revision, reason } soft delete (both legs of a transfer; a reversal
 //           and the entry it reverses together)
 //   POST    ?action=restore { transactionId }  restores the same group
+//   POST    ?action=move { transactionId, revision, toAccountId, reason }  moves one entry (or one leg
+//           of a transfer) to another account of the same currency, kept as an amendment (BT-006-05)
 const { readBody, query, header, badRequest, forbidden, notFound, conflict } = require('../_shared/http');
 const { newId, requireId } = require('../_shared/ids');
 const { capabilitiesFor, can, canChangeRecord } = require('../_shared/authz');
@@ -151,12 +153,34 @@ async function list(ctx, req) {
   // reimbursements (receivables) and adjustments have their own buckets and are never counted as
   // spending or income. With a category filter, split entries contribute only matching lines.
   const summary = {};
+  // What is owed to or by the viewer counts their OWN private accounts only (financial recheck F2): an
+  // amount someone else lent from a shared account is never the viewer's receivable.
+  const ownPrivate = new Set((doc.accounts || []).filter((a) => !a.deletedAt && a.visibility === 'private' && a.ownerSubject === ctx.principal.subject).map((a) => a.id));
+  const OWED = new Set(['advance', 'reimbursement', 'payable', 'repayment']);
+  // A removed account is out of every list and total (never erased, and its entries stay readable), so
+  // what was recorded there is not counted twice once it is recorded on another account (F2).
+  const removed = new Set((doc.accounts || []).filter((a) => a.deletedAt).map((a) => a.id));
+  // The viewer's own entries from Shared expenses on an account they can no longer change (for example
+  // after being made a viewer) are left there, never deleted, and their part is recorded again on an
+  // account of theirs: like entries on a removed account, they count in none of the viewer's totals
+  // (financial recheck of 53cf181, N-2).
+  const accountById = new Map((doc.accounts || []).map((a) => [a.id, a]));
+  const leftBehind = (t) => {
+    if (t.createdBy !== ctx.principal.subject || !t.links || !(t.links.groupExpenseId || t.links.groupSettlementId) || t.reversedBy || t.links.reverses) return false;
+    const a = accountById.get(t.accountId);
+    return !a || !can(doc, ctx.principal, a, 'create', now) || !canChangeRecord(doc, ctx.principal, a, t, 'edit', now);
+  };
   for (const t of txns) {
     const bucket = ledger.classify(t.kind);
-    if (t.deletedAt || bucket === 'transfer') continue;
+    if (t.deletedAt || bucket === 'transfer' || removed.has(t.accountId) || leftBehind(t)) continue;
     let amount = t.amountMinor;
     if (f.categoryId && (t.splits || []).length) amount = money.sum(t.splits.filter((s) => s.categoryId === f.categoryId).map((s) => s.amountMinor));
-    const s = summary[t.currency] || (summary[t.currency] = { gross: 0, refunds: 0, income: 0, adjustments: 0, advances: 0, reimbursements: 0, payables: 0, repayments: 0, count: 0 });
+    const s = summary[t.currency] || (summary[t.currency] = { gross: 0, refunds: 0, income: 0, adjustments: 0, advances: 0, reimbursements: 0, payables: 0, repayments: 0, receivable: 0, count: 0 });
+    // advances − reimbursements − payables + repayments is −(the sum of their signed amounts). Counted on
+    // the viewer's own private accounts, and for the viewer's own entries from Shared expenses wherever
+    // they can see them (financial recheck N-1: a part kept where the money moved still counts).
+    const ownGroupEntry = t.createdBy === ctx.principal.subject && t.links && (t.links.groupExpenseId || t.links.groupSettlementId);
+    if (OWED.has(bucket) && (ownPrivate.has(t.accountId) || ownGroupEntry)) s.receivable = money.sum([s.receivable, -amount]);
     s.count += 1;
     if (bucket === 'spending') s.gross = money.sum([s.gross, -amount]);
     else if (bucket === 'refund') s.refunds = money.sum([s.refunds, amount]);
@@ -171,30 +195,68 @@ async function list(ctx, req) {
   const limit = Math.min(Math.max(parseInt(query(req, 'limit') || '200', 10) || 200, 1), 1000);
   const offset = Math.max(parseInt(query(req, 'offset') || '0', 10) || 0, 0);
   const look = lookups(doc);
+  // A transfer is edited and deleted as a pair, and the routes require the right on every leg, so the
+  // list offers Edit and Delete only when both sides may change (security review of eefd115, L-3).
+  const legs = new Map();
+  for (const x of doc.transactions || []) if (x.transferId) legs.set(x.transferId, [...(legs.get(x.transferId) || []), x]);
+  const mayChange = (t, account, capability) => {
+    if (!canChangeRecord(doc, ctx.principal, account, t, capability, now)) return false;
+    if (!t.transferId) return true;
+    return (legs.get(t.transferId) || []).filter((x) => x.id !== t.id).every((x) => {
+      const other = look.accounts.get(x.accountId);
+      return !!other && canChangeRecord(doc, ctx.principal, other, x, capability, now);
+    });
+  };
   const page = txns.slice(offset, offset + limit).map((t) => {
     const view = ledger.transactionView(doc, t, ctx.principal, now, look);
     const account = look.accounts.get(t.accountId);
     view.responsible = people.labelFor(t.responsibleRef, { doc, user });
-    view.canEdit = canChangeRecord(doc, ctx.principal, account, t, 'edit', now);
-    view.canDelete = canChangeRecord(doc, ctx.principal, account, t, 'delete', now);
+    // Both edit and delete need the right on every leg of a transfer (security review of eefd115, L-3);
+    // "Move to another account" needs the same edit right (BT-006-05), so it follows the same both-sides
+    // check. A reason is given only when the person could otherwise change the entry, so a viewer just
+    // sees no action, not an explanation of a rule that would not matter to them.
+    const canEditThis = mayChange(t, account, 'edit');
+    view.canEdit = canEditThis;
+    view.canDelete = mayChange(t, account, 'delete');
+    view.moveBlockedReason = canEditThis ? moveBlockReason(t) : null;
+    view.canMove = canEditThis && !view.moveBlockedReason;
     return view;
   });
   return {
     body: {
       transactions: page, total: txns.length, offset, limit,
+      // The kinds that may be entered by hand here (group setting "Owed-to-others and repayment entries").
+      entryKinds: entryKinds(doc),
       summary: Object.entries(summary).map(([currency, s]) => ({
         currency, count: s.count, gross: money.toDecimal(s.gross, currency), refunds: money.toDecimal(s.refunds, currency),
         net: money.toDecimal(money.sum([s.gross, -s.refunds]), currency), income: money.toDecimal(s.income, currency),
         adjustments: money.toDecimal(s.adjustments, currency), advances: money.toDecimal(s.advances, currency),
         reimbursements: money.toDecimal(s.reimbursements, currency),
         payables: money.toDecimal(s.payables, currency), repayments: money.toDecimal(s.repayments, currency),
-        // What is owed to the account holder (negative: what they owe): lent − repaid to them − owed
-        // to others + repaid by them. For an account that records shared expenses it is the balance.
-        receivable: money.toDecimal(money.sum([s.advances, -s.reimbursements, -s.payables, s.repayments]), currency),
+        // What is owed to the viewer (negative: what they owe), on their own private accounts only: lent
+        // − repaid to them − owed to others + repaid by them. For an account that records shared
+        // expenses it is the group balance.
+        receivable: money.toDecimal(s.receivable, currency),
       })),
     },
   };
 }
+
+// `payable` (a share someone else paid, no money moved) and `repayment` are made by the shared-expense
+// route for the person recording their own part of a group (BT-009). A lone payable by hand would create
+// money that never arrived — a payable of 100.00 raises a balance by 100.00 — so by default both are
+// refused here (financial recheck N1). A group may allow entering them by hand (the group setting
+// "Owed-to-others and repayment entries", Terry 2026-09-14): a repayment is then valid alone, and an
+// owed amount is always recorded as a pair with its matching share as spending (see create), never
+// alone. No entry is ever changed to or from them. `advance` and `reimbursement` stay manual.
+const SERVER_ONLY_KINDS = new Set(['payable', 'repayment']);
+function refuseServerOnlyKind(kind) {
+  if (SERVER_ONLY_KINDS.has(kind)) throw badRequest('Money owed for a shared expense and repayments of it cannot be turned into other entries, or other entries into them.', 'server_only_kind');
+}
+const handEntryAllowed = (doc) => require('../_shared/group-settings').get(doc, 'ownedEntries') === 'manual';
+// The kinds a person may enter here, in this workspace (the client offers exactly these).
+const MANUAL_KINDS = Object.freeze(['expense', 'income', 'transfer', 'refund', 'fee', 'reimbursement', 'advance', 'adjustment', 'interest']);
+const entryKinds = (doc) => (handEntryAllowed(doc) ? [...MANUAL_KINDS, 'payable', 'repayment'] : [...MANUAL_KINDS]);
 
 async function create(ctx, req) {
   const wsId = requireId(query(req, 'workspaceId'), 'workspaceId');
@@ -247,6 +309,31 @@ async function create(ctx, req) {
       return { transactions: [legOut, legIn].map((x) => ledger.transactionView(doc, x, ctx.principal, now, look)) };
     }
 
+    if (SERVER_ONLY_KINDS.has(kind) && !handEntryAllowed(doc)) {
+      throw badRequest('Money owed for a shared expense and repayments of it are recorded from Shared expenses. An owner or manager can allow entering them by hand in the Shared expenses settings.', 'server_only_kind');
+    }
+    // An amount owed entered by hand is recorded as a pair, in this one write: the share as spending (in
+    // the chosen category, with the chosen merchant) and the matching payable. The balance does not
+    // change; spending grows by the share and what is owed by the same amount (Terry's decision C).
+    if (kind === 'payable') {
+      if (body.splits !== undefined && body.splits !== null && (!Array.isArray(body.splits) || body.splits.length)) throw badRequest('An amount owed takes one category, not split lines.', 'invalid_field');
+      const magnitude = -ledger.signedAmount('expense', body.amount, account.currency);
+      const owedPairId = newId('owe');
+      const common = {
+        ...base, accountId: account.id, currency: account.currency, splits: [], original: null, transferId: null, counterpartAccountId: null, owedPairId,
+        responsibleRef: people.requireRef(body.responsibleRef, { doc, user, visibility: account.visibility }),
+      };
+      const share = { ...common, id: newId('txn'), kind: 'expense', amountMinor: -magnitude, payeeId: resolvePayee(doc, ctx.principal, body, account, now), categoryId: checkCategory(doc, body.categoryId) };
+      const owed = { ...common, id: newId('txn'), kind: 'payable', amountMinor: magnitude, payeeId: null, categoryId: null, tags: [...base.tags], links: { ...base.links } };
+      history(share, member.subject, nowIso, ['create']);
+      history(owed, member.subject, nowIso, ['create']);
+      doc.transactions = [...(doc.transactions || []), share, owed];
+      ledger.assertLedgerInRange(doc);
+      ledger.assertMemberQuota(doc, member, ctx.env);
+      for (const x of [share, owed]) audit.record(doc, { actor: member.subject, action: 'transaction.create', targetType: 'transaction', targetId: x.id, scope: `account:${account.id}`, at: nowIso });
+      const look = lookups(doc);
+      return { transactions: [share, owed].map((x) => ledger.transactionView(doc, x, ctx.principal, now, look)) };
+    }
     const amountMinor = ledger.signedAmount(kind, body.amount, account.currency);
     const splits = ledger.validateSplits(body.splits, amountMinor, account.currency, doc);
     const txn = {
@@ -278,6 +365,38 @@ function checkRevision(t, revision) {
   if (revision !== t.revision) throw conflict('This entry changed since you loaded it. Reload to see the latest version.', 'stale_revision');
 }
 
+// The account an entry is being MOVED to (BT-006-05): the caller needs the create right there, not just
+// edit/view. Deny by default: an account outside the caller's access fails as not found — whether it
+// belongs to nobody, another workspace or another member's private records — so the refusal never
+// confirms it exists. Unlike `accountFor`, a deleted account is looked up so a caller who can already
+// see it (their own removed account) gets a specific reason instead of "not found".
+function moveDestination(doc, principal, accountId, now) {
+  const account = (doc.accounts || []).find((a) => a.id === accountId);
+  if (!account || capabilitiesFor(doc, principal, account, now).size === 0) throw notFound('Unknown account.');
+  if (!can(doc, principal, account, 'create', now)) throw forbidden(`You do not have create permission on ${account.name}.`);
+  if (account.deletedAt) throw conflict(`${account.name} has been removed. Bring it back on the Accounts page first.`, 'account_removed');
+  if (account.status === 'closed') throw conflict(`${account.name} is closed. Reopen it on the Accounts page to add entries.`, 'account_closed');
+  return account;
+}
+
+// Entries recorded from a shared expense or payment (server-set group links) follow that record: their
+// owner's update from Shared expenses reverses and replaces them. Changing their financial details,
+// reversing or deleting them here would leave them wrong until that update, so only notes, tags and
+// status change here (financial recheck N2).
+const sharedLinked = (t) => Boolean(t.links && (t.links.groupExpenseId || t.links.groupSettlementId));
+const sharedLocked = () => conflict('This entry was recorded from Shared expenses, so its amount, date, type, category and merchant follow the shared expense. Change it in Shared expenses; notes, tags and status can be changed here.', 'shared_expense_locked');
+
+// Why an otherwise-editable entry cannot be MOVED (BT-006-05), in the same words the move action would
+// refuse with — used both to answer a move attempt and to tell the Transactions list which rows offer
+// "Move to another account" and why not (a plain reason, never colour alone).
+function moveBlockReason(t) {
+  if (sharedLinked(t)) return 'This entry was recorded from Shared expenses. Change it in Shared expenses.';
+  if (t.owedPairId) return 'This amount owed and its matching share are recorded together on one account. Reverse it (both are reversed) and enter it again.';
+  if (inReversalPair(t)) return t.reversedBy ? 'This entry has been reversed, so it cannot be moved.' : 'This is a reversal, so it always stays with the entry it reverses.';
+  if (t.status === 'reconciled') return 'This entry is reconciled. Change its status to cleared before moving it.';
+  return null;
+}
+
 async function patch(ctx, req) {
   const wsId = requireId(query(req, 'workspaceId'), 'workspaceId');
   const body = fields.onlyKeys(readBody(req), PATCH_KEYS);
@@ -291,6 +410,12 @@ async function patch(ctx, req) {
     if (!canChangeRecord(doc, ctx.principal, account, t, 'edit', now)) throw forbidden('You cannot edit this entry.');
     checkRevision(t, body.revision);
     const reason = fields.text(body.reason, { field: 'Reason', max: 200 });
+    if (sharedLinked(t) && LOCKED_WHEN_REVERSED.some((k) => body[k] !== undefined)) throw sharedLocked();
+    // A hand-entered amount owed and its share stay one pair: corrected by reversing both, never edited
+    // (Terry's decision C).
+    if (t.owedPairId && LOCKED_WHEN_REVERSED.some((k) => body[k] !== undefined)) {
+      throw conflict('This amount owed and its matching share are recorded together, so their amount, date, type, category and merchant cannot change. Reverse it (both are reversed) and enter it again.', 'owed_pair_locked');
+    }
     if (inReversalPair(t) && LOCKED_WHEN_REVERSED.some((k) => body[k] !== undefined)) {
       throw conflict(t.reversedBy
         ? 'This entry has been reversed, so its amount, date, type, category and merchant can no longer change. Add a new entry with the correct details.'
@@ -336,6 +461,9 @@ async function patch(ctx, req) {
       for (const k of ['date', 'postedDate']) if (body[k] !== undefined) { t[k] = fields.date(body[k], k, { required: k === 'date' }); pair[k] = t[k]; changed.push(k); }
     } else {
       const kind = body.kind !== undefined ? fields.oneOf(body.kind, ledger.TX_KINDS.filter((k) => k !== 'transfer'), 'Kind') : t.kind;
+      // No entry becomes, or stops being, a kind only Shared expenses make, and such an entry's amount
+      // is not changed by hand (financial recheck N1).
+      if (body.kind !== undefined || body.amount !== undefined) { refuseServerOnlyKind(kind); refuseServerOnlyKind(t.kind); }
       if (body.amount !== undefined || body.kind !== undefined) {
         const amountText = body.amount !== undefined ? body.amount : money.toDecimal(kind === 'adjustment' ? t.amountMinor : Math.abs(t.amountMinor), t.currency);
         t.amountMinor = ledger.signedAmount(kind, amountText, t.currency);
@@ -413,6 +541,11 @@ function setDeleted(deleted) {
       if (deleted) checkRevision(t, body.revision);
       // Only entries not already in the target state change (they normally all are not).
       const legs = linkedEntries(doc, t).filter((x) => Boolean(x.deletedAt) !== deleted);
+      // Entries recorded from Shared expenses are removed only by their owner's update there (N2).
+      if (deleted && legs.some(sharedLinked)) throw sharedLocked();
+      // A hand-entered amount owed and its share are corrected by reversing both, never deleted, so the
+      // pair can never be split (Terry's decision C).
+      if (deleted && legs.some((x) => x.owedPairId)) throw conflict('This amount owed and its matching share are recorded together. Reverse it instead (both are reversed).', 'owed_pair_locked');
       if (deleted && legs.some((x) => x.status === 'reconciled')) {
         throw conflict(legs.length > 1 && t.status !== 'reconciled'
           ? 'This entry is linked to a reconciled entry, so it cannot be deleted.'
@@ -473,28 +606,121 @@ async function reverse(ctx, req) {
     // A reversal is a new entry, and closed accounts take no new entries (financial retest FIN-T8).
     if (account.status === 'closed') throw conflict(`${account.name} is closed. Reopen it on the Accounts page to correct its entries.`, 'account_closed');
     if (t.transferId) throw badRequest('Reverse a transfer by recording a transfer back.', 'unsupported');
+    // Reversed only by their owner's update from Shared expenses (N2).
+    if (sharedLinked(t)) throw sharedLocked();
     if (t.links && t.links.reverses) throw conflict('A reversal cannot itself be reversed. Record a new entry instead.', 'is_reversal');
     if (t.reversedBy) throw conflict('This entry has already been reversed.', 'already_reversed');
     const reason = fields.text(body.reason, { field: 'Reason', max: 200 });
     if (!reason) throw badRequest('Give a reason for the reversal. It is kept with both entries.', 'reason_required');
     // Dated like the entry it reverses unless told otherwise, so the pair nets out in the same budget
     // period (financial retest FIN-T4).
-    const rev = reverseEntry(doc, t, { by: member.subject, at: nowIso, reason, date: fields.date(body.date, 'Date') || t.date });
+    // A hand-entered amount owed and its matching share are reversed together, so the pair keeps
+    // netting out and never leaves a lone payable (Terry's decision C).
+    const targets = t.owedPairId ? (doc.transactions || []).filter((x) => x.owedPairId === t.owedPairId && !x.deletedAt && !x.reversedBy) : [t];
+    const date = fields.date(body.date, 'Date') || t.date;
+    const out = [];
+    for (const x of targets) {
+      const rev = reverseEntry(doc, x, { by: member.subject, at: nowIso, reason, date });
+      audit.record(doc, { actor: member.subject, action: 'transaction.reverse', targetType: 'transaction', targetId: x.id, scope: `account:${account.id}`, at: nowIso });
+      audit.record(doc, { actor: member.subject, action: 'transaction.create', targetType: 'transaction', targetId: rev.id, scope: `account:${account.id}`, at: nowIso });
+      out.push(x, rev);
+    }
     ledger.assertLedgerInRange(doc);
     ledger.assertMemberQuota(doc, member, ctx.env);
-    audit.record(doc, { actor: member.subject, action: 'transaction.reverse', targetType: 'transaction', targetId: t.id, scope: `account:${account.id}`, at: nowIso });
-    audit.record(doc, { actor: member.subject, action: 'transaction.create', targetType: 'transaction', targetId: rev.id, scope: `account:${account.id}`, at: nowIso });
     const look = lookups(doc);
-    return { transactions: [t, rev].map((x) => ledger.transactionView(doc, x, ctx.principal, now, look)) };
+    return { transactions: out.map((x) => ledger.transactionView(doc, x, ctx.principal, now, look)) };
   }, { idempotencyKey: header(req, 'idempotency-key') || undefined, idempotencyScope: 'transactions.reverse', requestHash: store.requestHash({ q: wsId, body }) });
   return { status: 201, body: result };
+}
+
+const MOVE_KEYS = ['transactionId', 'revision', 'toAccountId', 'reason'];
+
+// MOVE TO ANOTHER ACCOUNT (Terry, 2026-09-14: "i should be able to move a transaction from one account
+// to the next if i accidentally choose the wrong account in the first place"). A dedicated action, not a
+// silent PATCH field, because it touches two accounts' history, audit and balances: the caller needs the
+// change right on the entry's CURRENT account (existing canChangeRecord rules, including workspace
+// setting (f) if turned on) AND the create right on the DESTINATION account. Same currency only. The
+// move is kept as ONE atomic ETag-guarded write with an amendment on `accountId` (and, for one leg of a
+// transfer, the other leg's `counterpartAccountId`) — who, when, why — never a silent overwrite. Balances,
+// totals, forecasts and budgets are derived on read from `accountId`, so they follow automatically.
+async function move(ctx, req) {
+  const wsId = requireId(query(req, 'workspaceId'), 'workspaceId');
+  const body = fields.onlyKeys(readBody(req), MOVE_KEYS);
+  const id = requireId(body.transactionId, 'transactionId');
+  const toAccountId = requireId(body.toAccountId, 'toAccountId');
+  const user = await readUser(ctx);
+  const { result } = await store.mutateWorkspace(ctx, wsId, (doc, member) => {
+    const now = ctx.now();
+    const nowIso = ctx.nowIso();
+    const { t, account } = findTxn(doc, ctx.principal, id, now);
+    if (t.deletedAt) throw conflict('Restore this entry before moving it.', 'deleted');
+    if (!canChangeRecord(doc, ctx.principal, account, t, 'edit', now)) throw forbidden('You cannot move this entry.');
+    checkRevision(t, body.revision);
+    const blocked = moveBlockReason(t);
+    if (sharedLinked(t)) throw sharedLocked();
+    if (t.owedPairId) throw conflict(blocked, 'owed_pair_locked');
+    if (inReversalPair(t)) throw conflict(blocked, 'reversal_locked');
+    if (t.status === 'reconciled') throw conflict(blocked, 'reconciled_locked');
+    if (toAccountId === t.accountId) throw badRequest('Choose a different account to move this entry to.', 'same_account');
+    // Deny by default: an account the caller cannot see fails as not found, never confirming it exists.
+    const dest = moveDestination(doc, ctx.principal, toAccountId, now);
+    if (dest.currency !== t.currency) throw badRequest(`${dest.name} is in ${dest.currency}; enter it again on that account.`, 'currency_mismatch');
+    // One leg of a transfer: the OTHER leg's counterpartAccountId follows in the same write, and the
+    // destination may not equal the other leg's own account (a transfer needs two different accounts).
+    const pair = t.transferId ? (doc.transactions || []).find((x) => x.transferId === t.transferId && x.id !== t.id) : null;
+    if (pair && pair.accountId === dest.id) throw badRequest('A transfer needs two different accounts.', 'invalid_transfer');
+    if (pair) {
+      const pairAccount = (doc.accounts || []).find((a) => a.id === pair.accountId);
+      if (!pairAccount || !canChangeRecord(doc, ctx.principal, pairAccount, pair, 'edit', now)) throw forbidden('You cannot move both sides of this transfer.');
+    }
+    // A merchant already on the entry must stay usable on the new account (BT-007-01): a private
+    // merchant never lands on a shared account, and never on another private account than its own.
+    if (t.payeeId) {
+      const payee = (doc.payees || []).find((p) => p.id === t.payeeId);
+      if (payee && !merchants.usableOn(payee, dest)) {
+        throw conflict('Merchants used on a private account are not available on other private accounts or on a shared account. Change the merchant first, or choose another destination.', 'merchant_not_usable');
+      }
+    }
+    // Likewise a private contact (BT-005-01): usable only on its owner's private records.
+    if (t.responsibleRef) people.requireRef(t.responsibleRef, { doc, user, visibility: dest.visibility });
+    const reason = fields.text(body.reason, { field: 'Reason', max: 200 });
+    if (!reason) throw badRequest('Give a reason for this move. It is kept with the entry\'s history.', 'reason_required');
+
+    const fromAccountId = t.accountId;
+    t.accountId = dest.id;
+    t.revision += 1;
+    t.updatedAt = nowIso;
+    t.updatedBy = member.subject;
+    history(t, member.subject, nowIso, ['move']);
+    amend(t, member.subject, nowIso, reason, [{ field: 'accountId', from: fromAccountId, to: dest.id }]);
+    audit.record(doc, { actor: member.subject, action: 'transaction.move-out', targetType: 'transaction', targetId: t.id, scope: `account:${fromAccountId}`, at: nowIso });
+    audit.record(doc, { actor: member.subject, action: 'transaction.move-in', targetType: 'transaction', targetId: t.id, scope: `account:${dest.id}`, at: nowIso });
+    const touched = [t];
+    if (pair) {
+      const pairFrom = pair.counterpartAccountId;
+      pair.counterpartAccountId = dest.id;
+      pair.revision += 1;
+      pair.updatedAt = nowIso;
+      pair.updatedBy = member.subject;
+      history(pair, member.subject, nowIso, ['move']);
+      amend(pair, member.subject, nowIso, reason, [{ field: 'counterpartAccountId', from: pairFrom, to: dest.id }]);
+      audit.record(doc, { actor: member.subject, action: 'transaction.move', targetType: 'transaction', targetId: pair.id, scope: `account:${pair.accountId}`, at: nowIso });
+      touched.push(pair);
+    }
+    ledger.assertLedgerInRange(doc);
+    ledger.assertMemberQuota(doc, member, ctx.env);
+    const look = lookups(doc);
+    return { transactions: touched.map((x) => ledger.transactionView(doc, x, ctx.principal, now, look)) };
+  });
+  return { body: result };
 }
 
 // The full amendment history of one entry: who changed what, from what to what, when and why.
 async function amendmentHistory(ctx, req) {
   const wsId = requireId(query(req, 'workspaceId'), 'workspaceId');
   const { doc } = await store.loadWorkspace(ctx, wsId);
-  const { t } = findTxn(doc, ctx.principal, requireId(query(req, 'transactionId'), 'transactionId'), ctx.now());
+  const now = ctx.now();
+  const { t } = findTxn(doc, ctx.principal, requireId(query(req, 'transactionId'), 'transactionId'), now);
   const names = new Map((doc.members || []).map((m) => [m.subject, m.name || 'Member']));
   const value = (field, v) => {
     if (field === 'amountMinor' && typeof v === 'number') return money.toDecimal(v, t.currency);
@@ -502,10 +728,25 @@ async function amendmentHistory(ctx, req) {
     if (field === 'original' && v && typeof v === 'object' && money.isMinor(v.amountMinor)) return { ...v, amount: money.toDecimal(v.amountMinor, v.currency) };
     return v;
   };
+  // A moved entry's before/after account (BT-006-05) is named only to someone who can already see that
+  // account — the same rule a transfer's counterpart follows (SEC-B12; security recheck L3) — so a
+  // history shared across two accounts never discloses another member's private account by id or name.
+  const accountRef = (id) => {
+    const a = id && (doc.accounts || []).find((x) => x.id === id);
+    if (!a || !can(doc, ctx.principal, a, 'view-balances', now)) return { id: null, name: null };
+    return { id: a.id, name: a.name };
+  };
+  const ACCOUNT_FIELDS = new Set(['accountId', 'counterpartAccountId']);
+  const change = (c) => {
+    if (!ACCOUNT_FIELDS.has(c.field)) return { ...c, from: value(c.field, c.from), to: value(c.field, c.to) };
+    const from = accountRef(c.from);
+    const to = accountRef(c.to);
+    return { field: c.field, from: from.id, fromName: from.name, to: to.id, toName: to.name };
+  };
   return {
     body: {
       transactionId: t.id, createdAt: t.createdAt, createdBy: names.get(t.createdBy) || 'Former member',
-      amendments: (t.amendments || []).map((a) => ({ at: a.at, by: names.get(a.by) || 'Former member', reason: a.reason, changes: a.changes.map((c) => ({ ...c, from: value(c.field, c.from), to: value(c.field, c.to) })) })),
+      amendments: (t.amendments || []).map((a) => ({ at: a.at, by: names.get(a.by) || 'Former member', reason: a.reason, changes: a.changes.map(change) })),
     },
   };
 }
@@ -514,6 +755,7 @@ async function post(ctx, req) {
   const action = query(req, 'action');
   if (action === 'restore') return setDeleted(false)(ctx, req);
   if (action === 'reverse') return reverse(ctx, req);
+  if (action === 'move') return move(ctx, req);
   if (action !== undefined) throw notFound();
   return create(ctx, req);
 }

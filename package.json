@@ -11,6 +11,7 @@
     "test:app": "node --test --test-concurrency=1 app/test/*.test.js",
     "dev": "node scripts/dev/server.mjs",
     "seed:dev": "node scripts/dev/seed.mjs",
+    "e2e": "node scripts/dev/e2e/run.mjs",
     "validate": "node scripts/validate.cjs",
     "generate:functions": "node scripts/generate-functions.cjs",
     "build": "npm test && npm run validate",

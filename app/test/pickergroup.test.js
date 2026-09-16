@@ -15,7 +15,9 @@ afterEach(() => dom.teardown());
 
 const tick = () => new Promise((resolve) => setTimeout(resolve, 0));
 const buttonNamed = (root, text) => root.querySelectorAll("button").find((b) => b.textContent === text);
-const spoken = (select) => triggerFor(select).getAttribute("aria-label");
+import { spokenOf } from "./pickerassert.js";
+// What a screen reader announces: the field's name, the value and how to use it (a11y review finding 6).
+const spoken = (select) => spokenOf(triggerFor(select));
 const type = (node, value) => { node.value = value; node.dispatchEvent(new DomEvent("input", { bubbles: true })); };
 const labelled = (root, text) => { const label = root.querySelectorAll("label").find((l) => l.textContent === text); return root.querySelector(`#${label.getAttribute("for")}`); };
 
@@ -57,11 +59,11 @@ describe("BT-004-05 shared expenses: the expense dialog", () => {
     const dialog = openGroupExpense(ctx).element;
     assert.deepEqual(nativeDropdowns(dialog), []);
     assert.deepEqual(pickerLabels(dialog), ["Category", "Split", "Account"]);
-    assert.equal(spoken(pickerNamed(dialog, "Category")), "Category: No category. Search and choose.");
+    assert.equal(spoken(pickerNamed(dialog, "Category")), "Category: No category. Choose.");
     assert.equal(spoken(pickerNamed(dialog, "Split")), "Split: Equally. Choose.");
     assert.deepEqual(offeredOptions(pickerNamed(dialog, "Category")), ["No category", "Groceries", "Outings"], "income categories are not offered");
     const account = pickerNamed(dialog, "Account");
-    assert.equal(spoken(account), "Account: Alice Cash (EUR). Search and choose.");
+    assert.equal(spoken(account), "Account: Alice Cash (EUR). Choose.");
     assert.equal(triggerFor(account).disabled, true, "off until the person asks to record it on their account");
     labelled(dialog, "Also record my part on my own account").click();
     assert.equal(triggerFor(account).disabled, false, "the view enabled it from code, and the picker followed");
@@ -97,8 +99,8 @@ describe("BT-004-05 shared expenses: payments", () => {
     const dialog = openRecordPayment(ctx).element;
     assert.deepEqual(nativeDropdowns(dialog), []);
     assert.deepEqual(pickerLabels(dialog), ["From", "To", "Account"]);
-    assert.equal(spoken(pickerNamed(dialog, "From")), "From: Alice (you). Search and choose.");
-    assert.equal(spoken(pickerNamed(dialog, "To")), "To: Bob. Search and choose.");
+    assert.equal(spoken(pickerNamed(dialog, "From")), "From: Alice (you). Choose.");
+    assert.equal(spoken(pickerNamed(dialog, "To")), "To: Bob. Choose.");
     assert.deepEqual(offeredOptions(pickerNamed(dialog, "To")), ["Alice (you)", "Bob", "Dana · contact"]);
     const repayment = labelled(dialog, "Also record it on my account as a repayment").parentNode.parentNode;
     assert.equal(repayment.hidden, true, "paying someone else offers no repayment on my account");
@@ -142,7 +144,7 @@ describe("BT-004-05 shared expenses: payments", () => {
     view.element.querySelectorAll("button").find((b) => b.getAttribute("aria-label") === "Record Fictional dinner on my account").click();
     const dialog = dom.body.querySelector(".modal");
     assert.deepEqual(nativeDropdowns(dialog), []);
-    assert.equal(spoken(pickerNamed(dialog, "Account")), "Account: Alice Cash (EUR). Search and choose.");
+    assert.equal(spoken(pickerNamed(dialog, "Account")), "Account: Alice Cash (EUR). Choose.");
     buttonNamed(dialog, "Record").click();
     await tick();
     assert.deepEqual(calls.actions, [{ action: "ledger", body: { expenseId: "exp_1", accountId: "acc_cash" } }]);

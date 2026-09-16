@@ -13,6 +13,8 @@ import { colourEntries } from "../../core/categories.js";
 import { messageFor } from "../../core/errors.js";
 import { createIconPicker } from "../iconpicker.js";
 import { withIcon } from "../icons.js";
+import { stagingState, stagingAnchor, setAnchorHref, openStagingEditor, openPersonalStagingEditor, isLocal, STAGING_ADD_TEXT } from "../staginglink.js";
+import { stagingHref, stagingHost } from "../../core/links.js";
 
 const MAX_ICON_BYTES = 8 * 1024;
 
@@ -42,6 +44,16 @@ export function createView(ctx) {
   const prefBox = el("div", { class: "form-grid" });
   const contactsBox = el("div");
   const colourBox = el("div", { class: "stack" });
+  // "Deleted workspaces" (owners only; Terry, 2026-09-14): the server already returns a deleted
+  // (archived) workspace only to its owners, so this needs no extra check of its own. Hidden until this
+  // person has ever had one to show, so the card does not flash empty and then appear.
+  const deletedBox = el("div", { class: "stack" });
+  const deletedStatus = el("p", { class: "field__help", role: "status", tabindex: "-1" });
+  const deletedCard = el("section", { class: "card", "aria-labelledby": "set-deleted", hidden: true }, [
+    el("h2", { class: "card__title", id: "set-deleted", text: "Deleted workspaces" }),
+    el("p", { class: "field__help", text: "Workspaces you deleted. Nothing in them was erased; bring one back to give everyone who was in it their access again." }),
+    deletedStatus, deletedBox,
+  ]);
   // Site administrators only (BT-011-05): the icon catalogue. It holds no financial data and gives
   // no access to any workspace.
   // Category colours and icons belong to a workspace, so the card is hidden without one.
@@ -82,6 +94,104 @@ export function createView(ctx) {
     el("div", { class: "row" }, [saveName]),
     nameStatus,
   ]);
+  // The staging link (BT-011-06): the same preference and the same editor as the account menu, so it
+  // is findable here with the other personal settings. Built once and refreshed in place.
+  const stagingLink = stagingAnchor({ className: "staging__link" });
+  const stagingHostText = el("span", { class: "muted small staging__host" });
+  const stagingNone = el("p", { class: "muted small staging__none" });
+  const stagingSource = el("span");
+  let stagingSourceShown = "";
+  const stagingEdit = button("Edit staging link", () => openPersonalStagingEditor({ store }), { small: true });
+  const stagingReset = button("Use inherited", () => save({ stagingUrl: null }), { small: true, variant: "ghost", attrs: { "aria-label": "Use the inherited staging link" } });
+  // Under a site lock one's own saved address no longer applies, but it can still be cleared
+  // (security review of d363eff, finding 2).
+  const stagingClear = button("Clear my saved address", () => save({ stagingUrl: null }), { small: true, variant: "ghost" });
+  const localNow = () => isLocal(store.getState());
+  // Site administrators only: the address everyone inherits, and the lock. The default reaches only
+  // site administrators and active workspace members, never visitors who are not signed in.
+  let siteStaging = { loaded: false, loading: false, value: null, error: "", locked: [] };
+  const siteStagingText = el("span", { class: "small staging__host" });
+  const siteStagingEdit = button("Edit site staging link", () => openSiteStagingEditor(), { small: true });
+  const siteLockBox = el("input", { type: "checkbox" });
+  // Locking with no site link leaves everyone without one: said before it is done (review 2).
+  const siteLockWarning = el("p", { class: "field__help staging__warning", role: "status" });
+  siteLockWarning.hidden = true;
+  siteLockBox.addEventListener("change", async () => {
+    const others = siteStaging.locked.filter((k) => k !== "stagingUrl");
+    const locked = siteLockBox.checked ? [...others, "stagingUrl"] : others;
+    try {
+      await ctx.api.request("site-settings", { method: "PUT", body: { locked } });
+      announce(siteLockBox.checked ? "The staging link is locked for everyone." : "The staging link is no longer locked.");
+      await loadSiteStaging();
+      await store.actions.refreshPreferences();
+    } catch (err) {
+      siteLockBox.checked = !siteLockBox.checked;
+      siteLockWarning.textContent = messageFor(err);
+      siteLockWarning.hidden = false;
+    }
+  });
+  const siteStagingRow = el("div", { class: "stack staging__site" }, [
+    el("h3", { class: "staging__heading", text: "Site default (site administrators)" }),
+    el("p", { class: "field__help", text: "Everyone who has not set their own staging link gets this one. Only site administrators and members of a workspace receive it; visitors who are not signed in never do." }),
+    el("div", { class: "row" }, [siteStagingText, siteStagingEdit]),
+    el("label", { class: "field--inline field__label staging__lock" }, [siteLockBox, "Lock: everyone uses the site's staging link"]),
+    siteLockWarning,
+  ]);
+  siteStagingRow.hidden = true;
+  const stagingCard = el("section", { class: "card", "aria-labelledby": "set-staging" }, [
+    el("h2", { class: "card__title", id: "set-staging", text: "Staging link" }),
+    el("p", { class: "field__help", text: "Your staging (preview) site. It opens in a new tab from the account menu. Only https addresses are accepted, and http to 127.0.0.1 or localhost while running locally." }),
+    el("div", { class: "staging__current" }, [stagingLink, stagingHostText, stagingNone]),
+    el("div", { class: "row" }, [stagingSource, stagingEdit, stagingReset, stagingClear]),
+    siteStagingRow,
+  ]);
+  async function loadSiteStaging() {
+    siteStaging = { ...siteStaging, loading: true };
+    try {
+      const data = await ctx.api.siteSettings();
+      const settings = (data && data.settings) || {};
+      const defaults = settings.defaults || {};
+      siteStaging = { loaded: true, loading: false, value: stagingHref(defaults.stagingUrl, { local: localNow() }), error: "", locked: Array.isArray(settings.locked) ? settings.locked : [] };
+    } catch (err) { siteStaging = { ...siteStaging, loaded: true, loading: false, value: null, error: messageFor(err) }; }
+    siteStagingText.textContent = siteStaging.error || (siteStaging.value ? stagingHost(siteStaging.value) : "None set");
+    siteStagingEdit.textContent = siteStaging.value ? "Edit site staging link" : "Add site staging link…";
+    siteLockBox.checked = siteStaging.locked.includes("stagingUrl");
+    siteLockWarning.textContent = "No site staging link is set, so locking it leaves everyone without a staging link.";
+    siteLockWarning.hidden = !!siteStaging.value;
+  }
+  function openSiteStagingEditor() {
+    openStagingEditor({
+      title: "Site staging link", label: "Staging site address for everyone", current: siteStaging.value || "", canRemove: !!siteStaging.value, local: localNow(),
+      help: "Everyone who has not set their own staging link gets this one. Visitors who are not signed in never see it.",
+      save: async (value) => {
+        try { await ctx.api.request("site-settings", { method: "PUT", body: { defaults: { stagingUrl: value } } }); return { ok: true }; }
+        catch (error) { return { ok: false, error }; }
+      },
+      onSaved: async () => { await loadSiteStaging(); await store.actions.refreshPreferences(); },
+    });
+  }
+  function renderStaging(state) {
+    const s = stagingState(state);
+    const resetHadFocus = document.activeElement === stagingReset || document.activeElement === stagingClear;
+    setAnchorHref(stagingLink, s.href);
+    stagingLink.hidden = !s.href;
+    stagingHostText.textContent = s.href ? stagingHost(s.href) : "";
+    stagingHostText.hidden = !s.href;
+    stagingNone.textContent = s.locked ? "Set by the site: none" : "No staging link yet.";
+    stagingNone.hidden = !!s.href;
+    if (stagingSourceShown !== s.source) { stagingSourceShown = s.source; mount(stagingSource, sourceBadge(s.source)); }
+    stagingEdit.textContent = s.href ? "Edit staging link" : STAGING_ADD_TEXT;
+    stagingEdit.hidden = s.locked;
+    stagingReset.hidden = !s.personal;
+    stagingClear.hidden = !(s.locked && s.storedOwn);
+    // "Use inherited" and "Clear my saved address" leave once used; focus moves to the editor button
+    // instead of the page.
+    if (resetHadFocus && stagingReset.hidden && stagingClear.hidden && !stagingEdit.hidden) stagingEdit.focus();
+    const siteAdmin = !!(state.auth && state.auth.user && state.auth.user.siteAdmin);
+    siteStagingRow.hidden = !siteAdmin;
+    if (siteAdmin && !siteStaging.loaded && !siteStaging.loading) void loadSiteStaging();
+  }
+
   const element = el("section", {}, [
     pageHead("My settings"),
     el("p", { class: "muted small", text: "“Inherited” values follow the site default until you change them. “Customized” values are your own choice; use “Use inherited” to return to the default. “Locked by site” values are set by the site administrator." }),
@@ -89,9 +199,11 @@ export function createView(ctx) {
       nameCard,
       el("section", { class: "card", "aria-labelledby": "set-appearance" }, [el("h2", { class: "card__title", id: "set-appearance", text: "Appearance" }), appearanceSource, dayNight.element, paletteField]),
       el("section", { class: "card", "aria-labelledby": "set-display" }, [el("h2", { class: "card__title", id: "set-display", text: "Display and privacy" }), prefBox, status]),
+      stagingCard,
       el("section", { class: "card", "aria-labelledby": "set-contacts" }, [el("h2", { class: "card__title", id: "set-contacts", text: "Private contacts" }), el("p", { class: "field__help", text: "Only you can see these. Use them on your private records; use workspace contacts for shared ones." }), contactsBox]),
       colourCard,
       catalogCard,
+      deletedCard,
     ]),
   ]);
 
@@ -273,6 +385,37 @@ export function createView(ctx) {
     }
   }
 
+  // "Deleted workspaces": rendered on every update() (not gated behind the preferences-signature
+  // cache below), since it depends on state.workspaces, not on preferences.
+  let deletedShown = false;
+  let deletedSig = "";
+  function renderDeleted(state) {
+    const deleted = (state.workspaces || []).filter((w) => w.status === "archived");
+    if (deleted.length) deletedShown = true;
+    deletedCard.hidden = !deletedShown;
+    if (!deletedShown) return;
+    const sig = JSON.stringify(deleted.map((w) => [w.id, w.name, w.archivedAt]));
+    if (sig === deletedSig) return;
+    deletedSig = sig;
+    mount(deletedBox, deleted.length
+      ? el("ul", { class: "stack" }, deleted.map((w) => {
+          const err = el("p", { class: "error-text small", role: "alert", hidden: true });
+          const restore = button("Bring back", async () => {
+            err.hidden = true; err.textContent = "";
+            const out = await store.actions.restoreWorkspace(w.id);
+            if (out.ok) {
+              deletedStatus.textContent = `${w.name} is back. Everyone who was in it has their access again; choose it in the workspace picker.`;
+              deletedStatus.focus();
+            } else {
+              err.textContent = messageFor(out.error);
+              err.hidden = false;
+            }
+          }, { small: true, attrs: { "aria-label": `Bring back ${w.name}` } });
+          return el("li", { class: "row" }, [el("strong", { text: w.name }), el("span", { class: "muted small", text: `Deleted ${(w.archivedAt || "").slice(0, 10)}` }), restore, err]);
+        }))
+      : el("p", { class: "muted small", text: "No deleted workspaces." }));
+  }
+
   let rendered = "";
   function update(state) {
     // Show the saved name, or suggest the Google one once, without overwriting what is being typed.
@@ -286,8 +429,10 @@ export function createView(ctx) {
         });
       }
     }
+    renderDeleted(state);
     const prefs = state.preferences;
     if (!prefs) return;
+    renderStaging(state);
     colourCard.hidden = !state.selectedWorkspaceId;
     renderColours(state);
     const siteAdmin = !!(state.auth && state.auth.user && state.auth.user.siteAdmin);
@@ -315,7 +460,7 @@ export function createView(ctx) {
       prefControl("Display currency", "displayCurrency", pickerSelect(CURRENCIES.map((c) => ({ value: c, label: c || "Account currency" })), e.displayCurrency || ""), prefs),
       prefControl("Date format", "dateFormat", pickerSelect([{ value: "iso", label: "2026-09-13" }, { value: "dmy", label: "13/09/2026" }, { value: "mdy", label: "09/13/2026" }], e.dateFormat, {}, { search: false }), prefs),
       prefControl("Number format", "numberFormat", pickerSelect(["1,234.56", "1.234,56", "1 234,56"].map((v) => ({ value: v, label: v })), e.numberFormat, {}, { search: false }), prefs),
-      prefControl("Default workspace", "defaultWorkspaceId", pickerSelect([{ value: "", label: "First available" }].concat(state.workspaces.map((w) => ({ value: w.id, label: w.name }))), e.defaultWorkspaceId || ""), prefs),
+      prefControl("Default workspace", "defaultWorkspaceId", pickerSelect([{ value: "", label: "First available" }].concat(state.workspaces.filter((w) => w.status !== "archived").map((w) => ({ value: w.id, label: w.name }))), e.defaultWorkspaceId || ""), prefs),
     );
     // An enhanced select's focus() lands on its trigger.
     if (focusedKey && prefControls[focusedKey]) prefControls[focusedKey].focus();

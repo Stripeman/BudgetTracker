@@ -12,6 +12,8 @@
 //  * `publish` is never granted by role or ownership alone; it needs the site to enable public
 //    sharing and an explicit publication action (not yet implemented, so always denied).
 
+const workspaceSettings = require('./workspace-settings');
+
 const CAPABILITIES = Object.freeze(['view-balances', 'view-transactions', 'create', 'edit', 'delete',
   'comment', 'download-receipts', 'export', 'invite', 'change-permissions', 'publish']);
 const CAPABILITY_SET = new Set(CAPABILITIES);
@@ -92,13 +94,19 @@ function canWorkspace(ws, principal, capability) {
   return ROLE_PRESETS[member.role].includes(capability);
 }
 
-// A plain member may edit/delete only shared records they created; managers and owners any
-// shared record; private-account owners and grantees per their capabilities.
+// A plain member may edit/delete only shared records they created — unless the workspace setting
+// "Members may change other members' entries" is "Any entry" (Terry, 2026-09-14), when any member who
+// can add entries to that shared account may change any record on it. Managers and owners change any
+// shared record; private-account owners and grantees per their capabilities (never widened by the
+// setting); viewers never, because they hold no `edit` or `delete` capability.
 function canChangeRecord(ws, principal, account, record, capability, now = Date.now()) {
   if (!can(ws, principal, account, capability, now)) return false;
   if (account.visibility !== 'shared') return true;
   const member = activeMember(ws, principal);
-  if (member.role === 'member') return record && record.createdBy === member.subject;
+  if (member.role === 'member') {
+    if (record && record.createdBy === member.subject) return true;
+    return workspaceSettings.membersChangeOthers(ws) && can(ws, principal, account, 'create', now);
+  }
   return true;
 }
 

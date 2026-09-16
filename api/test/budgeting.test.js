@@ -52,7 +52,7 @@ describe('BT-008-01 budgets', () => {
   test('available = planned + carry − spent − still committed; private spending never leaks into shared budgets', async () => {
     const h = harness();
     const f = await budgetFixture(h);
-    ok(await h.call('budgets', 'POST', { as: 'alice', query: f.q, body: { name: 'Household food', scope: 'shared', currency: 'EUR', period: 'monthly', startDate: '2026-01-01', lines: [{ categoryId: f.cats.Groceries, amount: '400.00' }] } }), 201);
+    ok(await h.call('budgets', 'POST', { as: 'alice', query: f.q, body: { name: 'Household food', scope: 'shared', currency: 'EUR', period: 'monthly', startDate: '2026-01-01', confirmBackdate: true, lines: [{ categoryId: f.cats.Groceries, amount: '400.00' }] } }), 201);
     const [b] = ok(await h.call('budgets', 'GET', { as: 'carol', query: f.q })).budgets;
     assert.deepEqual(b.status.period, { start: '2026-09-01', end: '2026-09-30' });
     // Spent: 100.00 + 50.00 − 20.00 refund = 130.00. Committed: the 20 Sept delivery, 25.00.
@@ -64,7 +64,7 @@ describe('BT-008-01 budgets', () => {
   test('recording a commitment moves it from committed to spent without changing what is available', async () => {
     const h = harness();
     const f = await budgetFixture(h);
-    ok(await h.call('budgets', 'POST', { as: 'alice', query: f.q, body: { name: 'Food', scope: 'shared', currency: 'EUR', startDate: '2026-01-01', lines: [{ categoryId: f.cats.Groceries, amount: '400.00' }] } }), 201);
+    ok(await h.call('budgets', 'POST', { as: 'alice', query: f.q, body: { name: 'Food', scope: 'shared', currency: 'EUR', startDate: '2026-01-01', confirmBackdate: true, lines: [{ categoryId: f.cats.Groceries, amount: '400.00' }] } }), 201);
     const before = ok(await h.call('budgets', 'GET', { as: 'alice', query: f.q })).budgets[0].status.lines[0];
     ok(await h.call('recurring', 'POST', { as: 'alice', query: { ...f.q, action: 'record' }, body: { recurringId: f.delivery.id, occurrence: '2026-09-20' } }), 201);
     const after = ok(await h.call('budgets', 'GET', { as: 'alice', query: f.q })).budgets[0].status.lines[0];
@@ -81,7 +81,7 @@ describe('BT-008-01 budgets', () => {
   test('rollover carries the previous period\'s unspent amount (one period)', async () => {
     const h = harness();
     const f = await budgetFixture(h);
-    ok(await h.call('budgets', 'POST', { as: 'alice', query: f.q, body: { name: 'Food', scope: 'shared', currency: 'EUR', startDate: '2026-01-01', lines: [{ categoryId: f.cats.Groceries, amount: '400.00', rollover: true }] } }), 201);
+    ok(await h.call('budgets', 'POST', { as: 'alice', query: f.q, body: { name: 'Food', scope: 'shared', currency: 'EUR', startDate: '2026-01-01', confirmBackdate: true, lines: [{ categoryId: f.cats.Groceries, amount: '400.00', rollover: true }] } }), 201);
     const line = ok(await h.call('budgets', 'GET', { as: 'alice', query: f.q })).budgets[0].status.lines[0];
     // August: planned 400.00, spent 30.00 → carry 370.00. Available: 400 + 370 − 130 − 25 = 615.00.
     // (The 20 Aug delivery occurrence was never recorded, so August spending is only the 30.00.)
@@ -92,7 +92,7 @@ describe('BT-008-01 budgets', () => {
   test('changing a plan takes effect from the current period; earlier periods keep the plan they had', async () => {
     const h = harness();
     const f = await budgetFixture(h);
-    const b = ok(await h.call('budgets', 'POST', { as: 'alice', query: f.q, body: { name: 'Food', scope: 'shared', currency: 'EUR', startDate: '2026-01-01', lines: [{ categoryId: f.cats.Groceries, amount: '400.00' }] } }), 201).budget;
+    const b = ok(await h.call('budgets', 'POST', { as: 'alice', query: f.q, body: { name: 'Food', scope: 'shared', currency: 'EUR', startDate: '2026-01-01', confirmBackdate: true, lines: [{ categoryId: f.cats.Groceries, amount: '400.00' }] } }), 201).budget;
     const planned = async (date) => ok(await h.call('budgets', 'GET', { as: 'alice', query: { ...f.q, ...(date ? { date } : {}) } })).budgets[0].status.lines[0].planned;
     assert.equal(await planned('2026-08-15'), '400.00');
     const edited = ok(await h.call('budgets', 'PATCH', { as: 'alice', query: f.q, body: { budgetId: b.id, revision: 1, lines: [{ categoryId: f.cats.Groceries, amount: '500.00' }], reason: 'Bigger household' } })).budget;
@@ -107,7 +107,7 @@ describe('BT-008-01 budgets', () => {
   test('private budgets are invisible to others and count the owner\'s own accounts; shared budgets need a manager', async () => {
     const h = harness();
     const f = await budgetFixture(h);
-    ok(await h.call('budgets', 'POST', { as: 'bob', query: f.q, body: { name: 'Bob food', scope: 'private', currency: 'EUR', startDate: '2026-01-01', lines: [{ categoryId: f.cats.Groceries, amount: '1000.00' }] } }), 201);
+    ok(await h.call('budgets', 'POST', { as: 'bob', query: f.q, body: { name: 'Bob food', scope: 'private', currency: 'EUR', startDate: '2026-01-01', confirmBackdate: true, lines: [{ categoryId: f.cats.Groceries, amount: '1000.00' }] } }), 201);
     const bob = ok(await h.call('budgets', 'GET', { as: 'bob', query: f.q })).budgets[0];
     // Bob sees Joint (shared) and his own card: 130.00 + 999.00 = 1129.00 spent; 25.00 committed.
     assert.equal(bob.status.lines[0].actual, '1129.00');
@@ -137,8 +137,8 @@ describe('BT-008-01 backup and restore', () => {
   test('replace restores shared budgets and commitments but never another member\'s private budget; create-new carries only the caller\'s own', async () => {
     const h = harness();
     const f = await budgetFixture(h);
-    const shared = ok(await h.call('budgets', 'POST', { as: 'alice', query: f.q, body: { name: 'Food', scope: 'shared', startDate: '2026-01-01', lines: [{ categoryId: f.cats.Groceries, amount: '400.00' }] } }), 201).budget;
-    const bobs = ok(await h.call('budgets', 'POST', { as: 'bob', query: f.q, body: { name: 'Bob food', scope: 'private', startDate: '2026-01-01', lines: [{ categoryId: f.cats.Groceries, amount: '300.00' }] } }), 201).budget;
+    const shared = ok(await h.call('budgets', 'POST', { as: 'alice', query: f.q, body: { name: 'Food', scope: 'shared', startDate: '2026-01-01', confirmBackdate: true, lines: [{ categoryId: f.cats.Groceries, amount: '400.00' }] } }), 201).budget;
+    const bobs = ok(await h.call('budgets', 'POST', { as: 'bob', query: f.q, body: { name: 'Bob food', scope: 'private', startDate: '2026-01-01', confirmBackdate: true, lines: [{ categoryId: f.cats.Groceries, amount: '300.00' }] } }), 201).budget;
     const bobRec = ok(await h.call('recurring', 'POST', { as: 'bob', query: f.q, body: { name: 'Streaming', billType: 'subscription', accountId: f.bobCard.id, amount: '12.00', schedule: { freq: 'monthly', startDate: '2026-09-25' } } }), 201).recurring;
     const backup = ok(await h.call('backups', 'POST', { as: 'alice', query: f.q, body: {} }), 201).archive.archiveId;
 

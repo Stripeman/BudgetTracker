@@ -16,7 +16,9 @@
 
 /* ---------- fields ---------- */
 .field { display: flex; flex-direction: column; gap: var(--space-1); min-width: 0; }
-.field__label { font-size: var(--text-sm); font-weight: var(--weight-medium); }
+/* margin 0: the icon picker's field label is a <p>, whose default margin pushed its control 12 px below
+   the controls beside it (UX review U4, seen in headless Edge). */
+.field__label { font-size: var(--text-sm); font-weight: var(--weight-medium); margin: 0; }
 .field__help { font-size: var(--text-xs); color: var(--text-muted); }
 .field__input {
   min-height: var(--control-height); padding: var(--control-padding-y) var(--control-padding-x);
@@ -25,7 +27,7 @@
 }
 .field__input:hover { border-color: var(--control-border-hover); }
 .field__input:focus { border-color: var(--control-border-active); outline: none; box-shadow: 0 0 0 3px var(--accent-soft); }
-.field__input:disabled { background: var(--surface-sunken); color: var(--text-subtle); cursor: not-allowed; }
+.field__input:disabled, .field__input:read-only { background: var(--surface-sunken); color: var(--text-subtle); cursor: not-allowed; }
 textarea.field__input { min-height: 5rem; resize: vertical; }
 .field--inline { display: flex; flex-direction: row; align-items: center; gap: var(--space-2); }
 .field input[type="checkbox"] { align-self: flex-start; width: 1.1rem; height: 1.1rem; margin: var(--space-1) 0; }
@@ -81,6 +83,9 @@ fieldset.budget-line { margin: 0; padding: var(--space-3); border: 1px solid var
 .themepick__icon { color: var(--swatch, currentColor); }
 /* One compact row per category: name, colour and icon side by side when there is room (UXI-3). */
 .card--full { grid-column: 1 / -1; }
+/* "Delete workspace" (Terry, 2026-09-14): a danger-style card, set apart from the ordinary ones. */
+.card--danger { border-color: var(--color-danger); }
+.card--danger .card__title { color: var(--color-danger-text); }
 .catrow { display: grid; gap: var(--space-2) var(--space-3); align-items: start; grid-template-columns: repeat(auto-fit, minmax(min(13rem, 100%), 1fr)); padding-block: var(--space-2); border-top: 1px solid var(--border); }
 .catrow__name { margin: 0; padding-top: var(--space-4); font-size: var(--text-base); }
 .catrow__meta, .catrow > .error-text { grid-column: 1 / -1; }
@@ -218,6 +223,23 @@ fieldset.budget-line { margin: 0; padding: var(--space-3); border: 1px solid var
 .themepick__option:focus-visible { background: var(--surface-raised, var(--surface)); }
 .themepick__option:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 .themepick__option--current { font-weight: 600; }
+/* Inside a form field, an icon or colour picker's toggle looks like the command-picker trigger beside
+   it (UX review U4): the same height, padding, text size, border, surface and small caret, so a row of
+   fields lines up. Look only: they remain their own controls with their own lists (BT-011-03/05). */
+.field .themepick__toggle {
+  min-height: var(--control-height);
+  padding: var(--control-padding-y) var(--control-padding-x);
+  font-size: var(--control-font-size);
+  border: 1px solid var(--control-border);
+  border-radius: var(--control-radius);
+  background: var(--control-surface);
+}
+.field .themepick__toggle:hover,
+.field .themepick__toggle:focus-visible { background: var(--control-surface); border-color: var(--control-border-hover); }
+.field .themepick__toggle[aria-expanded="true"] { border-color: var(--control-border-active); }
+.field .themepick__toggle:disabled { opacity: 1; background: var(--surface-sunken); color: var(--text-subtle); }
+.field .themepick__caret { font-size: var(--text-xs); }
+.field .themepick__toggle .icon { width: 1.15em; height: 1.15em; }
 
 /* ---------- searchable merchant picker (combobox, BT-007-01) ----------
    In normal flow under its input, like TaskTracker's theme picker, so a scrolling dialog never
@@ -247,6 +269,12 @@ fieldset.budget-line { margin: 0; padding: var(--space-3); border: 1px solid var
 .meter { height: 6px; margin-top: var(--space-1); background: var(--surface-sunken); border-radius: var(--radius-pill); overflow: hidden; min-width: 6rem; }
 .meter__fill { height: 100%; width: var(--fill, 0%); background: var(--accent); }
 .meter__fill--over { background: var(--color-danger); }
+/* Site usage charts (BT-012-01): decorative (aria-hidden), hand-drawn SVG. Every figure is also
+   given as real text in a visually hidden table right beside the chart (the same rule as .meter). */
+.chart { width: 100%; height: auto; display: block; }
+.chart__bar { fill: var(--accent); }
+.chart__line { fill: none; stroke: var(--accent); stroke-width: 2; }
+.chart__point { fill: var(--accent); }
 .history-list { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--space-2); font-size: var(--text-sm); }
 .history-list li { border-left: 2px solid var(--border-strong); padding-left: var(--space-2); }
 .breakdown { list-style: none; margin: var(--space-2) 0 0; padding: 0; font-size: var(--text-xs); color: var(--text-muted); display: grid; gap: 2px; }
@@ -254,10 +282,84 @@ fieldset.budget-line { margin: 0; padding: var(--space-3); border: 1px solid var
 .summary { display: flex; flex-wrap: wrap; gap: var(--space-4); margin-bottom: var(--space-3); font-size: var(--text-sm); }
 .summary strong { font-variant-numeric: tabular-nums; }
 
-/* ---------- landing ---------- */
+/* ---------- landing (the auth-error page only; kept for that one small state) ---------- */
 .landing { max-width: 34rem; margin: var(--space-8) auto; text-align: center; }
 .landing__title { font-size: var(--text-2xl); }
 .landing__points { text-align: left; margin: var(--space-4) auto; color: var(--text-muted); }
+
+/* ---------- the sign-in page (BT-011-08, Terry's 2026-09-16 design brief) ----------
+   Two panels on a wide screen: brand/value/sign-in on the left, an illustrative preview on the
+   right, in DOCUMENT ORDER (not CSS `order`), so a screen reader and Tab both reach the sign-in
+   content first — the same order the mobile layout keeps single-column. A soft accent-tinted
+   radial glow replaces a flat background (the brief's "avoid a large empty black background");
+   `color-mix` keeps it correct in every palette and mode without hand-tuning eight accents twice,
+   the same technique already used for `.workspaces__marker--m`. */
+.login {
+  display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  align-items: center; gap: var(--space-6);
+  max-width: 76rem; padding: var(--space-6) var(--space-4) var(--space-8);
+  /* `#app.app` is a full-height flex column and `.login` is its only child when signed out; `auto`
+     top/bottom margins on a flex item consume the leftover main-axis space, centring the panel
+     vertically instead of leaving one large empty stretch of page below it on a tall viewport (a11y
+     and UX review of BT-011-08: a 1280x900 screen left ~250px of flat background under the content,
+     which is exactly the "large empty black background" the brief said to avoid). */
+  margin: auto;
+  /* An explicit opaque `background-color` UNDER the gradient image, not only the gradient itself:
+     a flat colour a contrast checker can read straight off `getComputedStyle` (browsers report the
+     colour and image layers separately), and the same flat page background if gradients are ever
+     disabled (forced-colours mode). The gradient's own reach is generous (90rem x 45rem) so any
+     residual whitespace above or below the panel still reads as a layered surface, not flat colour. */
+  background-color: var(--bg);
+  background-image: radial-gradient(90rem 45rem at 15% -10%, color-mix(in srgb, var(--accent) 12%, transparent), transparent 65%);
+}
+.login__panel--brand { display: flex; flex-direction: column; gap: var(--space-4); max-width: 30rem; }
+.login__brandrow { display: flex; align-items: center; gap: var(--space-2); }
+.login__logo { width: 2.5rem; height: 2.5rem; border-radius: var(--radius); flex: none; }
+.login__brandname { font-weight: var(--weight-bold); font-size: var(--text-lg); }
+.login__heading { font-size: var(--text-2xl); margin: 0; }
+.login__lede { color: var(--text-muted); margin: 0; }
+.login__points { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: var(--space-2); color: var(--text-muted); font-size: var(--text-sm); }
+.login__points .icon { color: var(--accent-text); }
+.login__appearance { display: flex; flex-direction: column; gap: var(--space-1); padding: var(--space-2) 0; border-top: 1px solid var(--border); }
+.login__appearance .menu__heading { padding: 0 0 var(--space-1); }
+.login__foot { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); margin-top: var(--space-2); padding-top: var(--space-3); border-top: 1px solid var(--border); color: var(--text-muted); font-size: var(--text-xs); }
+
+/* The approved Google sign-in presentation: fixed brand colours in both modes, never the app's
+   accent (Google's guidelines say the button is not re-themed). Left-aligned mark and text, like
+   Google's own asset, rather than the centred `.btn` default. */
+.login__google { justify-content: flex-start; gap: var(--space-3); min-height: 2.75rem; padding-inline: var(--space-4); font-size: var(--text-base); font-weight: var(--weight-medium); background: #ffffff; color: #1f1f1f; border-color: #747775; }
+.login__google:hover { background: #f7f8f8; }
+:root[data-mode="dark"] .login__google { background: #131314; color: #e3e3e3; border-color: #8e918f; }
+:root[data-mode="dark"] .login__google:hover { background: #1e1f20; }
+.login__googlemark { width: 1.15rem; height: 1.15rem; flex: none; }
+
+/* The illustrative preview: a layered surface (not a flat panel) with its own subtle gradient,
+   holding smaller `.login__widget` cards — the same `.card__title`/`.card__meta`/`.row` look the
+   signed-in dashboard uses, at a smaller scale so six widgets stay readable without scrolling. */
+.login__panel--preview {
+  /* Same reasoning as `.login` above: an opaque `background-color` fallback under the gradient. */
+  background-color: var(--surface-raised);
+  background-image: linear-gradient(165deg, color-mix(in srgb, var(--accent) 8%, var(--surface-raised)), var(--surface-raised));
+  /* `--control-border` (the token tokens.css itself documents as meeting 3:1, WCAG 1.4.11, A11Y-009),
+     not the plain `--border` used elsewhere for a merely decorative divider: in light mode
+     `--surface`/`--surface-raised` are the same white, so this border is the only thing separating
+     the panel (and each card inside it) from the page (accessibility review of BT-011-08). */
+  border: 1px solid var(--control-border); border-radius: var(--radius-lg); box-shadow: var(--shadow);
+  padding: var(--space-5); display: flex; flex-direction: column; gap: var(--space-3);
+}
+.login__previewlabel { margin: 0; font-size: var(--text-xs); text-transform: uppercase; letter-spacing: 0.04em; color: var(--text-muted); }
+.login__previewgrid { display: grid; gap: var(--space-3); grid-template-columns: repeat(auto-fit, minmax(min(13rem, 100%), 1fr)); }
+.login__widget { background: var(--surface); border: 1px solid var(--control-border); border-radius: var(--radius); padding: var(--space-3); display: flex; flex-direction: column; gap: var(--space-2); min-width: 0; }
+.login__widget .chart { max-height: 4rem; }
+
+@media (max-width: 60rem) {
+  /* Single column, brand first (already first in the document): the brief's "keep brand, value
+     statement, privacy summary, appearance control and Google sign-in above the fold; move the
+     illustrative dashboard below". No `order` is used, so this is also the keyboard/reading order. */
+  .login { grid-template-columns: 1fr; padding: var(--space-4) var(--space-3) var(--space-6); }
+  .login__panel--brand { max-width: none; }
+  .login__previewgrid { grid-template-columns: repeat(auto-fit, minmax(min(11rem, 100%), 1fr)); }
+}
 
 /*
   ---------- the day/night appearance control (BT-011-01) ----------
@@ -424,8 +526,13 @@ fieldset.budget-line { margin: 0; padding: var(--space-3); border: 1px solid var
 .cmdpick__trigger:disabled { cursor: not-allowed; opacity: var(--control-disabled-opacity); }
 .field .cmdpick__trigger:disabled { opacity: 1; background: var(--surface-sunken); color: var(--text-subtle); }
 .cmdpick__value { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* The value a screen reader hears (a11y review finding 6), visually hidden through .sr-only. */
+.cmdpick__spoken { white-space: nowrap; }
 .cmdpick--empty .cmdpick__value { color: var(--text-muted); }
 .cmdpick__hint { flex: none; color: var(--text-muted); font-size: var(--text-xs); }
+/* A locked field cannot open, so it promises no search and no list (UX review U5). Hidden rather than
+   removed, so it keeps the width of the fields beside it. */
+.cmdpick__trigger:disabled .cmdpick__hint { visibility: hidden; }
 /* A colour edge only for things that have a canonical colour (a category); never colour alone. */
 .cmdpick__swatch { display: none; }
 .cmdpick--swatched .cmdpick__swatch {
@@ -448,7 +555,14 @@ fieldset.budget-line { margin: 0; padding: var(--space-3); border: 1px solid var
   top: var(--pop-top, 50%); left: var(--pop-left, 50%);
   width: min(22rem, calc(100vw - 1rem));
   min-width: min(var(--pop-min-width, 0px), calc(100vw - 1rem));
-  max-height: var(--pop-max-height, 70vh);
+  /* No hidden cap: place() sets --pop-max-height whenever the panel does not fit, and removes it when
+     it does (a11y review finding 1; TaskTracker's 70vh fallback also capped panels that fitted). */
+  max-height: var(--pop-max-height, none);
+  /* Placed at once, never moved by a transition. base.css's reduced-motion rule gives every element a
+     0.01 ms transition, which starts on the next frame: the panel, first styled at its 50 % fallback while
+     it is measured, was drawn for one frame in the middle of the screen and then jumped (found by
+     npm run e2e, which reads the panel right after it opens). */
+  transition-property: none;
   display: flex; flex-direction: column;
   color: var(--text);
   background: var(--surface-raised);
@@ -477,6 +591,9 @@ fieldset.budget-line { margin: 0; padding: var(--space-3); border: 1px solid var
 
 .cmdpick__list { flex: 1 1 auto; min-height: 0; max-height: 15rem; overflow-y: auto; padding: var(--space-1); }
 .cmdpick__none { margin: 0; padding: var(--space-3); font-size: var(--text-sm); color: var(--text-muted); }
+/* The polite result count (a11y review finding 3): visually hidden through .sr-only, never display:none,
+   or it would not be announced. */
+.cmdpick__status { white-space: nowrap; }
 .cmdpick__opt {
   display: flex; align-items: center; gap: var(--space-2);
   padding: var(--space-2);
@@ -515,6 +632,11 @@ fieldset.budget-line { margin: 0; padding: var(--space-3); border: 1px solid var
   border-top: 1px solid var(--border);
   font-size: var(--text-xs); color: var(--text-muted);
 }
+/* On a short screen (400 % zoom is 256 CSS px high) the key hints give their room to the list
+   (a11y review finding 1). They are aria-hidden, so nothing is lost for a screen reader. */
+@media (max-height: 30rem) {
+  .cmdpick__foot { display: none; }
+}
 .cmdpick__kbd {
   font-family: var(--font-mono); font-size: 0.7rem;
   padding: 0 var(--space-1);
@@ -542,3 +664,41 @@ fieldset.budget-line { margin: 0; padding: var(--space-3); border: 1px solid var
 }
 .workspaces__marker--o { color: var(--accent-text); }
 .workspaces__marker--m { color: color-mix(in srgb, var(--accent-text) 70%, var(--text-muted)); }
+
+/* ---------- settings cards (workspace and group; UX/accessibility review of eefd115) ---------- */
+.settings__intro { max-width: 46rem; }
+/* Group headings inside a card are never larger than the card's own title (finding 7): the same size,
+   set apart by weight and colour. */
+.settings-group { border-top: 1px solid var(--border); }
+.settings-group__title { margin: 0; font-size: var(--text-sm); }
+.settings-group__toggle {
+  display: inline-flex; align-items: center; gap: var(--space-2); width: 100%; min-height: var(--control-height);
+  padding: var(--space-2) 0; border: 0; background: transparent; color: var(--text); font: inherit; font-weight: var(--weight-medium);
+  text-align: left; cursor: pointer;
+}
+/* The arrow follows aria-expanded and has no text alternative, so the button is named by the group alone. */
+.settings-group__toggle::before { content: "▸" / ""; display: inline-block; width: 1em; color: var(--text-muted); }
+.settings-group__toggle[aria-expanded="true"]::before { content: "▾" / ""; }
+.settings-group__body { display: flex; flex-direction: column; gap: var(--space-4); padding: 0 0 var(--space-4); }
+.settings-group__body[hidden] { display: none; }
+/* Controls at normal form width, not the whole card (finding 2). */
+.setting { max-width: 34rem; display: flex; flex-direction: column; gap: var(--space-1); }
+.setting > .badge { align-self: flex-start; }
+.setting__more { margin: 0; }
+.linklike { align-self: flex-start; padding: 0; border: 0; background: transparent; color: var(--accent-text); font: inherit; font-size: var(--text-xs); text-decoration: underline; cursor: pointer; }
+.input-with-unit { display: flex; align-items: center; gap: var(--space-2); }
+.input-with-unit .field__input { max-width: 7rem; }
+.input-with-unit__unit { font-size: var(--text-sm); color: var(--text-muted); }
+.settings-dl { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--space-1); margin: 0; max-width: 46rem; }
+.settings-dl__label { font-size: var(--text-sm); font-weight: var(--weight-medium); margin-top: var(--space-3); }
+.settings-dl__value { margin: 0; }
+.settings-dl__help { margin: 0; display: flex; flex-direction: column; gap: var(--space-1); }
+/* Save stays in reach however long the card is (finding 2). */
+.settings-bar {
+  position: sticky; bottom: 0; z-index: 5; display: flex; flex-direction: column; gap: var(--space-1);
+  margin-top: var(--space-3); padding: var(--space-3) 0; background: var(--surface); border-top: 1px solid var(--border);
+}
+.settings-bar__unsaved { margin: 0; font-size: var(--text-sm); font-weight: var(--weight-medium); }
+/* A field marked invalid shows it, not only in words beside it (finding 1); only fields already marked. */
+.field__input[aria-invalid="true"], .cmdpick__trigger[aria-invalid="true"] { border-color: var(--color-danger); }
+fieldset[aria-invalid="true"] > legend { color: var(--color-danger-text); }

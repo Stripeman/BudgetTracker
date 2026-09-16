@@ -26,6 +26,8 @@
 //      would push it past the far edge, and never pushed before the near margin.
 //   5. A PANEL MAY ASK TO SPAN THE COLUMN when neither side has enough room. Opt-in, and only as
 //      a last resort: a panel that FITS on one side still goes there.
+//   6. (BudgetTracker) A PANEL THAT WOULD BE UNREADABLE ON EITHER SIDE SPANS: when the caller says how
+//      tall it must be to be useful (`minUseful`) and neither side has that much room — a 400 % zoom.
 //
 // THE HEIGHT CAP IS THE PART THAT IS EASY TO FORGET. Flipping a panel that is taller than the
 // screen just moves the unreachable part from the bottom to the top.
@@ -44,7 +46,7 @@ const MIN_HEIGHT = 96;
  * @param {{width,height}} input.viewport
  * @returns {{top:number,left:number,maxHeight:number,placement:"below"|"above"|"span"}}
  */
-export function computePlacement({ anchor, panel, viewport, gap = GAP, margin = MARGIN, spanViewport = false } = {}) {
+export function computePlacement({ anchor, panel, viewport, gap = GAP, margin = MARGIN, spanViewport = false, minUseful = 0 } = {}) {
   const view = { width: num(viewport?.width, 0), height: num(viewport?.height, 0) };
   const a = {
     top: num(anchor?.top, 0),
@@ -71,7 +73,12 @@ export function computePlacement({ anchor, panel, viewport, gap = GAP, margin = 
   // RULE 5 — SPAN THE COLUMN, when asked and when neither side is enough. The height is the
   // viewport's, never a fixed figure; centred on the anchor, then clamped inside the margins.
   const spanRoom = Math.max(MIN_HEIGHT, view.height - 2 * margin);
-  const spans = spanViewport && (wanted.height || 0) > Math.max(below, above);
+  // RULE 6 (BudgetTracker adaptation, accessibility review finding 1) — A PANEL THAT WOULD BE USELESS ON
+  // EITHER SIDE SPANS. `minUseful` is the least height worth showing (the caller's search row and about
+  // two and a half rows). At 400 % zoom neither side has it, and a side-capped panel left a 15 px list.
+  const useful = Math.min(num(minUseful, 0), wanted.height || num(minUseful, 0));
+  const cramped = useful > 0 && Math.max(below, above) < useful;
+  const spans = cramped || (spanViewport && (wanted.height || 0) > Math.max(below, above));
   const maxHeight = spans ? Math.min(wanted.height || spanRoom, spanRoom) : sideHeight;
 
   let top;

@@ -2,29 +2,213 @@
 // "Who can see this" with explicit grants for private accounts (owner only). The server decides
 // everything; these controls only present what it allows.
 import { el, mount, announce } from "../dom.js";
-import { pageHead, stateView, money, accessBadge, button, field, input, pickerSelect, badge } from "../components.js";
+import { pageHead, stateView, money, accessBadge, button, field, input, pickerSelect, badge, uid } from "../components.js";
 import { openModal } from "../modal.js";
 import { sliceFor } from "../../core/store.js";
 import { newIdempotencyKey } from "../../core/api.js";
-import { ACCOUNT_TYPE_LABELS, todayIso } from "../../core/format.js";
+import { messageFor } from "../../core/errors.js";
+import { ACCOUNT_TYPE_LABELS, todayIso, formatDate } from "../../core/format.js";
 import { icon, withIcon, defaultIconFor } from "../icons.js";
 import { createIconPicker, iconChange } from "../iconpicker.js";
+import { managesSharedLists } from "../../core/workspacesettings.js";
 
 const CURRENCIES = ["EUR", "USD", "GBP", "CHF", "SEK", "NOK", "DKK", "PLN", "CZK", "HUF", "CAD", "AUD", "NZD", "JPY", "SGD", "HKD", "INR", "ZAR"];
 const GRANTABLE = [["view-balances", "See balance"], ["view-transactions", "See entries"], ["create", "Add entries"], ["edit", "Edit entries"], ["delete", "Delete entries"], ["comment", "Comment"], ["download-receipts", "Download receipts"], ["export", "Export"]];
 
-// Who may close or reopen: the owner of a private account, or an owner or manager for a shared one.
+// Terms are shown and edited only for account types that carry them (BT-006, `ledger.validateTerms`).
+const CREDIT_TERM_TYPES = new Set(["credit-card", "merchant-credit"]);
+const LOAN_TERM_TYPES = new Set(["loan", "mortgage", "other-liability"]);
+
+// Type and currency cannot be changed once an account exists (BT-006): every entry, category rule
+// and, for loans/credit cards, the terms above assume them. Shown read-only with this explanation.
+const TYPE_CURRENCY_LOCKED = "Type and currency are set when an account is created and can't be changed, because every entry and rule on this account depends on them. To fix a wrong type or currency, remove this account (if it has no entries) or close it, and create a new one.";
+const OPENING_LOCKED = "This account has reconciled entries, so this is locked to keep reconciled statements correct.";
+
+// The same shape `termsControls(...).collect()` produces, built directly from the account's data
+// rather than by reading the controls back — so "did terms change" never depends on a browser
+// having already reflected the fields' initial `value` attributes into their `.value` property.
+function canonicalTerms(type, terms) {
+  const t = terms || {};
+  if (CREDIT_TERM_TYPES.has(type)) {
+    return {
+      creditLimit: t.creditLimit || undefined,
+      statementDay: t.statementDay ? Number(t.statementDay) : undefined,
+      dueDay: t.dueDay ? Number(t.dueDay) : undefined,
+      minimumPayment: t.minimumPayment || undefined,
+      apr: t.apr || undefined,
+      promoApr: t.promoApr || undefined,
+      promoEndDate: t.promoEndDate || undefined,
+    };
+  }
+  if (LOAN_TERM_TYPES.has(type)) {
+    return {
+      principal: t.principal || undefined,
+      interestRate: t.interestRate || undefined,
+      termMonths: t.termMonths || undefined,
+      payment: t.payment || undefined,
+      paymentDay: t.paymentDay ? Number(t.paymentDay) : undefined,
+      startDate: t.startDate || undefined,
+    };
+  }
+  return null;
+}
+
+// The terms controls for a loan or credit-card account: the same fields `ledger.validateTerms`
+// accepts, pre-filled from the account's current terms. The server replaces the whole `terms`
+// object on any change, so `collect()` always returns every field, not only the one that changed.
+function termsControls(type, terms) {
+  const t = terms || {};
+  if (CREDIT_TERM_TYPES.has(type)) {
+    const creditLimit = input({ inputmode: "decimal", placeholder: "0.00", value: t.creditLimit || "" });
+    const statementDay = input({ type: "number", min: "1", max: "31", inputmode: "numeric", value: t.statementDay || "" });
+    const dueDay = input({ type: "number", min: "1", max: "31", inputmode: "numeric", value: t.dueDay || "" });
+    const minimumPayment = input({ inputmode: "decimal", placeholder: "0.00", value: t.minimumPayment || "" });
+    const apr = input({ inputmode: "decimal", placeholder: "e.g. 19.99", value: t.apr || "" });
+    const promoApr = input({ inputmode: "decimal", placeholder: "e.g. 0.00", value: t.promoApr || "" });
+    const promoEndDate = input({ type: "date", value: t.promoEndDate || "" });
+    return {
+      legend: "Credit terms",
+      fields: [
+        field("Credit limit", creditLimit), field("Statement day", statementDay), field("Due day", dueDay),
+        field("Minimum payment", minimumPayment), field("APR", apr), field("Promotional APR", promoApr),
+        field("Promotion end date", promoEndDate),
+      ],
+      collect: () => ({
+        creditLimit: creditLimit.value.trim() || undefined,
+        statementDay: statementDay.value.trim() ? Number(statementDay.value.trim()) : undefined,
+        dueDay: dueDay.value.trim() ? Number(dueDay.value.trim()) : undefined,
+        minimumPayment: minimumPayment.value.trim() || undefined,
+        apr: apr.value.trim() || undefined,
+        promoApr: promoApr.value.trim() || undefined,
+        promoEndDate: promoEndDate.value || undefined,
+      }),
+    };
+  }
+  if (LOAN_TERM_TYPES.has(type)) {
+    const principal = input({ inputmode: "decimal", placeholder: "0.00", value: t.principal || "" });
+    const interestRate = input({ inputmode: "decimal", placeholder: "e.g. 4.5", value: t.interestRate || "" });
+    const termMonths = input({ type: "number", min: "1", max: "600", inputmode: "numeric", value: t.termMonths || "" });
+    const payment = input({ inputmode: "decimal", placeholder: "0.00", value: t.payment || "" });
+    const paymentDay = input({ type: "number", min: "1", max: "31", inputmode: "numeric", value: t.paymentDay || "" });
+    const startDate = input({ type: "date", value: t.startDate || "" });
+    return {
+      legend: "Loan terms",
+      fields: [
+        field("Principal", principal), field("Interest rate", interestRate), field("Term (months)", termMonths),
+        field("Payment", payment), field("Payment day", paymentDay), field("Start date", startDate),
+      ],
+      collect: () => ({
+        principal: principal.value.trim() || undefined,
+        interestRate: interestRate.value.trim() || undefined,
+        termMonths: termMonths.value.trim() ? Number(termMonths.value.trim()) : undefined,
+        payment: payment.value.trim() || undefined,
+        paymentDay: paymentDay.value.trim() ? Number(paymentDay.value.trim()) : undefined,
+        startDate: startDate.value || undefined,
+      }),
+    };
+  }
+  return null;
+}
+
+// Who may edit, close or reopen: the owner of a private account; for a shared one whoever manages the
+// workspace's shared lists (owners and managers, or members too when the workspace setting says so).
 // Presentation only; the server decides.
-const canManage = (a, role) => a.ownedBySelf || (a.visibility === "shared" && (role === "owner" || role === "manager"));
+const canManage = (a, sharedLists) => a.ownedBySelf || (a.visibility === "shared" && sharedLists);
 
 export function createView(ctx) {
   const box = el("div");
-  const element = el("section", {}, [pageHead("Accounts", [button("Add account", () => openAddAccount(ctx), { variant: "primary" })]), box]);
+  // Removed accounts (BT-006-05): counted by the server, listed only when asked for, and forgotten
+  // when the workspace changes (a generation token discards an answer for an earlier request).
+  const removed = { open: false, list: null, error: null, gen: 0, ws: null };
+  const sectionId = uid("removed-accounts");
+  const toggle = button("", () => {
+    removed.open = !removed.open;
+    removed.error = null;
+    if (removed.open) loadRemoved(); else removed.gen += 1;
+    renderRemoved();
+  }, { small: true, attrs: { "aria-expanded": "false" } });
+  const toggleBox = el("div");
+  const listBox = el("div");
+  const element = el("section", {}, [pageHead("Accounts", [button("Add account", () => openAddAccount(ctx), { variant: "primary" })]), el("div", { class: "stack" }, [box, toggleBox, listBox])]);
+  let lastState = null;
+
+  async function loadRemoved() {
+    const ws = removed.ws;
+    const mine = ++removed.gen;
+    removed.list = null;
+    renderRemoved();
+    try {
+      const data = await ctx.api.accounts(ws, { includeDeleted: "1" });
+      if (mine !== removed.gen || ws !== removed.ws) return;
+      removed.list = (data.accounts || []).filter((a) => a.deletedAt);
+    } catch (err) {
+      if (mine !== removed.gen || ws !== removed.ws) return;
+      removed.list = [];
+      removed.error = `Removed accounts could not be loaded. ${messageFor(err)}`;
+    }
+    renderRemoved();
+  }
+
+  async function bringBack(account) {
+    removed.error = null;
+    const out = await ctx.store.actions.write((ws) => ctx.api.accountAction(ws, "restore", { accountId: account.id }), ["accounts", "transactions"]);
+    if (!out.ok) { removed.error = `${account.name} could not be brought back. ${typeof out.error === "string" ? out.error : messageFor(out.error)}`; renderRemoved(); return; }
+    announce(`${account.name} is back in your accounts, with its history.`);
+    toggle.focus();
+    await loadRemoved();
+  }
+
+  function renderRemoved() {
+    const state = lastState;
+    const count = state ? ((sliceFor(state, "accounts").data || {}).removedCount || 0) : 0;
+    if (!removed.open && !count) { mount(toggleBox); mount(listBox); return; }
+    toggle.textContent = removed.open ? "Hide removed accounts" : `Show removed accounts (${count})`;
+    toggle.setAttribute("aria-expanded", String(removed.open));
+    mount(toggleBox, toggle);
+    if (!removed.open) { toggle.removeAttribute("aria-controls"); mount(listBox); return; }
+    toggle.setAttribute("aria-controls", sectionId);
+    const prefs = state && state.preferences;
+    const dateFormat = prefs && prefs.effective && prefs.effective.dateFormat;
+    let body;
+    if (removed.list === null) body = el("p", { role: "status", text: "Loading…" });
+    else if (!removed.list.length) body = removed.error ? null : el("p", { class: "muted", text: "No removed accounts." });
+    else {
+      body = el("ul", { class: "stack" }, removed.list.map((a) => el("li", { class: "row" }, [
+        withIcon(a.icon, el("strong", { text: a.name })),
+        el("span", { class: "muted small", text: `${ACCOUNT_TYPE_LABELS[a.type] || a.type} · ${a.currency} · Removed ${formatDate(a.deletedAt, dateFormat)}` }),
+        button("Bring back", () => bringBack(a), { small: true, attrs: { "aria-label": `Bring back ${a.name}` } }),
+      ])));
+    }
+    mount(listBox, el("section", { id: sectionId, class: "card", "aria-labelledby": `${sectionId}-title` }, [
+      el("h2", { class: "card__title", id: `${sectionId}-title`, text: "Removed accounts" }),
+      el("p", { class: "muted small", text: "Removed accounts and their entries are kept, never erased. Bringing one back returns it to your lists and totals with its history." }),
+      removed.error ? el("p", { class: "state state--error", role: "alert", text: removed.error }) : null,
+      body,
+    ]));
+  }
+
+  // After a removal: the removed list is read again if it is open, and focus goes to its toggle
+  // (the row that held the Remove button is gone).
+  function afterRemove() {
+    if (removed.open) loadRemoved();
+    if (toggle.parentNode) toggle.focus();
+  }
+
   function update(state) {
+    lastState = state;
+    if (state.selectedWorkspaceId !== removed.ws) {
+      removed.ws = state.selectedWorkspaceId;
+      removed.open = false;
+      removed.list = null;
+      removed.error = null;
+      removed.gen += 1;
+    }
     const role = ((state.workspaces || []).find((w) => w.id === state.selectedWorkspaceId) || {}).role;
+    const sharedLists = managesSharedLists(state);
     const prefs = state.preferences;
     const accounts = sliceFor(state, "accounts");
-    const s = stateView(accounts, { empty: "No accounts yet. Add a bank account, card, cash wallet or loan.", isEmpty: (d) => !d.accounts.length });
+    renderRemoved();
+    const s = stateView(accounts, { empty: "No accounts yet. Add a bank account, card, cash wallet or loan.", isEmpty: (d) => !d.accounts.filter((a) => !a.deletedAt).length });
     if (s) { mount(box, s); return; }
     mount(box, el("div", { class: "table-wrap" }, [el("table", { class: "table table--cards", "aria-label": "Accounts" }, [
       el("thead", {}, [el("tr", {}, ["Account", "Type", "Who can see it", "Balance", "Actions"].map((h) => el("th", { scope: "col", class: h === "Balance" ? "num" : "", text: h })))]),
@@ -38,13 +222,62 @@ export function createView(ctx) {
         el("td", { "data-label": "Balance", class: "num" }, [a.balance !== undefined ? money(a.balance, a.currency, prefs) : el("span", { class: "muted small", text: "Not shared with you" })]),
         el("td", { "data-label": "" }, [el("div", { class: "row-actions" }, [
           button("Who can see this", () => openWhoCanSee(ctx, a), { small: true, attrs: { "aria-label": `Who can see ${a.name}` } }),
-          canManage(a, role) ? button("Edit", () => openEditAccount(ctx, a), { small: true, attrs: { "aria-label": `Edit ${a.name}` } }) : null,
-          canManage(a, role) ? button(a.status === "closed" ? "Reopen" : "Close", () => openLifecycle(ctx, a), { small: true, attrs: { "aria-label": `${a.status === "closed" ? "Reopen" : "Close"} ${a.name}` } }) : null,
+          canManage(a, sharedLists) ? button("Edit", () => openEditAccount(ctx, a), { small: true, attrs: { "aria-label": `Edit ${a.name}` } }) : null,
+          canManage(a, sharedLists) ? button(a.status === "closed" ? "Reopen" : "Close", () => openLifecycle(ctx, a), { small: true, attrs: { "aria-label": `${a.status === "closed" ? "Reopen" : "Close"} ${a.name}` } }) : null,
+          canManage(a, sharedLists) ? button("Remove", () => openRemove(ctx, a, afterRemove), { small: true, attrs: { "aria-label": `Remove ${a.name}` } }) : null,
         ])]),
       ]))),
     ])]));
   }
   return { element, update };
+}
+
+// Removing (BT-006-05; Terry, 2026-09-14: "i just created the wrong one and now i cant remove it") is
+// never erasing (BT-001-05): the account leaves lists, pickers and totals, keeps its history and comes
+// back with Bring back. An account with nothing recorded against it gets a ready-made reason; one with
+// entries needs a reason and offers closing instead. The server decides who may; it requires a reason,
+// so an empty account whose reason was cleared is still sent with the ready-made one.
+const MISTAKE = "Created by mistake";
+const HAS_ENTRIES_TEXT = "This account has entries. Removing it takes it out of your account lists, pickers and totals, but nothing is erased: its entries are kept and can still be found under Transactions, and you can bring it back from Removed accounts. To stop using it but keep it visible, close it instead.";
+// Financial recheck of 41494d1, FA-2: a currently linked account keeps recording after it is removed
+// (Shared expenses does not know), so the next time the person records their part there it lands on a
+// different account instead — said explicitly, in addition to the usual entries wording.
+const GROUP_LINKED_TEXT = "This account is linked in Shared expenses. If you record your part there again, it will be recorded on a different account.";
+
+function openRemove(ctx, account, onRemoved = () => {}) {
+  // When the server did not say (it tells only people who can see the entries), the stricter dialog.
+  const empty = account.hasEntries === false;
+  const reason = input({ maxlength: "200", autocomplete: "off" });
+  reason.value = empty ? MISTAKE : "";
+  const confirm = button("Remove account", async () => {
+    modal.setError("");
+    reason.removeAttribute("aria-invalid");
+    const text = reason.value.trim() || (empty ? MISTAKE : "");
+    if (!text) {
+      reason.setAttribute("aria-invalid", "true");
+      reason.setAttribute("aria-errormessage", modal.errorId);
+      modal.setError("Give a reason for removing this account. It is kept with the account's history.");
+      reason.focus();
+      return;
+    }
+    modal.setBusy(true);
+    const out = await ctx.store.actions.write((ws) => ctx.api.removeAccount(ws, { accountId: account.id, reason: text }), ["accounts", "transactions"]);
+    modal.setBusy(false);
+    if (!out.ok) { modal.setError(out.error); return; }
+    announce(`${account.name} removed. You can bring it back from Removed accounts.`);
+    modal.close();
+    onRemoved();
+  }, { variant: "danger" });
+  const closeInstead = !empty && account.status !== "closed" ? button("Close instead", () => { modal.close(); openLifecycle(ctx, account); }) : null;
+  const modal = openModal({
+    title: `Remove ${account.name}?`,
+    body: [
+      el("p", { text: empty ? "This account has no entries. It will be removed from your lists. You can bring it back from Removed accounts." : HAS_ENTRIES_TEXT }),
+      account.groupLedgerLinked ? el("p", { text: GROUP_LINKED_TEXT }) : null,
+      el("div", { class: "form-grid" }, [field("Reason", reason, { wide: true, help: empty ? "Kept with the account's history. Change it if you like." : "Required. It is kept with the account's history." })]),
+    ],
+    actions: [button("Cancel", () => modal.close()), closeInstead, confirm].filter(Boolean),
+  });
 }
 
 // Closing keeps the account, its balance and its history; it only stops new entries and bills.
@@ -87,19 +320,40 @@ function openLifecycle(ctx, account) {
   });
 }
 
-// Name and icon (BT-011-05). Every change is kept in the account's history with the reason.
+// Every currently-editable field (BT-006): name, institution, account number, opening balance and
+// date (locked once the account has a reconciled entry), icon, notes, and — for loans and credit
+// cards — the terms. Type and currency are shown read-only; they are fixed after creation because
+// every entry and rule on the account depends on them. Every change is kept in the account's
+// history with the reason (BT-011-05, BT-001-05).
 function openEditAccount(ctx, account) {
+  const locked = !!account.reconciledLocked;
   const name = input({ required: true, maxlength: "80", value: account.name, autocomplete: "off" });
+  const institution = input({ maxlength: "80", value: account.institution || "", autocomplete: "off" });
+  const last = input({ inputmode: "numeric", maxlength: "4", placeholder: "Last 2–4 digits only", value: account.maskedNumber || "", autocomplete: "off" });
+  const opening = input({ inputmode: "decimal", placeholder: "0.00", value: account.openingBalance || "", disabled: locked });
+  const openingDate = input({ type: "date", value: account.openingDate || "", disabled: locked });
+  const notes = el("textarea", { class: "field__input", maxlength: "5000", text: account.notes || "" });
   const chosen = account.iconSource === "record" ? account.icon : null;
   const iconPick = createIconPicker({ value: chosen, inherited: chosen ? defaultIconFor("account", account.type) : account.icon, name: account.name });
   const reason = input({ maxlength: "200", placeholder: "Optional", autocomplete: "off" });
+  const terms = termsControls(account.type, account.terms);
+  const initialTerms = terms ? JSON.stringify(canonicalTerms(account.type, account.terms)) : null;
   const save = button("Save changes", async () => {
     modal.setError("");
     if (!name.value.trim()) { name.setAttribute("aria-invalid", "true"); name.setAttribute("aria-errormessage", modal.errorId); modal.setError("Give the account a name."); name.focus(); return; }
     const body = { accountId: account.id, revision: account.revision };
     if (name.value.trim() !== account.name) body.name = name.value.trim();
+    if (institution.value.trim() !== (account.institution || "")) body.institution = institution.value.trim();
+    if (last.value.trim() !== (account.maskedNumber || "")) body.maskedNumber = last.value.trim();
+    if (!locked && opening.value.trim() !== (account.openingBalance || "")) body.openingBalance = opening.value.trim() || "0";
+    if (!locked && openingDate.value !== (account.openingDate || "")) body.openingDate = openingDate.value;
+    if (notes.value !== (account.notes || "")) body.notes = notes.value;
     const icon = iconChange(chosen, iconPick.getValue());
     if (icon !== undefined) body.icon = icon;
+    if (terms) {
+      const current = JSON.stringify(terms.collect());
+      if (current !== initialTerms) body.terms = terms.collect();
+    }
     if (Object.keys(body).length === 2) { announce("Nothing changed."); modal.close(); return; }
     if (reason.value.trim()) body.reason = reason.value.trim();
     modal.setBusy(true);
@@ -111,7 +365,19 @@ function openEditAccount(ctx, account) {
   }, { variant: "primary" });
   const modal = openModal({
     title: `Edit ${account.name}`,
-    body: [el("div", { class: "form-grid" }, [field("Name", name), iconPick.element, field("Reason for this change", reason, { wide: true })])],
+    body: [el("div", { class: "form-grid" }, [
+      field("Name", name),
+      field("Type", input({ readonly: true, value: ACCOUNT_TYPE_LABELS[account.type] || account.type }), { help: TYPE_CURRENCY_LOCKED }),
+      field("Currency", input({ readonly: true, value: account.currency }), { help: TYPE_CURRENCY_LOCKED }),
+      field("Institution", institution),
+      field("Account number", last, { help: "Never store a full account or card number." }),
+      field("Opening balance", opening, { help: locked ? OPENING_LOCKED : "Loans and other debts: enter the amount owed as a negative number, e.g. -20000.00." }),
+      field("Opening date", openingDate, locked ? { help: OPENING_LOCKED } : {}),
+      iconPick.element,
+      field("Notes", notes, { wide: true }),
+      terms ? el("fieldset", { class: "form-grid budget-line field--wide" }, [el("legend", { class: "field__label", text: terms.legend }), ...terms.fields]) : null,
+      field("Reason for this change", reason, { wide: true }),
+    ])],
     actions: [button("Cancel", () => modal.close()), save],
   });
 }
@@ -152,7 +418,7 @@ function openAddAccount(ctx) {
     title: "Add account",
     body: [el("div", { class: "form-grid" }, [
       field("Name", name), field("Type", type), iconBox, field("Currency", currency),
-      field("Who can see it", visibility, { wide: true, help: "New accounts are private by default. Workspace owners cannot see private accounts. Only owners and managers can create shared accounts." }),
+      field("Who can see it", visibility, { wide: true, help: "New accounts are private by default. Workspace owners cannot see private accounts. Shared accounts are created by whoever manages shared lists (owners and managers, unless Workspace settings say members too)." }),
       field("Opening balance", opening, { help: "Loans and other debts: enter the amount owed as a negative number, e.g. -20000.00." }),
       field("Opening date", openingDate), field("Institution", institution), field("Account number", last, { help: "Never store a full account or card number." }),
     ])],
@@ -184,7 +450,7 @@ async function openWhoCanSee(ctx, account) {
     const members = ((ctx.store.getState().members.data || {}).members || []).filter((m) => !m.self);
     const active = data.grants.filter((g) => !g.revokedAt);
     // People are searched, as in TaskTracker's people pickers (BT-004-05).
-    const memberSel = pickerSelect(members.map((m) => ({ value: m.id, label: m.name })), (members[0] || {}).id);
+    const memberSel = pickerSelect(members.map((m) => ({ value: m.id, label: m.name })), (members[0] || {}).id, {}, { placeholder: "Choose a member…" });
     const boxes = GRANTABLE.map(([value, label]) => { const c = el("input", { type: "checkbox", value }); if (value === "view-balances" || value === "view-transactions") c.checked = true; return el("label", { class: "field--inline" }, [c, label]); });
     const expires = input({ type: "date" });
     const grant = button("Share", async () => {

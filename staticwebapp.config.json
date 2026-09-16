@@ -23,6 +23,7 @@
     { "route": "/api/roles", "methods": ["POST"], "allowedRoles": ["anonymous", "authenticated"] },
     { "route": "/api/site-settings", "methods": ["GET"], "allowedRoles": ["anonymous", "authenticated"] },
     { "route": "/api/site-settings", "methods": ["PUT"], "allowedRoles": ["siteadmin"] },
+    { "route": "/api/analytics", "methods": ["GET"], "allowedRoles": ["siteadmin"] },
     { "route": "/api/*", "allowedRoles": ["authenticated"] }
   ],
   "responseOverrides": {

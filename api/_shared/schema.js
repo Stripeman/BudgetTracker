@@ -4,11 +4,11 @@
 // would silently drop fields on the next write — and nothing is changed.
 const { unavailable } = require('./http');
 
-const CURRENT = Object.freeze({ workspace: 1, user: 1, site: 1, backup: 1 });
+const CURRENT = Object.freeze({ workspace: 1, user: 1, site: 1, backup: 1, usage: 1 });
 
 // Per-type, per-version upgrade steps applied in memory on read. None exist yet; add a step
 // here and record the migration plan in PROJECT_STATE.md before bumping CURRENT.
-const MIGRATIONS = Object.freeze({ workspace: {}, user: {}, site: {}, backup: {} });
+const MIGRATIONS = Object.freeze({ workspace: {}, user: {}, site: {}, backup: {}, usage: {} });
 
 function readDocument(type, doc) {
   if (!Object.prototype.hasOwnProperty.call(CURRENT, type)) throw new Error(`Unknown document type ${type}`);

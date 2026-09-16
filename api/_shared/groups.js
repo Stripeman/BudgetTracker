@@ -260,7 +260,7 @@ function suggest(rows, rank) {
 // aside first; each remaining share is then matched to the payers in the order they are listed, so
 // the amounts are exact integers on both sides. Confirmed and reported settlements reduce the debt
 // between those two people. Each pair is netted to one direction.
-function direct(doc, currency, rank) {
+function direct(doc, currency, rank, countReported = true, counted = null) {
   const owe = new Map();
   const add = (from, to, x) => {
     if (from === to || x <= 0) return;
@@ -285,12 +285,24 @@ function direct(doc, currency, rank) {
       if (!creditors[j].left) j += 1;
     }
   }
+  const get = (a, b) => (owe.get(a) && owe.get(a).get(b)) || 0;
+  // A confirmed payment reduces the debt between those two people in full.
   for (const s of doc.groupSettlements || []) {
-    if (s.voidedAt || s.currency !== currency || (s.status !== 'confirmed' && s.status !== 'reported')) continue;
+    if (s.voidedAt || s.currency !== currency || s.status !== 'confirmed') continue;
     add(s.to, s.from, s.amountMinor);
   }
+  // A reported payment counts only while the group counts them (setting "countReported", default on),
+  // and only by what the suggestions count of it — up to what its payer still owes and its receiver is
+  // still owed (financial recheck N-3): a claim of 50.00 against a debt of 30.00 never makes the receiver
+  // owe 20.00, and the direct view still adds up to each person's basis.
+  if (countReported) {
+    for (const s of doc.groupSettlements || []) {
+      if (s.voidedAt || s.currency !== currency || s.status !== 'reported') continue;
+      const x = counted ? counted.get(s.id) || 0 : s.amountMinor;
+      if (x > 0) add(s.to, s.from, x);
+    }
+  }
   const refs = unique([...owe.keys(), ...[...owe.values()].flatMap((m) => [...m.keys()])]);
-  const get = (a, b) => (owe.get(a) && owe.get(a).get(b)) || 0;
   const out = [];
   for (let x = 0; x < refs.length; x += 1) {
     for (let y = x + 1; y < refs.length; y += 1) {
@@ -306,7 +318,9 @@ function direct(doc, currency, rank) {
 // Balances per currency: one row per person (everyone in `order`, then anyone else the records name),
 // with a breakdown of the expenses behind it, the suggested settlements and the direct view.
 // `ensureCurrency` adds an empty table for that currency when there are no records yet.
-function balances(doc, order, { ensureCurrency = null } = {}) {
+// `countReported` (the group setting, default on): when off, suggestions and the direct view count
+// confirmed payments only, like the balances themselves.
+function balances(doc, order, { ensureCurrency = null, countReported = true } = {}) {
   const index = new Map(order.map((r, i) => [r, i]));
   const rank = (ref) => (index.has(ref) ? index.get(ref) : order.length);
   const tables = new Map();
@@ -346,16 +360,19 @@ function balances(doc, order, { ensureCurrency = null } = {}) {
     // 80.00 against a debt of 50.00 must not make the creditor owe 30.00. Taken in a fixed order (date,
     // then when reported, then id), so the basis is deterministic and still adds up to zero.
     const left = new Map(rows.map((r) => [r.ref, r.netMinor]));
-    const pending = (doc.groupSettlements || []).filter((s) => !s.voidedAt && s.status === 'reported' && s.currency === currency)
+    const pending = (doc.groupSettlements || []).filter((s) => countReported && !s.voidedAt && s.status === 'reported' && s.currency === currency)
       .sort((p, q) => String(p.date).localeCompare(String(q.date)) || String(p.createdAt).localeCompare(String(q.createdAt)) || String(p.id).localeCompare(String(q.id)));
+    // How much of each reported payment counts, used by the direct view too (financial recheck N-3).
+    const counted = new Map();
     for (const s of pending) {
       const x = Math.min(s.amountMinor, Math.max(0, -left.get(s.from)), Math.max(0, left.get(s.to)));
+      counted.set(s.id, x);
       if (x <= 0) continue;
       left.set(s.from, money.sum([left.get(s.from), x]));
       left.set(s.to, money.sum([left.get(s.to), -x]));
     }
     for (const r of rows) r.basisMinor = left.get(r.ref);
-    out.push({ currency, rows, suggestions: suggest(rows, rank), direct: direct(doc, currency, rank) });
+    out.push({ currency, rows, suggestions: suggest(rows, rank), direct: direct(doc, currency, rank, countReported, counted) });
   }
   return out;
 }

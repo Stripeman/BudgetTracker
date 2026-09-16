@@ -14,8 +14,10 @@ import { createDayNightControl } from "./daynight.js";
 import { initials } from "./components.js";
 import { createThemePicker } from "./themepicker.js";
 import { createWorkspacePicker } from "./workspacepicker.js";
+import { createStagingMenuEntry, openPersonalStagingEditor } from "./staginglink.js";
 import { AUTH } from "../core/api.js";
 import { ROUTES, navRoutes } from "../core/router.js";
+import { sharedExpensesOn } from "../core/workspacesettings.js";
 import { Status } from "../core/store.js";
 
 import * as dashboard from "./views/dashboard.js";
@@ -28,10 +30,42 @@ import * as settings from "./views/settings.js";
 import * as workspace from "./views/workspace.js";
 import * as join from "./views/join.js";
 import * as group from "./views/group.js";
+import * as analytics from "./views/analytics.js";
 import { renderLanding, createOnboarding, openNewWorkspace } from "./views/landing.js";
 import { messageFor } from "../core/errors.js";
+import { confirmModal } from "./modal.js";
+import { unsavedNames, clearUnsaved } from "../core/unsaved.js";
 
-const VIEWS = { dashboard, group, transactions, bills, planning, accounts, payees, settings, workspace, join };
+const VIEWS = { dashboard, group, transactions, bills, planning, accounts, payees, settings, workspace, join, analytics };
+
+// Shared expenses turned off (workspace settings, Terry 2026-09-14): the page says so and loads nothing;
+// the server refuses /api/group as well. Nothing recorded is removed. The message follows the current
+// reason (the site's switch or the workspace's setting) on every update.
+const SHARED_EXPENSES_OFF = {
+  createView(ctx) {
+    const notice = el("p", { class: "notice" });
+    // A way back (UX/accessibility review of eefd115, finding 9): owners and managers go straight to the
+    // setting; everyone else is told whom to ask. A site switch-off is not the workspace's to undo.
+    const wayBack = el("div", { class: "row" });
+    const view = {
+      element: el("section", {}, [el("div", { class: "page-head" }, [el("h1", { text: "Shared expenses" })]), notice, wayBack]),
+      update(state) {
+        const site = state && state.site;
+        const siteOff = !!(site && site.modules && site.modules.sharedExpenses === false);
+        const ws = ((state && state.workspaces) || []).find((w) => w.id === state.selectedWorkspaceId);
+        const manages = !!ws && (ws.role === "owner" || ws.role === "manager");
+        notice.textContent = siteOff
+          ? "Shared expenses are turned off for this site by the site administrator. Nothing recorded has been removed."
+          : "Shared expenses are turned off in this workspace. Nothing recorded has been removed.";
+        mount(wayBack, siteOff ? null : manages
+          ? el("a", { class: "btn btn--primary", href: "#/workspace?setting=sharedExpenses", text: "Open Workspace settings" })
+          : el("p", { class: "muted", text: "Ask an owner or manager to turn it on." }));
+      },
+    };
+    view.update(ctx.state);
+    return view;
+  },
+};
 
 export function createShell({ mountPoint, store, router, theme, api }) {
   const header = el("header", { class: "app__header" });
@@ -43,6 +77,23 @@ export function createShell({ mountPoint, store, router, theme, api }) {
   let navigated = false;
   let menu = null;
   let wsPicker = null;
+  let landingEl = null;
+
+  // Leaving a page with unsaved changes asks first (UX/accessibility review of eefd115, finding 3); the
+  // browser asks on its own when the tab is closed or reloaded (main.js).
+  if (router.setGuard) {
+    router.setGuard((hash) => {
+      const names = unsavedNames();
+      if (!names.length) return true;
+      confirmModal({
+        title: "Leave without saving?",
+        message: `You have unsaved changes in ${names.join(" and ")}. If you leave this page now, they are lost.`,
+        confirmLabel: "Leave without saving", danger: true,
+        onConfirm: () => { clearUnsaved(); if (router.go) router.go(hash); },
+      });
+      return false;
+    });
+  }
 
   // The skip link targets #main; with hash routing it must move focus, not navigate (A11Y-003).
   document.addEventListener("click", (event) => {
@@ -89,17 +140,30 @@ export function createShell({ mountPoint, store, router, theme, api }) {
         announce(`The palette could not be saved. ${messageFor(out.error)}`);
       },
     });
+    // The staging link (BT-011-06), built once with the menu and refreshed in place. Editing closes
+    // the menu and puts focus on its button first, so the dialog gives focus back there when it closes.
+    const staging = createStagingMenuEntry({
+      getState: () => store.getState(),
+      onEdit: () => { setOpen(false); trigger.focus(); openPersonalStagingEditor({ store }); },
+    });
     panel.append(
       el("div", { class: "menu__group" }, [el("div", { class: "menu__identity" }, [el("strong", { text: user.name || "Signed in" }), el("div", { class: "muted small", text: user.email })])]),
       el("div", { class: "menu__group" }, [
         el("p", { class: "menu__heading", text: "Appearance" }), dayNight.element,
         el("div", { class: "menu__palette" }, [el("p", { class: "field__label small", id: "menu-palette-label", text: "Colour palette" }), palette.element]),
       ]),
+      staging.element,
       el("div", { class: "menu__group" }, [
         // Track something separately in its own workspace; the menu closes and focus returns to its
         // button first, so the dialog gives focus back there when it closes.
         el("button", { type: "button", class: "menu__item", text: "New workspace…", onClick: () => { setOpen(false); trigger.focus(); openNewWorkspace({ store }); } }),
         el("a", { class: "menu__item", href: "#/settings", text: "My settings" }),
+        // Usage (BT-012-01), like "My settings", is reached from the account menu — never only from
+        // the section nav, which is hidden whenever there is no workspace (UX-011) and is not even
+        // populated during onboarding. A site administrator with no workspace of their own (the usual
+        // case: site administration is configuration, never membership) would otherwise have no way
+        // to reach it at all, found in real-browser testing (BT-004-06).
+        user.siteAdmin ? el("a", { class: "menu__item", href: "#/analytics", text: "Usage" }) : null,
         el("a", { class: "menu__item", href: AUTH.logout, text: "Sign out" }),
       ]),
     );
@@ -115,6 +179,7 @@ export function createShell({ mountPoint, store, router, theme, api }) {
         dayNight.setLocked(isLocked("themeMode"));
         if (palette.getValue() !== theme.getTheme()) palette.select(theme.getTheme());
         palette.setDisabled(isLocked("themePalette"));
+        staging.refresh();
       },
     };
   }
@@ -146,10 +211,15 @@ export function createShell({ mountPoint, store, router, theme, api }) {
     return wsPicker.element;
   }
 
+  // Open workspaces: not a deleted one (an owner keeps seeing a deleted workspace only in My settings'
+  // "Deleted workspaces", to bring it back — Terry, 2026-09-14).
+  const openWorkspaces = (state) => state.workspaces.filter((w) => w.status !== "archived");
+
   function renderHeader(state) {
     brandName.textContent = (state.site && state.site.branding && state.site.branding.name) || "BudgetTracker";
     const items = [brand];
-    if (state.workspaces.length) items.push(workspacePicker(state));
+    const open = openWorkspaces(state);
+    if (open.length) items.push(workspacePicker({ ...state, workspaces: open }));
     items.push(spacer);
     if (!menu) menu = buildMenu(state.auth.user);
     menu.refresh();
@@ -161,10 +231,18 @@ export function createShell({ mountPoint, store, router, theme, api }) {
     if (pickerHadFocus && !wsPicker.hasFocus()) wsPicker.restoreFocus();
   }
 
-  // Sections depend on the workspace kind (Shared expenses: groups, trips and households, BT-009).
+  // Sections depend on the workspace: Shared expenses only while it is on (its setting, bounded by
+  // the site). Usage (BT-012-01) is not a workspace section, so it is not in navRoutes() (like
+  // "join"); it is added here only for a signed-in site administrator, and left out of the nav
+  // entirely for everyone else.
   function renderNav(route, state) {
     const ws = state.workspaces.find((w) => w.id === state.selectedWorkspaceId);
-    mount(nav, ...navRoutes(ws && ws.kind).map((r) => el("a", { href: `#${r.path}`, "aria-current": r.id === route.id ? "page" : null, text: r.label })));
+    const items = navRoutes(ws || null, state.site).map((r) => el("a", { href: `#${r.path}`, "aria-current": r.id === route.id ? "page" : null, text: r.label }));
+    if (state.auth.user && state.auth.user.siteAdmin) {
+      const usageRoute = ROUTES.find((r) => r.id === "analytics");
+      items.push(el("a", { href: `#${usageRoute.path}`, "aria-current": route.id === "analytics" ? "page" : null, text: usageRoute.label }));
+    }
+    mount(nav, ...items);
   }
 
   function renderFooter(state) {
@@ -177,11 +255,13 @@ export function createShell({ mountPoint, store, router, theme, api }) {
   }
 
   function renderView(state, route) {
-    const key = `${route.id}|${state.selectedWorkspaceId}|${JSON.stringify(route.params)}`;
+    const ws = state.workspaces.find((w) => w.id === state.selectedWorkspaceId);
+    const groupOff = route.id === "group" && !sharedExpensesOn(ws || null, state.site);
+    const key = `${route.id}|${state.selectedWorkspaceId}|${JSON.stringify(route.params)}|${groupOff ? "off" : "on"}`;
     if (key !== viewKey) {
       if (view && view.destroy) view.destroy();
       viewKey = key;
-      const mod = VIEWS[route.id] || dashboard;
+      const mod = groupOff ? SHARED_EXPENSES_OFF : VIEWS[route.id] || dashboard;
       view = mod.createView({ ...ctx(), params: route.params });
       mount(main, view.element);
       // On in-app navigation focus moves to the new view's heading so a screen reader announces
@@ -205,18 +285,25 @@ export function createShell({ mountPoint, store, router, theme, api }) {
       return;
     }
     if (!state.auth.user) {
-      clear(mountPoint); mountPoint.appendChild(renderLanding()); menu = null;
+      // Built once and reused across renders while signed out (the same reasoning as the account
+      // menu: rebuilding it on every commit would resubscribe the day/night control and refetch the
+      // footer's public version/channel for nothing).
+      if (!landingEl) landingEl = renderLanding({ theme, api });
+      if (!mountPoint.contains(landingEl)) { clear(mountPoint); mountPoint.appendChild(landingEl); }
+      menu = null;
       if (wsPicker) { wsPicker.destroy(); wsPicker = null; }
       document.title = "BudgetTracker — sign in"; return;
     }
+    landingEl = null;
     if (!mountPoint.contains(main)) mount(mountPoint, header, nav, main, footer);
     renderHeader(state);
     renderFooter(state);
     // Without a workspace there are no sections to navigate, so the nav is hidden (UX-011). My
     // settings stays reachable from the account menu: personal preferences, and for a site
-    // administrator the icon catalogue (BT-011-05), need no workspace.
-    const onboarding = !state.workspaces.length && route.id !== "join" && route.id !== "settings";
-    nav.hidden = onboarding || (!state.workspaces.length && route.id === "settings");
+    // administrator the icon catalogue (BT-011-05), need no workspace. Usage (BT-012-01) is the
+    // same: it is about the whole site, not any one workspace.
+    const onboarding = !openWorkspaces(state).length && route.id !== "join" && route.id !== "settings" && route.id !== "analytics";
+    nav.hidden = onboarding || (!openWorkspaces(state).length && (route.id === "settings" || route.id === "analytics"));
     if (onboarding) {
       if (viewKey !== "onboarding") { viewKey = "onboarding"; view = createOnboarding(ctx()); mount(main, view.element); document.title = "Create a workspace · BudgetTracker"; }
       return;

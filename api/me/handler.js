@@ -6,6 +6,7 @@ const { activeMember } = require('../_shared/authz');
 const store = require('../_shared/store');
 const model = require('../_shared/workspace-model');
 const site = require('../_shared/site');
+const usage = require('../_shared/usage');
 const { appInfo } = require('../_shared/version');
 const prefs = require('../preferences/handler');
 const fields = require('../_shared/fields');
@@ -13,23 +14,30 @@ const { readBody } = require('../_shared/http');
 
 async function get(ctx) {
   const user = await store.ensureUser(ctx);
+  // Usage/activity touch (BT-012-01), the natural once-per-boot touchpoint. Never lets a usage
+  // recording problem break sign-in or the boot payload.
+  try { await usage.touch(ctx, ctx.principal); } catch (err) { if (ctx.log) (ctx.log.error || ctx.log)(`usage_touch_failed ${(err && err.code) || 'unknown'}`); }
   const workspaces = [];
   for (const id of user.workspaceIds || []) {
     const { value } = await ctx.storage.getJson(store.paths.workspace(id));
     const doc = readDocument('workspace', value);
     const member = doc && activeMember(doc, ctx.principal);
-    if (member) workspaces.push(model.summary(doc, member));
+    if (model.listed(doc, member)) workspaces.push(model.summary(doc, member));
   }
   const { site: siteDoc } = await site.readSite(ctx.storage);
   const stored = user.preferences || {};
+  // The site's staging-link default reaches only site administrators and active members of at least
+  // one workspace (security review of d363eff, finding 1). `workspaces` holds exactly the workspaces
+  // where this person is an active member; a deleted (archived) one an owner still sees does not count.
+  const visible = ctx.siteAdmin || workspaces.some((w) => w.status !== 'archived') ? siteDoc : site.withoutStagingDefault(siteDoc);
   return {
     body: {
       // `subject` is the caller's own provider subject, shown so an operator can list it in
       // BT_SITE_ADMINS (the edge siteadmin role matches subjects only).
       user: { name: user.name || '', email: user.email, subject: ctx.principal.subject, siteAdmin: ctx.siteAdmin },
       workspaces,
-      preferences: { stored, ...prefs._resolve(stored, siteDoc) },
-      site: site.publicView(siteDoc, true),
+      preferences: { stored, ...prefs._resolve(stored, visible) },
+      site: site.publicView(visible, true),
       app: appInfo(ctx.env),
     },
   };

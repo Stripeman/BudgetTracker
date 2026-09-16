@@ -1,6 +1,8 @@
 'use strict';
 // /api/accounts?workspaceId=
-//   GET                         accounts the caller may see (balances only with view-balances)
+//   GET                         accounts the caller may see (balances only with view-balances; `hasEntries`
+//                               only with view-transactions); `removedCount` = removed accounts they may
+//                               bring back; `includeDeleted=1` lists those too
 //   POST   {...}                create; shared accounts need manager+, private any active member
 //   PATCH  { accountId, revision, reason?, ... }   edit settings (private owner, or manager+ for shared)
 //   POST   ?action=close  { accountId, revision, reason, closedOn? }   no new entries; history stays
@@ -23,6 +25,7 @@ const icons = require('../_shared/icons');
 
 // The icon catalogue is read only when an icon is being chosen (BT-011-05).
 const catalogFor = async (ctx, body) => (body.icon !== undefined ? (await icons.readCatalog(ctx.storage)).catalog : null);
+const workspaceSettings = require('../_shared/workspace-settings');
 
 // `status` is changed only by the close and reopen actions, which need a reason.
 const EDITABLE = ['revision', 'reason', 'name', 'institution', 'maskedNumber', 'terms', 'notes', 'openingBalance', 'openingDate', 'visibility', 'confirmShare', 'icon'];
@@ -32,9 +35,11 @@ const changesSince = (before, a) => TRACKED
   .filter((f) => JSON.stringify(before[f]) !== JSON.stringify(a[f] === undefined ? null : a[f]))
   .map((f) => ({ field: f, from: before[f], to: a[f] === undefined ? null : structuredClone(a[f]) }));
 
-function mayManage(account, member) {
+// A private account: its owner only. A shared account: whoever manages the workspace's shared lists —
+// managers and owners, or members too when the workspace setting says so (Terry, 2026-09-14).
+function mayManage(doc, account, member) {
   if (account.visibility === 'private') return account.ownerSubject === member.subject;
-  return roleAtLeast(member.role, 'manager');
+  return workspaceSettings.managesSharedLists(doc, member);
 }
 
 function locate(doc, principal, accountId, now) {
@@ -49,7 +54,7 @@ async function list(ctx, req) {
   const { doc, member } = await store.loadWorkspace(ctx, wsId);
   const now = ctx.now();
   const visible = (doc.accounts || []).filter((a) => capabilitiesFor(doc, ctx.principal, a, now).size > 0)
-    .filter((a) => !a.deletedAt || (includeDeleted && mayManage(a, member)));
+    .filter((a) => !a.deletedAt || (includeDeleted && mayManage(doc, a, member)));
   const accounts = visible.map((a) => ledger.accountView(doc, ctx.principal, a, now));
   // Net position per currency over accounts whose balances this person may see. Accounts they
   // cannot see contribute nothing — totals never reveal hidden balances. The breakdown separates
@@ -62,9 +67,13 @@ async function list(ctx, req) {
     t.all = money.sum([t.all, a.balanceMinor]);
     t[a.access] = money.sum([t[a.access], a.balanceMinor]);
   }
+  // How many removed accounts this person may bring back (BT-006-05), so the page can offer them
+  // without loading them; accounts they may not manage are never counted.
+  const removedCount = (doc.accounts || []).filter((a) => a.deletedAt && capabilitiesFor(doc, ctx.principal, a, now).size > 0 && mayManage(doc, a, member)).length;
   return {
     body: {
       accounts,
+      removedCount,
       totals: Object.entries(totals).map(([currency, t]) => ({
         currency, minor: t.all, amount: money.toDecimal(t.all, currency),
         breakdown: { own: money.toDecimal(t.own, currency), shared: money.toDecimal(t.shared, currency), granted: money.toDecimal(t.granted, currency) },
@@ -94,7 +103,7 @@ async function create(ctx, req) {
     status: 'open', deletedAt: null, revision: 1, history: [],
   };
   const { result } = await store.mutateWorkspace(ctx, wsId, (doc, member) => {
-    if (visibility === 'shared' && !roleAtLeast(member.role, 'manager')) throw forbidden('Only owners and managers can create shared accounts.');
+    if (visibility === 'shared' && !workspaceSettings.managesSharedLists(doc, member)) throw forbidden(member.role === 'viewer' ? 'Viewers cannot create shared accounts.' : 'Only owners and managers can create shared accounts in this workspace.');
     const nowIso = ctx.nowIso();
     const record = { ...account, ownerSubject: visibility === 'private' ? member.subject : null, createdBy: member.subject, createdAt: nowIso };
     doc.accounts = [...(doc.accounts || []), record];
@@ -114,15 +123,14 @@ async function patch(ctx, req) {
   const { result } = await store.mutateWorkspace(ctx, wsId, (doc, member) => {
     const now = ctx.now();
     const account = locate(doc, ctx.principal, accountId, now);
-    if (!mayManage(account, member)) throw forbidden('Only the account owner (or a manager for shared accounts) can change this account.');
+    if (!mayManage(doc, account, member)) throw forbidden('Only the account owner (or a manager for shared accounts) can change this account.');
     // Record-level concurrency: a stale edit never silently overwrites someone else's (finding 8).
     if (!Number.isSafeInteger(body.revision)) throw badRequest('revision is required so a stale edit cannot overwrite a newer one.', 'missing_revision');
     if (body.revision !== (account.revision || 1)) throw conflict('This account changed since you loaded it. Reload to see the latest version.', 'stale_revision');
     const before = { openingBalanceMinor: account.openingBalanceMinor, openingDate: account.openingDate };
     const beforeAll = snap(account);
     const reason = fields.text(body.reason, { field: 'Reason', max: 200 });
-    if ((body.openingBalance !== undefined || body.openingDate !== undefined)
-        && (doc.transactions || []).some((t) => t.accountId === account.id && !t.deletedAt && t.status === 'reconciled')) {
+    if ((body.openingBalance !== undefined || body.openingDate !== undefined) && ledger.hasReconciledEntries(doc, account.id)) {
       throw conflict('This account has reconciled entries. Opening balance and date are locked to keep reconciled statements correct.', 'reconciled_locked');
     }
     const changed = [];
@@ -139,12 +147,25 @@ async function patch(ctx, req) {
     }
     if (body.visibility !== undefined && body.visibility !== account.visibility) {
       if (body.visibility !== 'shared') throw badRequest('A shared account cannot be made private; create a new private account instead.', 'visibility_change');
-      if (body.confirmShare !== true) throw badRequest('Sharing exposes this account\'s balance and full history to every workspace member. Confirm with confirmShare: true.', 'confirm_required');
+      if (body.confirmShare !== true) throw badRequest('Sharing exposes this account\'s balance and full history to every workspace member. Your shared-expense recording on this account stops; choose another private account in Shared expenses. Confirm with confirmShare: true.', 'confirm_required');
       account.visibility = 'shared';
       account.sharedAt = ctx.nowIso();
       account.sharedBy = member.subject;
       account.ownerSubject = null;
       for (const g of doc.grants || []) if (g.resourceId === account.id && g.revokedAt === null) { g.revokedAt = ctx.nowIso(); g.revokedBy = member.subject; }
+      // Shared expenses are recorded only on their owner's own private account (security recheck R1):
+      // every link to this account ends in this write, audited to its owner only. What is already on
+      // the account stays as recorded.
+      const at = ctx.nowIso();
+      for (const l of doc.groupLedgers || []) {
+        if (l.accountId !== account.id || l.endedAt) continue;
+        l.endedAt = at;
+        l.endReason = 'The account was shared';
+        audit.record(doc, { actor: member.subject, action: 'group.ledger.end', targetType: 'group-ledger', targetId: l.id, scope: `self:${l.subject}`, at });
+      }
+      for (const rec of [...(doc.groupExpenses || []), ...(doc.groupSettlements || [])]) {
+        for (const l of rec.ledgerLinks || []) if (l.accountId === account.id && !l.endedAt) { l.endedAt = at; l.endReason = 'The account was shared'; }
+      }
       changed.push('visibility');
     }
     if (!changed.length) return { account: ledger.accountView(doc, ctx.principal, account, now) };
@@ -176,7 +197,7 @@ function setDeleted(deleted) {
     const accountId = requireId(body.accountId, 'accountId');
     const { result } = await store.mutateWorkspace(ctx, wsId, (doc, member) => {
       const account = locate(doc, ctx.principal, accountId, ctx.now());
-      if (!mayManage(account, member)) throw forbidden('Only the account owner (or a manager for shared accounts) can do that.');
+      if (!mayManage(doc, account, member)) throw forbidden('Only the account owner (or a manager for shared accounts) can do that.');
       if (Boolean(account.deletedAt) === deleted) return { account: ledger.accountView(doc, ctx.principal, account, ctx.now()) };
       // Removing an account hides it from lists; it is never erased, and the reason is kept.
       const reason = fields.text(body.reason, { field: 'Reason', max: 200 });
@@ -204,7 +225,7 @@ function lifecycle(action) {
       const now = ctx.now();
       const nowIso = ctx.nowIso();
       const account = locate(doc, ctx.principal, accountId, now);
-      if (!mayManage(account, member)) throw forbidden('Only the account owner (or a manager for shared accounts) can close or reopen it.');
+      if (!mayManage(doc, account, member)) throw forbidden('Only the account owner (or a manager for shared accounts) can close or reopen it.');
       if (!Number.isSafeInteger(body.revision)) throw badRequest('revision is required so a stale change cannot overwrite a newer one.', 'missing_revision');
       if (body.revision !== (account.revision || 1)) throw conflict('This account changed since you loaded it. Reload to see the latest version.', 'stale_revision');
       const reason = fields.text(body.reason, { field: 'Reason', max: 200 });

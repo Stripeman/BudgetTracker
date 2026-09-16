@@ -4,8 +4,9 @@
 //   GET ?id=         one workspace
 //   POST             create (Idempotency-Key supported); the creator becomes its owner
 //   PATCH ?id=       rename / shared settings (owner or manager)
-//   DELETE ?id=      archive (owner) — recoverable, never a permanent delete
-//   POST ?id=&action=restore   unarchive (owner)
+//   DELETE ?id=      archive (owner) — shown as "Delete workspace"; recoverable, never a permanent delete.
+//                    Nobody reaches an archived workspace until an owner brings it back (store.loadWorkspace).
+//   POST ?id=&action=restore   unarchive (owner) — "Bring back" under Deleted workspaces in My settings
 const { readBody, query, header, badRequest, forbidden, notFound, conflict } = require('../_shared/http');
 const { newId, requireId, isIdempotencyKey } = require('../_shared/ids');
 const { PreconditionFailed } = require('../_shared/storage');
@@ -17,6 +18,8 @@ const fields = require('../_shared/fields');
 const money = require('../_shared/money');
 const audit = require('../_shared/audit');
 const groups = require('../_shared/groups');
+const workspaceSettings = require('../_shared/workspace-settings');
+const siteSettings = require('../_shared/site');
 
 async function list(ctx) {
   const user = await store.ensureUser(ctx);
@@ -25,7 +28,7 @@ async function list(ctx) {
     const { value } = await ctx.storage.getJson(store.paths.workspace(id));
     const doc = readDocument('workspace', value);
     const member = doc && activeMember(doc, ctx.principal);
-    if (member) out.push(model.summary(doc, member));
+    if (model.listed(doc, member)) out.push(model.summary(doc, member));
   }
   return { body: { workspaces: out } };
 }
@@ -35,9 +38,17 @@ async function get(ctx, req) {
   const id = query(req, 'id');
   if (!id) return list(ctx);
   const { doc, etag, member } = await store.loadWorkspace(ctx, id);
-  const workspace = { ...model.summary(doc, member), settings: doc.settings };
+  // Every workspace setting from the one list, with whether this member may change it (Terry,
+  // 2026-09-14). Values only; nothing financial.
+  const { site } = await siteSettings.readSite(ctx.storage);
+  const workspace = { ...model.summary(doc, member), settings: doc.settings, settingsList: workspaceSettings.view(doc, member, site) };
+  const names = new Map((doc.members || []).map((m) => [m.subject, m.name || 'Member']));
+  // Every member reads the settings history — who, when, from, to and why, settings only; no name or
+  // lifecycle changes, nothing financial (UX review of eefd115, decision 6).
+  workspace.settingsHistory = (doc.history || [])
+    .map((h) => ({ at: h.at, by: names.get(h.by) || 'Former member', changes: (h.changes || []).filter((c) => c && typeof c.field === 'string' && c.field.startsWith('settings.')), reason: h.reason || '' }))
+    .filter((h) => h.changes.length);
   if (roleAtLeast(member.role, 'manager')) {
-    const names = new Map((doc.members || []).map((m) => [m.subject, m.name || 'Member']));
     const named = (list) => (list || []).map((h) => ({ ...h, by: names.get(h.by) || 'Former member' }));
     workspace.history = named(doc.history);
     workspace.lifecycle = named(doc.lifecycle);
@@ -99,7 +110,14 @@ async function patch(ctx, req) {
     const set = (field, from, to, apply) => { if (JSON.stringify(from ?? null) === JSON.stringify(to ?? null)) return; apply(); changed.push(field); changes.push({ field, from: from ?? null, to: to ?? null }); };
     if (body.name !== undefined) { const v = fields.text(body.name, { field: 'Name', max: 80, required: true }); set('name', doc.name, v, () => { doc.name = v; }); }
     if (body.settings !== undefined) {
-      const s = fields.onlyKeys(body.settings || {}, ['reportingCurrency', 'budgetPeriod', 'weekStart']);
+      if (!body.settings || typeof body.settings !== 'object' || Array.isArray(body.settings)) throw badRequest('Send the settings to change.', 'invalid_field');
+      const { reportingCurrency, ...policy } = body.settings;
+      const s = { reportingCurrency };
+      // Every other key is a workspace setting from the one list (api/_shared/workspace-settings.js):
+      // unknown keys and values that are not allowed are refused, a key the member may not change is
+      // refused naming who may, and each real change is kept below with before and after values.
+      const parsed = Object.keys(policy).length ? workspaceSettings.parseChanges(policy) : {};
+      if (!doc.settings || typeof doc.settings !== 'object' || Array.isArray(doc.settings)) doc.settings = {};
       if (s.reportingCurrency !== undefined) {
         money.precisionOf(s.reportingCurrency);
         // New shared expenses use the reporting currency, so it cannot change while anyone's shared
@@ -109,8 +127,7 @@ async function patch(ctx, req) {
         if (open.length) throw conflict(`Shared expenses are not settled up in ${open.join(', ')}. Settle up first, then change the reporting currency.`, 'group_balances_open');
         set('settings.reportingCurrency', doc.settings.reportingCurrency, s.reportingCurrency, () => { doc.settings.reportingCurrency = s.reportingCurrency; });
       }
-      if (s.budgetPeriod !== undefined) { const v = fields.oneOf(s.budgetPeriod, ['weekly', 'biweekly', 'monthly', 'custom'], 'Budget period'); set('settings.budgetPeriod', doc.settings.budgetPeriod, v, () => { doc.settings.budgetPeriod = v; }); }
-      if (s.weekStart !== undefined) { if (![0, 1, 6].includes(s.weekStart)) throw badRequest('Week start must be 0, 1 or 6.', 'invalid_field'); set('settings.weekStart', doc.settings.weekStart, s.weekStart, () => { doc.settings.weekStart = s.weekStart; }); }
+      for (const c of workspaceSettings.changesFor(doc, parsed, member)) set(`settings.${c.key}`, c.from, c.to, () => { doc.settings[c.key] = c.to; });
     }
     if (!changed.length) return undefined;
     doc.history = [...(doc.history || []), { at: ctx.nowIso(), by: member.subject, changes, reason: fields.text(body.reason, { field: 'Reason', max: 200 }) }];
@@ -132,7 +149,7 @@ async function archive(ctx, req) {
     addLifecycle(doc, { at: doc.archivedAt, by: member.subject, state: 'archived', reason: fields.text(body.reason, { field: 'Reason', max: 200 }) });
     audit.record(doc, { actor: member.subject, action: 'workspace.archive', targetType: 'workspace', targetId: doc.id, at: ctx.nowIso() });
     return { workspace: model.summary(doc, member) };
-  }, { allowHeadroom: true });
+  }, { allowHeadroom: true, archived: true });
   return { body: result };
 }
 
@@ -141,8 +158,8 @@ async function post(ctx, req) {
     const id = requireId(query(req, 'id'), 'id');
     const body = fields.onlyKeys(readBody(req), ['reason']);
     // Unarchiving counts toward the creator's active-workspace limit like creating one (SEC-T4).
-    const { doc: current } = await store.loadWorkspace(ctx, id);
-    if (current.status === 'archived' && current.createdBy === ctx.principal.subject) await store.assertCanCreateWorkspace(ctx);
+    const { doc: current } = await store.loadWorkspace(ctx, id, { archived: true });
+    if (current.status === 'archived' && current.createdBy === ctx.principal.subject) await store.assertCanCreateWorkspace(ctx, { restoring: true });
     const { result } = await store.mutateWorkspace(ctx, id, (doc, member) => {
       if (member.role !== 'owner') throw forbidden('Only an owner can restore a workspace.');
       if (doc.status !== 'archived') return { workspace: model.summary(doc, member) };
@@ -152,7 +169,7 @@ async function post(ctx, req) {
       doc.archivedAt = null;
       audit.record(doc, { actor: member.subject, action: 'workspace.restore', targetType: 'workspace', targetId: doc.id, at: ctx.nowIso() });
       return { workspace: model.summary(doc, member) };
-    });
+    }, { archived: true });
     return { body: result };
   }
   if (query(req, 'action') !== undefined) throw notFound();

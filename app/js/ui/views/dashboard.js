@@ -5,17 +5,20 @@ import { el, mount } from "../dom.js";
 import { pageHead, stateView, money, accessBadge, button, transferLabel } from "../components.js";
 import { sliceFor } from "../../core/store.js";
 import { ACCOUNT_TYPE_LABELS, formatDate } from "../../core/format.js";
-import { openQuickEntry, canAddEntries, addEntriesBlocked, amountWithDirection } from "./transactions.js";
+import { openQuickEntry, canAddEntries, addEntriesBlocked, entryAmount } from "./transactions.js";
 import { warningText } from "./planning.js";
 import { formatAmount } from "../../core/format.js";
 import { icon, withIcon } from "../icons.js";
 import { openGroupExpense, balanceLabel, shownTables } from "./group.js";
+import { sharedExpensesOn } from "../../core/workspacesettings.js";
 
 // A card title with its icon (BT-011-05); the words name the card, the icon is decoration.
 const titled = (id, iconId, text, tag = "h2") => el(tag, { class: "card__title", id }, [withIcon(iconId, text)]);
 
 // A shared-expense group or a trip needs no account (Terry, 2026-09-14; BT-009): its dashboard leads
-// to Shared expenses and shows the person's balance there, instead of asking for an account.
+// to Shared expenses, instead of asking for an account. The balance card follows the one rule for
+// Shared expenses (the workspace setting, bounded by the site), so a household sees it too — the page
+// and its dashboard summary are shown or hidden together (workspace settings, Terry 2026-09-14).
 const SHARED_KINDS = new Set(["group", "trip"]);
 const workspaceOf = (state) => (state.workspaces || []).find((w) => w.id === state.selectedWorkspaceId) || null;
 
@@ -39,12 +42,20 @@ export function createView(ctx) {
   void ctx.store.actions.refreshTransactions({ limit: 8 });
   void ctx.store.actions.refreshBills();
   void ctx.store.actions.refreshForecast({ horizon: "30" });
-  const first = workspaceOf(ctx.state || ctx.store.getState());
-  if (first && SHARED_KINDS.has(first.kind)) void ctx.store.actions.refreshGroup();
+  // Shared expenses are loaded once while they are on, including when they are turned on later.
+  let groupRequested = false;
+  const loadGroup = (state) => {
+    if (groupRequested || !sharedExpensesOn(workspaceOf(state), state.site)) return;
+    groupRequested = true;
+    void ctx.store.actions.refreshGroup();
+  };
+  loadGroup(ctx.state || ctx.store.getState());
 
   function update(state) {
     const ws = workspaceOf(state);
-    const sharedKind = !!ws && SHARED_KINDS.has(ws.kind);
+    const groupOn = !!ws && sharedExpensesOn(ws, state.site);
+    loadGroup(state);
+    const sharedKind = groupOn && SHARED_KINDS.has(ws.kind);
     const prefs = state.preferences;
     const dateFormat = prefs && prefs.effective && prefs.effective.dateFormat;
     // Needs attention (BT-008): overdue and due-soon bills, and 30-day cash-flow warnings.
@@ -55,6 +66,14 @@ export function createView(ctx) {
     if (billData && billData.summary.overdue) items.push(el("li", { class: "iconlabel" }, [icon("alert"), el("span", {}, [el("a", { href: "#/bills", text: `${billData.summary.overdue} overdue bill payment${billData.summary.overdue === 1 ? "" : "s"}` }), " — review and record or skip."])]));
     if (billData && billData.summary.dueSoon) items.push(el("li", { class: "iconlabel" }, [icon("clock"), el("a", { href: "#/bills", text: `${billData.summary.dueSoon} bill payment${billData.summary.dueSoon === 1 ? "" : "s"} due soon` })]));
     if (forecast) for (const w of forecast.forecast.warnings) items.push(el("li", { class: "iconlabel" }, [icon("chart-line"), el("a", { href: "#/planning", text: warningText(w, fmt, dateFormat) })]));
+    // A shared expense corrected or voided while the viewer's own linked account could not be written to
+    // (for example it is closed) leaves their part needing review, without telling them beyond the
+    // passive banner on Shared expenses itself (financial recheck of 41494d1, FA-3: correcting stays
+    // allowed either way — the corrector must never learn anything about another person's account).
+    const groupDataForAlert = groupOn ? sliceFor(state, "group").data : null;
+    if (groupDataForAlert && (groupDataForAlert.myLedgers || []).some((l) => l.reviewCount > 0)) {
+      items.push(el("li", { class: "iconlabel" }, [icon("users"), el("a", { href: "#/group", text: "Shared expenses needs your attention" })]));
+    }
     mount(alerts, items.length ? el("section", { class: "notice notice--warning", "aria-labelledby": "dash-alerts" }, [titled("dash-alerts", "bell", "Needs attention"), el("ul", { class: "stack" }, items)]) : null);
     const accounts = sliceFor(state, "accounts");
     const txns = sliceFor(state, "transactions");
@@ -66,14 +85,14 @@ export function createView(ctx) {
         ? button("Add expense", () => openQuickEntry(ctx), { variant: "primary" })
         : addEntriesBlocked(state));
     }
-    if (sharedKind) {
+    if (groupOn) {
       const g = sliceFor(state, "group");
       const data = g.data;
       // The viewer's balance in every currency where it is open, not only the reporting currency
       // (financial review finding 3).
       const mine = data ? shownTables(data).map((t) => [t, t.rows.find((r) => r.ref === data.permissions.selfRef)]).filter(([, r]) => r && !/^-?0(\.0+)?$/.test(String(r.net))) : [];
       mount(shared, el("section", { class: "card", "aria-labelledby": "dash-shared" }, [
-        titled("dash-shared", "users", "Your balance in this group"),
+        titled("dash-shared", "users", SHARED_KINDS.has(ws.kind) ? "Your balance in this group" : "Your balance in Shared expenses"),
         data ? el("div", { class: "card__value" }, mine.length ? mine.map(([t, r]) => el("div", {}, [balanceLabel(r, t.currency, fmt, { self: true, subject: "You" })])) : [el("span", { class: "muted", text: "You are settled up" })]) : stateView(g),
         data ? el("p", { class: "card__meta" }, [`${data.expenses.filter((e) => e.status !== "void").length} shared expenses recorded. `, el("a", { href: "#/group", text: "Open Shared expenses" })]) : null,
       ]));
@@ -115,7 +134,7 @@ export function createView(ctx) {
       el("span", { class: "muted small", text: formatDate(t.date, dateFormat) }),
       merchantOf(t),
       el("span", { class: "app__spacer" }),
-      amountWithDirection(t, prefs),
+      entryAmount(t, prefs),
     ]))));
   }
   return { element, update };

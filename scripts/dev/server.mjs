@@ -15,6 +15,7 @@ import path from "node:path";
 import { randomBytes } from "node:crypto";
 import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
+import { resolveDataRoot } from "./dataroot.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 const require = createRequire(import.meta.url);
@@ -27,18 +28,22 @@ const PORT = Number(process.env.BT_DEV_PORT || 4380);
 if (RESERVED_PORTS.has(PORT)) { console.error(`Port ${PORT} belongs to another local application. Choose another BT_DEV_PORT.`); process.exit(2); }
 if (process.env.WEBSITE_SITE_NAME || process.env.WEBSITE_INSTANCE_ID) { console.error("Refusing to run: Azure environment markers are present."); process.exit(2); }
 
-const LOCAL = path.join(ROOT, ".local");
-const DATA_DIR = path.join(LOCAL, "dev-data");
-const BACKUP_DIR = path.join(LOCAL, "dev-backups");
-const KEY_FILE = path.join(LOCAL, "dev-backup-key");
-fs.mkdirSync(LOCAL, { recursive: true });
+// BT_DEV_DATA_ROOT (optional, inside .local/ only) gives this server its own data, backups and key;
+// unset, the paths are the usual .local/dev-data, .local/dev-backups and .local/dev-backup-key.
+let dirs;
+try { dirs = resolveDataRoot(process.env, ROOT); } catch (err) { console.error(err.message); process.exit(2); }
+const { dataRoot: DATA_ROOT, dataDir: DATA_DIR, backupDir: BACKUP_DIR, keyFile: KEY_FILE } = dirs;
+fs.mkdirSync(DATA_ROOT, { recursive: true });
 if (!fs.existsSync(KEY_FILE)) fs.writeFileSync(KEY_FILE, randomBytes(32).toString("base64"), { mode: 0o600 });
 
+// Eve is an outsider: the seed never adds her to any workspace, so she proves what a signed-in
+// stranger gets (not found). Dave is a site administrator by configuration, never by membership.
 export const FICTIONAL_USERS = Object.freeze({
   alice: { userId: "dev-alice", email: "alice@example.com", name: "Alice Fictional" },
   bob: { userId: "dev-bob", email: "bob@example.com", name: "Bob Fictional" },
   carol: { userId: "dev-carol", email: "carol@example.com", name: "Carol Fictional" },
   dave: { userId: "dev-dave", email: "dave@example.com", name: "Dave Siteadmin" },
+  eve: { userId: "dev-eve", email: "eve@example.com", name: "Eve Outsider" },
 });
 
 const env = {

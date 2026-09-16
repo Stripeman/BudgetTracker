@@ -16,6 +16,7 @@ import { formatDate, formatAmount, todayIso } from "../../core/format.js";
 import { messageFor } from "../../core/errors.js";
 import { icon, withIcon } from "../icons.js";
 import { createIconPicker, iconChange } from "../iconpicker.js";
+import { managesSharedLists } from "../../core/workspacesettings.js";
 
 // Account icons for the forecast tables (BT-011-05), from the accounts the viewer may see.
 const accountIcons = (state) => new Map(((sliceFor(state, "accounts").data || {}).accounts || []).map((a) => [a.id, a.icon]));
@@ -25,9 +26,22 @@ const PERIODS = [{ value: "monthly", label: "Monthly" }, { value: "biweekly", la
 
 // A plan change dated before the current period changes periods that have finished, so it needs an
 // explicit confirmation; the server refuses it otherwise (FIN-R14). Returns the message or null.
-export function backdateProblem(effectiveFrom, periodStart, confirmed) {
-  if (!effectiveFrom || !periodStart || effectiveFrom >= periodStart || confirmed) return null;
+export function backdateProblem(effectiveFrom, periodStart, confirmed, { never = false } = {}) {
+  if (!effectiveFrom || !periodStart || effectiveFrom >= periodStart) return null;
+  // The workspace setting "Budget changes may apply to past periods: Never" (the server refuses too).
+  if (never) return `This workspace does not let budget changes apply to periods that have finished. Choose ${formatDate(periodStart)} or later.`;
+  if (confirmed) return null;
   return "This date is before the current period, so it would change periods that have already finished. Tick “Also change finished periods” to confirm, or choose a later date.";
+}
+
+// The start a new budget is offered (workspace settings, Terry 2026-09-14), the same rule as the server:
+// the first of the month for a monthly budget; for a weekly or two-weekly one the latest day on or before
+// `today` that is the workspace's week start (0 Sunday, 1 Monday, 6 Saturday).
+export function defaultBudgetStart(period, weekStart, today) {
+  if (period === "monthly") return `${today.slice(0, 8)}01`;
+  const d = new Date(`${today}T00:00:00Z`);
+  d.setUTCDate(d.getUTCDate() - ((d.getUTCDay() - weekStart + 7) % 7));
+  return d.toISOString().slice(0, 10);
 }
 
 export function warningText(w, fmt, dateFormat) {
@@ -230,22 +244,36 @@ function openBudgetLifecycle(ctx, budget, archive, after = null) {
 function openBudgetEditor(ctx, budget = null) {
   const state = ctx.store.getState();
   const editing = !!budget;
-  const role = ((state.workspaces || []).find((w) => w.id === state.selectedWorkspaceId) || {}).role;
   const categories = ((sliceFor(state, "categories").data || {}).categories || []).filter((c) => !c.archived && c.type !== "income");
   const currencies = [...new Set(((sliceFor(state, "accounts").data || {}).accounts || []).map((a) => a.currency))];
   const name = input({ maxlength: "80", autocomplete: "off" });
   name.value = editing ? budget.name : "";
-  const canShare = role === "owner" || role === "manager";
+  // Shared budgets belong to whoever manages shared lists (workspace setting; owners and managers by default).
+  const canShare = managesSharedLists(state);
   const scope = pickerSelect([{ value: "private", label: "Private to me" }].concat(canShare ? [{ value: "shared", label: "Shared (shared accounts only)" }] : []), editing ? budget.scope : (canShare ? "shared" : "private"), { disabled: editing }, { search: false });
   const currency = pickerSelect((currencies.length ? currencies : ["EUR"]).map((c) => ({ value: c, label: c })), editing ? budget.currency : currencies[0] || "EUR", { disabled: editing });
-  const period = pickerSelect(PERIODS, editing ? budget.period : "monthly", {}, { search: false });
+  // The workspace's settings give a new budget its period and start (Terry, 2026-09-14).
+  const wsValues = ((state.workspaces || []).find((w) => w.id === state.selectedWorkspaceId) || {}).settingValues || {};
+  const weekStart = [0, 1, 6].includes(wsValues.weekStart) ? wsValues.weekStart : 1;
+  const neverBackdate = wsValues.budgetBackdating === "never";
+  const period = pickerSelect(PERIODS, editing ? budget.period : (PERIODS.some((p) => p.value === wsValues.budgetPeriod) ? wsValues.budgetPeriod : "monthly"), {}, { search: false });
   const categoryMarks = categoryBadges(state);
   const start = input({ type: "date" });
-  start.value = editing ? budget.startDate : `${todayIso().slice(0, 8)}01`;
+  start.value = editing ? budget.startDate : defaultBudgetStart(period.value, weekStart, todayIso());
+  // A new budget's start follows its period until someone types a start of their own.
+  if (!editing) {
+    let offered = start.value;
+    period.addEventListener("change", () => { if (start.value === offered) { offered = defaultBudgetStart(period.value, weekStart, todayIso()); start.value = offered; } });
+  }
   // Plan changes apply from a date; earlier periods keep the plan they had (BT-001-05).
   const effectiveFrom = input({ type: "date" });
   effectiveFrom.value = editing ? budget.status.period.start : "";
   const confirmBackdate = el("input", { type: "checkbox" });
+  // A NEW budget that starts before its current period needs the same confirmation (FIN-1); the box
+  // appears once the server says so. Under "Not allowed" it never does: the server's reason is shown.
+  const createConfirm = el("input", { type: "checkbox" });
+  const createConfirmRow = el("label", { class: "field--inline field__label" }, [createConfirm, "Also count the periods that have finished"]);
+  createConfirmRow.hidden = true;
   const reason = input({ maxlength: "200", placeholder: "Optional" });
   const chosenIcon = editing && budget.iconSource === "record" ? budget.icon : null;
   const iconPick = createIconPicker({ value: chosenIcon, inherited: "target", name: editing ? budget.name : "New budget" });
@@ -258,7 +286,7 @@ function openBudgetEditor(ctx, budget = null) {
   }
   function addRow(line = {}, { focus = false } = {}) {
     // `cat.focus()` below lands on the picker's trigger.
-    const cat = pickerSelect(categories.map((c) => ({ value: c.id, label: c.name })), line.categoryId || (categories[0] || {}).id, {}, { badgeOf: categoryMarks });
+    const cat = pickerSelect(categories.map((c) => ({ value: c.id, label: c.name })), line.categoryId || (categories[0] || {}).id, {}, { badgeOf: categoryMarks, placeholder: "Choose a category…" });
     const amount = input({ inputmode: "decimal", placeholder: "0.00" });
     amount.value = line.amount || "";
     const rollover = el("input", { type: "checkbox" });
@@ -285,13 +313,20 @@ function openBudgetEditor(ctx, budget = null) {
   const modal = openModal({
     title: editing ? `Edit ${budget.name}` : "Add budget",
     body: [
-      el("div", { class: "form-grid" }, [field("Name", name), iconPick.element, field("Who it is for", scope, { help: "A shared budget counts shared accounts only, so members' private spending never appears in it." }), field("Currency", currency), field("Period", period), field("Starts on", start)]),
+      el("div", { class: "form-grid" }, [field("Name", name), iconPick.element, field("Who it is for", scope, { help: "A shared budget counts shared accounts only, so members' private spending never appears in it." }), field("Currency", currency), field("Period", period, editing ? {} : { help: `${(PERIODS.find((p) => p.value === wsValues.budgetPeriod) || PERIODS.find((p) => p.value === "monthly")).label} is this workspace's usual period (Workspace settings).` }), field("Starts on", start)]),
       el("h3", { text: "Categories" }), linesBox, addLine,
       editing ? el("div", { class: "form-grid" }, [
-        field("Plan changes apply from", effectiveFrom, { help: `Earlier periods keep the plan they had. A date before ${formatDate(budget.status.period.start)} changes periods that have finished and needs confirming.` }),
-        el("label", { class: "field--inline field__label" }, [confirmBackdate, "Also change finished periods"]),
+        field("Plan changes apply from", effectiveFrom, { help: neverBackdate
+          ? `Earlier periods keep the plan they had. This workspace does not let changes apply to periods that have finished, so choose ${formatDate(budget.status.period.start)} or later.`
+          : `Earlier periods keep the plan they had. A date before ${formatDate(budget.status.period.start)} changes periods that have finished and needs confirming.` }),
+        neverBackdate ? null : el("label", { class: "field--inline field__label" }, [confirmBackdate, "Also change finished periods"]),
         field("Reason for the change", reason),
-      ]) : null,
+      ]) : el("div", { class: "form-grid" }, [
+        el("p", { class: "field__help field--wide", text: neverBackdate
+          ? "This workspace does not let a new budget start in a period that has finished."
+          : "A start before the current period counts periods that have finished and needs confirming." }),
+        createConfirmRow,
+      ]),
     ],
     actions: [cancel, save],
   });
@@ -321,19 +356,24 @@ function openBudgetEditor(ctx, budget = null) {
         || period.value !== budget.period || start.value !== budget.startDate;
       if (planChanged) {
         effectiveFrom.removeAttribute("aria-invalid");
-        const problem = backdateProblem(effectiveFrom.value, budget.status.period.start, confirmBackdate.checked);
+        const problem = backdateProblem(effectiveFrom.value, budget.status.period.start, confirmBackdate.checked, { never: neverBackdate });
         if (problem) { invalid(effectiveFrom, problem); return; }
         const backdated = !!effectiveFrom.value && effectiveFrom.value < budget.status.period.start;
         Object.assign(body, { lines, period: period.value, startDate: start.value, ...(effectiveFrom.value ? { effectiveFrom: effectiveFrom.value } : {}), ...(backdated || confirmBackdate.checked ? { confirmBackdate: true } : {}), ...(reason.value.trim() ? { reason: reason.value.trim() } : {}) });
       }
       if (Object.keys(body).length === 2) { announce("Nothing changed."); modal.close(); return; }
     } else {
-      body = { name: name.value.trim(), scope: scope.value, currency: currency.value, period: period.value, startDate: start.value, lines, ...(iconPick.getValue() ? { icon: iconPick.getValue() } : {}) };
+      body = { name: name.value.trim(), scope: scope.value, currency: currency.value, period: period.value, startDate: start.value, lines, ...(iconPick.getValue() ? { icon: iconPick.getValue() } : {}), ...(createConfirm.checked ? { confirmBackdate: true } : {}) };
     }
     modal.setBusy(true);
     const out = await ctx.store.actions.write((ws) => (editing ? ctx.api.updateBudget(ws, body) : ctx.api.createBudget(ws, body)), ["budgets"]);
     modal.setBusy(false);
-    if (!out.ok) { modal.setError(out.error); return; }
+    if (!out.ok) {
+      // The server asks for the confirmation: offer it beside the message.
+      if (!editing && out.error && out.error.code === "backdate_unconfirmed") createConfirmRow.hidden = false;
+      modal.setError(out.error);
+      return;
+    }
     announce(editing ? "Budget saved." : "Budget added.");
     modal.close();
   });
@@ -355,8 +395,9 @@ function createWhatIf(ctx, params) {
   ], "one-off", {}, { search: false });
   // Filled by setChoices() below; the pickers follow the new options. The account's icon is read from
   // the current list, which setChoices replaces.
-  const account = pickerSelect([], "", {}, { badgeOf: (id) => { const a = accounts.find((x) => x.id === id); return a && a.icon ? icon(a.icon) : null; } });
-  const bill = pickerSelect([], "");
+  // Natural empty-field text while the choices load or when there are none (UX review U6).
+  const account = pickerSelect([], "", {}, { badgeOf: (id) => { const a = accounts.find((x) => x.id === id); return a && a.icon ? icon(a.icon) : null; }, placeholder: "Choose an account…" });
+  const bill = pickerSelect([], "", {}, { placeholder: "Choose a bill…" });
   const date = input({ type: "date" });
   date.value = todayIso();
   const amount = input({ inputmode: "decimal", placeholder: "-250.00 or 100.00" });

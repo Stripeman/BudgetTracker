@@ -244,7 +244,9 @@ async function openRecord(ctx, bill, occurrence) {
       el("p", { text: `${draft.overdue ? "Overdue: " : ""}due ${formatDate(occurrence, eff.dateFormat)}, ${where}.` }),
       el("div", { class: "form-grid" }, [
         field(`${words.amount} (${draft.currency})`, amount, { help: draft.amountIsEstimate ? `This varies; the estimate is ${draft.amount}. Enter the actual amount.` : "Change it if this one was different." }),
-        field(words.date, date),
+        // A late payment's date comes from the workspace setting; say so (finding 10). An entered date wins.
+        field(words.date, date, draft.overdue ? { help: ((((state.workspaces || []).find((w) => w.id === state.selectedWorkspaceId) || {}).settingValues || {}).overdueRecordDate === "due"
+          ? "Filled in with the due date (Workspace settings)." : "Filled in with today's date (Workspace settings).") } : {}),
         isTransfer ? null : el("div", { class: "field" }, [el("label", { class: "field__label", for: picker.input.id, text: words.who }), picker.element]),
         isTransfer ? null : field("Category", category),
         field("Status", status),
@@ -418,8 +420,9 @@ export function openBillEditor(ctx, bill = null) {
   makeIconPicker(chosenIcon);
   const direction = pickerSelect(DIRECTIONS, b.kind === "transfer" ? "transfer" : b.kind === "income" ? "income" : defaultDirection(b.billType || "housing"), { disabled: editing }, { search: false });
   const accountMarks = iconBadges(allAccounts);
-  const account = pickerSelect(accounts.map((a) => ({ value: a.id, label: `${a.name} (${a.currency})` })), b.accountId || (accounts[0] || {}).id, { disabled: editing }, { badgeOf: accountMarks });
-  const toAccount = pickerSelect(accounts.map((a) => ({ value: a.id, label: `${a.name} (${a.currency})` })), b.toAccountId || "", { disabled: editing }, { badgeOf: accountMarks });
+  // Natural empty-field text, not the label-built "Choose to account…" (UX review U6).
+  const account = pickerSelect(accounts.map((a) => ({ value: a.id, label: `${a.name} (${a.currency})` })), b.accountId || (accounts[0] || {}).id, { disabled: editing }, { badgeOf: accountMarks, placeholder: "Choose an account…" });
+  const toAccount = pickerSelect(accounts.map((a) => ({ value: a.id, label: `${a.name} (${a.currency})` })), b.toAccountId || "", { disabled: editing }, { badgeOf: accountMarks, placeholder: "Choose an account…" });
   const amount = input({ inputmode: "decimal", autocomplete: "off" });
   amount.value = b.amount || "";
   const amountType = pickerSelect([{ value: "fixed", label: "Always the same" }, { value: "variable", label: "Varies (estimate)" }], b.amountType || "fixed", {}, { search: false });
@@ -437,7 +440,9 @@ export function openBillEditor(ctx, bill = null) {
   // People are searched; the list is filled below, and the picker follows the new options.
   const responsible = pickerSelect([{ value: "", label: "Nobody in particular" }], "");
   const reminder = input({ type: "number", min: "0", max: "60" });
-  reminder.value = String(b.reminderDays === undefined ? 3 : b.reminderDays);
+  // A new bill starts with the workspace's due-soon default (workspace settings; 3 unless changed).
+  const wsDefault = (((state.workspaces || []).find((w) => w.id === state.selectedWorkspaceId) || {}).settingValues || {}).billReminderDays;
+  reminder.value = String(b.reminderDays === undefined ? (Number.isInteger(wsDefault) ? wsDefault : 3) : b.reminderDays);
   const notes = el("textarea", { class: "field__input", maxlength: "2000", text: b.notes || "" });
   const effectiveFrom = input({ type: "date" });
   effectiveFrom.value = b.nextDue || todayIso();
@@ -481,7 +486,9 @@ export function openBillEditor(ctx, bill = null) {
     ...scheduleFields,
     notTransfer,
     // It decides when a bill shows as due soon; there are no notifications yet (UX2-005).
-    field("Show as due soon (days before)", reminder, { help: "How many days ahead it appears under Due soon." }),
+    // A new bill says where its number came from (UX/accessibility review of eefd115, finding 10).
+    field("Show as due soon (days before)", reminder, { help: editing ? "How many days ahead it appears under Due soon."
+      : `How many days ahead it appears under Due soon. New bills start with this workspace's ${reminder.value} ${reminder.value === "1" ? "day" : "days"} (Workspace settings).` }),
     field("Notes", notes, { wide: true }),
     editing ? field("Changes to amount, merchant, category or responsible person take effect from", effectiveFrom, { help: "Payments already recorded are never changed.", wide: true }) : null,
   ]);

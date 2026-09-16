@@ -174,6 +174,8 @@ function dismissOutside(doc, event) {
     // ALREADY CLOSED IS NOT ASKED TO CLOSE.
     if (!entry.isOpen()) continue;
     if (keep.has(entry)) continue;
-    entry.close();
+    // What was pressed is passed on (adaptation, a11y review finding 2): the registry still never moves
+    // focus, but the control may, when the press landed on something that cannot take focus.
+    entry.close({ reason: "outside", target });
   }
 }

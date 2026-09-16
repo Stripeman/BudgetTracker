@@ -75,8 +75,11 @@ export function createStore({ api }) {
           auth: { status: Status.READY, user: me.user }, app: me.app, site: me.site, preferences: me.preferences,
           workspaces: me.workspaces,
         });
+        // A deleted (archived) workspace is never opened by default — an owner sees it only to bring it
+        // back (Terry, 2026-09-14: "Delete workspace"); it stays out of the picker and out of onboarding.
+        const openable = me.workspaces.filter((w) => w.status !== "archived");
         const preferred = me.preferences && me.preferences.effective && me.preferences.effective.defaultWorkspaceId;
-        const first = me.workspaces.find((w) => w.id === preferred) || me.workspaces.find((w) => w.status === "active") || me.workspaces[0];
+        const first = openable.find((w) => w.id === preferred) || openable.find((w) => w.status === "active") || openable[0];
         if (first) await actions.selectWorkspace(first.id);
       } catch (err) {
         if (err instanceof ApiError && err.kind === ErrorKind.UNAUTHENTICATED) commit({ auth: { status: Status.READY, user: null } });
@@ -115,12 +118,70 @@ export function createStore({ api }) {
     // The last forecast parameters are kept, so a refresh after a write keeps the chosen horizon.
     refreshForecast: (params) => { if (params) lastForecast = params; return loadSlice("forecast", (id) => api.forecast(id, lastForecast)); },
 
+    // Re-reads the workspace list (names, roles and each workspace's setting values) after a change such
+    // as a workspace setting, without resetting the selected workspace's data.
+    async refreshWorkspaces() {
+      try {
+        const list = await api.workspaces();
+        commit({ workspaces: list.workspaces });
+        return { ok: true };
+      } catch (err) {
+        handleAuthLoss(err);
+        return { ok: false, error: err };
+      }
+    },
+
     async createWorkspace(body, key) {
       const out = await api.createWorkspace(body, key);
       const list = await api.workspaces();
       commit({ workspaces: list.workspaces });
       await actions.selectWorkspace(out.workspace.id);
       return out.workspace;
+    },
+
+    // "Delete workspace" (owners only; Terry, 2026-09-14): the recoverable archive underneath. Everyone
+    // in it loses access at once. If the deleted workspace was open, the synchronous reset and generation
+    // guard (as in selectWorkspace) switch to another open workspace, or to onboarding with none left, in
+    // the SAME commit as the new workspace list, so nothing from the deleted workspace can render again.
+    async deleteWorkspace(id, reason) {
+      try {
+        await api.deleteWorkspace(id, reason ? { reason } : {});
+        const list = await api.workspaces();
+        if (state.selectedWorkspaceId === id) {
+          generation += 1;
+          const openable = list.workspaces.filter((w) => w.status !== "archived" && w.id !== id);
+          const preferred = state.preferences && state.preferences.effective && state.preferences.effective.defaultWorkspaceId;
+          const next = openable.find((w) => w.id === preferred) || openable[0] || null;
+          const nextId = next ? next.id : null;
+          commit({
+            workspaces: list.workspaces, selectedWorkspaceId: nextId,
+            accounts: emptySlice(nextId), transactions: emptySlice(nextId), payees: emptySlice(nextId), categories: emptySlice(nextId), members: emptySlice(nextId), bills: emptySlice(nextId),
+            budgets: emptySlice(nextId), forecast: emptySlice(nextId), icons: emptySlice(nextId), group: emptySlice(nextId),
+          });
+          if (nextId) await Promise.all([actions.refreshAccounts(), actions.refreshCategories(), actions.refreshPayees(), actions.refreshMembers(), actions.refreshIcons()]);
+        } else {
+          commit({ workspaces: list.workspaces });
+        }
+        return { ok: true };
+      } catch (err) {
+        handleAuthLoss(err);
+        return { ok: false, error: err };
+      }
+    },
+
+    // "Bring back" (My settings, "Deleted workspaces"). Re-reads the list; with no workspace open
+    // (everyone's workspaces were deleted) the one just brought back is opened.
+    async restoreWorkspace(id, reason) {
+      try {
+        await api.restoreWorkspace(id, reason ? { reason } : {});
+        const list = await api.workspaces();
+        commit({ workspaces: list.workspaces });
+        if (!state.selectedWorkspaceId) await actions.selectWorkspace(id);
+        return { ok: true };
+      } catch (err) {
+        handleAuthLoss(err);
+        return { ok: false, error: err };
+      }
     },
 
     // Every write re-reads the affected slices afterwards; the server is the source of truth.
@@ -143,6 +204,18 @@ export function createStore({ api }) {
       try {
         const prefs = await api.savePreferences(patch);
         commit({ preferences: prefs });
+        return { ok: true };
+      } catch (err) {
+        handleAuthLoss(err);
+        return { ok: false, error: err };
+      }
+    },
+
+    // Re-reads the effective preferences after a change made elsewhere, such as a site default
+    // (the staging link, BT-011-06), without re-initialising the app or changing the workspace.
+    async refreshPreferences() {
+      try {
+        commit({ preferences: await api.preferences() });
         return { ok: true };
       } catch (err) {
         handleAuthLoss(err);

@@ -3,10 +3,17 @@
 //   GET   { stored, effective, sources, locked }
 //   PUT   partial update; null clears a value back to the inherited default
 // Effective values are computed on read: personal choice → site default → built-in default.
-// A site-locked key cannot be overridden, and the source of each value is reported so the UI
-// can show inherited / customized / locked.
+// A site-locked key cannot be set personally, and its source is ALWAYS reported as "locked" (with the
+// site's value, or the built-in default when the site set none), so the UI never offers a change that
+// would be refused. Clearing one's OWN stored value (null) is always allowed, even under a lock
+// (security review of d363eff, finding 2).
+// The site's staging-link default is shown only to site administrators and to active members of at
+// least one workspace; everyone else gets it omitted (finding 1).
 const { readBody, badRequest, forbidden } = require('../_shared/http');
 const { isSafeId } = require('../_shared/ids');
+const { readDocument } = require('../_shared/schema');
+const { activeMember } = require('../_shared/authz');
+const { localDevelopment } = require('../_shared/version');
 const store = require('../_shared/store');
 const site = require('../_shared/site');
 const money = require('../_shared/money');
@@ -63,8 +70,18 @@ const VALIDATORS = {
   favoritePayees: (v) => { if (!Array.isArray(v) || v.length > 50 || !v.every(isSafeId)) throw badRequest('Favourite payees are not valid.', 'invalid_field'); return [...new Set(v)]; },
   categoryColors,
   categoryIcons,
+  // The staging (preview) site's address, opened from the account menu (BT-011-06). The app never
+  // hard-codes it: each person sets it, or inherits the site default. Stored normalised; http to a
+  // loopback host only while the API runs in local development.
+  stagingUrl: (v, extra) => fields.webAddress(v, 'Staging link', { localHttp: !!(extra && extra.localHttp) }),
+  // Each person's own defaults for Shared expenses (BT-009, Terry 2026-09-14). Not set (null) means the
+  // group's setting; the balance view not set means Fewest payments.
+  groupSplitMethod: (v) => fields.oneOf(v, ['equal', 'amounts', 'percentages', 'shares'], 'Default split'),
+  groupSplitWho: (v) => fields.oneOf(v, ['everyone', 'me'], 'Who shares by default'),
+  groupPaidBy: (v) => fields.oneOf(v, ['me', 'nobody'], 'Who paid by default'),
+  groupBalanceView: (v) => fields.oneOf(v, ['suggested', 'direct'], 'Balance view'),
 };
-const BUILT_IN = { locale: 'en', timeZone: 'UTC', dateFormat: 'iso', numberFormat: '1,234.56', displayCurrency: null, balanceMasking: false, defaultWorkspaceId: null, dashboardWidgets: ['balances', 'upcoming', 'budgets', 'recent'], favoritePayees: [], categoryColors: {}, categoryIcons: {} };
+const BUILT_IN = { locale: 'en', timeZone: 'UTC', dateFormat: 'iso', numberFormat: '1,234.56', displayCurrency: null, balanceMasking: false, defaultWorkspaceId: null, dashboardWidgets: ['balances', 'upcoming', 'budgets', 'recent'], favoritePayees: [], categoryColors: {}, categoryIcons: {}, stagingUrl: null };
 
 function resolve(stored, siteDoc) {
   const effective = {};
@@ -72,28 +89,50 @@ function resolve(stored, siteDoc) {
   for (const key of Object.keys(VALIDATORS)) {
     const locked = (siteDoc.locked || []).includes(key);
     const siteValue = siteDoc.defaults ? siteDoc.defaults[key] : undefined;
-    if (!locked && stored[key] !== undefined && stored[key] !== null) { effective[key] = stored[key]; sources[key] = 'personal'; }
-    else if (siteValue !== undefined) { effective[key] = siteValue; sources[key] = locked ? 'locked' : 'site'; }
-    else { effective[key] = BUILT_IN[key] !== undefined ? BUILT_IN[key] : null; sources[key] = 'default'; }
+    const builtIn = BUILT_IN[key] !== undefined ? BUILT_IN[key] : null;
+    if (locked) { effective[key] = siteValue !== undefined ? siteValue : builtIn; sources[key] = 'locked'; }
+    else if (stored[key] !== undefined && stored[key] !== null) { effective[key] = stored[key]; sources[key] = 'personal'; }
+    else if (siteValue !== undefined) { effective[key] = siteValue; sources[key] = 'site'; }
+    else { effective[key] = builtIn; sources[key] = 'default'; }
   }
   return { effective, sources };
+}
+
+// Whether this caller may see the site's staging-link default: a site administrator, or an active
+// member of at least one workspace. Reads the person's document and workspaces without writing.
+async function seesSiteStaging(ctx, user) {
+  if (ctx.siteAdmin) return true;
+  const doc = user || readDocument('user', (await ctx.storage.getJson(store.paths.user(ctx.principal.subject))).value);
+  for (const id of (doc && doc.workspaceIds) || []) {
+    const { value } = await ctx.storage.getJson(store.paths.workspace(id));
+    const doc = readDocument('workspace', value);
+    if (doc && doc.status !== 'archived' && activeMember(doc, ctx.principal)) return true;
+  }
+  return false;
+}
+
+// The site settings as this signed-in caller may see them.
+async function siteFor(ctx, siteDoc, user) {
+  return (await seesSiteStaging(ctx, user)) ? siteDoc : site.withoutStagingDefault(siteDoc);
 }
 
 async function get(ctx) {
   const user = await store.ensureUser(ctx);
   const { site: siteDoc } = await site.readSite(ctx.storage);
+  const visible = await siteFor(ctx, siteDoc, user);
   const stored = user.preferences || {};
-  return { body: { stored, ...resolve(stored, siteDoc), locked: siteDoc.locked || [] } };
+  return { body: { stored, ...resolve(stored, visible), locked: siteDoc.locked || [] } };
 }
 
 async function put(ctx, req) {
   const body = readBody(req);
   fields.onlyKeys(body, Object.keys(VALIDATORS));
   const { site: siteDoc } = await site.readSite(ctx.storage);
-  for (const key of Object.keys(body)) {
-    if ((siteDoc.locked || []).includes(key)) throw forbidden(`${key} is set by the site and cannot be changed personally.`);
+  // A locked key cannot be SET personally; clearing one's own stored value (null) is always allowed.
+  for (const [key, value] of Object.entries(body)) {
+    if (value !== null && (siteDoc.locked || []).includes(key)) throw forbidden(`${key} is set by the site and cannot be changed personally.`);
   }
-  const extra = {};
+  const extra = { localHttp: localDevelopment(ctx.env || {}) };
   if (body.categoryIcons !== undefined && body.categoryIcons !== null) {
     extra.catalog = (await icons.readCatalog(ctx.storage)).catalog;
     extra.stored = (await store.ensureUser(ctx)).preferences || {};
@@ -106,7 +145,8 @@ async function put(ctx, req) {
     user.preferences = prefs;
     return prefs;
   });
-  return { body: { stored, ...resolve(stored, siteDoc), locked: siteDoc.locked || [] } };
+  const visible = await siteFor(ctx, siteDoc);
+  return { body: { stored, ...resolve(stored, visible), locked: siteDoc.locked || [] } };
 }
 
-module.exports = { GET: get, PUT: put, _resolve: resolve };
+module.exports = { GET: get, PUT: put, _resolve: resolve, _siteFor: siteFor };

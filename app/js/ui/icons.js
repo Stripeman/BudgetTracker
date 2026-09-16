@@ -26,6 +26,11 @@ const ART = {
   "money-out": [p("M12 4v15"), p("M18.5 12.5 12 19l-6.5-6.5")],
   transfer: [p("M7 4 3 8l4 4"), p("M3 8h17"), p("M17 12l4 4-4 4"), p("M21 16H4")],
   reversal: [p("M9 14 4 9l5-5"), p("M4 9h10.5a5.5 5.5 0 0 1 0 11H11")],
+  // No money moved (BT-009 recheck N3): two parallel lines between two short bars, no arrowheads,
+  // like |==| — for an amount owed for a shared expense.
+  "no-money-moved": [p("M4 7.5v9"), p("M20 7.5v9"), p("M7 10h10"), p("M7 14h10")],
+  // An arrow leaving a box: the link opens in a new tab (BT-011-06).
+  external: [p("M14 4h6v6"), p("M20 4l-8.5 8.5"), p("M18 14v4.5a1.5 1.5 0 0 1-1.5 1.5h-11A1.5 1.5 0 0 1 4 18.5v-11A1.5 1.5 0 0 1 5.5 6H10")],
   home: [p("M3 11.5 12 4l9 7.5"), p("M5.5 10v10h13V10"), p("M10 20v-5.5h4V20")],
   bolt: [poly("13 2.5 4.5 13.5 11.5 13.5 10.5 21.5 19.5 10.5 12.5 10.5 13 2.5")],
   cart: [p("M2.5 3.5h2.8l2.4 11a1.8 1.8 0 0 0 1.8 1.4h8a1.8 1.8 0 0 0 1.7-1.3l1.8-6.6H6.1"), c(9.5, 20, 1.4), c(17.5, 20, 1.4)],
@@ -82,7 +87,8 @@ const ART = {
 
 const LABELS = {
   fallback: "Unknown", "money-in": "Money in", "money-out": "Money out", transfer: "Transfer", reversal: "Refund or reversal",
-  home: "Home", bolt: "Energy", cart: "Groceries", utensils: "Dining", car: "Car", heart: "Health", shield: "Protection",
+  "no-money-moved": "No money moved",
+  external: "Opens in a new tab", home: "Home", bolt: "Energy", cart: "Groceries", utensils: "Dining", car: "Car", heart: "Health", shield: "Protection",
   film: "Entertainment", bag: "Shopping", plane: "Travel", book: "Education", gift: "Gift", receipt: "Receipt", percent: "Interest",
   briefcase: "Work", coins: "Coins", tag: "Tag", wifi: "Internet", phone: "Phone", droplet: "Water", flame: "Heating", coffee: "Coffee",
   fuel: "Fuel", train: "Train", paw: "Pets", dumbbell: "Fitness", music: "Music", bank: "Bank", "piggy-bank": "Savings", wallet: "Wallet",
@@ -93,7 +99,7 @@ const LABELS = {
 
 export const FALLBACK = "fallback";
 export const BUILT_IN_IDS = Object.freeze(Object.keys(ART));
-export const SYSTEM_IDS = Object.freeze(["fallback", "money-in", "money-out", "transfer", "reversal"]);
+export const SYSTEM_IDS = Object.freeze(["fallback", "money-in", "money-out", "transfer", "reversal", "no-money-moved", "external"]);
 
 // The same allow-list the server applies to uploads (api/_shared/icon-svg.js).
 const SHAPES = Object.freeze({ path: ["d"], circle: ["cx", "cy", "r"], rect: ["x", "y", "width", "height", "rx", "ry"], line: ["x1", "y1", "x2", "y2"], polyline: ["points"], polygon: ["points"] });
@@ -179,8 +185,12 @@ export function withIcon(id, content, { className = "" } = {}) {
 
 // Money direction (BT-011-05): an arrow says only whether money comes in (upward) or goes out
 // (downward) — never both ways (Terry, 2026-09-13). A transfer leg is in or out by its own sign;
-// refunds and reversals keep a return arrow. Decided from the entry itself.
+// refunds and reversals keep a return arrow. Decided from the entry itself. An amount owed to others
+// for a shared expense (`payable`), or its reversal, moved no money, so it gets the no-money-moved
+// mark (two lines, no heads) instead of an arrow, beside the words "No money moved" (BT-009 recheck N3).
 export function directionOf(t) {
+  // No money moved: an amount owed, or a share someone else paid (BT-009 recheck N3 and L4).
+  if (t.kind === "payable" || t.paidBySomeoneElse) return "no-money-moved";
   if ((t.links && t.links.reverses) || t.kind === "refund") return "reversal";
   const minor = t.amountMinor !== undefined ? t.amountMinor : Number(String(t.amount || "0").replace(/[^0-9.-]/g, ""));
   return minor >= 0 ? "money-in" : "money-out";

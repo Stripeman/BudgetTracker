@@ -70,4 +70,50 @@ describe('BT-001-05 account lifecycle', () => {
     assert.equal((await act(h, f.q, 'carol', 'close', { accountId: joint.id, revision: joint.revision, reason: 'x' })).status, 403);
     assert.equal((await act(h, f.q, 'alice', 'close', { accountId: f.bobCard.id, revision: 1, reason: 'x' })).status, 404);
   });
+
+  test('BT-006-06 type and currency stay fixed after creation: a PATCH naming either is refused, even together with an allowed field', async () => {
+    const h = harness();
+    const f = await household(h);
+    code(await h.call('accounts', 'PATCH', { as: 'alice', query: f.q, body: { accountId: f.aliceSavings.id, revision: 1, type: 'checking' } }), 400, 'unknown_field');
+    code(await h.call('accounts', 'PATCH', { as: 'alice', query: f.q, body: { accountId: f.aliceSavings.id, revision: 1, currency: 'USD' } }), 400, 'unknown_field');
+    code(await h.call('accounts', 'PATCH', { as: 'alice', query: f.q, body: { accountId: f.aliceSavings.id, revision: 1, name: 'Renamed', type: 'checking' } }), 400, 'unknown_field');
+    const unchanged = (await accountsOf(h, f.q, 'alice')).find((a) => a.id === f.aliceSavings.id);
+    assert.deepEqual([unchanged.type, unchanged.currency, unchanged.revision], ['savings', 'EUR', 1], 'refused as a whole; nothing was applied');
+  });
+
+  test('BT-006-06 opening date, account number and notes round-trip; reconciledLocked is reported before it is enforced', async () => {
+    const h = harness();
+    const f = await household(h);
+    const before = (await accountsOf(h, f.q, 'alice')).find((a) => a.id === f.aliceSavings.id);
+    assert.equal(before.reconciledLocked, false, 'no reconciled entry yet');
+    const edited = ok(await h.call('accounts', 'PATCH', {
+      as: 'alice', query: f.q,
+      body: { accountId: before.id, revision: before.revision, openingDate: '2026-02-01', maskedNumber: '7777', notes: 'Fictional note.', reason: 'Corrected details' },
+    })).account;
+    assert.deepEqual([edited.openingDate, edited.maskedNumber, edited.notes], ['2026-02-01', '7777', 'Fictional note.']);
+    const doc = await rawDoc(h, f.ws.id);
+    const stored = doc.accounts.find((a) => a.id === before.id);
+    const entry = stored.history.at(-1);
+    assert.deepEqual(entry.fields.sort(), ['maskedNumber', 'notes', 'openingDate']);
+    assert.deepEqual(entry.changes.find((c) => c.field === 'openingDate'), { field: 'openingDate', from: before.openingDate, to: '2026-02-01' });
+    assert.deepEqual(entry.changes.find((c) => c.field === 'maskedNumber'), { field: 'maskedNumber', from: '', to: '7777' });
+    assert.deepEqual(entry.changes.find((c) => c.field === 'notes'), { field: 'notes', from: '', to: 'Fictional note.' });
+    assert.equal(entry.reason, 'Corrected details');
+    assert.deepEqual(entry.before, { openingBalanceMinor: before.openingBalanceMinor, openingDate: before.openingDate });
+    assert.deepEqual(entry.after, { openingBalanceMinor: before.openingBalanceMinor, openingDate: '2026-02-01' });
+    assert.equal(doc.audit.at(-1).action, 'account.update');
+    assert.deepEqual(doc.audit.at(-1).fields.sort(), ['maskedNumber', 'notes', 'openingDate']);
+    const t = ok(await h.call('transactions', 'POST', { as: 'alice', query: f.q, body: { accountId: before.id, kind: 'expense', amount: '5.00' } }), 201).transactions[0];
+    ok(await h.call('transactions', 'PATCH', { as: 'alice', query: f.q, body: { transactionId: t.id, revision: 1, status: 'reconciled' } }));
+    const locked = (await accountsOf(h, f.q, 'alice')).find((a) => a.id === before.id);
+    assert.equal(locked.reconciledLocked, true, 'shown before Save, not only discovered by a failed one');
+    code(await h.call('accounts', 'PATCH', { as: 'alice', query: f.q, body: { accountId: before.id, revision: locked.revision, openingDate: '2020-01-01' } }), 409, 'reconciled_locked');
+  });
+
+  test('BT-006-06 credit terms are returned as decimal amounts alongside the minor units, ready to display and edit', async () => {
+    const h = harness();
+    const f = await household(h);
+    const card = (await accountsOf(h, f.q, 'bob')).find((a) => a.id === f.bobCard.id);
+    assert.deepEqual([card.terms.creditLimit, card.terms.creditLimitMinor], ['2000.00', 200000]);
+  });
 });
