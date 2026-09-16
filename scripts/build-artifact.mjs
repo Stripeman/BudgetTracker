@@ -4,6 +4,10 @@
 //
 //   node scripts/build-artifact.mjs            -> .local/artifact/site and .local/artifact/api
 //
+// NOT A DEPLOYMENT SCRIPT: this never calls Azure or the SWA CLI. scripts/deploy/engine.mjs runs
+// it as one gate among several, ships the result, then never reuses it as a shortcut anywhere
+// else (see docs/DEPLOYMENT.md, "Deployment path inventory"). Ship code only through .\deploy.ps1.
+//
 // The API gets production dependencies installed from its lockfile (npm ci --omit=dev) and never
 // includes tests. The site gets index.html, favicon, version.json, staticwebapp.config.json and
 // app/js + app/styles (never app/test). Output is under the ignored .local/ directory.

@@ -1,72 +1,69 @@
 <#
 .SYNOPSIS
-  Deploys BudgetTracker to an EXPLICIT environment of its own Static Web App.
+  Deploys BudgetTracker to an EXPLICIT environment of its own Static Web App. The ONE supported
+  entry point for shipping BudgetTracker code (BT-003-05).
 
 .DESCRIPTION
-  -Environment preview      the named preview environment "preview" (fictional data only).
-  -Environment production   REFUSED unless -AuthorizedProduction is passed, HEAD is on main and
-                            equal to origin/main with a clean tree, and the operator types the
-                            Static Web App name. Production needs Terry's explicit authorization
-                            for the exact commit.
+  This script is an INTERFACE over scripts/deploy/engine.mjs, not an implementation of it. Every
+  gating rule — clean-tree and branch checks, tenant verification, Azure resource and application
+  settings validation, the test/validate/build/secret-scan gates, the typed production
+  confirmation, the post-deploy health check and the deployment receipt — lives in the engine, so
+  this script and a direct `node scripts/deploy/engine.mjs ...` invocation enforce exactly the
+  same things. There is no flag anywhere in this repository that skips a gate: production readers
+  who need that assurance can read scripts/deploy/engine.mjs directly.
 
-  The deployment token is read from Azure at run time, held in memory only, never printed, logged
-  or stored. The artifact is built from an allowlist (scripts/build-artifact.mjs). Tests and the
-  validator must pass first. Deployment success is NOT application validation — verify separately.
+  -Environment preview      the named preview environment "preview" (fictional data only).
+  -Environment production   REFUSED unless -AuthorizedProduction is passed AND HEAD is on main,
+                             equal to origin/main, with a clean tree, AND the operator types the
+                             exact Static Web App name when prompted. Production needs Terry's
+                             own, current authorization for the exact commit — never inferred from
+                             this script having run before.
+
+  -SubscriptionId / -TenantId / -ResourceGroup / -SwaName are optional: when omitted, they are
+  read from the gitignored .local/deploy-target.json (subscriptionId, tenantId, resourceGroup,
+  swaName). Missing subscription/tenant configuration fails closed with a clear message; nothing
+  is ever inferred from ambient `az` context.
+
+  scripts/deploy/provision.ps1 (one-time infrastructure) and scripts/deploy/configure-settings.ps1
+  (application settings) are SEPARATE operator scripts, run rarely and by hand before this one
+  exists to deploy against a new environment — they are not alternate ways to deploy code, and
+  this script does not call them. scripts/recovery/*.ps1 and *.cjs are a different,
+  recovery-operator concern (see docs/RECOVERY_RUNBOOK.md); they never deploy code either.
+
+.EXAMPLE
+  .\deploy.ps1 -Environment preview
+
+.EXAMPLE
+  .\deploy.ps1 -Environment production -AuthorizedProduction
 #>
 [CmdletBinding()]
 param(
-  [Parameter(Mandatory)] [ValidatePattern('^[0-9a-f-]{36}$')] [string] $SubscriptionId,
-  [Parameter(Mandatory)] [ValidatePattern('^[0-9a-f-]{36}$')] [string] $TenantId,
   [Parameter(Mandatory)] [ValidateSet('preview', 'production')] [string] $Environment,
-  [string] $ResourceGroup = 'budget-tracker',
-  [string] $SwaName = 'budget-tracker',
+  [string] $SubscriptionId,
+  [string] $TenantId,
+  [string] $ResourceGroup,
+  [string] $SwaName,
   [switch] $AuthorizedProduction
 )
 $ErrorActionPreference = 'Stop'
 Set-Location (Resolve-Path "$PSScriptRoot/../..")
 
-$tenant = az account show --subscription $SubscriptionId --query tenantId -o tsv --only-show-errors
-if ($tenant -ne $TenantId) { throw 'Subscription is not in the selected tenant. Nothing was deployed.' }
-
-$commit = (git rev-parse HEAD).Trim()
-# Every deployment is tied to an exact commit: a dirty tree would publish something that is not
-# that commit (this happened once in preview on 2026-09-13 and is recorded in PROJECT_STATE.md).
-if (git status --porcelain --untracked-files=no) { throw 'Commit your changes first: deployments must come from a clean tree so the deployed artifact equals the recorded commit.' }
-if ($Environment -eq 'production') {
-  if (-not $AuthorizedProduction) { throw 'Production deployment requires Terry''s explicit authorization (-AuthorizedProduction).' }
-  if ((git branch --show-current).Trim() -ne 'main') { throw 'Production deploys only from main.' }
-  git fetch origin main --quiet
-  if ($commit -ne (git rev-parse origin/main).Trim()) { throw 'HEAD must equal origin/main.' }
-  if (git status --porcelain) { throw 'The working tree must be clean.' }
-  $typed = Read-Host "Type the Static Web App name ($SwaName) to deploy commit $($commit.Substring(0,7)) to PRODUCTION"
-  if ($typed -ne $SwaName) { throw 'Confirmation did not match. Nothing was deployed.' }
+$engine = Join-Path $PSScriptRoot 'engine.mjs'
+if (-not (Test-Path $engine)) {
+  Write-Error "The deployment engine is missing. Expected $engine. Is the repository complete?"
+  exit 1
+}
+if (-not (Get-Command node -ErrorAction SilentlyContinue)) {
+  Write-Error 'Node.js is not on PATH. The deployment engine runs on Node.'
+  exit 1
 }
 
-Write-Host "Gate: tests and validation"
-npm test | Out-Host
-if ($LASTEXITCODE -ne 0) { throw 'Tests failed. Nothing was deployed.' }
-npm run validate | Out-Host
-if ($LASTEXITCODE -ne 0) { throw 'Validation failed. Nothing was deployed.' }
+$engineArgs = @($engine, '--environment', $Environment)
+if ($SubscriptionId) { $engineArgs += @('--subscription-id', $SubscriptionId) }
+if ($TenantId) { $engineArgs += @('--tenant-id', $TenantId) }
+if ($ResourceGroup) { $engineArgs += @('--resource-group', $ResourceGroup) }
+if ($SwaName) { $engineArgs += @('--swa-name', $SwaName) }
+if ($AuthorizedProduction) { $engineArgs += '--authorized-production' }
 
-Write-Host "Build: allowlisted artifact"
-node scripts/build-artifact.mjs | Out-Host
-if ($LASTEXITCODE -ne 0) { throw 'Artifact build failed. Nothing was deployed.' }
-
-$token = az staticwebapp secrets list -n $SwaName -g $ResourceGroup --subscription $SubscriptionId --query 'properties.apiKey' -o tsv --only-show-errors
-if (-not $token) { throw 'Could not read the deployment token.' }
-$swaEnv = if ($Environment -eq 'production') { 'production' } else { 'preview' }
-Write-Host "Deploy: commit $($commit.Substring(0,7)) -> $SwaName ($swaEnv)"
-$env:SWA_CLI_DEPLOYMENT_TOKEN = $token
-try {
-  npx --no-install swa deploy .local/artifact/site --api-location .local/artifact/api --api-language node --api-version 22 --env $swaEnv --no-use-keychain | Out-Host
-  if ($LASTEXITCODE -ne 0) { throw 'Deployment command failed.' }
-} finally {
-  Remove-Item Env:SWA_CLI_DEPLOYMENT_TOKEN -ErrorAction SilentlyContinue
-  $token = $null
-}
-# Record the exact deployed commit (non-secret) so the running app reports it publicly through
-# /api/site-settings `app.commit` and the footer. Only after a successful deploy.
-$envArgs = if ($swaEnv -eq 'production') { @() } else { @('--environment-name', $swaEnv) }
-az staticwebapp appsettings set -n $SwaName -g $ResourceGroup --subscription $SubscriptionId @envArgs --setting-names "BT_COMMIT=$commit" --only-show-errors | Out-Null
-if ($LASTEXITCODE -ne 0) { Write-Warning 'Deployed, but BT_COMMIT could not be recorded; the app will report the previous commit.' }
-Write-Host "Deployed commit $commit to $swaEnv. Now verify the running application separately."
+& node @engineArgs
+exit $LASTEXITCODE

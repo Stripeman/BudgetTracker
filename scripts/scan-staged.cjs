@@ -184,4 +184,6 @@ function main() {
 }
 
 if (require.main === module) main();
-module.exports = { scanPath, scanContent, luhn, ibanValid };
+// gitleaksBinary is also used by scripts/deploy/engine.mjs (the deploy-time secret-scan gate),
+// so the deploy engine and the commit hook discover the same binary the same way.
+module.exports = { scanPath, scanContent, luhn, ibanValid, gitleaksBinary };

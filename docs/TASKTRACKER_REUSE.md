@@ -212,6 +212,25 @@ implementation time. Preserve Simple, Advanced and customizable toolbar groups: 
 never destroy content. BudgetTracker additionally requires server-side rich-text validation and
 sanitization; confirm what TaskTracker's security-and-paste reference covers before relying on it.
 
+## Deployment: thin interface over a shared engine — BT-003-05 (2026-09-16)
+
+Read-only via `git -C T:/repos/TaskTracker show main:<path>`. TaskTracker's `deploy.ps1` only
+parses arguments and, for production, collects the typed confirmation; every gating rule (gate
+ordering, environment resolution, secret handling, the health check, the receipt) lives in a Node
+engine under `scripts/deploy/engine/` (`cli.js`, `operations.js`, `environments.js`,
+`gateevidence.js`, and others), so `deploy.ps1` and a direct `node scripts/deploy/cli.js` call
+enforce identical rules. Adapted for BudgetTracker as `scripts/deploy/deploy.ps1` (thin wrapper,
+~70 lines) delegating to a single `scripts/deploy/engine.mjs` (not TaskTracker's multi-file
+`engine/` package — BudgetTracker's deployment surface is far smaller: one app, two environments,
+no CI deploy path, no Setup Wizard, no `--ci` mode). Deliberately NOT reused: TaskTracker's
+`--skip-tests`/`--skip-live-check` flags and its `--ci` token-authenticated mode (Terry's brief
+requires the complete gate on every deploy, with nothing to weaken it), and its guided browser
+Setup Wizard (out of scope). **Deliberately not copied** (see "Do not copy" below): TaskTracker's
+`deploy.ps1` currently suspends its own interactive production confirmation prompt "for the beta
+development phase" ("Interactive confirmation is suspended for the beta phase"); BudgetTracker's
+typed confirmation is never suspended. Full comparison and path inventory:
+`docs/DEPLOYMENT.md`, "Deployment path inventory and TaskTracker comparison".
+
 ## Other seams (re-verified against `T:` `main` `a1ec150` unless noted)
 
 | Area | Current source | Adaptation decision |
