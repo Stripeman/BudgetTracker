@@ -18,6 +18,7 @@
 // list, so the interface renders them all the same way. ADDING A SETTING is one entry here plus its
 // enforcement where the rule applies.
 const { badRequest, HttpError } = require('./http');
+const { REAL_LAYOUT_OPTIONS, REAL_DEFAULT_LAYOUT_ID } = require('./layouts');
 
 // The daily restore ceiling for members below manager (security review SEC-R2). A workspace may lower
 // it, never raise it: each merge or replace writes a full recovery point.
@@ -71,6 +72,19 @@ const SETTINGS = freezeAll({
     label: 'Changing a budget for periods that have finished',
     options: [opt('confirm', 'Allowed after a confirmation'), opt('never', 'Not allowed')],
     explanation: 'Whether a change to a budget’s plan may reach back into periods that have already finished. With “Allowed after a confirmation” the person changing it must tick a box to say it is intended; with “Not allowed” a change always starts in the current period or later, so finished periods keep the plan they had.',
+  },
+  // Layout theme (BT-013, Terry's 2026-09-16 design brief). The real, selectable mechanism for the
+  // "workspace Layout setting" the brief asks for: stable id (never a display name), owners/managers
+  // change it, audited with before/after like every other setting, returned in the workspace GET.
+  // Only one real option exists today — `classic`, the application's one existing implicit layout —
+  // because the 20 new concepts under review in the Design Gallery (site administrators only) are not
+  // yet selectable on any real workspace; Terry has not chosen which to keep. When he does, their ids
+  // join `options` here unchanged — no new mechanism, no migration of this setting's shape.
+  layoutId: {
+    group: 'Appearance', type: 'choice', default: REAL_DEFAULT_LAYOUT_ID, changedBy: 'manager',
+    label: 'Layout theme',
+    options: REAL_LAYOUT_OPTIONS.map((o) => opt(o.value, o.label)),
+    explanation: 'How this workspace’s pages are organised: navigation, density and dashboard composition. This never changes financial records, permissions, calculations or filters, and never changes anyone’s personal light/dark or colour-palette choice. Terry is reviewing 20 new layout concepts in the Design Gallery (site administrators only); once he chooses which to keep, they will appear here as options for every workspace.',
   },
   // (j) Bill defaults. Each bill's own reminder still wins; an entered date always wins.
   billReminderDays: {

@@ -29,6 +29,10 @@ const ROUTES = Object.freeze({
   roles: { methods: ['POST'], options: { anonymous: true, csrfExempt: true } },
   // Site usage/activity aggregate (BT-012-01): site administrators only, never financial data.
   analytics: { methods: ['GET'] },
+  // Design Gallery (BT-013): 20 layout-theme concepts for review, site administrators only. GET
+  // returns the manifests, catalog overrides and Terry's recorded picks; PATCH records a catalog
+  // change or a pick. Never financial data; never wired to a real workspace's data.
+  'design-gallery': { methods: ['GET', 'PATCH'] },
 });
 
 module.exports = { ROUTES };

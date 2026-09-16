@@ -26,6 +26,9 @@ const paths = Object.freeze({
   user: (subject) => `users/${userKey(subject)}.json`,
   site: () => 'site/settings.json',
   usage: () => 'site/usage.json',
+  // Design Gallery (BT-013): site-admin catalog overrides and Terry's recorded implementation
+  // picks. No financial data; never part of any workspace document.
+  gallery: () => 'site/gallery.json',
 });
 
 const IDEMPOTENCY_TTL_MS = 48 * 60 * 60 * 1000;
