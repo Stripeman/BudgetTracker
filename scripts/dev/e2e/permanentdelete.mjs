@@ -153,8 +153,14 @@ export async function run(h, t) {
   await b.carol.waitForText("Everything in this workspace will be permanently deleted:", { scope: MODAL });
   await b.carol.click({ role: "button", name: "Continue", scope: MODAL });
   await b.carol.waitForText("This cannot be undone.", { scope: MODAL });
-  await b.carol.waitForText("Continue without a backup", { scope: MODAL });
-  await b.carol.click({ role: "button", name: "Continue without a backup", scope: MODAL });
+  await b.carol.waitForText("Take a backup first", { scope: MODAL });
+  // Terry's own repro (2026-09-17): taking a backup writes its own audit entry into the workspace
+  // document, which used to leave the dialog holding a now-stale impact token — confirming after a
+  // backup always failed as stale and bounced the whole dialog back to its first step, forever.
+  // Exercising the backup path for real here is exactly what would have caught that.
+  await b.carol.click({ role: "button", name: "Take a backup first", scope: MODAL });
+  await b.carol.waitForText("Backup taken.", { scope: MODAL });
+  await b.carol.click({ role: "button", name: "Continue", scope: MODAL });
   // The workspace still has one surviving Shared expense (from step 3, deliberately left in place),
   // so the Shared-expenses download offer appears here too, exactly as it did for the single account.
   // Real-browser coverage of the other new binary format (PDF, BT-014-06): the same reasoning as

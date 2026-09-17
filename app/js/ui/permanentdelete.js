@@ -193,19 +193,27 @@ export function openDeleteDialog(ctx, {
       return;
     }
     if (impact.blocked) { mount(body, ...impactBody(impact)); renderFoot([]); return; }
-    const toConfirm = () => {
-      if (impact.groupInvolved && wsIdForExport) {
-        const offer = offerGroupDownload(ctx, modal, wsIdForExport, () => showConfirmStep(impact));
-        mount(body, ...impactBody(impact), offer);
+    // Accepts an optional fresher impact (bug fix, 2026-09-17): an extraStep can itself change the
+    // workspace document before the user reaches confirmation — taking a backup writes its own
+    // audit entry into the workspace doc (api/backups/handler.js), which bumps doc.revision and
+    // makes the impact token fetched before it stale. Without re-fetching, confirming would always
+    // fail with delete_impact_stale, and its recovery path (loadAndShowStep1) sends the user all
+    // the way back to the start, re-showing this same extraStep — an infinite loop for anyone who
+    // takes a backup first. extraStep now gets `refreshImpact` to re-fetch and pass the current
+    // impact into toConfirm explicitly, so the token it confirms with always matches.
+    const toConfirm = (current = impact) => {
+      if (current.groupInvolved && wsIdForExport) {
+        const offer = offerGroupDownload(ctx, modal, wsIdForExport, () => showConfirmStep(current));
+        mount(body, ...impactBody(current), offer);
         renderFoot([]);
         const first = offer.querySelector("button");
         if (first) first.focus();
         return;
       }
-      showConfirmStep(impact);
+      showConfirmStep(current);
     };
     if (extraStep) {
-      extraStep(impact, { setBody: (nodes) => mount(body, ...nodes), setFoot: renderFoot, toConfirm });
+      extraStep(impact, { setBody: (nodes) => mount(body, ...nodes), setFoot: renderFoot, toConfirm, refreshImpact: fetchImpact });
       return;
     }
     toConfirm();
@@ -278,7 +286,7 @@ export function openWorkspacePermanentDeleteDialog(ctx, { wsId, onDeleted = () =
       if (!out.ok) throw out.error;
     },
     wsIdForExport: wsId,
-    extraStep: (impact, { setBody, setFoot, toConfirm }) => {
+    extraStep: (impact, { setBody, setFoot, toConfirm, refreshImpact }) => {
       const status = el("p", { class: "muted small", role: "status" });
       const warning = () => el("div", { class: "state state--error permdelete-warning", role: "alert" }, [
         el("strong", { text: "This cannot be undone." }),
@@ -286,15 +294,24 @@ export function openWorkspacePermanentDeleteDialog(ctx, { wsId, onDeleted = () =
         el("p", { text: "If you have not backed it up, you can take a restorable encrypted backup first." }),
       ]);
       const render = () => setBody([warning(), ...impactBody(impact), status]);
+      // Bug fix (2026-09-17): taking a backup writes its own audit entry into the workspace
+      // document, which changes what "the impact reviewed" was computed against — re-fetch it
+      // fresh before confirming, or the server correctly (but unhelpfully, from the user's side)
+      // refuses as stale every time, bouncing the whole dialog back to its very first step. This
+      // was previously confirmed with the impact captured before the backup — always stale.
       const backupNow = async () => {
         status.textContent = "Taking a backup…";
         render();
         try {
           await ctx.api.createBackup(wsId);
+          status.textContent = "Backup taken. Reviewing what this would affect once more before you confirm…";
+          render();
+          const fresh = await refreshImpact();
+          if (fresh.blocked) { setBody(impactBody(fresh)); setFoot([]); return; }
           status.textContent = "Backup taken. You can restore it later from Workspace → Backups, as long as you still have access to a workspace to restore into.";
           announce("Backup taken.");
-          render();
-          setFoot([button("Continue", () => toConfirm(), { variant: "danger" })]);
+          setBody([warning(), ...impactBody(fresh), status]);
+          setFoot([button("Continue", () => toConfirm(fresh), { variant: "danger" })]);
         } catch (err) {
           status.textContent = "";
           setBody([warning(), ...impactBody(impact), el("p", { class: "state state--error", role: "alert", text: `The backup could not be taken. ${messageFor(err)} You can try again, or continue without one.` })]);
