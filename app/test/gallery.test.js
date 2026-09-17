@@ -179,7 +179,7 @@ function boot(store, routeId = "dashboard") {
   dom.body.appendChild(mountPoint);
   const shell = createShell({ mountPoint, store, router, theme, api: { designGallery: async () => FIXTURE } });
   shell.render();
-  return { mountPoint, header: mountPoint.querySelector(".app__header"), nav: mountPoint.querySelector(".app__nav") };
+  return { mountPoint, header: mountPoint.querySelector(".app__header"), nav: mountPoint.querySelector(".app__nav"), subnav: mountPoint.querySelector(".app__nav--sub") };
 }
 
 describe("BT-013 the nav entry: site administrators only", () => {
@@ -190,19 +190,21 @@ describe("BT-013 the nav entry: site administrators only", () => {
     assert.ok(!links.includes("Design Gallery"), links.join(", "));
   });
 
-  test("'Design Gallery' appears in the nav for a site administrator, and links to #/gallery", () => {
+  test("'Site Settings' appears in the main nav for a site administrator, and 'Design Gallery' appears in its own sub-tab row, linking to #/gallery", () => {
     const store = recordingStore({ auth: { status: "ready", user: { name: "Dave Siteadmin", siteAdmin: true } } });
-    const { nav } = boot(store);
-    const link = [...nav.querySelectorAll("a")].find((a) => a.textContent === "Design Gallery");
-    assert.ok(link, "Design Gallery link is present");
+    const { nav, subnav } = boot(store, "gallery");
+    assert.ok([...nav.querySelectorAll("a")].some((a) => a.textContent === "Site Settings"), "Site Settings entry is present in the main nav");
+    const link = [...subnav.querySelectorAll("a")].find((a) => a.textContent === "Design Gallery");
+    assert.ok(link, "Design Gallery sub-tab is present");
     assert.equal(link.getAttribute("href"), "#/gallery");
   });
 
   test("a non-admin who opens #/gallery directly gets no content and no nav entry, not a crash", () => {
     const store = recordingStore();
-    const { mountPoint, nav } = boot(store, "gallery");
+    const { mountPoint, nav, subnav } = boot(store, "gallery");
     const links = [...nav.querySelectorAll("a")].map((a) => a.textContent);
-    assert.ok(!links.includes("Design Gallery"));
+    assert.ok(!links.includes("Site Settings"));
+    assert.equal(subnav.hidden, true, "the site-admin sub-tab row never shows for a non-admin");
     assert.match(mountPoint.querySelector("main").textContent, /only shown to site administrators/);
   });
 

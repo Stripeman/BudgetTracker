@@ -70,9 +70,16 @@ const SHARED_EXPENSES_OFF = {
   },
 };
 
+// Usage (BT-012-01), Design Gallery (BT-013) and the Workspaces directory (BT-014-03/04): not
+// workspace sections, so navRoutes() leaves them out of the main nav (like "join"). Terry, 2026-09-17:
+// grouped under one "Site Settings" entry with its own sub-tab row, instead of three flat top-level
+// items — the three routes, views, tests and URLs are unchanged; only how they are reached changed.
+const SITE_ADMIN_ROUTE_IDS = Object.freeze(new Set(["analytics", "gallery", "admin-workspaces"]));
+
 export function createShell({ mountPoint, store, router, theme, api }) {
   const header = el("header", { class: "app__header" });
   const nav = el("nav", { class: "app__nav", "aria-label": "Sections" });
+  const siteAdminNav = el("nav", { class: "app__nav app__nav--sub", "aria-label": "Site administration" });
   const main = el("main", { class: "app__main", id: "main", tabindex: "-1" });
   const footer = el("footer", { class: "app__footer" });
   let view = null;
@@ -250,14 +257,24 @@ export function createShell({ mountPoint, store, router, theme, api }) {
     const ws = state.workspaces.find((w) => w.id === state.selectedWorkspaceId);
     const items = navRoutes(ws || null, state.site).map((r) => navLink(r, route.id));
     if (state.auth.user && state.auth.user.siteAdmin) {
-      // Usage (BT-012-01), Design Gallery (BT-013) and the Workspaces directory (BT-014-03/04) are
-      // site-admin-only surfaces, not workspace sections, so navRoutes() leaves them out (like
-      // "join"); they are added here only for a signed-in site administrator.
-      items.push(navLink(ROUTES.find((r) => r.id === "analytics"), route.id));
-      items.push(navLink(ROUTES.find((r) => r.id === "gallery"), route.id));
-      items.push(navLink(ROUTES.find((r) => r.id === "admin-workspaces"), route.id));
+      // One "Site Settings" entry stands in for all three site-admin routes; it reads as current
+      // (aria-current=page) for any of them, and always lands on Workspaces (the first sub-tab).
+      const landing = ROUTES.find((r) => r.id === "admin-workspaces");
+      items.push(el("a", { href: `#${landing.path}`, "aria-current": SITE_ADMIN_ROUTE_IDS.has(route.id) ? "page" : null }, [withIcon("shield", "Site Settings")]));
     }
     mount(nav, ...items);
+  }
+
+  // The three site-admin pages' own sub-tab row (Workspaces, Design Gallery, Usage), shown only for
+  // a site administrator, only while one of them is the current route — never for anyone else, even
+  // one who opens the URL directly (each page's own view still refuses them independently either
+  // way; this only stops the row itself from appearing). Each is still its own real
+  // route/URL/view/test — grouping them under "Site Settings" changed only how they are reached.
+  function renderSiteAdminNav(route, state) {
+    const show = !!(state.auth.user && state.auth.user.siteAdmin) && SITE_ADMIN_ROUTE_IDS.has(route.id);
+    siteAdminNav.hidden = !show;
+    if (!show) { mount(siteAdminNav); return; }
+    mount(siteAdminNav, ...["admin-workspaces", "gallery", "analytics"].map((id) => navLink(ROUTES.find((r) => r.id === id), route.id)));
   }
 
   function renderFooter(state) {
@@ -310,20 +327,21 @@ export function createShell({ mountPoint, store, router, theme, api }) {
       document.title = "BudgetTracker — sign in"; return;
     }
     landingEl = null;
-    if (!mountPoint.contains(main)) mount(mountPoint, header, nav, main, footer);
+    if (!mountPoint.contains(main)) mount(mountPoint, header, nav, siteAdminNav, main, footer);
     renderHeader(state);
     renderFooter(state);
     // Without a workspace there are no sections to navigate, so the nav is hidden (UX-011). My
     // settings stays reachable from the account menu: personal preferences, and for a site
-    // administrator the icon catalogue (BT-011-05), need no workspace. Usage (BT-012-01) and the
-    // Design Gallery (BT-013) are the same: both are about the whole site, not any one workspace.
-    const onboarding = !openWorkspaces(state).length && route.id !== "join" && route.id !== "settings" && route.id !== "analytics" && route.id !== "gallery" && route.id !== "admin-workspaces";
-    nav.hidden = onboarding || (!openWorkspaces(state).length && (route.id === "settings" || route.id === "analytics" || route.id === "gallery" || route.id === "admin-workspaces"));
+    // administrator the icon catalogue (BT-011-05), need no workspace. Usage, Design Gallery and the
+    // Workspaces directory are the same: all three are about the whole site, not any one workspace.
+    const onboarding = !openWorkspaces(state).length && route.id !== "join" && route.id !== "settings" && !SITE_ADMIN_ROUTE_IDS.has(route.id);
+    nav.hidden = onboarding || (!openWorkspaces(state).length && (route.id === "settings" || SITE_ADMIN_ROUTE_IDS.has(route.id)));
     if (onboarding) {
       if (viewKey !== "onboarding") { viewKey = "onboarding"; view = createOnboarding(ctx()); mount(main, view.element); document.title = "Create a workspace · BudgetTracker"; }
       return;
     }
     renderNav(route, state);
+    renderSiteAdminNav(route, state);
     renderView(state, route);
   }
 
