@@ -26,7 +26,7 @@ test('card purchase is spending; paying the card is a transfer, not spending aga
   assert.deepEqual(pay.body.transactions.map((t) => t.amount), ['-120.00', '120.00']);
   assert.deepEqual(await balances(h, f.q), { Checking: '1380.00', Card: '0.00', 'Travel Yen': '0' });
   const summary = (await h.call('transactions', 'GET', { as: 'alice', query: f.q })).body.summary;
-  assert.deepEqual(summary, [{ currency: 'EUR', count: 1, gross: '120.00', refunds: '0.00', net: '120.00', income: '0.00', adjustments: '0.00', advances: '0.00', reimbursements: '0.00', payables: '0.00', repayments: '0.00', receivable: '0.00' }]);
+  assert.deepEqual(summary, [{ currency: 'EUR', count: 1, gross: '120.00', refunds: '0.00', net: '120.00', income: '0.00', adjustments: '0.00', advances: '0.00', reimbursements: '0.00', payables: '0.00', repayments: '0.00', receivable: '0.00', byCategory: [{ categoryId: 'uncategorized', amount: '120.00' }] }]);
 });
 
 test('cross-currency transfer keeps rate context and exact converted amount', async () => {
@@ -54,6 +54,25 @@ test('splits must sum exactly to the amount', async () => {
   assert.deepEqual(good.body.transactions[0].splits.map((s) => s.amount), ['-30.00', '-20.00']);
   const filtered = (await h.call('transactions', 'GET', { as: 'alice', query: { ...f.q, categoryId: home } })).body.total;
   assert.equal(filtered, 1, 'category filter matches split lines');
+});
+
+test('spending-by-category summary (Dashboard, BT-014-14): a split entry breaks down by its own lines, an unsplit entry by its whole amount', async () => {
+  const h = harness();
+  const f = await personal(h);
+  const cats = (await h.call('categories', 'GET', { as: 'alice', query: f.q })).body.categories;
+  const groceries = cats.find((c) => c.name === 'Groceries').id;
+  const home = cats.find((c) => c.name === 'Housing').id;
+  const dining = cats.find((c) => c.name === 'Dining').id;
+  await h.call('transactions', 'POST', { as: 'alice', query: f.q, body: { accountId: f.checking.id, kind: 'expense', amount: '50.00', splits: [{ categoryId: groceries, amount: '30.00' }, { categoryId: home, amount: '20.00' }] } });
+  await h.call('transactions', 'POST', { as: 'alice', query: f.q, body: { accountId: f.checking.id, kind: 'expense', amount: '15.00', categoryId: dining } });
+  // A second Groceries entry proves the same category accumulates across separate entries and splits.
+  await h.call('transactions', 'POST', { as: 'alice', query: f.q, body: { accountId: f.checking.id, kind: 'expense', amount: '10.00', categoryId: groceries } });
+  const summary = (await h.call('transactions', 'GET', { as: 'alice', query: f.q })).body.summary.find((s) => s.currency === 'EUR');
+  const byId = Object.fromEntries(summary.byCategory.map((c) => [c.categoryId, c.amount]));
+  assert.deepEqual(byId, { [groceries]: '40.00', [home]: '20.00', [dining]: '15.00' });
+  // A category filter narrows byCategory to just that category, same as it already narrows gross.
+  const filteredSummary = (await h.call('transactions', 'GET', { as: 'alice', query: { ...f.q, categoryId: home } })).body.summary.find((s) => s.currency === 'EUR');
+  assert.deepEqual(filteredSummary.byCategory, [{ categoryId: home, amount: '20.00' }]);
 });
 
 test('a repeated Idempotency-Key creates exactly one entry', async () => {

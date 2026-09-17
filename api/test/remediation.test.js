@@ -69,7 +69,7 @@ describe('financial review remediation', () => {
       currency: 'EUR', count: 3, gross: '0.00', refunds: '0.00', net: '0.00', income: '0.00',
       adjustments: '-3.00', advances: '225.00', reimbursements: '225.00',
       // Nothing owed to others or repaid to them; lent 225.00 − repaid 225.00 = nothing outstanding (BT-009).
-      payables: '0.00', repayments: '0.00', receivable: '0.00',
+      payables: '0.00', repayments: '0.00', receivable: '0.00', byCategory: [],
     }]);
     // 1500.00 - 225.00 + 225.00 - 3.00 = 1497.00
     assert.equal((await balances(h, f.q)).Checking, '1497.00');

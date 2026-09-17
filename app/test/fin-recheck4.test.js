@@ -160,7 +160,7 @@ function dashboardCtx({ myLedgers = [] } = {}) {
     transactions: { workspaceId: "ws_1", status: "ready", error: null, data: { transactions: [], summary: [], total: 0 } },
     payees: { workspaceId: "ws_1", status: "ready", error: null, data: { payees: [] } },
   };
-  const store = { getState: () => state, actions: { refreshTransactions: async () => {}, refreshBills: async () => {}, refreshForecast: async () => {}, refreshGroup: async () => {} } };
+  const store = { getState: () => state, actions: { refreshTransactions: async () => {}, refreshBills: async () => {}, refreshForecast: async () => {}, refreshGroup: async () => {}, refreshWeekActivity: async () => {}, refreshMonthActivity: async () => {} } };
   return { ctx: { store, api: {}, state }, state };
 }
 

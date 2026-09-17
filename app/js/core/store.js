@@ -28,7 +28,7 @@ export function initialState() {
     workspaces: [], selectedWorkspaceId: null,
     accounts: emptySlice(null), transactions: emptySlice(null), payees: emptySlice(null),
     categories: emptySlice(null), members: emptySlice(null), bills: emptySlice(null),
-    budgets: emptySlice(null), forecast: emptySlice(null), icons: emptySlice(null), group: emptySlice(null),
+    budgets: emptySlice(null), forecast: emptySlice(null), icons: emptySlice(null), group: emptySlice(null), monthActivity: emptySlice(null), weekActivity: emptySlice(null),
   };
 }
 
@@ -93,7 +93,7 @@ export function createStore({ api }) {
       commit({
         selectedWorkspaceId: id,
         accounts: emptySlice(id), transactions: emptySlice(id), payees: emptySlice(id), categories: emptySlice(id), members: emptySlice(id), bills: emptySlice(id),
-        budgets: emptySlice(id), forecast: emptySlice(id), icons: emptySlice(id), group: emptySlice(id),
+        budgets: emptySlice(id), forecast: emptySlice(id), icons: emptySlice(id), group: emptySlice(id), monthActivity: emptySlice(id), weekActivity: emptySlice(id),
       });
       await Promise.all([actions.refreshAccounts(), actions.refreshCategories(), actions.refreshPayees(), actions.refreshMembers(), actions.refreshIcons()]);
     },
@@ -111,6 +111,14 @@ export function createStore({ api }) {
       return res;
     }),
     refreshTransactions: (filters = {}) => loadSlice("transactions", (id) => api.transactions(id, filters)),
+    // Two separate slices from `transactions` above and from each other (Dashboard, BT-014-14):
+    // "Recent entries" needs the true most-recent entries regardless of date (`limit`, no date
+    // filter); the weekly income/expense recap needs this week's own date-ranged summary; the
+    // spending-by-category donut needs this month's own (a shorter week range would make the
+    // breakdown mostly empty). Sharing one slice would make whichever refresh ran last silently
+    // overwrite an earlier one's filtered results.
+    refreshWeekActivity: (filters = {}) => loadSlice("weekActivity", (id) => api.transactions(id, filters)),
+    refreshMonthActivity: (filters = {}) => loadSlice("monthActivity", (id) => api.transactions(id, filters)),
     refreshBills: () => loadSlice("bills", (id) => api.bills(id)),
     refreshBudgets: () => loadSlice("budgets", (id) => api.budgets(id)),
     // Shared expenses and settlement (BT-009): expenses, payments and derived balances.
@@ -156,7 +164,7 @@ export function createStore({ api }) {
           commit({
             workspaces: list.workspaces, selectedWorkspaceId: nextId,
             accounts: emptySlice(nextId), transactions: emptySlice(nextId), payees: emptySlice(nextId), categories: emptySlice(nextId), members: emptySlice(nextId), bills: emptySlice(nextId),
-            budgets: emptySlice(nextId), forecast: emptySlice(nextId), icons: emptySlice(nextId), group: emptySlice(nextId),
+            budgets: emptySlice(nextId), forecast: emptySlice(nextId), icons: emptySlice(nextId), group: emptySlice(nextId), monthActivity: emptySlice(nextId), weekActivity: emptySlice(nextId),
           });
           if (nextId) await Promise.all([actions.refreshAccounts(), actions.refreshCategories(), actions.refreshPayees(), actions.refreshMembers(), actions.refreshIcons()]);
         } else {
@@ -186,7 +194,7 @@ export function createStore({ api }) {
           commit({
             workspaces: list.workspaces, selectedWorkspaceId: nextId,
             accounts: emptySlice(nextId), transactions: emptySlice(nextId), payees: emptySlice(nextId), categories: emptySlice(nextId), members: emptySlice(nextId), bills: emptySlice(nextId),
-            budgets: emptySlice(nextId), forecast: emptySlice(nextId), icons: emptySlice(nextId), group: emptySlice(nextId),
+            budgets: emptySlice(nextId), forecast: emptySlice(nextId), icons: emptySlice(nextId), group: emptySlice(nextId), monthActivity: emptySlice(nextId), weekActivity: emptySlice(nextId),
           });
           if (nextId) await Promise.all([actions.refreshAccounts(), actions.refreshCategories(), actions.refreshPayees(), actions.refreshMembers(), actions.refreshIcons()]);
         } else {
