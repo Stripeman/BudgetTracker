@@ -24,6 +24,12 @@
   swaName). Missing subscription/tenant configuration fails closed with a clear message; nothing
   is ever inferred from ambient `az` context.
 
+  -Confirm <name> answers the Production step's own typed-name prompt non-interactively (Terry,
+  2026-09-17: this session runs non-interactively, with no real stdin to answer an interactive
+  prompt with). It changes nothing about what is required: -AuthorizedProduction is still
+  mandatory, the value must still match the target Static Web App's exact name, and a mismatch
+  still fails closed with nothing deployed. Omit it to be asked interactively as before.
+
   scripts/deploy/provision.ps1 (one-time infrastructure) and scripts/deploy/configure-settings.ps1
   (application settings) are SEPARATE operator scripts, run rarely and by hand before this one
   exists to deploy against a new environment — they are not alternate ways to deploy code, and
@@ -43,7 +49,8 @@ param(
   [string] $TenantId,
   [string] $ResourceGroup,
   [string] $SwaName,
-  [switch] $AuthorizedProduction
+  [switch] $AuthorizedProduction,
+  [string] $Confirm
 )
 $ErrorActionPreference = 'Stop'
 Set-Location (Resolve-Path "$PSScriptRoot/../..")
@@ -64,6 +71,7 @@ if ($TenantId) { $engineArgs += @('--tenant-id', $TenantId) }
 if ($ResourceGroup) { $engineArgs += @('--resource-group', $ResourceGroup) }
 if ($SwaName) { $engineArgs += @('--swa-name', $SwaName) }
 if ($AuthorizedProduction) { $engineArgs += '--authorized-production' }
+if ($Confirm) { $engineArgs += @('--confirm', $Confirm) }
 
 & node @engineArgs
 exit $LASTEXITCODE
