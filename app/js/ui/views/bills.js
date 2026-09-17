@@ -9,12 +9,14 @@ import { stateView, money, button, field, input, pickerSelect, categoryBadges, i
 import { openModal } from "../modal.js";
 import { openDeleteDialog } from "../permanentdelete.js";
 import { createMerchantPicker } from "../merchantpicker.js";
+import { quickAddAccountForm } from "./accounts.js";
 import { choosableMerchants, canAddEntries, addEntriesBlocked } from "./transactions.js";
 import { sliceFor } from "../../core/store.js";
 import { newIdempotencyKey } from "../../core/api.js";
 import { formatDate, formatAmount, todayIso, BILL_TYPE_LABELS } from "../../core/format.js";
 import { icon, withIcon, defaultIconFor, iconLabel } from "../icons.js";
 import { createIconPicker, iconChange } from "../iconpicker.js";
+import { pickerOf } from "../selectpicker.js";
 
 const PRESETS = [
   { value: "weekly", label: "Weekly", freq: "weekly", interval: 1 },
@@ -440,8 +442,12 @@ export function openBillEditor(ctx, bill = null) {
   const direction = pickerSelect(DIRECTIONS, b.kind === "transfer" ? "transfer" : b.kind === "income" ? "income" : defaultDirection(b.billType || "housing"), { disabled: editing }, { search: false });
   const accountMarks = iconBadges(allAccounts);
   // Natural empty-field text, not the label-built "Choose to account…" (UX review U6).
-  const account = pickerSelect(accounts.map((a) => ({ value: a.id, label: `${a.name} (${a.currency})` })), b.accountId || (accounts[0] || {}).id, { disabled: editing }, { badgeOf: accountMarks, placeholder: "Choose an account…" });
-  const toAccount = pickerSelect(accounts.map((a) => ({ value: a.id, label: `${a.name} (${a.currency})` })), b.toAccountId || "", { disabled: editing }, { badgeOf: accountMarks, placeholder: "Choose an account…" });
+  // "+ New account" (BT-014-09, Terry, 2026-09-17), the same pinned create action the workspace
+  // picker already offers (app/js/ui/workspacepicker.js) — only on a NEW bill (an existing bill's
+  // account is locked; nothing here is relevant to change on an edit). Wired below, once the modal
+  // and its swappable body exist.
+  const account = pickerSelect(accounts.map((a) => ({ value: a.id, label: `${a.name} (${a.currency})` })), b.accountId || (accounts[0] || {}).id, { disabled: editing }, { badgeOf: accountMarks, placeholder: "Choose an account…", create: editing ? null : { label: "New account", onPick: (term) => startQuickAddAccount(term, account) } });
+  const toAccount = pickerSelect(accounts.map((a) => ({ value: a.id, label: `${a.name} (${a.currency})` })), b.toAccountId || "", { disabled: editing }, { badgeOf: accountMarks, placeholder: "Choose an account…", create: editing ? null : { label: "New account", onPick: (term) => startQuickAddAccount(term, toAccount) } });
   const amount = input({ inputmode: "decimal", autocomplete: "off" });
   amount.value = b.amount || "";
   const amountType = pickerSelect([{ value: "fixed", label: "Always the same" }, { value: "variable", label: "Varies (estimate)" }], b.amountType || "fixed", {}, { search: false });
@@ -514,7 +520,43 @@ export function openBillEditor(ctx, bill = null) {
   // The footer button belongs to the form, so Enter in a field submits it (UX2-006).
   const save = el("button", { type: "submit", class: "btn btn--primary", text: editing ? "Save changes" : "Add bill", form: `bill-form-${key}` });
   const cancel = button("Cancel", () => modal.close());
-  const modal = openModal({ title: editing ? `Edit ${b.name}` : "Add bill", body: [form], actions: [cancel, save] });
+  // A single wrapper so "+ New account" can swap the bill form out for a moment without losing
+  // anything already typed (BT-014-09) — the form node itself is only detached, never discarded,
+  // so every field's value survives the round trip. Focus is moved explicitly on every swap
+  // (never left implicit — the exact bug class found and fixed in permanentdelete.js's own
+  // sub-steps this same session): into the quick-add form's Name field when it appears, back to
+  // the account picker's trigger when the bill form returns, after modal.setBusy(false) (whose own
+  // stale-focus restore would otherwise try to refocus the "+ New account" button, which is gone
+  // once its picker panel closes).
+  const bodyBox = el("div", {}, [form]);
+  const modal = openModal({ title: editing ? `Edit ${b.name}` : "Add bill", body: [bodyBox], actions: [cancel, save] });
+  function startQuickAddAccount(term, targetSelect) {
+    modal.setError("");
+    modal.setBusy(true);
+    const returnFocus = () => { const p = pickerOf(targetSelect); (p ? p.trigger : targetSelect).focus(); };
+    const quickForm = quickAddAccountForm(ctx, {
+      name: term || "",
+      onCreated: (created) => {
+        allAccounts.push(created);
+        accounts.push(created);
+        // accountMarks (its icon badge) was captured once at modal-open time, so the new account's
+        // option shows no icon until this bill editor is reopened — cosmetic only, not worth a
+        // second badge-lookup indirection for a just-created, empty account.
+        for (const sel of [account, toAccount]) {
+          sel.appendChild(el("option", { value: created.id, text: `${created.name} (${created.currency})` }));
+        }
+        targetSelect.value = created.id;
+        targetSelect.dispatchEvent(new Event("change", { bubbles: true }));
+        mount(bodyBox, form);
+        modal.setBusy(false);
+        returnFocus();
+      },
+      onCancel: () => { mount(bodyBox, form); modal.setBusy(false); returnFocus(); },
+    });
+    mount(bodyBox, quickForm);
+    const nameInput = quickForm.querySelector("input");
+    if (nameInput) nameInput.focus();
+  }
   save.addEventListener("click", (e) => { e.preventDefault(); void submit(); });
   form.addEventListener("submit", (e) => { e.preventDefault(); void submit(); });
 

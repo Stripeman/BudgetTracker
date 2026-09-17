@@ -52,8 +52,14 @@ function billsCtx() {
     createBill: async (ws, body) => { calls.created.push(body); return {}; },
     billDraft: async () => ({ draft: { amountIsEstimate: false, amount: "950.00", date: "2026-09-01", categoryId: null, payeeId: null, payeeName: null, currency: "EUR", overdue: true } }),
     billAction: async (ws, action, body) => { calls.recorded.push({ action, body }); return {}; },
+    createAccount: async (ws, body) => {
+      calls.accountsCreated = calls.accountsCreated || [];
+      calls.accountsCreated.push(body);
+      const account = { id: "acc_new", name: body.name, type: body.type, currency: body.currency, visibility: body.visibility, access: "own", status: "open", capabilities: ["create"], icon: null };
+      return { account };
+    },
   };
-  const store = { getState: () => state, actions: { write: async (fn) => { await fn("ws_1"); return { ok: true }; }, refreshBills: async () => {} } };
+  const store = { getState: () => state, actions: { write: async (fn, refresh) => { const result = await fn("ws_1"); if (refresh && refresh.includes("accounts")) state.accounts = ready({ accounts: [...state.accounts.data.accounts] }); return { ok: true, result }; }, refreshBills: async () => {} } };
   return { ctx: { store, api }, state, calls };
 }
 
@@ -148,5 +154,57 @@ describe("BT-004-05 bills: review and record", () => {
     assert.equal(calls.recorded.length, 1);
     assert.equal(calls.recorded[0].action, "record");
     assert.deepEqual({ status: calls.recorded[0].body.status, categoryId: calls.recorded[0].body.categoryId }, { status: "cleared", categoryId: "cat_home" });
+  });
+});
+
+const panel = () => dom.body.querySelector(".cmdpick__panel");
+
+describe("BT-014-09 + New account, from the bill editor's Account picker", () => {
+  test("is pinned in the Account picker on a new bill, swaps the form in place without losing what was already typed, and selects the new account once created", async () => {
+    const { ctx, calls } = billsCtx();
+    openBillEditor(ctx);
+    const root = dom.body.querySelector(".modal");
+    // Something already typed elsewhere in the bill, to prove it survives the round trip.
+    root.querySelector("form").querySelector("input").value = "Fictional gym";
+    const accountSelect = pickerNamed(root, "Account");
+    triggerFor(accountSelect).click();
+    const createButton = panel().querySelector(".cmdpick__create");
+    assert.equal(createButton.querySelector(".cmdpick__createlabel").textContent, "New account");
+    createButton.click();
+    assert.equal(dom.body.querySelectorAll(".modal").length, 1, "still one dialog, not a second stacked one");
+    assert.ok(root.querySelector("form") == null, "the bill form is swapped out while adding an account");
+    const nameField = root.querySelectorAll("input")[0];
+    nameField.value = "Fictional new wallet";
+    const typeSelect = root.querySelectorAll("select").find((s) => s.querySelectorAll("option").some((o) => o.textContent === "Cash"));
+    typeSelect.value = "cash";
+    buttonNamed(root, "Create account").click();
+    await tick();
+    await tick();
+    assert.equal(calls.accountsCreated.length, 1);
+    assert.equal(calls.accountsCreated[0].name, "Fictional new wallet");
+    assert.equal(calls.accountsCreated[0].type, "cash");
+    // The bill form is back, with the earlier name still there, and the new account selected.
+    assert.equal(root.querySelector("form").querySelector("input").value, "Fictional gym");
+    assert.equal(pickerNamed(root, "Account").value, "acc_new");
+  });
+
+  test("cancelling the quick-add restores the bill form untouched, and nothing was created", () => {
+    const { ctx, calls } = billsCtx();
+    openBillEditor(ctx);
+    const root = dom.body.querySelector(".modal");
+    const accountSelect = pickerNamed(root, "Account");
+    triggerFor(accountSelect).click();
+    panel().querySelector(".cmdpick__create").click();
+    buttonNamed(root, "Cancel").click();
+    assert.ok(root.querySelector("form"), "the bill form is back");
+    assert.equal(pickerNamed(root, "Account").value, "acc_joint", "unchanged");
+    assert.equal(calls.accountsCreated, undefined);
+  });
+
+  test("is not reachable when editing an existing bill (its account picker is disabled)", () => {
+    const { ctx } = billsCtx();
+    openBillEditor(ctx, RENT);
+    const root = dom.body.querySelector(".modal");
+    assert.equal(triggerFor(pickerNamed(root, "Account")).disabled, true);
   });
 });

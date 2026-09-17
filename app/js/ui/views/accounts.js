@@ -20,8 +20,9 @@ const GRANTABLE = [["view-balances", "See balance"], ["view-transactions", "See 
 const CREDIT_TERM_TYPES = new Set(["credit-card", "merchant-credit"]);
 const LOAN_TERM_TYPES = new Set(["loan", "mortgage", "other-liability"]);
 
-// Type and currency cannot be changed once an account exists (BT-006): every entry, category rule
-// and, for loans/credit cards, the terms above assume them. Shown read-only with this explanation.
+// Type and currency may still be fixed while nothing has been recorded against the account yet
+// (BT-014-08); once anything is, every entry, category rule and, for loans/credit cards, the terms
+// below assume them, so they lock — shown read-only with this explanation.
 const TYPE_CURRENCY_LOCKED = "This account already has activity recorded against it (an entry, a bill, a grant or a Shared-expenses link), so type and currency are locked — every entry and rule on it depends on them.";
 const TYPE_CURRENCY_EDITABLE = "Nothing has been recorded against this account yet, so its type and currency can still be fixed if you picked the wrong one. Once anything is recorded, they lock.";
 const OPENING_LOCKED = "This account has reconciled entries, so this is locked to keep reconciled statements correct.";
@@ -479,6 +480,53 @@ function openAddAccount(ctx) {
     ])],
     actions: [button("Cancel", () => modal.close()), save],
   });
+}
+
+// A minimal, self-contained "quick add account" form (BT-014-09, Terry, 2026-09-17: "I should be
+// able to add an account from the add bill modal > Account, same same type and features that drop
+// down as when I select workspaces") — the same "+ New X" pinned action already used by the
+// workspace picker (`enhanceSelect`'s `create` option, `app/js/ui/selectpicker.js`), reused for
+// account pickers wherever it makes sense to add one without losing what's already been typed
+// elsewhere in the surrounding form. Just the essentials (name, type, currency, visibility) — full
+// details (institution, account number, opening balance/date) can be filled in afterward from the
+// Accounts page; this exists to unblock "I need an account that doesn't exist yet" mid-flow, not to
+// replace the full Add Account form. Returns a DOM node ready to mount; `onCreated(account)` fires
+// with the server's own account view on success, `onCancel()` if the person backs out.
+export function quickAddAccountForm(ctx, { name: initialName = "", onCreated, onCancel }) {
+  const key = newIdempotencyKey();
+  const name = input({ required: true, maxlength: "80", value: initialName, autocomplete: "off" });
+  const type = pickerSelect(Object.entries(ACCOUNT_TYPE_LABELS).map(([value, label]) => ({ value, label })), "checking", {}, { search: false, badgeOf: (v) => icon(defaultIconFor("account", v)) });
+  const currency = pickerSelect(CURRENCIES.map((c) => ({ value: c, label: c })), (ctx.store.getState().workspaces.find((w) => w.id === ctx.store.getState().selectedWorkspaceId) || {}).reportingCurrency || "EUR");
+  const visibility = pickerSelect([{ value: "private", label: "Private — only you (you can share it later)" }, { value: "shared", label: "Shared — every workspace member per their role" }], "private", {}, { search: false });
+  const errorBox = el("p", { class: "state state--error", role: "alert", hidden: true });
+  const create = button("Create account", async () => {
+    errorBox.hidden = true;
+    if (!name.value.trim()) {
+      name.setAttribute("aria-invalid", "true");
+      errorBox.textContent = "Give the account a name.";
+      errorBox.hidden = false;
+      name.focus();
+      return;
+    }
+    create.disabled = true;
+    cancel.disabled = true;
+    const body = { name: name.value.trim(), type: type.value, currency: currency.value, visibility: visibility.value };
+    const out = await ctx.store.actions.write((ws) => ctx.api.createAccount(ws, body, key), ["accounts"]);
+    create.disabled = false;
+    cancel.disabled = false;
+    if (!out.ok) { errorBox.textContent = messageFor(out.error); errorBox.hidden = false; return; }
+    announce(`Account “${out.result.account.name}” created.`);
+    onCreated(out.result.account);
+  }, { variant: "primary" });
+  const cancel = button("Cancel", () => onCancel());
+  return el("div", { class: "stack" }, [
+    el("div", { class: "form-grid" }, [
+      field("Name", name), field("Type", type), field("Currency", currency),
+      field("Who can see it", visibility, { wide: true }),
+    ]),
+    errorBox,
+    el("div", { class: "row" }, [cancel, create]),
+  ]);
 }
 
 async function openWhoCanSee(ctx, account) {
