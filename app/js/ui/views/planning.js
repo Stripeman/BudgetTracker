@@ -11,6 +11,7 @@ import { el, mount, announce } from "../dom.js";
 import { stateView, money, amountText, button, field, input, pickerSelect, categoryBadges, badge, categoryLabel } from "../components.js";
 import { categoryIndex } from "../../core/categories.js";
 import { openModal } from "../modal.js";
+import { openDeleteDialog } from "../permanentdelete.js";
 import { sliceFor } from "../../core/store.js";
 import { formatDate, formatAmount, todayIso } from "../../core/format.js";
 import { messageFor } from "../../core/errors.js";
@@ -183,6 +184,23 @@ function forecastTable(f, prefs, dateFormat, label, compare = null, icons = new 
   ])]);
 }
 
+// BT-014-04: permanent deletion, distinct from Archive above (which is recoverable). Nothing else
+// references a budget by id, so it is always deleted alone (api/_shared/deletion.js).
+function openPermanentDelete(ctx, budget) {
+  const wsId = ctx.store.getState().selectedWorkspaceId;
+  openDeleteDialog(ctx, {
+    title: `Permanently delete budget ${budget.name}?`,
+    fetchImpact: async () => (await ctx.api.permanentDeleteImpact("budgets", { workspaceId: wsId }, { budgetId: budget.id })).impact,
+    execute: async (impact, typedConfirmation) => {
+      const out = await ctx.store.actions.write(
+        (ws) => ctx.api.permanentDeleteExecute("budgets", { workspaceId: ws }, { budgetId: budget.id, impactToken: impact.token, typedConfirmation }),
+        ["budgets"],
+      );
+      if (!out.ok) throw out.error;
+    },
+  });
+}
+
 function budgetCard(ctx, b, prefs, fmt, dateFormat, cats = new Map()) {
   const s = b.status;
   if (s.error) return el("section", { class: "card", "aria-label": `Budget ${b.name}` }, [el("h3", { class: "card__title" }, [withIcon(b.icon, b.name)]), el("p", { class: "error-text", text: s.explanation })]);
@@ -203,6 +221,7 @@ function budgetCard(ctx, b, prefs, fmt, dateFormat, cats = new Map()) {
       el("span", { class: "app__spacer" }),
       b.canEdit ? button("Edit", () => openBudgetEditor(ctx, b), { small: true, attrs: { "aria-label": `Edit budget ${b.name}` } }) : null,
       b.canEdit ? button("Archive", () => openBudgetLifecycle(ctx, b, true), { small: true, attrs: { "aria-label": `Archive budget ${b.name}` } }) : null,
+      b.canEdit ? button("Delete permanently", () => openPermanentDelete(ctx, b), { small: true, variant: "danger", attrs: { "aria-label": `Permanently delete budget ${b.name}` } }) : null,
     ]),
     el("p", { class: "muted small", text: `${s.explanation} ${s.scopeNote}` }),
     el("div", { class: "table-wrap" }, [el("table", { class: "table table--cards", "aria-label": `${b.name} by category` }, [

@@ -24,6 +24,10 @@ export const ROUTES = Object.freeze([
   // Design Gallery (BT-013): site administrators only, for the same reason as Usage above — not a
   // workspace section, added to the nav directly by the shell, only for site admins.
   { id: "gallery", path: "/gallery", label: "Design Gallery", hidden: true },
+  // Site-admin workspace directory and administrative permanent deletion (BT-014-03/04): site
+  // administrators only, extending the same small site-admin surface as Usage and Design Gallery
+  // above rather than a new nav paradigm (Terry's own instruction). Never financial content.
+  { id: "admin-workspaces", path: "/admin-workspaces", label: "Workspaces", hidden: true },
 ]);
 
 // The sections shown in the nav for this workspace (a workspace summary, or just its kind) and site.

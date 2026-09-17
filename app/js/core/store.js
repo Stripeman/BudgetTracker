@@ -169,6 +169,36 @@ export function createStore({ api }) {
       }
     },
 
+    // BT-014-02/04: PERMANENT whole-workspace deletion (owner only) — an explicit, unmistakably
+    // distinct action from "Delete workspace" (the recoverable archive) above. No undo, no "Bring
+    // back". Same synchronous reset and generation guard as deleteWorkspace, so nothing from the
+    // wiped workspace can render again once this resolves.
+    async permanentlyDeleteWorkspace(id, impactToken, typedConfirmation) {
+      try {
+        await api.permanentDeleteExecute("workspaces", { id }, { impactToken, typedConfirmation });
+        const list = await api.workspaces();
+        if (state.selectedWorkspaceId === id) {
+          generation += 1;
+          const openable = list.workspaces.filter((w) => w.status !== "archived" && w.id !== id);
+          const preferred = state.preferences && state.preferences.effective && state.preferences.effective.defaultWorkspaceId;
+          const next = openable.find((w) => w.id === preferred) || openable[0] || null;
+          const nextId = next ? next.id : null;
+          commit({
+            workspaces: list.workspaces, selectedWorkspaceId: nextId,
+            accounts: emptySlice(nextId), transactions: emptySlice(nextId), payees: emptySlice(nextId), categories: emptySlice(nextId), members: emptySlice(nextId), bills: emptySlice(nextId),
+            budgets: emptySlice(nextId), forecast: emptySlice(nextId), icons: emptySlice(nextId), group: emptySlice(nextId),
+          });
+          if (nextId) await Promise.all([actions.refreshAccounts(), actions.refreshCategories(), actions.refreshPayees(), actions.refreshMembers(), actions.refreshIcons()]);
+        } else {
+          commit({ workspaces: list.workspaces });
+        }
+        return { ok: true };
+      } catch (err) {
+        handleAuthLoss(err);
+        return { ok: false, error: err };
+      }
+    },
+
     // "Bring back" (My settings, "Deleted workspaces"). Re-reads the list; with no workspace open
     // (everyone's workspaces were deleted) the one just brought back is opened.
     async restoreWorkspace(id, reason) {

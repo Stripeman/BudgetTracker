@@ -7,6 +7,7 @@
 import { el, mount, announce } from "../dom.js";
 import { stateView, money, button, field, input, pickerSelect, categoryBadges, iconBadges, badge } from "../components.js";
 import { openModal } from "../modal.js";
+import { openDeleteDialog } from "../permanentdelete.js";
 import { createMerchantPicker } from "../merchantpicker.js";
 import { choosableMerchants, canAddEntries, addEntriesBlocked } from "./transactions.js";
 import { sliceFor } from "../../core/store.js";
@@ -197,10 +198,28 @@ export function createView(ctx) {
         // Ending is explicit and explains that history stays (UX2-007).
         b.canEdit && !b.ended ? button("End", () => openEnd(ctx, b), { small: true, attrs: { "aria-label": `End ${b.name}` } }) : null,
         button("History", () => openHistory(ctx, b), { small: true, attrs: { "aria-label": `History of ${b.name}` } }),
+        b.canEdit ? button("Delete permanently", () => openPermanentDelete(ctx, b, state.selectedWorkspaceId), { small: true, variant: "danger", attrs: { "aria-label": `Permanently delete ${b.name}` } }) : null,
       ])]),
     ])), "All bills"));
   }
   return { element, update };
+}
+
+// BT-014-04: permanent deletion, distinct from End above (which is recoverable). No cascade
+// dependents (skips/pauses/resumes are embedded, not a separate record); an entry already
+// recorded from it keeps its amount and just loses the link (api/_shared/deletion.js).
+function openPermanentDelete(ctx, bill, wsId) {
+  openDeleteDialog(ctx, {
+    title: `Permanently delete ${bill.name}?`,
+    fetchImpact: async () => (await ctx.api.permanentDeleteImpact("recurring", { workspaceId: wsId }, { recurringId: bill.id })).impact,
+    execute: async (impact, typedConfirmation) => {
+      const out = await ctx.store.actions.write(
+        (ws) => ctx.api.permanentDeleteExecute("recurring", { workspaceId: ws }, { recurringId: bill.id, impactToken: impact.token, typedConfirmation }),
+        ["bills", "transactions"],
+      );
+      if (!out.ok) throw out.error;
+    },
+  });
 }
 
 // ---- review and record one payment ----------------------------------------------------------

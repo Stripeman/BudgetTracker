@@ -181,16 +181,22 @@ async function openWorkspace(options) {
   dom.body.appendChild(view.element);
   view.update(state);
   await settle();
-  return { view, calls, card: view.element.querySelectorAll("section").find((s) => s.getAttribute("aria-labelledby") === "ws-delete") || null };
+  return {
+    view, calls,
+    card: view.element.querySelectorAll("section").find((s) => s.getAttribute("aria-labelledby") === "ws-delete") || null,
+    permanentCard: view.element.querySelectorAll("section").find((s) => s.getAttribute("aria-labelledby") === "ws-delete-permanent") || null,
+  };
 }
 
 const MESSAGE = "Everyone loses access and it disappears from your lists. Nothing is erased: you can bring it back from Deleted workspaces in My settings.";
 
 describe("Delete workspace, on the Workspace page, for owners only", () => {
-  test("an owner sees it at the bottom of the page, in the danger style; managers, members and viewers do not (they keep Leave workspace)", async () => {
+  test("an owner sees it near the bottom of the page, in the danger style; managers, members and viewers do not (they keep Leave workspace)", async () => {
     const { view, card } = await openWorkspace();
     const cards = view.element.querySelectorAll("section.card");
-    assert.ok(cards[cards.length - 1] === card, "the last card on the page");
+    // BT-014-04: the PERMANENT deletion card (a separate, unmistakably distinct action) is now the
+    // very last card on the page; this recoverable one is immediately before it.
+    assert.ok(cards[cards.length - 2] === card, "the second-to-last card on the page");
     assert.equal(card.querySelector("h2").textContent, "Delete workspace");
     const del = buttonNamed(card, "Delete workspace…");
     assert.ok(del.classList.contains("btn--danger"));
@@ -200,6 +206,23 @@ describe("Delete workspace, on the Workspace page, for owners only", () => {
       const other = await openWorkspace({ role });
       assert.equal(other.card, null, role);
       assert.ok(buttonNamed(other.view.element, "Leave workspace"), `${role} keeps Leave workspace`);
+    }
+  });
+
+  test("BT-014-04: the PERMANENT deletion card is unmistakably distinct from the recoverable one above — different heading, wording and an extra style class, owners only", async () => {
+    const { view, card, permanentCard } = await openWorkspace();
+    const cards = view.element.querySelectorAll("section.card");
+    assert.ok(cards[cards.length - 1] === permanentCard, "the last card on the page");
+    assert.notEqual(permanentCard, card, "a distinct card, not a re-labelled version of the recoverable one");
+    assert.equal(permanentCard.querySelector("h2").textContent, "Permanently delete workspace (cannot be undone)");
+    assert.notEqual(permanentCard.querySelector("h2").textContent, card.querySelector("h2").textContent);
+    assert.ok(permanentCard.classList.contains("card--danger-permanent"), "an extra class on top of the ordinary danger styling");
+    assert.ok(buttonNamed(permanentCard, "Permanently delete workspace…"));
+    assert.notEqual(buttonNamed(permanentCard, "Permanently delete workspace…").textContent, "Delete workspace…");
+    for (const role of ["manager", "member", "viewer"]) {
+      dom.teardown(); dom = installDom();
+      const other = await openWorkspace({ role });
+      assert.equal(other.permanentCard, null, role);
     }
   });
 
