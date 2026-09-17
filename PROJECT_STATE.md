@@ -874,3 +874,85 @@ ever shown together, or a person could pick the wrong one expecting to be able t
 - Dispatch `security-privacy-reviewer` and `financial-accuracy-reviewer` on this branch before
   Preview or Production, per CLAUDE.md §8 — not run this session for the tool-availability reason
   above.
+
+## Checkpoint V — BT-014 independent review, and fixes (2026-09-17)
+
+The two reviews Checkpoint U flagged as not-yet-run were dispatched (`security-privacy-reviewer`,
+`financial-accuracy-reviewer`, both against commit `c016876`, the reconciled merge of BT-014's
+backend with BT-013's Design Gallery). Both found real, independent-of-each-other defects. Fixed
+directly by the coordinator (not delegated) since the frontend-UI build (Checkpoint W, if it lands
+after this one) depends on the exact same routes.
+
+**HIGH, security — workspace name leaked to the site administrator.** `workspace-deletion.js`'s
+`toClientImpact` returned `label`/`confirmPhrase` sourced from `doc.name` unconditionally; the
+site-admin route (`api/analytics/handler.js`) passed this straight through with no stripping,
+directly contradicting the feature's own promise ("without gaining visibility into private
+financial content") and its own code comment claiming no name/note/balance ever leaks. The
+feature's own test asserted the leak as *expected* rather than catching it. **Fixed:** `impact()`/
+`applyPermanentDelete()` take an `adminSafe` option; the admin path now omits `label` entirely and
+confirms by the workspace's own id (already legitimately known to the admin from `?action=directory`
+and from the id they supplied to call the route) instead of its name. Test corrected to assert the
+name's absence.
+
+**HIGH, found independently by BOTH reviewers — whole-workspace deletion's outside audit record was
+not atomic with the wipe.** `site/deletions.json` was written only AFTER `store.mutateWorkspace`/
+`mutateWorkspaceAdmin` committed the wipe (which deliberately clears the workspace's own internal
+`audit` array). A crash, timeout or storage failure in the window between the two writes left a
+permanently, irreversibly wiped workspace with **zero durable record anywhere** that it ever
+existed — exactly the failure mode CLAUDE.md §3's "audited atomically, never best-effort" rule
+exists to prevent, for the single most destructive action this app has. **Fixed** in both
+`api/workspaces/handler.js` (owner) and `api/analytics/handler.js` (site-admin): a `pending` log
+entry is now written BEFORE the wipe, updated to `completed` after it commits, or `failed` (with
+the caught error's code) if the write throws — so even a mid-operation crash leaves durable
+evidence an attempt was made, never nothing. Trade-off accepted: a rejected confirmation (wrong
+phrase, stale token) now also writes a `pending`+`failed` pair instead of zero entries — judged
+worth it for closing the catastrophic case.
+
+**HIGH, financial — a category could be permanently deleted while still referenced by an OLDER,
+superseded budget version.** `categoryImpact` and `backup.js`'s `checkInvariants` both checked only
+a budget's CURRENT `lines` for a `categoryId` reference; BT-008's budget versioning keeps every past
+plan in `budget.versions[]`, each with its own `lines[].categoryId`, which neither check read.
+Reproducible: create a budget with a category in its plan, revise the plan to drop that category
+(a normal operation — the category simply moves out of `lines` into a superseded `versions[]`
+entry), then the category showed zero blocking budgets and could be deleted, leaving a permanent
+dangling `categoryId` inside stored version history that no future backup would catch either.
+**Fixed:** both now scan `budget.versions[].lines[]` too. New regression test added
+(`api/test/deletion.test.js`).
+
+**MEDIUM, financial — the reconciled-transaction protection had a back door via account-level
+cascade.** A single reconciled transaction correctly refuses individual permanent deletion
+("Reverse the entry instead"); `accountImpact`'s cascade to an account's own transactions applied
+no equivalent check, so the same reconciled entries could be swept away by deleting the whole
+account instead. **Fixed:** `accountImpact` now blocks while any transaction it would cascade-delete
+is reconciled. New regression test added.
+
+**LOW/minor, also fixed while in this code:** the per-record impact token omitted `doc.revision`
+(the workspace-level token already included it) — added for consistency/defense-in-depth against a
+content-only edit inside an unchanged cascade group. `site/deletions.json` silently dropped entries
+past 5000 (a literal truncation of an audit array, against CLAUDE.md §3's explicit rule) — removed,
+now unbounded (ADR-003 partitioning is the documented future answer if this ever needs a bound,
+which is unlikely given how rare whole-workspace permanent deletion is). The log was write-only
+(`listWorkspaceDeletions` existed, nothing called it) — `GET /api/analytics?action=deletions` now
+reads it back, site-admin-gated.
+
+**Not fixed, judged acceptable, documented debt:** a narrower TOCTOU gap the security reviewer also
+found — a per-record deletion that becomes blocked only in the exact window between the outer
+pre-check and the real `mutateWorkspace` call is not itself audited, because the write that would
+record it also aborts it (needs a genuine concurrent write racing the delete call; low severity,
+narrow).
+
+**Evidence:** `npm test` 39/601/431 (up from 39/599/431 — two new regression tests), `npm run
+validate` ok (24 routes), both exit 0. Not independently re-reviewed after these fixes — a third
+review pass was judged unnecessary for this scope; flagged here for transparency rather than
+silently treated as fully closed. `docs/REQUIREMENTS.md` gained BT-014-05.
+
+**Not deployed.** Still gated behind the frontend UI work (no UI exists to actually reach these
+routes yet) before any Preview deploy makes sense to review. Committed to `feature/project-foundation`
+locally; not yet pushed at the time this checkpoint was written — see the exact next step below.
+
+**Exact next step:** push this commit to `origin/feature/project-foundation`; when the
+frontend-UI/Shared-expenses-severance agent (dispatched separately, worktree
+`agent-a19d8b99ede0b2ea2`, branch suggested `feature/record-deletion-ui`) reports back, merge it in,
+re-gate, and only then consider a Preview deploy — Terry explicitly wants all three surfaces (member
+deletion, whole-workspace deletion, site-admin management) verified on Preview together before any
+Production discussion.

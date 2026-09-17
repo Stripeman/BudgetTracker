@@ -39,12 +39,17 @@ describe('BT-014 whole-workspace permanent deletion', () => {
     assert.deepEqual(doc.members, []);
     assert.deepEqual(doc.audit, [], 'the workspace-local audit is wiped with everything else');
     // The summary survives OUTSIDE the workspace: actor, counts, outcome — never a name or balance.
+    // Written twice — 'pending' before the wipe, 'completed' after — so a crash between the two
+    // writes still leaves a durable record that a deletion was attempted (2026-09-17 fix).
     const log = JSON.parse((await h.storage.getBytes('site/deletions.json')).bytes.toString());
-    const entry = log.entries.find((e) => e.workspaceId === f.ws.id);
-    assert.equal(entry.outcome, 'completed');
-    assert.equal(entry.actorRole, 'owner');
-    assert.equal(entry.datasets.accounts, 3);
-    assert.equal(JSON.stringify(entry).includes('Fictional Household'), false, 'no workspace name in the outside record');
+    const entries = log.entries.filter((e) => e.workspaceId === f.ws.id);
+    const pending = entries.find((e) => e.outcome === 'pending');
+    const completed = entries.find((e) => e.outcome === 'completed');
+    assert.ok(pending, 'a durable record exists before the wipe commits');
+    assert.ok(completed);
+    assert.equal(completed.actorRole, 'owner');
+    assert.equal(completed.datasets.accounts, 3);
+    assert.equal(JSON.stringify(entries).includes('Fictional Household'), false, 'no workspace name in the outside record');
   });
 
   test('a member, a viewer and an outsider cannot permanently delete the workspace; only an owner can', async () => {
@@ -87,11 +92,16 @@ describe('BT-014 whole-workspace permanent deletion', () => {
 
     const imp = ok(await h.call('analytics', 'POST', { as: 'dave', query: { action: 'delete-impact', workspaceId: f.ws.id } })).impact;
     assert.equal(imp.blocked, false);
-    assert.equal(JSON.stringify(imp).includes('Fictional Household'), true, 'the confirmation phrase is the only place the name appears, and only to the admin actually confirming a deletion they were already given the id for');
+    assert.equal(imp.label, null, 'the site administrator never receives the workspace name, not even as a label');
+    assert.equal(imp.confirmPhrase, f.ws.id, 'confirmation uses the id the admin already has, never the name');
+    assert.equal(JSON.stringify(imp).includes('Fictional Household'), false, 'the workspace name never appears anywhere in the admin-facing impact payload');
     ok(await h.call('analytics', 'POST', { as: 'dave', query: { action: 'delete-permanent', workspaceId: f.ws.id }, body: { impactToken: imp.token, typedConfirmation: imp.confirmPhrase } }));
     assert.equal((await h.call('workspaces', 'GET', { as: 'alice', query: { id: f.ws.id } })).status, 404, 'gone for the owner too');
     const log = JSON.parse((await h.storage.getBytes('site/deletions.json')).bytes.toString());
-    assert.equal(log.entries.find((e) => e.workspaceId === f.ws.id).actorRole, 'site-admin');
+    const entries = log.entries.filter((e) => e.workspaceId === f.ws.id);
+    assert.ok(entries.some((e) => e.outcome === 'pending'), 'a durable record is written before the wipe, not only after');
+    assert.ok(entries.some((e) => e.outcome === 'completed' && e.actorRole === 'site-admin'));
+    assert.equal(JSON.stringify(entries).includes('Fictional Household'), false, 'no workspace name in the outside record, from either write');
   });
 
   test('an outsider (not a site administrator) cannot reach the directory or administrative deletion', async () => {

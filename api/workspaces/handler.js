@@ -178,32 +178,58 @@ async function permanentDeleteExecute(ctx, req) {
   const reason = fields.text(body.reason, { field: 'Reason', max: 200 });
   // Checked once outside the write so a genuinely blocked attempt is still audited: throwing
   // INSIDE the write below aborts the whole transaction, so it cannot itself persist a log entry.
+  let preImpact;
+  let actorSubject;
+  let workspaceKind;
   {
     const { doc, member } = await store.loadWorkspace(ctx, id, { archived: true });
     if (member.role !== 'owner') throw forbidden('Only an owner can permanently delete this workspace.');
-    const imp = workspaceDeletion.impact(doc);
-    if (imp.blocked) {
+    actorSubject = member.subject;
+    workspaceKind = doc.kind;
+    preImpact = workspaceDeletion.impact(doc);
+    if (preImpact.blocked) {
       await siteDeletions.recordWorkspaceDeletion(ctx.storage, {
         id: `wsdel_${id}_${ctx.now()}`, workspaceId: id, workspaceKind: doc.kind, at: ctx.nowIso(),
-        actor: member.subject, actorRole: 'owner', datasets: imp.datasets, reason: reason || null, outcome: 'blocked',
+        actor: member.subject, actorRole: 'owner', datasets: preImpact.datasets, reason: reason || null, outcome: 'blocked',
       });
-      throw conflict(`This workspace cannot be permanently deleted yet: ${imp.blockers.join(' ')}`, 'delete_blocked');
+      throw conflict(`This workspace cannot be permanently deleted yet: ${preImpact.blockers.join(' ')}`, 'delete_blocked');
     }
   }
-  let logEntry = null;
-  const { result } = await store.mutateWorkspace(ctx, id, (doc, member) => {
-    if (member.role !== 'owner') throw forbidden('Only an owner can permanently delete this workspace.');
-    const before = workspaceDeletion.applyPermanentDelete(doc, {
-      token: body.impactToken, typedConfirmation: body.typedConfirmation, actor: member.subject, nowIso: ctx.nowIso(),
+  // Security/financial-review fix (2026-09-17): the outside log entry is now written BEFORE the
+  // wipe commits, then updated to 'completed' after — never only-after. The prior design left a
+  // real window where a crash, timeout or storage failure between the wipe write and this log
+  // write would destroy the workspace (its own internal audit intentionally cleared with it,
+  // per tombstoneOf) with literally zero durable record anywhere that it ever existed or who
+  // deleted it — exactly what CLAUDE.md's "audited atomically, never best-effort" rule exists to
+  // prevent, for the single most destructive, least reversible action this app has.
+  const correlationId = `wsdel_${id}_${ctx.now()}`;
+  await siteDeletions.recordWorkspaceDeletion(ctx.storage, {
+    id: `${correlationId}#pending`, workspaceId: id, workspaceKind, at: ctx.nowIso(),
+    actor: actorSubject, actorRole: 'owner', datasets: preImpact.datasets, reason: reason || null, outcome: 'pending',
+  });
+  try {
+    let completedEntry = null;
+    const { result } = await store.mutateWorkspace(ctx, id, (doc, member) => {
+      if (member.role !== 'owner') throw forbidden('Only an owner can permanently delete this workspace.');
+      const before = workspaceDeletion.applyPermanentDelete(doc, {
+        token: body.impactToken, typedConfirmation: body.typedConfirmation, actor: member.subject, nowIso: ctx.nowIso(),
+      });
+      completedEntry = {
+        id: `${correlationId}#completed`, workspaceId: id, workspaceKind: before.kind, at: ctx.nowIso(),
+        actor: member.subject, actorRole: 'owner', datasets: before.datasets, reason: reason || null, outcome: 'completed',
+      };
+      return { deleted: true, id, datasets: before.datasets };
+    }, { allowHeadroom: true, archived: true });
+    await siteDeletions.recordWorkspaceDeletion(ctx.storage, completedEntry);
+    return { body: result };
+  } catch (err) {
+    await siteDeletions.recordWorkspaceDeletion(ctx.storage, {
+      id: `${correlationId}#failed`, workspaceId: id, workspaceKind, at: ctx.nowIso(),
+      actor: actorSubject, actorRole: 'owner', datasets: preImpact.datasets, reason: reason || null,
+      outcome: 'failed', errorCode: err && err.code ? err.code : null,
     });
-    logEntry = {
-      id: `wsdel_${id}_${ctx.now()}`, workspaceId: id, workspaceKind: before.kind, at: ctx.nowIso(),
-      actor: member.subject, actorRole: 'owner', datasets: before.datasets, reason: reason || null, outcome: 'completed',
-    };
-    return { deleted: true, id, datasets: before.datasets };
-  }, { allowHeadroom: true, archived: true });
-  if (logEntry) await siteDeletions.recordWorkspaceDeletion(ctx.storage, logEntry);
-  return { body: result };
+    throw err;
+  }
 }
 
 async function post(ctx, req) {

@@ -36,14 +36,25 @@ function datasetCounts(doc) {
 
 // Impact never carries a name, balance, note or any other financial value — only counts, so it is
 // exactly as safe in the site administrator's hands as in the owner's (BT-014's site-admin rule).
-function impact(doc) {
+//
+// `adminSafe` (security review finding, 2026-09-17): the OWNER already has the workspace's name —
+// it's their own workspace, shown in their own Settings — so the owner path may use it as the
+// typed-confirmation phrase. A SITE ADMINISTRATOR must never learn it: `label`/`confirmPhrase`
+// would otherwise leak `doc.name` (a private, user-chosen identifier) through this exact route,
+// contradicting the one promise this whole feature makes ("without gaining visibility into private
+// financial content"). When `adminSafe` is true, `label` is omitted and `confirmPhrase` is the
+// workspace's own id instead — information the admin already legitimately has (it's the id they
+// supplied to call this route, and the same id the ?action=directory listing already returns).
+function impact(doc, { adminSafe = false } = {}) {
   const shared = (doc.groupExpenses || []).length + (doc.groupSettlements || []).length + (doc.groupLedgers || []).length;
   const blockers = [];
   if (shared) {
     blockers.push(`This workspace has ${shared} Shared-expenses record${shared === 1 ? '' : 's'} (expenses, settlements or personal-ledger links). Deleting a workspace with Shared-expenses involvement needs the full download/sever/preserve flow, which is not available in this version. Resolve or remove them in Shared expenses first.`);
   }
   const datasets = datasetCounts(doc);
-  const target = { type: 'workspace', id: doc.id, label: doc.name, confirmPhrase: doc.name };
+  const target = adminSafe
+    ? { type: 'workspace', id: doc.id, label: null, confirmPhrase: doc.id }
+    : { type: 'workspace', id: doc.id, label: doc.name, confirmPhrase: doc.name };
   const out = { target, kind: doc.kind, status: doc.status, blocked: blockers.length > 0, blockers, datasets };
   out.token = fingerprint({ id: doc.id, blocked: out.blocked, blockers: out.blockers, datasets, revision: doc.revision || 0 });
   return out;
@@ -76,15 +87,18 @@ function tombstoneOf(doc, actor, nowIso) {
 // which is what makes the wipe atomic (one ETag-guarded write) regardless of which route calls it.
 // Returns the pre-wipe impact (for the response and for the caller to log outside the workspace
 // AFTER this write commits — see api/_shared/site-deletions.js).
-function applyPermanentDelete(doc, { token, typedConfirmation, actor, nowIso }) {
-  const before = impact(doc);
+function applyPermanentDelete(doc, { token, typedConfirmation, actor, nowIso, adminSafe = false }) {
+  const before = impact(doc, { adminSafe });
   if (before.blocked) throw conflict(`This workspace cannot be permanently deleted yet: ${before.blockers.join(' ')}`, 'delete_blocked');
   if (!token || token !== before.token) {
     throw conflict('What this would affect has changed since you reviewed it. Review the impact again before confirming.', 'delete_impact_stale');
   }
   const expected = String(before.target.confirmPhrase || '').trim().toLowerCase();
   const typed = String(typedConfirmation || '').trim().toLowerCase();
-  if (!expected || typed !== expected) throw badRequest('Type the workspace name exactly as shown to permanently delete it.', 'confirmation_mismatch');
+  const mismatchMessage = adminSafe
+    ? 'Type the workspace id exactly as shown to permanently delete it.'
+    : 'Type the workspace name exactly as shown to permanently delete it.';
+  if (!expected || typed !== expected) throw badRequest(mismatchMessage, 'confirmation_mismatch');
   const wiped = tombstoneOf(doc, actor, nowIso);
   for (const k of Object.keys(doc)) delete doc[k];
   Object.assign(doc, wiped);

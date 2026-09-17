@@ -71,7 +71,14 @@ function checkInvariants(doc) {
       if (v.payeeId && !payees.has(v.payeeId)) throw invalidData('bill merchant');
     }
   }
-  for (const b of doc.budgets || []) for (const l of b.lines || []) if (!categories.has(l.categoryId)) throw invalidData('budget category');
+  // Checks every version's lines too, not just the current plan (financial review finding,
+  // 2026-09-17) — a budget's versions[] keeps every past plan (BT-008 versioning) and each has its
+  // own categoryId references, so a check of only the current `lines` could pass a document with a
+  // dangling category reference buried in an older version.
+  for (const b of doc.budgets || []) {
+    for (const l of b.lines || []) if (!categories.has(l.categoryId)) throw invalidData('budget category');
+    for (const v of b.versions || []) for (const l of v.lines || []) if (!categories.has(l.categoryId)) throw invalidData('budget category');
+  }
   // Shared expenses and payments (BT-009): payers and shares add up to the total, the shares are what
   // the split gives, everyone named exists as a member or shared contact, payments are positive.
   uniqueIds(doc.groupExpenses || [], 'group expense');

@@ -78,6 +78,13 @@ function accountImpact(doc, account) {
   if (incomingBills.length) {
     blockers.push(`${incomingBills.length} recurring bill${incomingBills.length === 1 ? '' : 's'} on another account transfer into this account. Change or end ${incomingBills.length === 1 ? 'it' : 'them'} first.`);
   }
+  // A single reconciled transaction is already blocked from permanent deletion elsewhere in this
+  // module (transactionImpact, below: "Reverse the entry instead") — cascading through the account
+  // must not become a back door around that same protection (financial review finding, 2026-09-17).
+  const reconciled = txns.filter((t) => t.status === 'reconciled');
+  if (reconciled.length) {
+    blockers.push(`${reconciled.length} reconciled transaction${reconciled.length === 1 ? '' : 's'} on this account cannot be permanently deleted. Reverse ${reconciled.length === 1 ? 'it' : 'them'} first, then try again.`);
+  }
   // Shared expenses linked to this account (Terry's resolution 2: a download offer, and a sever
   // for another workspace's connection versus a cascade delete when solely owned here, are not
   // built yet in this version — see PROJECT_STATE.md). Refusing rather than guessing at partial
@@ -158,7 +165,16 @@ function payeeApply(doc, payee) {
 
 function categoryImpact(doc, category) {
   const blockers = [];
-  const budgetsUsing = (doc.budgets || []).filter((b) => (b.lines || []).some((l) => l.categoryId === category.id));
+  // Checks EVERY budget version, not just the current plan (financial review finding, 2026-09-17):
+  // a budget keeps every past version of its plan (b.versions[], BT-008 versioning — "term changes
+  // take effect from a chosen date and never rewrite recorded entries"), and an older version can
+  // reference a category the current plan no longer does. Checking only `b.lines` missed that case
+  // and would leave a permanent dangling categoryId inside `b.versions[]` — invisible to this
+  // check, to checkInvariants (fixed alongside this in api/_shared/backup.js), and to every future
+  // backup's manifest, once the category was gone.
+  const budgetsUsing = (doc.budgets || []).filter((b) =>
+    (b.lines || []).some((l) => l.categoryId === category.id) ||
+    (b.versions || []).some((v) => (v.lines || []).some((l) => l.categoryId === category.id)));
   if (budgetsUsing.length) blockers.push(`${budgetsUsing.length} budget${budgetsUsing.length === 1 ? '' : 's'} currently use this category. Remove it from ${budgetsUsing.length === 1 ? 'that budget' : 'those budgets'} (or delete the budget) first.`);
   const subcategories = (doc.categories || []).filter((c) => c.parentId === category.id);
   if (subcategories.length) blockers.push(`${subcategories.length} subcategor${subcategories.length === 1 ? 'y uses' : 'ies use'} this as their parent category. Move or delete ${subcategories.length === 1 ? 'it' : 'them'} first.`);
@@ -251,6 +267,11 @@ function computeImpact(type, doc, record) {
     type, id: record.id, blocked: out.blocked, blockers: out.blockers,
     cascade: out.cascade.map((g) => ({ key: g.key, ids: g.ids })),
     together: out.together || [], severed: out.severed,
+    // Defense-in-depth / consistency with workspace-deletion.js's token (financial review
+    // finding, 2026-09-17): catches a concurrent edit to a record already IN the cascade/severed
+    // group (e.g. its amount or status changing) that leaves group membership unchanged, which the
+    // id-list hash above alone would not detect.
+    revision: doc.revision || 0,
   });
   return out;
 }

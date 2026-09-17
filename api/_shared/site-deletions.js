@@ -9,16 +9,17 @@
 const { update } = require('./storage');
 const { paths } = require('./store');
 
-const MAX_ENTRIES = 5000;
-
+// Security-review fix (2026-09-17): this array is never truncated. CLAUDE.md §3 is explicit —
+// "Never truncate history or audit arrays; size limits are solved by partitioning (ADR-003), never
+// by deletion" — and that rule applies here with extra force, since a whole-workspace permanent
+// deletion's outside log entry is often the ONLY surviving record that a workspace ever existed
+// (its own internal audit is deliberately wiped with it). Whole-workspace permanent deletion is
+// rare and this entry is small, so an unbounded array is not a near-term practical concern; if it
+// ever needs a bound, the fix is date-based partitioning (ADR-003), never dropping old entries.
 async function recordWorkspaceDeletion(storage, entry) {
   await update(storage, paths.deletionLog(), (value) => {
     const entries = Array.isArray(value && value.entries) ? value.entries : [];
-    // A bounded ring, never a silent unbounded array (ADR-003's own rule for every array applies
-    // here too: partition/bound, never delete history to make room) — this log is metadata-only
-    // and small per entry, so a generous bound is enough headroom for years of real use.
-    const next = entries.length >= MAX_ENTRIES ? entries.slice(entries.length - MAX_ENTRIES + 1) : entries;
-    return { entries: [...next, entry] };
+    return { entries: [...entries, entry] };
   });
 }
 

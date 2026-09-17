@@ -84,6 +84,23 @@ describe('BT-014 permanent deletion — cascade rule', () => {
     assert.equal(before.accounts.some((a) => a.id === to.id), true);
   });
 
+  test('a reconciled transaction blocks the WHOLE account from permanent deletion too, not just its own individual deletion (financial review fix, 2026-09-17)', async () => {
+    const h = harness();
+    const f = await household(h);
+    const acc = ok(await h.call('accounts', 'POST', { as: 'alice', query: f.q, body: { name: 'Checked', type: 'checking', currency: 'EUR', openingBalance: '200.00' } }), 201).account;
+    const t = ok(await h.call('transactions', 'POST', { as: 'alice', query: f.q, body: { accountId: acc.id, kind: 'expense', amount: '3.00' } }), 201).transactions[0];
+    ok(await h.call('transactions', 'PATCH', { as: 'alice', query: f.q, body: { transactionId: t.id, revision: t.revision, status: 'reconciled', reason: 'Matched to bank statement' } }));
+    // Deleting the entry alone was already blocked (existing coverage above); cascading through
+    // the account must not be a back door around the same protection.
+    const imp = await impact(h, 'accounts', 'accountId', acc.id, 'alice', f.q);
+    assert.equal(imp.blocked, true);
+    assert.match(imp.blockers.join(' '), /reconciled transaction/);
+    const res = await execute(h, 'accounts', 'accountId', acc.id, 'alice', f.q, imp);
+    assert.equal(res.status, 409);
+    const doc = await rawDoc(h, f.ws.id);
+    assert.equal(doc.accounts.some((a) => a.id === acc.id), true, 'nothing touched');
+  });
+
   test('permission mirrors edit authority: a member cannot permanently delete a shared account; a manager can', async () => {
     const h = harness();
     const f = await household(h);
@@ -166,6 +183,24 @@ describe('BT-014 permanent deletion — cascade rule', () => {
     const doc = await rawDoc(h, f.ws.id);
     assert.equal(doc.categories.some((c) => c.id === shopping.id), false);
     assert.equal(doc.transactions.find((t) => t.id === f.grocery.id).categoryId, null);
+  });
+
+  test('a category still referenced by an OLDER budget version blocks deletion too, not just the current plan (financial review fix, 2026-09-17)', async () => {
+    const h = harness();
+    const f = await household(h);
+    const cats = ok(await h.call('categories', 'GET', { as: 'alice', query: f.q })).categories;
+    const dining = cats.find((c) => c.name === 'Dining');
+    const shopping = cats.find((c) => c.name === 'Shopping');
+    const budget = ok(await h.call('budgets', 'POST', { as: 'alice', query: f.q, body: { name: 'Monthly', scope: 'private', currency: 'EUR', lines: [{ categoryId: dining.id, amount: '100.00' }] } }), 201).budget;
+    // Revise the plan forward so Dining is no longer in the CURRENT lines — only in the old version.
+    ok(await h.call('budgets', 'PATCH', { as: 'alice', query: f.q, body: { budgetId: budget.id, revision: budget.revision, lines: [{ categoryId: shopping.id, amount: '50.00' }] } }));
+    const imp = await impact(h, 'categories', 'categoryId', dining.id, 'alice', f.q);
+    assert.equal(imp.blocked, true, 'the category is still referenced by the budget\'s earlier version, even though the current plan has moved on');
+    assert.match(imp.blockers.join(' '), /budget/);
+    const res = await execute(h, 'categories', 'categoryId', dining.id, 'alice', f.q, imp);
+    assert.equal(res.status, 409);
+    const doc = await rawDoc(h, f.ws.id);
+    assert.equal(doc.categories.some((c) => c.id === dining.id), true, 'nothing touched; a real deletion here would have left a permanent dangling categoryId inside the budget\'s stored version history');
   });
 
   test('a recurring bill is deleted freely; an entry already recorded from it keeps its amount and just loses the link', async () => {
