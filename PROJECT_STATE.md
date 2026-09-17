@@ -1273,3 +1273,76 @@ BT-014 (deletion, rename, cascade, whole-workspace deletion, site-admin manageme
 severance and four-format export) is now feature-complete, gated, and verified end-to-end in a real
 browser. Not yet pushed to origin or deployed to Preview as of this note — see the exact next step
 immediately following.
+
+## Checkpoint Z — tooltip fix, merchant-linking fix, production deploy, Gallery cut (2026-09-17)
+
+**Catching up an under-logged stretch.** Several PRs landed on `main` in this session without a
+PROJECT_STATE update at the time; recorded here together, after the fact, from Git history and
+`docs/REQUIREMENTS.md`.
+
+- **BT-014-12** (`279d191`, PR #5 area): the "Record next" tooltip on All bills was clipped by
+  `.table-wrap`'s `overflow-x: auto` (which forces `overflow-y` to clip too — CSS spec, not a bug in
+  the table). Terry caught this in a real browser after it shipped without one ("you would have seen
+  this had you tested it on localhost"). Fixed by rebuilding `infoTip()` (`app/js/ui/components.js`)
+  as a JS-positioned floating box appended to `document.body`, immune to any ancestor's `overflow`.
+  New permanent regression scenario `scripts/dev/e2e/bills.mjs`.
+- **`fix/deploy-confirm-flag`** (`6a27206`, PR #6, merged `0a5e4c5`): `deploy.ps1` had no way to answer
+  the Production typed-confirmation prompt non-interactively, blocking this non-interactive session
+  from deploying Production at all. Terry explicitly chose (via `AskUserQuestion`) to add a `-Confirm
+  <name>` parameter — it still requires `-AuthorizedProduction` and an exact name match; it only
+  removes the interactive-stdin blocker, not the authorization requirement.
+- **Production deploy of `0a5e4c5`** (the tooltip fix + deploy-confirm flag): run from a fresh scratch
+  clone with `.local/deploy-target.json` and `.local/bin/gitleaks.exe` copied in (never their contents
+  read/printed). Verified independently via `GET /api/site-settings` on `https://budget.remsik.org`
+  matching `app.commit: 0a5e4c5...`.
+- **BT-014-13** (`edcf51b`, PR #7, merged `6a12dd0`): "Add as merchant" (BT-014-11) linked using
+  `bill.nextDue` as `effectiveFrom`, which is almost always in the future relative to today, so
+  `termsAt` (`api/_shared/bills.js`) never selected the new version — the merchant never showed up on
+  an already-started bill, and "Bills without a merchant" (`app/js/ui/views/payees.js`) kept
+  re-offering it forever. Root-caused by reading the raw `workspace.json` from a kept e2e data
+  directory, proving the PATCH succeeded server-side but was invisible client-side. Fixed
+  `effectiveFrom` to use today (or the bill's own `schedule.startDate` if that's later), and added a
+  client-side `recentlyLinked` Set so the list stops re-offering a bill even when its own
+  `schedule.startDate` is still in the future (a bill that hasn't started yet structurally cannot have
+  anything "in effect" before its start date — that limitation is real and disclosed in the
+  confirmation message, not hidden).
+- **Production deploy of `6a12dd0`** (merged PR #7): first two attempts correctly refused —
+  dependencies (`npm ci` for both root and `api/`) were never installed in the fresh scratch clone, so
+  `exceljs` (used by BT-014-06's export) and the SWA CLI (`npx --no-install swa`) were both missing.
+  Not a code bug — the gate fail-closed exactly as designed. Fixed by running `npm ci` (root and
+  `api/`) in the scratch clone; third attempt succeeded. Verified independently via
+  `GET https://budget.remsik.org/api/site-settings` matching `app.commit: 6a12dd0...`.
+- **BT-013-05** (Design Gallery, 5 of 20 concepts cut to 15 — see `docs/REQUIREMENTS.md` for full
+  detail): Terry reviewed real rendered screenshots and disliked (a) the "filled-tint" card style's
+  brown/mustard wash under the Solar/Amber palettes (Cash-Flow Studio, Envelope Planner, Visual
+  Finance) and (b) a genuine broken icon-rail rendering bug in Timeline Finance and Adaptive Overview
+  (confirmed against Financial Command Center, same `navStyle: 'rail'`, rendering correctly). Terry
+  asked for removal over a root-cause fix. All five removed from `api/_shared/layouts.js`; every
+  hardcoded "20"/"10" count updated across `api/test/layouts.test.js`, `api/test/design-gallery.test.js`,
+  `app/js/ui/views/gallery.js`, `scripts/dev/e2e/gallery.mjs`. Terry was explicit: do not touch the
+  real `classic` layout as part of this. **Evidence:** `npm test` 39/611/442 (exit 0); `npm run
+  validate` ok; `npm run e2e -- --only gallery` 106/106 (exit 0). Not yet committed/pushed as of this
+  checkpoint — see exact next step.
+
+**Terry's separate, larger ask (in progress, same conversation):** bring three things into the REAL
+`classic` layout now (not the Gallery): (1) more prominent colour-coded category icons on the real
+Dashboard (inspired by Executive Ledger's table-first hero, which is really just the existing shared
+`categoryLabel()` component made prominent — no new mechanism needed); (2) nav polish on the real top
+nav (`app/js/ui/shell.js`) matching Modern Banking's icon+label items and active-item highlight — the
+real nav is already `top`, this is a visual/polish change, not a structural one; (3) three genuinely
+new Dashboard widgets that do not exist anywhere in the codebase yet, inspired by reference screenshots
+Terry shared (BudgetBuddie, Ledger, Jeamstar): a donut "spending by category" chart (no pie/donut chart
+primitive exists yet — only bar and multi-line), a ranked "Top Merchants" list sorted by spend
+descending (closest existing thing, the Gallery's `merchant-feed` pattern, is an unordered feed, not
+ranked), and weekly income/expense recap cards (nothing like this exists; needs a new
+this-week-vs-last-week aggregation, server-authorized per the security invariants in `CLAUDE.md` §3
+since this is a financial report). Terry approved this scope explicitly via `AskUserQuestion` ("Real
+app, now" / "Yes, build all three"). Not yet started as of this checkpoint.
+
+**Exact next step:** commit and push the BT-013-05 Gallery cut on its own branch/PR (small, contained,
+already gated green); then start the real-Dashboard/nav/widgets work as a separate PR, beginning with
+an investigation of the real `dashboard.js`/`shell.js` and whatever existing aggregation (budget
+envelopes, merchant totals, forecast) can be reused rather than rebuilt, and whether the new weekly/
+top-merchants/category-spend aggregations belong in a new API route or an extension of an existing one
+(`api/analytics` or a new `api/reports`-style route) — trace consumers before choosing, per CLAUDE.md
+"Before Modifying Code."

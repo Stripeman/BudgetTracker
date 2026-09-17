@@ -1,15 +1,16 @@
 'use strict';
-// BT-013 Design Gallery — the 20-concept manifest is well-formed metadata: stable, unique ids and
-// every field the Gallery UI and comparison matrix depend on, so a missing field fails a test rather
-// than rendering blank in front of Terry.
+// BT-013 Design Gallery — the 15-concept manifest (originally 20; Terry cut 5 on 2026-09-17, see
+// api/_shared/layouts.js) is well-formed metadata: stable, unique ids and every field the Gallery UI
+// and comparison matrix depend on, so a missing field fails a test rather than rendering blank in
+// front of Terry.
 const { test, describe } = require('node:test');
 const assert = require('node:assert/strict');
 const { CONCEPTS, CONCEPT_IDS, REQUIRED_PAGES, REAL_LAYOUT_OPTIONS, REAL_DEFAULT_LAYOUT_ID, NAV_STYLES, DENSITIES, DASHBOARD_PATTERNS, CARD_STYLES, CHART_EMPHASES } = require('../_shared/layouts');
 
 describe('BT-013 layout manifests', () => {
-  test('exactly 20 concepts, unique ids', () => {
-    assert.equal(CONCEPTS.length, 20);
-    assert.equal(new Set(CONCEPT_IDS).size, 20);
+  test('exactly 15 concepts, unique ids', () => {
+    assert.equal(CONCEPTS.length, 15);
+    assert.equal(new Set(CONCEPT_IDS).size, 15);
   });
 
   test('every concept has the fields the Gallery and comparison matrix render', () => {
@@ -42,15 +43,15 @@ describe('BT-013 layout manifests', () => {
     assert.ok(new Set(CONCEPTS.map((c) => c.density)).size === 4);
   });
 
-  test('exactly 10 concepts are marked recommended (this session\'s top-10 for Terry)', () => {
-    assert.equal(CONCEPTS.filter((c) => c.recommended).length, 10);
+  test('exactly 8 of the remaining 15 concepts are marked recommended (2 of the original top-10 were among the 5 Terry cut)', () => {
+    assert.equal(CONCEPTS.filter((c) => c.recommended).length, 8);
   });
 
   test('the 7 pages Terry\'s brief names as the minimum review deliverable', () => {
     assert.deepEqual(REQUIRED_PAGES, ['dashboard', 'transactions', 'bills', 'budget', 'shared', 'trips', 'settings']);
   });
 
-  test('today\'s one real, selectable layout is "classic" and nothing else — none of the 20 concepts are live-selectable yet', () => {
+  test('today\'s one real, selectable layout is "classic" and nothing else — none of the 15 concepts are live-selectable yet', () => {
     assert.deepEqual(REAL_LAYOUT_OPTIONS, [{ value: 'classic', label: 'Classic (current)' }]);
     assert.equal(REAL_DEFAULT_LAYOUT_ID, 'classic');
     assert.ok(!CONCEPT_IDS.includes('classic'));

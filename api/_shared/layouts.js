@@ -1,7 +1,12 @@
 'use strict';
-// Design Gallery — BT-013: 20 workspace layout-theme concepts for Terry's review (design brief,
-// 2026-09-16: "sharp, professional, clean, attractive, and highly functional interfaces — not one
-// generic layout with different colors").
+// Design Gallery — BT-013: originally 20 workspace layout-theme concepts for Terry's review (design
+// brief, 2026-09-16: "sharp, professional, clean, attractive, and highly functional interfaces — not
+// one generic layout with different colors"). Terry (2026-09-17) cut 5 after reviewing real rendered
+// screenshots: Cash-Flow Studio, Envelope Planner and Visual Finance all shared `cardStyle:
+// 'filled-tint'`, which washes the whole card in `--accent-soft` — under the Solar or Amber palette
+// that reads as a muddy tan/mustard ("yucky turd brown", his words) rather than a subtle tint; Timeline
+// Finance and Adaptive Overview's icon rail rendered as an empty collapsed strip instead of visible nav
+// items (a real rendering bug, not fixed — Terry asked for removal over a fix). 15 concepts remain.
 //
 // THIS FILE IS METADATA AND COMPOSITION PARAMETERS ONLY. It never holds or references real
 // financial data. The Gallery (site-admin only: /api/design-gallery and the app's Gallery page)
@@ -10,8 +15,8 @@
 // category colours, badges) — so what Terry reviews is built from real, reusable primitives, never
 // a throwaway image. Nothing here is yet a selectable option on any real workspace: that stays the
 // separate `layoutId` workspace setting (api/_shared/workspace-settings.js), which today offers only
-// `classic`, the application's one existing implicit layout, until Terry chooses which of these 20
-// to keep (his brief: "Wait for my selection before permanently adding the chosen 10").
+// `classic`, the application's one existing implicit layout, until Terry chooses which of these 15
+// to keep.
 //
 // COMPOSITION AXES (read by app/js/ui/gallery/compose.js, the shared renderer):
 //   navStyle          'top' | 'rail' | 'sidebar' | 'sidebar-right' | 'command'
@@ -119,30 +124,6 @@ const CONCEPTS = Object.freeze([
     fidelity: 'flagship', recommended: true,
   }),
   c({
-    id: 'cash-flow-studio', name: 'Cash-Flow Studio',
-    tagline: 'Forecast-first layout centered on money movement over time.',
-    direction: 'A top bar and a chart-first dashboard whose hero is the cash-flow forecast (expected/cautious/hopeful), with upcoming bills and income laid beneath it as the events that drive the line.',
-    distinct: 'Chart-first like Wealth Overview, but forward-looking (the forecast, not the historical trend) and paired with the bill/income timeline directly under the chart — a different emphasis from the same structural family.',
-    audience: 'Planners who think in terms of "will I have enough before payday" rather than a static balance.',
-    strengths: ['Answers the most common budgeting anxiety directly: what happens next.', 'Bills and income shown as the events driving the forecast, not a separate disconnected list.', 'Reuses the existing forecast assumptions/warnings verbatim.'],
-    tradeoffs: ['Needs bills and a forecast horizon to be useful; thin for a workspace with none yet.', 'Three scenario lines need careful, non-colour-only distinction.'],
-    accessibilityNotes: ['Expected/cautious/hopeful lines distinguished by dash pattern and a legend with text, never colour alone.', 'Forecast warnings keep their existing plain-text sentences (reused verbatim from Planning).'],
-    density: 'comfortable', navStyle: 'top', dashboardPattern: 'chart-first', cardStyle: 'filled-tint', chartEmphasis: 'line',
-    fidelity: 'standard', recommended: true,
-  }),
-  c({
-    id: 'envelope-planner', name: 'Envelope Planner',
-    tagline: 'Category and allocation-focused budgeting.',
-    direction: 'A sidebar and a dashboard whose hero is a grid of budget "envelopes" — one tile per category with planned/spent/available — rather than accounts.',
-    distinct: 'Envelope-grid dashboard: the only concept where the Dashboard leads with budget categories instead of accounts or a table of entries.',
-    audience: 'Envelope-style budgeters who think in categories first and accounts second.',
-    strengths: ['Puts "how much do I have left to spend on X" one glance away.', 'Reuses the existing budget-progress meters with the exact-figure text already required.', 'Category colours and icons carry real meaning here, not decoration.'],
-    tradeoffs: ['Accounts and raw transactions are one level deeper — not ideal for someone who thinks account-first.', 'Needs budgets set up to be useful; otherwise the hero is mostly empty.'],
-    accessibilityNotes: ['Every envelope meter keeps the existing "figure also as text" rule (never a bar alone).', 'Category colour never the only cue — name and icon always present too.'],
-    density: 'comfortable', navStyle: 'sidebar', dashboardPattern: 'envelope-grid', cardStyle: 'filled-tint', chartEmphasis: 'bars',
-    fidelity: 'standard', recommended: true,
-  }),
-  c({
     id: 'household-hub', name: 'Household Hub',
     tagline: 'Shared household planning, responsibilities and bills.',
     direction: 'A spacious top-nav layout whose dashboard leads with a stack of "what the household needs" cards: shared bills due, who paid what, and the shared balance.',
@@ -189,30 +170,6 @@ const CONCEPTS = Object.freeze([
     accessibilityNotes: ['The filter rail is reachable by keyboard before the results in tab order when open, and is a labelled region either way.', 'Collapsing the rail to a drawer keeps focus management (opens with focus inside, closes returning focus to its toggle) — the same pattern as the command picker\'s panel.'],
     density: 'compact', navStyle: 'sidebar-right', dashboardPattern: 'table-first', cardStyle: 'outline-minimal', chartEmphasis: 'bars',
     fidelity: 'flagship', recommended: true,
-  }),
-  c({
-    id: 'visual-finance', name: 'Visual Finance',
-    tagline: 'Charts and meaningful graphics balanced with detailed records.',
-    direction: 'A top-nav layout whose chart-first dashboard mixes a spending-by-category chart with a cash-flow line, tinted cards linking every figure back to its category colour.',
-    distinct: 'Chart-first with `chartEmphasis: mixed` (bar breakdown by category AND a line trend together) — the only concept combining both shared chart primitives on one dashboard.',
-    audience: 'Visually-oriented users who understand their spending faster from a picture than a table.',
-    strengths: ['Category-colour spending breakdown answers "where does it go" immediately.', 'Combines two chart types without overwhelming (both reuse the same accessible primitive).', 'Tinted cards reinforce category colour meaning across the page.'],
-    tradeoffs: ['Two charts on one dashboard needs careful vertical rhythm to avoid feeling busy — deliberately capped at two, never more (the brief\'s "avoid chart overload").', 'Colour-tinted cards must keep text contrast independent of the tint (verified, not assumed).'],
-    accessibilityNotes: ['Both charts keep the existing sr-only figure-table pattern.', 'Category colour tint on cards never drops text below 4.5:1 — computed against the tinted background, not the base surface.'],
-    density: 'comfortable', navStyle: 'top', dashboardPattern: 'chart-first', cardStyle: 'filled-tint', chartEmphasis: 'mixed',
-    fidelity: 'standard', recommended: false,
-  }),
-  c({
-    id: 'timeline-finance', name: 'Timeline Finance',
-    tagline: 'Bills, income, forecasts and obligations organized chronologically.',
-    direction: 'An icon rail and a dashboard whose hero is a single chronological timeline: past entries, today, and upcoming bills/income laid out left to right (or top to bottom on narrow screens) as one continuous line.',
-    distinct: 'Timeline dashboard pattern is unique to this concept: nothing else organises the hero strictly by date across past and future in one continuous structure.',
-    audience: 'People who think about money as a sequence of events rather than a snapshot — "what happened, what\'s next".',
-    strengths: ['Naturally answers "what\'s coming up" and "what just happened" in one structure.', 'Bills, income and entries share one visual timeline instead of three separate lists.', 'Scales well to a workspace with a lot of recurring activity.'],
-    tradeoffs: ['A long history needs pagination/virtualization discipline to stay performant — implemented as a windowed view (recent + upcoming only), not the whole history at once.', 'Chronological-only ordering is less useful for someone who wants to filter by account or category first.'],
-    accessibilityNotes: ['Timeline is a real ordered list (not just visually positioned dots), so it reads correctly to assistive technology in date order.', 'Overdue items marked in text ("overdue"), never colour alone.'],
-    density: 'comfortable', navStyle: 'rail', dashboardPattern: 'timeline', cardStyle: 'flat-bordered', chartEmphasis: 'bars',
-    fidelity: 'standard', recommended: false,
   }),
   c({
     id: 'goal-navigator', name: 'Goal Navigator',
@@ -272,18 +229,6 @@ const CONCEPTS = Object.freeze([
     tradeoffs: ['Weakest overview of any concept — a poor fit for anyone who wants a dashboard.', 'Needs a clear, discoverable way to the rest of the app (a visible "More" / full nav toggle, always present, never hidden behind a gesture).'],
     accessibilityNotes: ['The "more" control is a real, labelled, always-present link/button, never a swipe-only affordance.', 'Reduced navigation never reduces the number of landmarks below one nav + one main.'],
     density: 'spacious', navStyle: 'command', dashboardPattern: 'story-flow', cardStyle: 'soft-shadow', chartEmphasis: 'line',
-    fidelity: 'standard', recommended: false,
-  }),
-  c({
-    id: 'adaptive-overview', name: 'Adaptive Overview',
-    tagline: 'Responsive layout that changes emphasis based on screen size and financial state.',
-    direction: 'A rail on desktop that becomes a top bar on mobile, and a dashboard that reorders its own sections by what needs attention (overdue bills first when there are any; balances first when everything is settled) rather than a fixed order.',
-    distinct: 'The only concept whose composition is explicitly conditional: `adaptive` reads the same fictional data every other concept renders but changes section ORDER based on it (attention-needed content promoted), proving the shared components support real conditional composition, not just a fixed template.',
-    audience: 'Anyone who wants the app to surface what matters right now rather than always showing the same fixed layout.',
-    strengths: ['Demonstrates the composition system can reorder, not just restyle, based on real (fictional, in the gallery) data.', 'Naturally surfaces urgent items (overdue bills, a shortfall warning) without a separate "alerts" step.', 'Nav style itself adapts cleanly (rail to top) rather than the sidebar simply disappearing.'],
-    tradeoffs: ['Reordering content between visits can cost a returning user their learned spatial memory of the page — used carefully, only for genuinely urgent states, never cosmetically.', 'Hardest concept to keep predictable in testing (the gallery preview fixes the fictional data per screenshot so results are reproducible).'],
-    accessibilityNotes: ['Reordering happens in the DOM (real reading order), never only visually with CSS order, so assistive technology sees the same priority as sighted users.', 'Nav landmark stays a single consistent nav element across the rail-to-top change (attributes change, the landmark does not disappear and reappear).'],
-    density: 'comfortable', navStyle: 'rail', dashboardPattern: 'adaptive', cardStyle: 'flat-bordered', chartEmphasis: 'mixed',
     fidelity: 'standard', recommended: false,
   }),
 ]);

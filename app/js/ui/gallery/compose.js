@@ -120,7 +120,7 @@ function heroMetricGrid() {
 
 function heroChartFirst(concept) {
   const series = [{ key: "expected", dash: "solid" }, { key: "cautious", dash: "dashed" }, { key: "hopeful", dash: "dotted" }];
-  const trendLabel = concept.id === "wealth-overview" ? "Net worth trend, last 4 weeks" : concept.id === "visual-finance" ? "Cash flow and spending by category" : "Cash-flow forecast, next 30 days";
+  const trendLabel = concept.id === "wealth-overview" ? "Net worth trend, last 4 weeks" : "Cash-flow forecast, next 30 days";
   const chart = multiLineChart(fx.forecast.points, series);
   const rows = fx.forecast.points.map((p) => [p.date, p.expected, p.cautious, p.hopeful]);
   const blocks = [
