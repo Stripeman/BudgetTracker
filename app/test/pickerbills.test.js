@@ -6,7 +6,7 @@
 // only. Layout and screen-reader output are checked in a real browser.
 import { test, describe, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
-import { installDom } from "./domdouble.js";
+import { installDom, DomEvent } from "./domdouble.js";
 import { nativeDropdowns, pickerLabels, pickerNamed, chooseOption, chooseByKeyboard, offeredOptions, triggerFor } from "./pickerassert.js";
 import { createView, openBillEditor } from "../js/ui/views/bills.js";
 
@@ -134,24 +134,42 @@ describe("BT-004-05 bills: the bill editor", () => {
   });
 });
 
-describe("BT-014-10 'Record next' has a plain-language tooltip (Terry, 2026-09-17: \"i dont know what that means\")", () => {
-  test("the All bills table's Record next button explains itself on hover/focus and to a screen reader", () => {
+describe("BT-014-10/12 'Record next' has a plain-language tooltip that doesn't get clipped (Terry, 2026-09-17: \"i dont know what that means\"; then \"the tool tip ... is clipped\")", () => {
+  test("explains itself to a screen reader via aria-describedby, distinct from its own accessible name", () => {
     const { ctx, state } = billsCtx();
     const view = createView(ctx);
     dom.body.appendChild(view.element);
     view.update(state);
     const recordNext = view.element.querySelectorAll("button").find((b) => b.textContent === "Record next");
     assert.ok(recordNext, "the All bills table row has a Record next button");
-    const wrapper = recordNext.closest(".tip");
-    assert.ok(wrapper && wrapper.classList.contains("tip--info"), "wrapped so the tooltip always shows, not just when disabled");
-    assert.match(wrapper.getAttribute("data-tip"), /review.*record.*(entry|payment)/i);
+    assert.ok(recordNext.closest(".tip-anchor"), "wrapped, not styled directly (the floating box lives elsewhere)");
     const describedById = recordNext.getAttribute("aria-describedby");
     assert.ok(describedById, "linked to a description for screen readers, not hover-only");
-    const hidden = wrapper.querySelector(`#${describedById}`);
-    assert.ok(hidden && hidden.classList.contains("sr-only"), "the same text is available off-screen, not only in the CSS ::after");
-    assert.equal(hidden.textContent, wrapper.getAttribute("data-tip"));
+    const hidden = view.element.querySelector(`#${describedById}`);
+    assert.ok(hidden && hidden.classList.contains("sr-only"), "the same text is available off-screen");
+    assert.match(hidden.textContent, /review.*record.*(entry|payment)/i);
     // Still keeps its own accessible name distinct from the description (name != description).
     assert.equal(recordNext.getAttribute("aria-label"), "Record next: Fictional rent");
+  });
+
+  test("the floating tooltip is a real, separately-positioned box on the body — not a CSS box tied to the table's own scrolling container, which is what clipped it (bug fix, 2026-09-17)", () => {
+    const { ctx, state } = billsCtx();
+    const view = createView(ctx);
+    dom.body.appendChild(view.element);
+    view.update(state);
+    const recordNext = view.element.querySelectorAll("button").find((b) => b.textContent === "Record next");
+    const describedById = recordNext.getAttribute("aria-describedby");
+    const expectedText = view.element.querySelector(`#${describedById}`).textContent;
+    assert.equal(dom.body.querySelectorAll(".floating-tip").length, 0, "nothing shown before hover/focus");
+    recordNext.dispatchEvent(new DomEvent("focus", {}));
+    const tips = dom.body.querySelectorAll(".floating-tip");
+    assert.equal(tips.length, 1);
+    assert.equal(tips[0].textContent, expectedText, "the same text hover/focus and screen readers both get");
+    assert.equal(tips[0].getAttribute("aria-hidden"), "true", "announced once, through aria-describedby, never twice");
+    // A direct child of body — not nested inside the table/table-wrap that clipped the old version.
+    assert.equal(tips[0].parentNode, dom.body);
+    recordNext.dispatchEvent(new DomEvent("blur", {}));
+    assert.equal(dom.body.querySelectorAll(".floating-tip").length, 0, "removed once focus leaves");
   });
 });
 
