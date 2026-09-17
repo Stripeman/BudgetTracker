@@ -85,6 +85,15 @@ export function badge(text, variant = "") {
   return el("span", { class: ["badge", variant ? `badge--${variant}` : ""], text });
 }
 
+// Wraps an already-enabled control with a plain-language explanation, shown on hover/focus (the
+// `.tip--info` CSS modifier) and to screen readers via `aria-describedby` (Terry, 2026-09-17: "add
+// nice tool tips" for an action whose name alone wasn't clear — "Record next"). `id` must be
+// unique on the page; the wrapped control must accept `aria-describedby` (every `button()` does).
+export function infoTip(node, text, id) {
+  node.setAttribute("aria-describedby", [node.getAttribute("aria-describedby"), id].filter(Boolean).join(" "));
+  return el("span", { class: "tip tip--info", "data-tip": text }, [node, el("span", { class: "sr-only", id, text })]);
+}
+
 // Three states, as the brief asks (UX-009): a value you chose, a value inherited from the site or
 // the built-in default, or a value the site has locked.
 const SOURCE_LABELS = { personal: "Customized", site: "Inherited", default: "Inherited", locked: "Locked by site" };

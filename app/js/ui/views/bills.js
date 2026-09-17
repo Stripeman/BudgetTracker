@@ -5,7 +5,7 @@
 // real entry. Changes to a bill's terms take effect from a chosen date and never rewrite payments
 // already recorded; bills are ended, never deleted (BT-001-05). The server enforces every rule.
 import { el, mount, announce } from "../dom.js";
-import { stateView, money, button, field, input, pickerSelect, categoryBadges, iconBadges, badge } from "../components.js";
+import { stateView, money, button, field, input, pickerSelect, categoryBadges, iconBadges, badge, infoTip } from "../components.js";
 import { openModal } from "../modal.js";
 import { openDeleteDialog } from "../permanentdelete.js";
 import { createMerchantPicker } from "../merchantpicker.js";
@@ -192,7 +192,13 @@ export function createView(ctx) {
       el("td", { "data-label": "Schedule", text: scheduleLabel(b.schedule, eff.dateFormat) }),
       el("td", { "data-label": "Next due", text: b.ended ? "Ended" : b.inactiveReason ? "Not active" : b.nextDue ? formatDate(b.nextDue, eff.dateFormat) : "—" }),
       el("td", { "data-label": "" }, [el("div", { class: "row-actions" }, [
-        b.canRecord && b.nextDue ? button("Record next", () => void openRecord(ctx, b, b.nextDue), { small: true, attrs: { "aria-label": `Record next: ${b.name}` } }) : null,
+        // "Record next" wasn't self-explanatory (Terry, 2026-09-17) — a hover/focus tooltip and a
+        // screen-reader description spell out what it does: review, then record, the upcoming payment.
+        b.canRecord && b.nextDue ? infoTip(
+          button("Record next", () => void openRecord(ctx, b, b.nextDue), { small: true, attrs: { "aria-label": `Record next: ${b.name}` } }),
+          `Review this bill's next due payment (${formatDate(b.nextDue, eff.dateFormat)}) and record it as a real entry.`,
+          `${b.id}-record-next-tip`,
+        ) : null,
         b.canEdit ? button("Edit", () => openBillEditor(ctx, b), { small: true, attrs: { "aria-label": `Edit ${b.name}` } }) : null,
         b.canEdit ? (b.pausedNow
           ? button("Resume", () => openResume(ctx, b), { small: true, attrs: { "aria-label": `Resume ${b.name}` } })

@@ -448,14 +448,19 @@ fieldset.budget-line { margin: 0; padding: var(--space-3); border: 1px solid var
 /* ---------- palette picker ---------- */
 .swatch { display: inline-block; width: 0.8rem; height: 0.8rem; border-radius: 50%; background: var(--swatch); border: 1px solid var(--border-strong); }
 
-/* A styled hint over a control that is unavailable yet, saying what to do first (Terry, 2026-09-13:
-   "a tool tip on hover, not the Windows alt text"). A disabled button receives no pointer events,
-   so the hint hangs off a wrapper; the same text is also written in the dialog for keyboard and
-   screen-reader users. Shown only while the wrapped control is disabled. */
+/* A styled hint over a control, saying what to do first (Terry, 2026-09-13: "a tool tip on hover,
+   not the Windows alt text") or, with the `tip--info` modifier (Terry, 2026-09-17: plain-language
+   explanations for actions whose name alone isn't clear, e.g. "Record next"), what an already-
+   enabled control actually does. A disabled button receives no pointer events, so the hint hangs
+   off a wrapper either way; the same text is also written for keyboard and screen-reader users
+   (a visually-hidden span, `aria-describedby`). The plain `.tip` form shows only while its control
+   is disabled; `.tip--info` always shows on hover/focus, disabled or not. */
 .tip { position: relative; display: inline-flex; }
 .tip > :disabled { pointer-events: none; }
 .tip:has(> :disabled):hover::after,
-.tip:has(> :disabled):focus-within::after {
+.tip:has(> :disabled):focus-within::after,
+.tip--info:hover::after,
+.tip--info:focus-within::after {
   content: attr(data-tip);
   position: absolute;
   bottom: calc(100% + 0.5rem);

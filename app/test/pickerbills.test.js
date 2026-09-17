@@ -134,6 +134,27 @@ describe("BT-004-05 bills: the bill editor", () => {
   });
 });
 
+describe("BT-014-10 'Record next' has a plain-language tooltip (Terry, 2026-09-17: \"i dont know what that means\")", () => {
+  test("the All bills table's Record next button explains itself on hover/focus and to a screen reader", () => {
+    const { ctx, state } = billsCtx();
+    const view = createView(ctx);
+    dom.body.appendChild(view.element);
+    view.update(state);
+    const recordNext = view.element.querySelectorAll("button").find((b) => b.textContent === "Record next");
+    assert.ok(recordNext, "the All bills table row has a Record next button");
+    const wrapper = recordNext.closest(".tip");
+    assert.ok(wrapper && wrapper.classList.contains("tip--info"), "wrapped so the tooltip always shows, not just when disabled");
+    assert.match(wrapper.getAttribute("data-tip"), /review.*record.*(entry|payment)/i);
+    const describedById = recordNext.getAttribute("aria-describedby");
+    assert.ok(describedById, "linked to a description for screen readers, not hover-only");
+    const hidden = wrapper.querySelector(`#${describedById}`);
+    assert.ok(hidden && hidden.classList.contains("sr-only"), "the same text is available off-screen, not only in the CSS ::after");
+    assert.equal(hidden.textContent, wrapper.getAttribute("data-tip"));
+    // Still keeps its own accessible name distinct from the description (name != description).
+    assert.equal(recordNext.getAttribute("aria-label"), "Record next: Fictional rent");
+  });
+});
+
 describe("BT-004-05 bills: review and record", () => {
   test("Category and Status are pickers, and the payment is recorded with what was chosen", async () => {
     const { ctx, state, calls } = billsCtx();
