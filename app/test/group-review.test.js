@@ -45,6 +45,7 @@ function ctxWith(balances, { accounts = [], expenses = [], settlements = [], myL
     actions: {
       write: async (fn, refresh) => { const result = await fn("ws_1"); calls.refresh = refresh; return { ok: true, result }; },
       refreshGroup: async () => {}, refreshTransactions: async () => {}, refreshBills: async () => {}, refreshForecast: async () => {},
+      refreshWeekActivity: async () => {}, refreshMonthActivity: async () => {},
     },
   };
   return { ctx: { store, api, state }, state, calls };
