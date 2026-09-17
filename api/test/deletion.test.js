@@ -84,6 +84,34 @@ describe('BT-014 permanent deletion — cascade rule', () => {
     assert.equal(before.accounts.some((a) => a.id === to.id), true);
   });
 
+  test('Part A (Terry, 2026-09-17): an account linked to Shared expenses this workspace solely manages is deleted, not blocked — the ledger link is severed and the shared expense (amount, split, participants, history) is preserved', async () => {
+    const h = harness();
+    const f = await household(h);
+    const aliceRef = `member:${f.memberId('Alice')}`;
+    const exp = ok(await h.call('group', 'POST', {
+      as: 'alice', query: f.q,
+      body: {
+        description: 'Solo grocery run', amount: '40.00',
+        payers: [{ ref: aliceRef }], split: { method: 'equal', lines: [{ ref: aliceRef }] },
+        ledger: { accountId: f.aliceSavings.id },
+      },
+    }), 201).expense;
+    const before = await rawDoc(h, f.ws.id);
+    assert.equal(before.groupLedgers.some((l) => l.accountId === f.aliceSavings.id && !l.endedAt), true, 'fixture: the account is really linked');
+    const imp = await impact(h, 'accounts', 'accountId', f.aliceSavings.id, 'alice', f.q);
+    assert.equal(imp.blocked, false, 'no cross-workspace participation exists in this codebase, so this is always "managed solely by this workspace"');
+    assert.equal(imp.groupInvolved, true);
+    assert.ok(imp.autoCleanup.some((c) => c.type === 'group-link'), 'the client is told a Shared-expenses link will be cleaned up');
+    await execute(h, 'accounts', 'accountId', f.aliceSavings.id, 'alice', f.q, imp);
+    const after = await rawDoc(h, f.ws.id);
+    assert.equal(after.accounts.some((a) => a.id === f.aliceSavings.id), false, 'the account is gone');
+    assert.equal(after.groupLedgers.some((l) => l.accountId === f.aliceSavings.id), false, 'the dangling ledger link is removed, not left as a stale pointer');
+    const survivor = after.groupExpenses.find((e) => e.id === exp.id);
+    assert.ok(survivor, 'the shared expense itself survives the account it was linked to');
+    assert.equal(survivor.amountMinor, 4000);
+    assert.deepEqual(survivor.payers, exp.payers.map((p) => ({ ref: p.ref, amountMinor: p.amountMinor })), 'payers/amounts unchanged');
+  });
+
   test('permission mirrors edit authority: a member cannot permanently delete a shared account; a manager can', async () => {
     const h = harness();
     const f = await household(h);

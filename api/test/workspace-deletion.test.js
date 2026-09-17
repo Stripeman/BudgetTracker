@@ -56,18 +56,25 @@ describe('BT-014 whole-workspace permanent deletion', () => {
     assert.equal((await h.call('workspaces', 'POST', { as: 'eve', query: { id: f.ws.id, action: 'delete-impact' } })).status, 404, 'an outsider learns nothing');
   });
 
-  test('a workspace with Shared-expenses involvement is refused, not guessed at (the fuller download/sever flow is not built in this version)', async () => {
+  test('a workspace with Shared-expenses involvement, solely managed by this workspace (BT-014 Part A, Terry 2026-09-17): the impact flags it for a download offer and deletion proceeds, wiping the shared expenses with everything else', async () => {
     const h = harness();
     const f = await household(h);
     // Seeded directly (bypassing /api/group, whose expense/split contract is exercised by its own
-    // suite): this test is only about the workspace-deletion blocker, not Shared expenses itself.
+    // suite): this test is only about the workspace-deletion behaviour, not Shared expenses itself.
     const path = `workspaces/${f.ws.id}/workspace.json`;
     const raw = JSON.parse((await h.storage.getBytes(path)).bytes.toString());
     raw.groupExpenses = [{ id: 'gex_seed', description: 'x', currency: 'EUR', amountMinor: 100 }];
     await h.storage.putBytes(path, Buffer.from(JSON.stringify(raw)), { ifMatch: (await h.storage.getBytes(path)).etag });
     const imp = ok(await h.call('workspaces', 'POST', { as: 'alice', query: { id: f.ws.id, action: 'delete-impact' } })).impact;
-    assert.equal(imp.blocked, true);
-    assert.match(imp.blockers[0], /Shared-expenses/);
+    // No cross-workspace participation model exists in this codebase yet (groups.foreignWorkspaceIds),
+    // so a shared expense is always "managed solely by this workspace" today: not blocked, but
+    // flagged so the client offers "Download before continuing" first.
+    assert.equal(imp.blocked, false);
+    assert.equal(imp.groupInvolved, true);
+    assert.equal(imp.datasets.groupExpenses, 1);
+    ok(await h.call('workspaces', 'POST', { as: 'alice', query: { id: f.ws.id, action: 'delete-permanent' }, body: { impactToken: imp.token, typedConfirmation: 'Fictional Household' } }));
+    const doc = JSON.parse((await h.storage.getBytes(path)).bytes.toString());
+    assert.deepEqual(doc.groupExpenses, [], 'the shared expense is deleted as part of the cleanup, with everything else');
   });
 
   test('site administrator: the directory lists workspaces by counts only, never a name or balance; administrative deletion reuses the same logic', async () => {
