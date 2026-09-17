@@ -201,8 +201,15 @@ export async function run(h, t) {
   await b.dave.waitFor("!!document.querySelector('.modal')", { what: "the admin permanent-delete dialog" });
   await b.dave.waitForText("Everything in this workspace will be permanently deleted:", { scope: MODAL });
   await b.dave.click({ role: "button", name: "Continue", scope: MODAL });
-  await b.dave.waitForText(`Type "${W2.name}" to confirm`, { scope: MODAL });
-  await b.dave.fill({ label: `Type "${W2.name}" to confirm`, scope: MODAL }, W2.name);
+  // A site administrator confirms by the workspace's ID, never its name (security fix,
+  // 2026-09-17: adminSafe mode omits `label` and sets `confirmPhrase` to the id, which the admin
+  // already legitimately has from the directory) — unlike the owner's own flow, which confirms by
+  // name. Confirming this in a real browser is the whole point of this step.
+  await b.dave.waitForText(`Type "${W2.id}" to confirm`, { scope: MODAL });
+  t.check("the site administrator is asked to confirm by the workspace's id, never its name", {
+    expected: false, actual: (await b.dave.text(MODAL)).includes(W2.name),
+  });
+  await b.dave.fill({ label: `Type "${W2.id}" to confirm`, scope: MODAL }, W2.id);
   await b.dave.click({ role: "button", name: "Permanently delete workspace", scope: MODAL });
   await modalGone(b.dave, "the dialog to close after the administrative permanent deletion");
   await b.dave.settle();

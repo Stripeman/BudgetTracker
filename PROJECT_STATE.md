@@ -1255,3 +1255,21 @@ once reviewed; root-cause the pre-existing `admin-workspaces` e2e timeout above 
 feature); then pursue a Preview deploy of the accumulated BT-014 work, since Terry wants member
 deletion, whole-workspace deletion, site-admin management and now the full four-format Shared-expenses
 export all verified together on Preview.
+
+**Update (2026-09-17, coordinator):** merged (clean fast-forward, `ef7fccc`). The gate initially
+failed after merging — `exceljs`/`pdfkit` weren't installed in the coordinator's checkout (the
+merge brings `package.json` but nothing runs `npm install` automatically); fixed with `npm install`
+in `api/`, then gate passed clean (39/611/432, validate ok 24 routes). The "pre-existing
+`admin-workspaces` e2e timeout" flagged above turned out to be a stale TEST, not a product bug: the
+security review's earlier `adminSafe` fix correctly changed the site-admin confirmation phrase from
+the workspace's name to its id, but `scripts/dev/e2e/permanentdelete.mjs`'s admin step was never
+updated to match, so it waited forever for text (`Type "<name>" to confirm`) that could never
+appear. Fixed the test to expect the id and added an explicit check that the name never appears in
+that step. Re-ran the real-browser scenario end to end: **14/14 passed, exit 0**, including a real
+XLSX download verified as a well-formed ZIP/OOXML file and a real PDF download verified as a
+well-formed PDF, both via base64-decoded bytes fetched independently after the click — not just a
+button-exists check. Clean process cleanup, no console errors across all three browser sessions.
+BT-014 (deletion, rename, cascade, whole-workspace deletion, site-admin management, Shared-expenses
+severance and four-format export) is now feature-complete, gated, and verified end-to-end in a real
+browser. Not yet pushed to origin or deployed to Preview as of this note — see the exact next step
+immediately following.
