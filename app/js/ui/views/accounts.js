@@ -22,7 +22,8 @@ const LOAN_TERM_TYPES = new Set(["loan", "mortgage", "other-liability"]);
 
 // Type and currency cannot be changed once an account exists (BT-006): every entry, category rule
 // and, for loans/credit cards, the terms above assume them. Shown read-only with this explanation.
-const TYPE_CURRENCY_LOCKED = "Type and currency are set when an account is created and can't be changed, because every entry and rule on this account depends on them. To fix a wrong type or currency, remove this account (if it has no entries) or close it, and create a new one.";
+const TYPE_CURRENCY_LOCKED = "This account already has activity recorded against it (an entry, a bill, a grant or a Shared-expenses link), so type and currency are locked — every entry and rule on it depends on them.";
+const TYPE_CURRENCY_EDITABLE = "Nothing has been recorded against this account yet, so its type and currency can still be fixed if you picked the wrong one. Once anything is recorded, they lock.";
 const OPENING_LOCKED = "This account has reconciled entries, so this is locked to keep reconciled statements correct.";
 
 // The same shape `termsControls(...).collect()` produces, built directly from the account's data
@@ -342,12 +343,20 @@ function openLifecycle(ctx, account) {
 
 // Every currently-editable field (BT-006): name, institution, account number, opening balance and
 // date (locked once the account has a reconciled entry), icon, notes, and — for loans and credit
-// cards — the terms. Type and currency are shown read-only; they are fixed after creation because
-// every entry and rule on the account depends on them. Every change is kept in the account's
-// history with the reason (BT-011-05, BT-001-05).
+// cards — the terms. Type and currency are editable too, but only while nothing has been recorded
+// against the account yet (Terry, 2026-09-17: "to minimize deleting... edit account type,
+// currency") — the same boundary as account deletion eligibility (BT-006-05, `account.hasEntries`
+// already returned by the API); once anything is recorded they lock, since every entry and rule on
+// the account depends on them. Every change is kept in the account's history with the reason
+// (BT-011-05, BT-001-05).
 function openEditAccount(ctx, account) {
   const locked = !!account.reconciledLocked;
+  const typeCurrencyEditable = account.hasEntries === false;
   const name = input({ required: true, maxlength: "80", value: account.name, autocomplete: "off" });
+  const typePick = typeCurrencyEditable
+    ? pickerSelect(Object.entries(ACCOUNT_TYPE_LABELS).map(([value, label]) => ({ value, label })), account.type, {}, { search: false, badgeOf: (v) => icon(defaultIconFor("account", v)) })
+    : null;
+  const currencyPick = typeCurrencyEditable ? pickerSelect(CURRENCIES.map((c) => ({ value: c, label: c })), account.currency) : null;
   const institution = input({ maxlength: "80", value: account.institution || "", autocomplete: "off" });
   const last = input({ inputmode: "numeric", maxlength: "4", placeholder: "Last 2–4 digits only", value: account.maskedNumber || "", autocomplete: "off" });
   const opening = input({ inputmode: "decimal", placeholder: "0.00", value: account.openingBalance || "", disabled: locked });
@@ -356,13 +365,33 @@ function openEditAccount(ctx, account) {
   const chosen = account.iconSource === "record" ? account.icon : null;
   const iconPick = createIconPicker({ value: chosen, inherited: chosen ? defaultIconFor("account", account.type) : account.icon, name: account.name });
   const reason = input({ maxlength: "200", placeholder: "Optional", autocomplete: "off" });
-  const terms = termsControls(account.type, account.terms);
-  const initialTerms = terms ? JSON.stringify(canonicalTerms(account.type, account.terms)) : null;
+  // Terms are type-specific (credit limit, APR, ...): if the type picker changes, the terms shown
+  // must follow the NEWLY chosen type, not the account's original one, or the form would offer
+  // fields the server would refuse (and drop any it no longer recognises) for the type about to be
+  // saved. Rebuilt in place whenever the type selection changes.
+  const termsBox = el("div");
+  let terms = termsControls(typePick ? typePick.value : account.type, account.terms);
+  let initialTerms = terms ? JSON.stringify(canonicalTerms(account.type, account.terms)) : null;
+  const renderTerms = () => {
+    mount(termsBox, terms ? el("fieldset", { class: "form-grid budget-line field--wide" }, [el("legend", { class: "field__label", text: terms.legend }), ...terms.fields]) : null);
+  };
+  if (typePick) {
+    typePick.addEventListener("change", () => {
+      // A type change (this session's own case) clears terms server-side too — the form mirrors
+      // that rather than offering stale, possibly-invalid fields for the new type.
+      terms = typePick.value === account.type ? termsControls(account.type, account.terms) : termsControls(typePick.value, null);
+      initialTerms = typePick.value === account.type && terms ? JSON.stringify(canonicalTerms(account.type, account.terms)) : (terms ? JSON.stringify(terms.collect()) : null);
+      renderTerms();
+    });
+  }
+  renderTerms();
   const save = button("Save changes", async () => {
     modal.setError("");
     if (!name.value.trim()) { name.setAttribute("aria-invalid", "true"); name.setAttribute("aria-errormessage", modal.errorId); modal.setError("Give the account a name."); name.focus(); return; }
     const body = { accountId: account.id, revision: account.revision };
     if (name.value.trim() !== account.name) body.name = name.value.trim();
+    if (typePick && typePick.value !== account.type) body.type = typePick.value;
+    if (currencyPick && currencyPick.value !== account.currency) body.currency = currencyPick.value;
     if (institution.value.trim() !== (account.institution || "")) body.institution = institution.value.trim();
     if (last.value.trim() !== (account.maskedNumber || "")) body.maskedNumber = last.value.trim();
     if (!locked && opening.value.trim() !== (account.openingBalance || "")) body.openingBalance = opening.value.trim() || "0";
@@ -370,9 +399,11 @@ function openEditAccount(ctx, account) {
     if (notes.value !== (account.notes || "")) body.notes = notes.value;
     const icon = iconChange(chosen, iconPick.getValue());
     if (icon !== undefined) body.icon = icon;
-    if (terms) {
-      const current = JSON.stringify(terms.collect());
-      if (current !== initialTerms) body.terms = terms.collect();
+    // Terms are sent explicitly only when the type is NOT also changing (a type change already
+    // clears/reapplies terms server-side); when it is, and the user configured new terms for the
+    // new type in this same save, those are sent too.
+    if (terms && (body.type !== undefined || (() => { const current = JSON.stringify(terms.collect()); return current !== initialTerms; })())) {
+      body.terms = terms.collect();
     }
     if (Object.keys(body).length === 2) { announce("Nothing changed."); modal.close(); return; }
     if (reason.value.trim()) body.reason = reason.value.trim();
@@ -387,15 +418,19 @@ function openEditAccount(ctx, account) {
     title: `Edit ${account.name}`,
     body: [el("div", { class: "form-grid" }, [
       field("Name", name),
-      field("Type", input({ readonly: true, value: ACCOUNT_TYPE_LABELS[account.type] || account.type }), { help: TYPE_CURRENCY_LOCKED }),
-      field("Currency", input({ readonly: true, value: account.currency }), { help: TYPE_CURRENCY_LOCKED }),
+      typePick
+        ? field("Type", typePick, { help: TYPE_CURRENCY_EDITABLE })
+        : field("Type", input({ readonly: true, value: ACCOUNT_TYPE_LABELS[account.type] || account.type }), { help: TYPE_CURRENCY_LOCKED }),
+      currencyPick
+        ? field("Currency", currencyPick, { help: TYPE_CURRENCY_EDITABLE })
+        : field("Currency", input({ readonly: true, value: account.currency }), { help: TYPE_CURRENCY_LOCKED }),
       field("Institution", institution),
       field("Account number", last, { help: "Never store a full account or card number." }),
       field("Opening balance", opening, { help: locked ? OPENING_LOCKED : "Loans and other debts: enter the amount owed as a negative number, e.g. -20000.00." }),
       field("Opening date", openingDate, locked ? { help: OPENING_LOCKED } : {}),
       iconPick.element,
       field("Notes", notes, { wide: true }),
-      terms ? el("fieldset", { class: "form-grid budget-line field--wide" }, [el("legend", { class: "field__label", text: terms.legend }), ...terms.fields]) : null,
+      termsBox,
       field("Reason for this change", reason, { wide: true }),
     ])],
     actions: [button("Cancel", () => modal.close()), save],

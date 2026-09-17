@@ -29,8 +29,8 @@ const catalogFor = async (ctx, body) => (body.icon !== undefined ? (await icons.
 const workspaceSettings = require('../_shared/workspace-settings');
 
 // `status` is changed only by the close and reopen actions, which need a reason.
-const EDITABLE = ['revision', 'reason', 'name', 'institution', 'maskedNumber', 'terms', 'notes', 'openingBalance', 'openingDate', 'visibility', 'confirmShare', 'icon'];
-const TRACKED = ['name', 'institution', 'maskedNumber', 'terms', 'notes', 'openingBalanceMinor', 'openingDate', 'visibility', 'icon'];
+const EDITABLE = ['revision', 'reason', 'name', 'type', 'currency', 'institution', 'maskedNumber', 'terms', 'notes', 'openingBalance', 'openingDate', 'visibility', 'confirmShare', 'icon'];
+const TRACKED = ['name', 'type', 'currency', 'institution', 'maskedNumber', 'terms', 'notes', 'openingBalanceMinor', 'openingDate', 'visibility', 'icon'];
 const snap = (a) => Object.fromEntries(TRACKED.map((f) => [f, a[f] === undefined ? null : structuredClone(a[f])]));
 const changesSince = (before, a) => TRACKED
   .filter((f) => JSON.stringify(before[f]) !== JSON.stringify(a[f] === undefined ? null : a[f]))
@@ -134,8 +134,34 @@ async function patch(ctx, req) {
     if ((body.openingBalance !== undefined || body.openingDate !== undefined) && ledger.hasReconciledEntries(doc, account.id)) {
       throw conflict('This account has reconciled entries. Opening balance and date are locked to keep reconciled statements correct.', 'reconciled_locked');
     }
+    // Type and currency may be fixed only while the account is exactly the "created by mistake"
+    // case (Terry, 2026-09-17: "to minimize deleting... I should be able to edit my account,
+    // namely account type, currency") — the same boundary ledger.hasEntries already draws for
+    // deletion eligibility (BT-006-05). Once anything is recorded (an entry, a bill, a grant, a
+    // Shared-expenses link — including deleted/reversed ones, which are kept), every transaction
+    // on this account carries this exact currency (checkInvariants, api/_shared/backup.js) and
+    // reinterpreting it under a new one would silently misstate real historical amounts, not just
+    // relabel them — so it locks, the same way opening balance/date lock once reconciled.
+    if ((body.type !== undefined || body.currency !== undefined) && ledger.hasEntries(doc, account)) {
+      throw conflict('This account already has activity recorded against it (entries, bills, grants or a Shared-expenses link). Type and currency are locked once anything is recorded, so existing amounts are never silently reinterpreted.', 'has_entries_locked');
+    }
     const changed = [];
     if (body.name !== undefined) { account.name = fields.text(body.name, { field: 'Name', max: 80, required: true }); changed.push('name'); }
+    if (body.type !== undefined && body.type !== account.type) {
+      account.type = fields.oneOf(body.type, ledger.ACCOUNT_TYPES, 'Type');
+      // Type-specific terms (credit limit, APR, ...) may no longer apply to the new type — cleared
+      // rather than silently carried over or left invalid; re-enter them if the new type needs them.
+      account.terms = ledger.validateTerms(account.type, undefined, account.currency);
+      changed.push('type', 'terms');
+    }
+    if (body.currency !== undefined && body.currency !== account.currency) {
+      money.precisionOf(body.currency);
+      account.currency = body.currency;
+      // The opening balance's minor-units number carries over unchanged — this fixes a
+      // data-entry mistake (the wrong currency was picked), it is never a currency conversion.
+      account.terms = ledger.validateTerms(account.type, undefined, account.currency);
+      changed.push('currency', 'terms');
+    }
     if (body.institution !== undefined) { account.institution = fields.text(body.institution, { field: 'Institution', max: 80 }); changed.push('institution'); }
     if (body.maskedNumber !== undefined) { account.maskedNumber = ledger.maskedNumber(body.maskedNumber); changed.push('maskedNumber'); }
     if (body.terms !== undefined) { account.terms = ledger.validateTerms(account.type, body.terms, account.currency); changed.push('terms'); }

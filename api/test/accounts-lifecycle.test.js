@@ -71,14 +71,21 @@ describe('BT-001-05 account lifecycle', () => {
     assert.equal((await act(h, f.q, 'alice', 'close', { accountId: f.bobCard.id, revision: 1, reason: 'x' })).status, 404);
   });
 
-  test('BT-006-06 type and currency stay fixed after creation: a PATCH naming either is refused, even together with an allowed field', async () => {
+  test('BT-006-06 type and currency can be fixed while nothing has been recorded yet (Terry, 2026-09-17: "to minimize deleting... edit account type, currency"), but lock the moment anything is', async () => {
     const h = harness();
     const f = await household(h);
-    code(await h.call('accounts', 'PATCH', { as: 'alice', query: f.q, body: { accountId: f.aliceSavings.id, revision: 1, type: 'checking' } }), 400, 'unknown_field');
-    code(await h.call('accounts', 'PATCH', { as: 'alice', query: f.q, body: { accountId: f.aliceSavings.id, revision: 1, currency: 'USD' } }), 400, 'unknown_field');
-    code(await h.call('accounts', 'PATCH', { as: 'alice', query: f.q, body: { accountId: f.aliceSavings.id, revision: 1, name: 'Renamed', type: 'checking' } }), 400, 'unknown_field');
-    const unchanged = (await accountsOf(h, f.q, 'alice')).find((a) => a.id === f.aliceSavings.id);
-    assert.deepEqual([unchanged.type, unchanged.currency, unchanged.revision], ['savings', 'EUR', 1], 'refused as a whole; nothing was applied');
+    // A brand-new, empty account: the "created by mistake" case ledger.hasEntries already defines
+    // for deletion eligibility (BT-006-05) is reused here as the same edit boundary.
+    const mistake = ok(await h.call('accounts', 'POST', { as: 'alice', query: f.q, body: { name: 'Wrong pick', type: 'savings', currency: 'EUR' } }), 201).account;
+    const fixed = ok(await h.call('accounts', 'PATCH', { as: 'alice', query: f.q, body: { accountId: mistake.id, revision: mistake.revision, type: 'checking', currency: 'USD' } })).account;
+    assert.equal(fixed.type, 'checking');
+    assert.equal(fixed.currency, 'USD');
+    // The moment anything is recorded against it — even just once — type and currency lock.
+    ok(await h.call('transactions', 'POST', { as: 'alice', query: f.q, body: { accountId: mistake.id, kind: 'expense', amount: '1.00' } }), 201);
+    code(await h.call('accounts', 'PATCH', { as: 'alice', query: f.q, body: { accountId: mistake.id, revision: fixed.revision, type: 'savings' } }), 409, 'has_entries_locked');
+    code(await h.call('accounts', 'PATCH', { as: 'alice', query: f.q, body: { accountId: mistake.id, revision: fixed.revision, currency: 'EUR' } }), 409, 'has_entries_locked');
+    const stillLocked = (await accountsOf(h, f.q, 'alice')).find((a) => a.id === mistake.id);
+    assert.deepEqual([stillLocked.type, stillLocked.currency], ['checking', 'USD'], 'refused; nothing further was applied');
   });
 
   test('BT-006-06 opening date, account number and notes round-trip; reconciledLocked is reported before it is enforced', async () => {
