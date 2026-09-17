@@ -1,11 +1,13 @@
 'use strict';
-// BT-014 Part A (Terry, 2026-09-17): "Before either deletion or disconnection, offer the deleting
-// workspace a download of its authorized shared-expense information in PDF, CSV, or XLSX format.
-// Include participants, dates, descriptions, currencies, amounts, splits, settlements, and
-// outstanding balances." CSV and JSON only in this version — see api/_shared/sharedexport.js for
-// why XLSX/PDF are deferred. All data is fictional.
+// BT-014 Part A/BT-014-06 (Terry, 2026-09-17): "Before either deletion or disconnection, offer the
+// deleting workspace a download of its authorized shared-expense information in PDF, CSV, or XLSX
+// format. Include participants, dates, descriptions, currencies, amounts, splits, settlements, and
+// outstanding balances." All four formats are built — see api/_shared/sharedexport.js. All data is
+// fictional.
 const { test, describe } = require('node:test');
 const assert = require('node:assert/strict');
+const ExcelJS = require('exceljs');
+const JSZip = require('jszip');
 const { harness, USERS } = require('./helpers');
 
 const ok = (res, status = 200) => { assert.equal(res.status, status, JSON.stringify(res.body)); return res.body; };
@@ -93,7 +95,149 @@ describe('BT-014 Part A: shared-expenses export (CSV/JSON)', () => {
     const h = harness();
     const f = await fixture(h);
     assert.equal((await h.call('group', 'GET', { as: 'eve', query: { ...f.q, action: 'export', format: 'json' } })).status, 404);
-    const bad = await h.call('group', 'GET', { as: 'alice', query: { ...f.q, action: 'export', format: 'pdf' } });
+    const bad = await h.call('group', 'GET', { as: 'alice', query: { ...f.q, action: 'export', format: 'xml' } });
+    assert.equal(bad.status, 400);
+    assert.equal(bad.body.error.code, 'invalid_format');
+    assert.match(bad.body.error.message, /csv, json, xlsx, pdf/);
+  });
+
+  test('XLSX export includes the same data as CSV/JSON, with the correct mime type, filename and base64 encoding, and mirrors the export authorization', async () => {
+    const h = harness();
+    const f = await fixture(h);
+    await ok(await h.call('group', 'POST', {
+      as: 'alice', query: f.q,
+      body: { description: 'Fictional dinner', amount: '90.00', date: '2026-09-10', payers: [{ ref: f.refs.alice, amount: '90.00' }], split: equal(f.refs.alice, f.refs.bob) },
+    }), 201);
+    ok(await h.call('group', 'POST', { as: 'bob', query: { ...f.q, action: 'settle' }, body: { from: f.refs.bob, to: f.refs.alice, amount: '20.00', currency: 'EUR', date: '2026-09-11', method: 'cash' } }), 201);
+
+    // An outsider cannot export XLSX either (same authorization as CSV/JSON above).
+    assert.equal((await h.call('group', 'GET', { as: 'eve', query: { ...f.q, action: 'export', format: 'xlsx' } })).status, 404);
+
+    const res = ok(await h.call('group', 'GET', { as: 'alice', query: { ...f.q, action: 'export', format: 'xlsx' } }));
+    assert.equal(res.format, 'xlsx');
+    assert.equal(res.mime, 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    assert.match(res.filename, /\.xlsx$/);
+    assert.equal(res.encoding, 'base64');
+    const buf = Buffer.from(res.content, 'base64');
+    // A real ZIP/OOXML file, not a stub: starts with the ZIP local-file-header signature.
+    assert.equal(buf.subarray(0, 2).toString('latin1'), 'PK');
+
+    const wb = new ExcelJS.Workbook();
+    await wb.xlsx.load(buf);
+    const sheetNames = wb.worksheets.map((ws) => ws.name);
+    assert.deepEqual(sheetNames, ['Participants', 'Expenses', 'Expense shares', 'Settlements', 'Outstanding balances']);
+
+    const participants = wb.getWorksheet('Participants');
+    const names = [];
+    participants.eachRow((row, i) => { if (i > 1) names.push(row.getCell(1).value); });
+    assert.ok(names.some((n) => n.startsWith('Alice')));
+    assert.ok(names.some((n) => n.startsWith('Bob')));
+
+    const expenses = wb.getWorksheet('Expenses');
+    let expenseRow = null;
+    expenses.eachRow((row, i) => { if (i > 1 && row.getCell(2).value === 'Fictional dinner') expenseRow = row; });
+    assert.ok(expenseRow, 'the expense appears in the Expenses sheet');
+    assert.equal(expenseRow.getCell(3).value, 'EUR');
+    assert.equal(expenseRow.getCell(4).value, '90.00');
+    assert.equal(expenseRow.getCell(7).value, 'equal');
+
+    const settlements = wb.getWorksheet('Settlements');
+    let settleRow = null;
+    settlements.eachRow((row, i) => { if (i > 1 && row.getCell(5).value === '20.00') settleRow = row; });
+    assert.ok(settleRow, 'the settlement appears in the Settlements sheet');
+    assert.equal(settleRow.getCell(6).value, 'reported');
+
+    const balances = wb.getWorksheet('Outstanding balances');
+    let balanceRows = 0;
+    balances.eachRow((row, i) => { if (i > 1) balanceRows += 1; });
+    assert.ok(balanceRows > 0, 'outstanding balances are included');
+  });
+
+  test('a description starting with a formula character is never turned into an XLSX formula (security review lesson carried forward, 2026-09-17)', async () => {
+    const h = harness();
+    const f = await fixture(h);
+    await ok(await h.call('group', 'POST', {
+      as: 'alice', query: f.q,
+      body: { description: '=HYPERLINK("http://attacker.example")', amount: '10.00', date: '2026-09-10', payers: [{ ref: f.refs.alice, amount: '10.00' }], split: equal(f.refs.alice, f.refs.bob) },
+    }), 201);
+    const res = ok(await h.call('group', 'GET', { as: 'alice', query: { ...f.q, action: 'export', format: 'xlsx' } }));
+    const buf = Buffer.from(res.content, 'base64');
+
+    // Object-model proof: exceljs reads the cell back as a plain string, never as a formula, and
+    // the text is stored byte-for-byte as written (no apostrophe or other neutralization applied
+    // or needed for this format — see the comment above toXlsx() in sharedexport.js).
+    const wb = new ExcelJS.Workbook();
+    await wb.xlsx.load(buf);
+    const expenses = wb.getWorksheet('Expenses');
+    let cell = null;
+    expenses.eachRow((row, i) => { if (i > 1 && String(row.getCell(2).value).startsWith('=HYPERLINK')) cell = row.getCell(2); });
+    assert.ok(cell, 'the hostile description is present as plain data');
+    assert.equal(cell.value, '=HYPERLINK("http://attacker.example")');
+    assert.equal(cell.type, ExcelJS.ValueType.String);
+    assert.equal(cell.formula, undefined);
+
+    // File-level proof: unzip the OOXML package and confirm the worksheet XML holds the text as a
+    // shared/inline string, never inside a <f> (formula) element.
+    const zip = await JSZip.loadAsync(buf);
+    const sheetFiles = Object.keys(zip.files).filter((n) => /^xl\/worksheets\/sheet\d+\.xml$/.test(n));
+    let sawFormulaTag = false;
+    let sawTextSomewhere = false;
+    for (const name of sheetFiles) {
+      const xml = await zip.files[name].async('string');
+      if (/<f[ >]/.test(xml)) sawFormulaTag = true;
+    }
+    const sharedStrings = zip.files['xl/sharedStrings.xml'] ? await zip.files['xl/sharedStrings.xml'].async('string') : '';
+    if (sharedStrings.includes('HYPERLINK')) sawTextSomewhere = true;
+    for (const name of sheetFiles) {
+      const xml = await zip.files[name].async('string');
+      if (xml.includes('HYPERLINK')) sawTextSomewhere = true;
+    }
+    assert.equal(sawFormulaTag, false, 'no worksheet XML may contain a <f> formula element anywhere in this workbook');
+    assert.ok(sawTextSomewhere, 'the literal text is present somewhere in the package (shared strings or inline)');
+  });
+
+  test('PDF export includes the same data, with the correct mime type, filename and base64 encoding, and mirrors the export authorization; hostile text renders as plain content, never breaking out of the stream', async () => {
+    const h = harness();
+    const f = await fixture(h);
+    await ok(await h.call('group', 'POST', {
+      as: 'alice', query: f.q,
+      body: { description: 'Fictional dinner (with parens) \\ and a =HYPERLINK("x") prefix', amount: '90.00', date: '2026-09-10', payers: [{ ref: f.refs.alice, amount: '90.00' }], split: equal(f.refs.alice, f.refs.bob) },
+    }), 201);
+
+    assert.equal((await h.call('group', 'GET', { as: 'eve', query: { ...f.q, action: 'export', format: 'pdf' } })).status, 404);
+
+    const res = ok(await h.call('group', 'GET', { as: 'alice', query: { ...f.q, action: 'export', format: 'pdf' } }));
+    assert.equal(res.format, 'pdf');
+    assert.equal(res.mime, 'application/pdf');
+    assert.match(res.filename, /\.pdf$/);
+    assert.equal(res.encoding, 'base64');
+    const buf = Buffer.from(res.content, 'base64');
+    assert.equal(buf.subarray(0, 5).toString('latin1'), '%PDF-');
+    assert.match(buf.toString('latin1'), /%%EOF\s*$/, 'a well-formed, complete PDF trailer');
+
+    // The content stream is written uncompressed (see toPdf()), so it can be inspected directly.
+    // pdfkit's default font here (Helvetica/WinAnsi, drawn via `.text()`) writes every text run as
+    // a HEX string (`<...>` before a Tj/TJ operator), not a parenthesized literal — confirmed by
+    // generating this exact PDF and inspecting its bytes. That is a stronger guarantee than
+    // character-escaping: raw text characters (letters, digits, `(`, `)`, `\`, `=`) never appear in
+    // the content stream at all, only their hex byte codes, which cannot be interpreted as PDF
+    // stream syntax (a string delimiter, an operator name, or anything else) under any
+    // circumstance. Decoding every hex run in document order and concatenating them (TJ's numeric
+    // kerning adjustments between runs never drop characters) recovers the original text exactly,
+    // proving nothing was lost, corrupted or reinterpreted — while the RAW literal text is absent
+    // from the stream bytes, proving it never took the literal-string path this test first assumed.
+    const text = buf.toString('latin1');
+    assert.equal(text.includes('Fictional dinner (with parens)'), false, 'hostile/plain text never appears unencoded in the content stream (it is always hex-encoded)');
+    const hexRuns = [...text.matchAll(/<([0-9a-fA-F]+)>/g)].map((m) => m[1]);
+    let decoded = '';
+    for (const h of hexRuns) for (let i = 0; i < h.length; i += 2) decoded += String.fromCharCode(parseInt(h.slice(i, i + 2), 16));
+    assert.ok(decoded.includes('Fictional dinner (with parens) \\ and a =HYPERLINK("x") prefix'), 'the exact original text is recoverable from the hex-encoded page content, byte for byte');
+  });
+
+  test('an unsupported format is refused for XLSX and PDF requests the same way as for CSV/JSON', async () => {
+    const h = harness();
+    const f = await fixture(h);
+    const bad = await h.call('group', 'GET', { as: 'alice', query: { ...f.q, action: 'export', format: 'doc' } });
     assert.equal(bad.status, 400);
     assert.equal(bad.body.error.code, 'invalid_format');
   });

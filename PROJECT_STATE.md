@@ -1159,3 +1159,99 @@ one). XLSX/PDF export — Terry explicitly approved adding a small vetted depend
 then pursue the XLSX/PDF export addition (new scope, needs a dependency choice) as its own unit of
 work before a Preview deploy, since Terry wants member deletion, whole-workspace deletion and
 site-admin management all verified together on Preview.
+
+## Checkpoint Y — BT-014-06: XLSX and PDF Shared-expenses export (2026-09-17)
+
+Built on a fresh worktree from `origin/feature/project-foundation` at `8d48b27` (Checkpoint X's
+tip), branch `feature/shared-expenses-export-formats`. Terry explicitly approved adding a small,
+well-known, narrowly-scoped dependency for each format (2026-09-17), closing the gap Checkpoint X
+left open.
+
+**Built.** `exceljs` 4.4.0 (XLSX) and `pdfkit` 0.20.2 (PDF) added to `api/package.json` as exact
+production dependencies; `jszip` 3.10.2 added as a `devDependency` (test-only OOXML-package
+inspection; also pulled in anyway as exceljs's own runtime dependency, so nothing new ships).
+`api/_shared/sharedexport.js`'s `FORMATS` registry gained `xlsx` (one workbook, one worksheet per
+table: Participants, Expenses, Expense shares, Settlements, Outstanding balances) and `pdf` (a
+sectioned, readable document mirroring the same structure), both reusing the exact same
+`buildReport()` output CSV/JSON already use — never re-derived. `render()` is now async and returns
+an `encoding` field (`"text"` or `"base64"`) alongside `content`, since the shared HTTP responder
+(`api/_shared/http.js`) always JSON-encodes its body; `api/group/handler.js`'s `exportReport` now
+awaits `render()` and passes `encoding` through. `app/js/ui/permanentdelete.js`'s
+`offerGroupDownload` gained "Download as XLSX" and "Download as PDF" buttons; `downloadFile` now
+decodes base64 (`atob`) back to raw bytes for binary formats before building the `Blob`, unchanged
+for text. No changes were needed to `scripts/build-artifact.mjs`, `staticwebapp.config.json` or
+`api/_shared/routes.js` — verified, not assumed: the artifact was actually built
+(`node scripts/build-artifact.mjs`) and `sharedexport.js` was required from inside it, confirming
+`npm ci --omit=dev` (already the artifact's existing dependency step) correctly installs the new
+production deps and correctly excludes the `devDependency`-only `jszip` from what ships (`jszip`
+still lands anyway, as exceljs's own dependency — expected and fine).
+
+**Dependency sanity check (not taken on faith).** Neither package is deprecated. `npm audit` found
+one moderate, transitive, inapplicable advisory: `uuid` GHSA-w5hq-g745-h8pq (a bounds check
+missing only when a caller passes an explicit output `buf` to its v3/v5/v6 functions) — exceljs's
+own only use of `uuid` calls `uuidv4()` with no arguments, so this advisory cannot reach through
+this dependency. `npm --prefix api list exceljs pdfkit jszip` shows a clean tree, no
+peer-dependency conflicts.
+
+**CSV-injection lesson, carried forward and verified (not assumed).** For XLSX: read exceljs's own
+source (`lib/doc/cell.js`) — a plain JS string always resolves to `Cell.Types.String` before the
+formula check ever runs; a formula cell is reachable only via an explicit `{ formula: '...' }`
+object, which this module never constructs. Proven two ways in
+`api/test/sharedexport.test.js`: object-model (round-tripped through
+`ExcelJS.Workbook().xlsx.load()`, cell type is String, `cell.formula` is `undefined`) and file-level
+(the OOXML package is unzipped with `jszip` and every worksheet XML is confirmed to contain no
+`<f>` element anywhere). The CSV file's leading-apostrophe neutralization is deliberately NOT
+reapplied for XLSX — confirmed unneeded, and it would visibly alter the stored text for no
+protective benefit. For PDF: generated an actual file and inspected its bytes directly — pdfkit
+draws text runs as hex-encoded strings (`<...> Tj`), so raw characters (including `(`, `)`, `\`, a
+leading `=`) never appear in the content stream at all, only inert hex byte codes that cannot be
+parsed as PDF syntax; had pdfkit instead used literal `(...)` strings, its own
+`escapable`/`escapableRe` table already escapes them. `toPdf()` sets `compress: false` deliberately
+so this is directly inspectable (and testable) without first inflating the stream.
+
+**Evidence.** `api/test/sharedexport.test.js`: 8/8 (all four formats: content, mime, filename,
+encoding, authorization matching CSV/JSON exactly; the existing CSV neutralization test unchanged;
+new XLSX formula-safety tests at both levels above; a new PDF hex-encoding safety test; the
+existing read-only/outsider/unsupported-format tests, the last one re-pointed at `xml`/`doc` since
+`pdf` is now a valid format). `npm --prefix api test`: 611/611. `npm test` (repo+api+app):
+39/611/432, all green. `npm run validate`: ok, 24 routes. All exit 0.
+
+**Real-browser e2e.** `npm run e2e -- --only permanentdelete` extended: the account-deletion step
+now clicks "Download as XLSX" for real (previously it only clicked "Continue without downloading");
+the workspace-deletion step now clicks "Download as PDF" for real. Both are followed by an
+independent re-fetch of the same export (a plain API call, not through the browser) to inspect the
+actual bytes: real ZIP/OOXML (`PK` header) and real PDF (`%PDF-` header, `%%EOF` trailer) with the
+correct mime and `encoding: "base64"`. The button-presence check was extended to require all four
+"Download as …" buttons plus "Continue without downloading". **Result: 9 of the scenario's own
+checks pass** (everything through the site-admin Workspaces directory listing, including both new
+real-download checks). **The scenario cannot complete end-to-end in this environment**: its last
+step (Dave's administrative permanent deletion of a second workspace, step 5) times out waiting for
+the typed-confirmation field to appear. **Confirmed pre-existing and unrelated to this change**: the
+exact unmodified `8d48b27` scenario file was restored into the worktree and rerun in isolation —
+it times out at the identical step with the identical error message, with none of this session's
+edits present. Restored to the edited version afterward (`git diff --stat` confirms only the
+intended +31/-5 change remains). Not investigated further (out of scope: unrelated to Shared-expenses
+export, and CLAUDE.md's "keep the change limited to the user's request"); flagged below as a known
+gap for whoever picks up BT-014-03/04 next.
+
+**Not done / not verified this session.** No independent security/financial review of the new XLSX/PDF
+code by a separate reviewer subagent (none was available in this session, same limitation as
+Checkpoints U–X) — the injection-safety reasoning above is thorough but self-reviewed, and a real
+independent pass is recommended before Preview/Production, per CLAUDE.md §8. No Preview deploy was
+attempted: `.local/deploy-target.json` is absent from this worktree (consistent with every prior
+BT-014 worktree session) — merge-ready, not deployed.
+
+**KNOWN BUGS / TECHNICAL DEBT (new).** `scripts/dev/e2e/permanentdelete.mjs` step 5 (Dave's
+administrative permanent deletion of a workspace he was never a member of) reliably times out
+waiting for the typed-confirmation field in this environment, on the unmodified `8d48b27` baseline
+as well as on this branch — a pre-existing bug or environment-specific flake in BT-014-03's admin
+deletion flow (or the harness), not yet root-caused. Two consecutive `POST /api/analytics` calls
+(200 each) precede the timeout in the server log, so the impact fetch itself succeeds; the failure
+looks front-end/rendering-side. Needs investigation by whoever next touches
+`app/js/ui/views/adminworkspaces.js` or the admin permanent-delete wiring in `permanentdelete.js`.
+
+**Exact next step:** merge `feature/shared-expenses-export-formats` into `feature/project-foundation`
+once reviewed; root-cause the pre-existing `admin-workspaces` e2e timeout above (separate from this
+feature); then pursue a Preview deploy of the accumulated BT-014 work, since Terry wants member
+deletion, whole-workspace deletion, site-admin management and now the full four-format Shared-expenses
+export all verified together on Preview.

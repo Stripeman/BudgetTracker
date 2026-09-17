@@ -653,18 +653,19 @@ const newestFirst = (a, b) => (a.date === b.date ? String(b.createdAt).localeCom
 // optional and must not execute or confirm deletion." Any active member may download exactly the
 // data their own Shared expenses page already shows them (same authority as ?action=balances
 // above) — this route never deletes or disconnects anything by itself; it is read-only. The raw
-// text is returned inside the normal JSON envelope (`content`), not as a binary response body,
-// because this codebase's one shared HTTP responder (api/_shared/http.js `respond`) always
-// JSON-encodes `body` for every route; the client builds the downloadable file from `content`
-// with a Blob, so no change was needed to that shared response path. CSV and JSON only — see
-// api/_shared/sharedexport.js for why XLSX/PDF are not built here.
+// text or base64-encoded binary is returned inside the normal JSON envelope (`content` plus
+// `encoding`), not as a binary response body, because this codebase's one shared HTTP responder
+// (api/_shared/http.js `respond`) always JSON-encodes `body` for every route; the client builds
+// the downloadable file from `content` (decoding base64 first for XLSX/PDF) with a Blob, so no
+// change was needed to that shared response path. CSV, JSON, XLSX and PDF (BT-014-06) — see
+// api/_shared/sharedexport.js.
 async function exportReport(ctx, req) {
   const wsId = requireId(query(req, 'workspaceId'), 'workspaceId');
   const format = query(req, 'format') || 'json';
   const { doc } = await store.loadWorkspace(ctx, wsId);
-  const out = sharedExport.render(doc, ctx.principal, format, ctx.nowIso());
+  const out = await sharedExport.render(doc, ctx.principal, format, ctx.nowIso());
   if (!out) throw badRequest(`Unsupported export format. Choose one of: ${sharedExport.FORMATS.join(', ')}.`, 'invalid_format');
-  return { body: { format, filename: out.filename, mime: out.mime, content: out.body } };
+  return { body: { format, filename: out.filename, mime: out.mime, content: out.body, encoding: out.encoding } };
 }
 
 async function list(ctx, req) {

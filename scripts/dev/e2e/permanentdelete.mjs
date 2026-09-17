@@ -100,8 +100,17 @@ export async function run(h, t) {
   await b.carol.waitForText("linked to Shared expenses", { scope: MODAL });
   const offerButtons = await modalButtons(b.carol);
   t.note(`screenshot of the download-before-continuing offer: ${await b.carol.shot("permdel-group-offer")}`);
-  await b.carol.click({ role: "button", name: "Continue without downloading", scope: MODAL });
+  // BT-014-06: a real click on "Download as XLSX" in the real browser, not just a button-presence
+  // check. offerGroupDownload() only calls onDone() (which advances the dialog to the typed-name
+  // confirmation step) once the download's fetch/Blob/anchor-click path resolves without throwing;
+  // if it had failed, the dialog would show the inline retry error and stay on the offer step
+  // instead. Reaching the confirmation step is therefore itself real-browser proof the XLSX
+  // download completed. The same authorized export is independently re-fetched here (a plain API
+  // call, not through the browser) to inspect the actual bytes the button just downloaded.
+  await b.carol.click({ role: "button", name: "Download as XLSX", scope: MODAL });
   await b.carol.waitForText('Type "E2E Perm Shared Link" to confirm', { scope: MODAL });
+  const xlsxCheck = await api("carol").ok("group", { query: { ...q, action: "export", format: "xlsx" } });
+  const xlsxBytes = Buffer.from(xlsxCheck.content, "base64");
   await b.carol.fill({ label: 'Type "E2E Perm Shared Link" to confirm', scope: MODAL }, "E2E Perm Shared Link");
   await b.carol.click({ role: "button", name: "Permanently delete", scope: MODAL });
   await modalGone(b.carol, "the dialog to close after deleting the shared-linked account");
@@ -109,10 +118,14 @@ export async function run(h, t) {
   const sharedAfter = await api("carol").ok("accounts", { query: q });
   const groupAfter = await api("carol").ok("group", { query: q });
   const survivor = groupAfter.expenses.find((e) => e.id === expense.id);
-  t.check("downloading before continuing is offered (never deleting by itself); after Continue without downloading and confirming, the account is gone and the shared expense survives unchanged", {
-    expected: { offered: true, accountGone: true, expenseSurvives: true, amount: "40.00" },
+  t.check("downloading before continuing is offered in all four formats (never deleting by itself); a real XLSX download (clicked in the browser) is a well-formed ZIP/OOXML file with the correct mime and base64 encoding; after it, and confirming, the account is gone and the shared expense survives unchanged", {
+    expected: {
+      offered: true, xlsxMime: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", xlsxEncoding: "base64", xlsxIsZip: true,
+      accountGone: true, expenseSurvives: true, amount: "40.00",
+    },
     actual: {
-      offered: ["Download as CSV", "Download as JSON", "Continue without downloading"].every((x) => offerButtons.includes(x)),
+      offered: ["Download as CSV", "Download as JSON", "Download as XLSX", "Download as PDF", "Continue without downloading"].every((x) => offerButtons.includes(x)),
+      xlsxMime: xlsxCheck.mime, xlsxEncoding: xlsxCheck.encoding, xlsxIsZip: xlsxBytes.subarray(0, 2).toString("latin1") === "PK",
       accountGone: !sharedAfter.accounts.some((a) => a.id === shared.id), expenseSurvives: !!survivor, amount: survivor && survivor.amount,
     },
   });
@@ -144,9 +157,22 @@ export async function run(h, t) {
   await b.carol.click({ role: "button", name: "Continue without a backup", scope: MODAL });
   // The workspace still has one surviving Shared expense (from step 3, deliberately left in place),
   // so the Shared-expenses download offer appears here too, exactly as it did for the single account.
+  // Real-browser coverage of the other new binary format (PDF, BT-014-06): the same reasoning as
+  // step 3's XLSX check — reaching the next step is proof the click-driven download succeeded — plus
+  // an independent re-fetch of the same export to inspect the actual PDF bytes.
   await b.carol.waitForText("linked to Shared expenses", { scope: MODAL });
-  await b.carol.click({ role: "button", name: "Continue without downloading", scope: MODAL });
+  await b.carol.click({ role: "button", name: "Download as PDF", scope: MODAL });
   await b.carol.waitForText(`Type "${W.name}" to confirm`, { scope: MODAL });
+  const pdfCheck = await api("carol").ok("group", { query: { ...q, action: "export", format: "pdf" } });
+  const pdfBytes = Buffer.from(pdfCheck.content, "base64");
+  t.check("a real PDF download (clicked in the browser) is a well-formed PDF file with the correct mime and base64 encoding", {
+    expected: { mime: "application/pdf", encoding: "base64", startsPdf: true, endsEof: true },
+    actual: {
+      mime: pdfCheck.mime, encoding: pdfCheck.encoding,
+      startsPdf: pdfBytes.subarray(0, 5).toString("latin1") === "%PDF-",
+      endsEof: /%%EOF\s*$/.test(pdfBytes.toString("latin1")),
+    },
+  });
   await b.carol.fill({ label: `Type "${W.name}" to confirm`, scope: MODAL }, W.name);
   await b.carol.click({ role: "button", name: "Permanently delete workspace", scope: MODAL });
   await modalGone(b.carol, "the dialog to close after permanently deleting the workspace");

@@ -80,8 +80,19 @@ function impactBody(impact) {
 // Terry, 2026-09-17: "Before either deletion or disconnection, offer the deleting workspace a
 // download of its authorized shared-expense information... Downloading is optional and must not
 // execute or confirm deletion... If a download fails, keep the dialog open for retry."
-export function downloadFile(name, mime, content) {
-  const blob = new Blob([content], { type: mime });
+//
+// `content` is plain text for CSV/JSON and a base64 string for XLSX/PDF (BT-014-06): the shared
+// HTTP responder always JSON-encodes `body`, so binary bytes travel as base64 and are decoded back
+// to raw bytes here before building the Blob — see api/_shared/sharedexport.js and
+// api/group/handler.js's `exportReport`.
+function base64ToBytes(b64) {
+  const binary = atob(b64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i);
+  return bytes;
+}
+export function downloadFile(name, mime, content, encoding = "text") {
+  const blob = new Blob([encoding === "base64" ? base64ToBytes(content) : content], { type: mime });
   const url = URL.createObjectURL(blob);
   const a = el("a", { href: url, download: name });
   document.body.appendChild(a);
@@ -96,7 +107,7 @@ function offerGroupDownload(ctx, modal, wsId, onDone) {
     status.textContent = `Preparing the ${format.toUpperCase()} download…`;
     try {
       const out = await ctx.api.sharedExport(wsId, format);
-      downloadFile(out.filename, out.mime, out.content);
+      downloadFile(out.filename, out.mime, out.content, out.encoding);
       status.textContent = "Downloaded.";
       announce("Shared-expenses information downloaded.");
       onDone();
@@ -109,6 +120,8 @@ function offerGroupDownload(ctx, modal, wsId, onDone) {
     el("div", { class: "row" }, [
       button("Download as CSV", () => doDownload("csv")),
       button("Download as JSON", () => doDownload("json")),
+      button("Download as XLSX", () => doDownload("xlsx")),
+      button("Download as PDF", () => doDownload("pdf")),
       button("Continue without downloading", () => onDone(), { variant: "ghost" }),
     ]),
     status,
