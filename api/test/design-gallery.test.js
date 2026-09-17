@@ -31,10 +31,10 @@ describe('BT-013 design gallery: permissions', () => {
     assert.equal(res.status, 401);
   });
 
-  test('a site administrator is let through and gets all 20 concepts', async () => {
+  test('a site administrator is let through and gets all 15 concepts', async () => {
     const h = harness();
     const data = ok(await h.call('design-gallery', 'GET', { as: 'dave' }));
-    assert.equal(data.concepts.length, 20);
+    assert.equal(data.concepts.length, 15);
     assert.deepEqual(data.requiredPages, ['dashboard', 'transactions', 'bills', 'budget', 'shared', 'trips', 'settings']);
     assert.deepEqual(data.realLayoutOptions, [{ value: 'classic', label: 'Classic (current)' }]);
     assert.deepEqual(data.picks, { selectedIds: [], note: '', updatedAt: null, updatedBy: null });

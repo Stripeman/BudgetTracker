@@ -1,13 +1,13 @@
 // BT-013 Design Gallery, verified in real headless Edge (never a static screenshot claim): the
 // Gallery is reachable only by a site administrator (401/403/hidden nav for everyone else); every
-// one of the 20 concepts renders a live thumbnail with no console errors; a sample walk across
+// one of the 15 concepts renders a live thumbnail with no console errors; a sample walk across
 // distinct navStyle/dashboardPattern families renders every required page; desktop/tablet/mobile
 // widths with no horizontal overflow at 320px; light/dark and a palette sample with the same
 // pageContrast/pageBorderContrast pattern login.mjs already established; reduced motion; and the
 // workspace `layoutId` setting's real plumbing (schema/API/audit/permissions), shown in a real
-// browser even though it is not yet wired to any of the 20 concepts.
+// browser even though it is not yet wired to any of the 15 concepts.
 export const name = "gallery";
-export const title = "BT-013 Design Gallery: site-admin only, all 20 concepts render, sampled pages/viewports/palettes/modes, no 320px overflow, reduced motion, layoutId setting plumbing";
+export const title = "BT-013 Design Gallery: site-admin only, all 15 concepts render, sampled pages/viewports/palettes/modes, no 320px overflow, reduced motion, layoutId setting plumbing";
 export const needsBrowser = true;
 
 // The same contrast primitives as scripts/dev/e2e/login.mjs (serialized with toString(), so each
@@ -59,7 +59,7 @@ export async function run(h, t) {
   const asAnon = await fetch(`${h.base}/api/design-gallery`);
   t.check("anonymous: GET /api/design-gallery is refused", { expected: 401, actual: asAnon.status });
   const daveGet = await h.api("dave").ok("design-gallery");
-  t.check("dave (site admin): sees all 20 concepts and the 7 required pages", { expected: { concepts: 20, pages: 7 }, actual: { concepts: daveGet.concepts.length, pages: daveGet.requiredPages.length } });
+  t.check("dave (site admin): sees all 15 concepts and the 7 required pages", { expected: { concepts: 15, pages: 7 }, actual: { concepts: daveGet.concepts.length, pages: daveGet.requiredPages.length } });
   const alicePatch = await h.api("alice").request("design-gallery", { method: "PATCH", body: { picks: { selectedIds: ["executive-ledger"] } } });
   t.check("alice: PATCH /api/design-gallery (picks) is refused", { expected: 403, actual: alicePatch.status });
 
@@ -72,27 +72,29 @@ export async function run(h, t) {
   const aliceText = await alice.text();
   t.check("alice: opening #/gallery directly shows no concept data, only the refusal sentence", {
     expected: { hasData: false, hasRefusal: true },
-    actual: { hasData: /All 20 concepts/.test(aliceText), hasRefusal: /only shown to site administrators/.test(aliceText) },
+    actual: { hasData: /All 15 concepts/.test(aliceText), hasRefusal: /only shown to site administrators/.test(aliceText) },
   });
   t.check("alice: no exceptions or console errors", { expected: [], actual: alice.problems({ allowHttp: [{ status: 403, path: /\/api\/design-gallery$/ }] }) });
 
   await dave.open("dashboard");
   t.check("dave: a 'Design Gallery' entry pointing at #/gallery exists in the DOM", { expected: true, actual: await dave.exists('a[href="#/gallery"]') });
   await dave.goto("gallery");
-  await dave.waitForText("All 20 concepts");
+  await dave.waitForText("All 15 concepts");
   const cardCount = await dave.evaluate("document.querySelectorAll('.gcard-outer').length");
-  t.check("dave: all 20 concept cards render", { expected: 20, actual: cardCount });
+  t.check("dave: all 15 concept cards render", { expected: 15, actual: cardCount });
   const thumbCount = await dave.evaluate("document.querySelectorAll('.gcard-outer .gframe').length");
-  t.check("dave: every card carries a live rendered preview thumbnail (never a static image)", { expected: 20, actual: thumbCount });
+  t.check("dave: every card carries a live rendered preview thumbnail (never a static image)", { expected: 15, actual: thumbCount });
   const navFamilies = await dave.evaluate("[...new Set([...document.querySelectorAll('.gcard-outer .gframe')].map((f) => f.dataset.nav))].sort()");
   t.check("dave: the loaded concepts show at least 4 distinct navigation families (genuine structural variety)", { expected: true, actual: navFamilies.length >= 4 });
-  await dave.shot("grid-all-20");
-  t.check("dave: no console errors/exceptions loading and rendering all 20 concepts at once", { expected: [], actual: dave.problems() });
+  await dave.shot("grid-all-15");
+  t.check("dave: no console errors/exceptions loading and rendering all 15 concepts at once", { expected: [], actual: dave.problems() });
 
   // ---- sample deep walk: 5 concepts spanning distinct nav styles, every required page -------------
-  // Sampled (not all 20 x 7 in the browser): the composition-engine unit tests
-  // (app/test/gallery.test.js) already render all 20 x 7 = 140 combinations headlessly without a
-  // browser and assert no exception; this real-browser walk instead proves the ones a person would
+  // Sampled (not all 15 x 7 in the browser): the composition-engine unit tests
+  // (app/test/gallery.test.js) already render 20 x 7 = 140 combinations headlessly without a browser,
+  // against that test's own self-contained representative fixture (independent of the 15 real
+  // concepts here since Terry's 2026-09-17 cut), and assert no exception; this real-browser walk
+  // instead proves the ones a person would
   // actually navigate render correctly with real layout/CSS, covering every distinct navStyle family
   // (sidebar, top, rail, sidebar-right, command) at least once.
   const sample = [
@@ -132,7 +134,7 @@ export async function run(h, t) {
   // ---- desktop / tablet / mobile widths, no horizontal overflow at 320px -------------------------
   const { dave: narrow } = await h.browsers(["dave"], { prefix: "gallery-320-", width: 320, height: 720 });
   await narrow.open("gallery");
-  await narrow.waitForText("All 20 concepts");
+  await narrow.waitForText("All 15 concepts");
   const overflow320 = await narrow.evaluate("document.documentElement.scrollWidth - window.innerWidth");
   t.check("320px width: no horizontal page overflow", { expected: true, actual: overflow320 <= 1 });
   await narrow.shot("320px");
@@ -140,7 +142,7 @@ export async function run(h, t) {
 
   const { dave: tablet } = await h.browsers(["dave"], { prefix: "gallery-834-", width: 834, height: 900 });
   await tablet.open("gallery");
-  await tablet.waitForText("All 20 concepts");
+  await tablet.waitForText("All 15 concepts");
   const overflow834 = await tablet.evaluate("document.documentElement.scrollWidth - window.innerWidth");
   t.check("834px (tablet) width: no horizontal page overflow", { expected: true, actual: overflow834 <= 1 });
   await tablet.shot("834px");
@@ -176,7 +178,7 @@ export async function run(h, t) {
   t.check("reduced motion: a Gallery nav item's own transition duration is effectively zero (the site-wide reduced-motion rule applies here too)", { expected: true, actual: toMs(navDuration) <= 1 });
 
   // ---- the workspace layoutId setting's real plumbing, in a real browser (not yet wired to any of
-  // the 20 concepts — only "Classic" is a real, selectable option today) ---------------------------
+  // the 15 concepts — only "Classic" is a real, selectable option today) ---------------------------
   await alice.useWorkspace("Fictional Household");
   await alice.goto("workspace");
   // The settings card groups its settings under collapsible headings, only the first open by

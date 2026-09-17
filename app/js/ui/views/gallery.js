@@ -39,14 +39,14 @@ export function createView(ctx) {
   const picksBox = el("div");
 
   const content = el("div", { class: "stack", hidden: true }, [
-    el("p", { class: "field__help", text: "Twenty layout-theme concepts for review, built from fictional data only. Nothing here is visible to, or ever computed from, any real workspace. Palette and appearance mode use the same controls as the rest of the app; layout theme itself is a separate, workspace-level setting (Workspace → Layout theme) not changed from here." }),
+    el("p", { class: "field__help", text: "Fifteen layout-theme concepts for review, built from fictional data only. Nothing here is visible to, or ever computed from, any real workspace. Palette and appearance mode use the same controls as the rest of the app; layout theme itself is a separate, workspace-level setting (Workspace → Layout theme) not changed from here." }),
     toolbar,
     el("section", { class: "card", "aria-labelledby": "gallery-preview" }, [
       el("h2", { class: "card__title", id: "gallery-preview", text: "Preview" }),
       previewBox,
     ]),
     el("section", { class: "card card--full", "aria-labelledby": "gallery-concepts" }, [
-      el("h2", { class: "card__title", id: "gallery-concepts", text: "All 20 concepts" }),
+      el("h2", { class: "card__title", id: "gallery-concepts", text: "All 15 concepts" }),
       gridBox,
     ]),
     el("section", { class: "card card--full", "aria-labelledby": "gallery-picks" }, [
@@ -112,7 +112,7 @@ export function createView(ctx) {
   }
 
   function renderMatrix() {
-    mount(matrixBox, el("table", { class: "table", "aria-label": "Comparison matrix of all 20 concepts" }, [
+    mount(matrixBox, el("table", { class: "table", "aria-label": "Comparison matrix of all 15 concepts" }, [
       el("thead", {}, [el("tr", {}, ["Concept", "Audience", "Density", "Navigation", "Dashboard pattern", "Fidelity", "Recommended", "Status"].map((h) => el("th", { text: h })))]),
       el("tbody", {}, (data.concepts || []).map((c) => el("tr", {}, [
         el("td", { "data-label": "Concept" }, [el("strong", { text: c.name })]),
