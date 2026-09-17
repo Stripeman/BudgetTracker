@@ -38,12 +38,19 @@ if (!fs.existsSync(KEY_FILE)) fs.writeFileSync(KEY_FILE, randomBytes(32).toStrin
 
 // Eve is an outsider: the seed never adds her to any workspace, so she proves what a signed-in
 // stranger gets (not found). Dave is a site administrator by configuration, never by membership.
+// Frank and Grace (BT-014-17) exist for account-request scenarios that need a genuinely
+// never-touched identity: the isolated e2e harness's own readiness probe signs in as eve before any
+// scenario runs (scripts/dev/harness/devserver.mjs), and the fictional seed invites bob and carol
+// into alice's household (scripts/dev/seed.mjs) — all four already have a user document by the time
+// a scenario's own code runs, which a "brand-new signup" test cannot use.
 export const FICTIONAL_USERS = Object.freeze({
   alice: { userId: "dev-alice", email: "alice@example.com", name: "Alice Fictional" },
   bob: { userId: "dev-bob", email: "bob@example.com", name: "Bob Fictional" },
   carol: { userId: "dev-carol", email: "carol@example.com", name: "Carol Fictional" },
   dave: { userId: "dev-dave", email: "dave@example.com", name: "Dave Siteadmin" },
   eve: { userId: "dev-eve", email: "eve@example.com", name: "Eve Outsider" },
+  frank: { userId: "dev-frank", email: "frank@example.com", name: "Frank Newcomer" },
+  grace: { userId: "dev-grace", email: "grace@example.com", name: "Grace Newcomer" },
 });
 
 const env = {

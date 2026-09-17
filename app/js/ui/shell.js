@@ -34,12 +34,13 @@ import * as group from "./views/group.js";
 import * as analytics from "./views/analytics.js";
 import * as gallery from "./views/gallery.js";
 import * as adminWorkspaces from "./views/adminworkspaces.js";
+import * as accountRequests from "./views/accountrequests.js";
 import { renderLanding, createOnboarding, openNewWorkspace } from "./views/landing.js";
 import { messageFor } from "../core/errors.js";
 import { confirmModal } from "./modal.js";
 import { unsavedNames, clearUnsaved } from "../core/unsaved.js";
 
-const VIEWS = { dashboard, group, transactions, bills, planning, accounts, payees, settings, workspace, join, analytics, gallery, "admin-workspaces": adminWorkspaces };
+const VIEWS = { dashboard, group, transactions, bills, planning, accounts, payees, settings, workspace, join, analytics, gallery, "admin-workspaces": adminWorkspaces, "account-requests": accountRequests };
 
 // Shared expenses turned off (workspace settings, Terry 2026-09-14): the page says so and loads nothing;
 // the server refuses /api/group as well. Nothing recorded is removed. The message follows the current
@@ -70,11 +71,26 @@ const SHARED_EXPENSES_OFF = {
   },
 };
 
-// Usage (BT-012-01), Design Gallery (BT-013) and the Workspaces directory (BT-014-03/04): not
-// workspace sections, so navRoutes() leaves them out of the main nav (like "join"). Terry, 2026-09-17:
-// grouped under one "Site Settings" entry with its own sub-tab row, instead of three flat top-level
-// items — the three routes, views, tests and URLs are unchanged; only how they are reached changed.
-const SITE_ADMIN_ROUTE_IDS = Object.freeze(new Set(["analytics", "gallery", "admin-workspaces"]));
+// A pending or rejected account (BT-014-17, account requests): built once per state, the same
+// "static screen, no app chrome" pattern as the signed-out landing page — nothing else to show or
+// navigate to either way. Signing out is the only action offered; there is nothing more to do here
+// until a site administrator acts.
+function renderPendingApproval({ rejected }) {
+  return el("main", { class: "landing", id: "main", tabindex: "-1" }, [
+    el("h1", { text: rejected ? "Account request not approved" : "Waiting for approval" }),
+    el("p", { text: rejected
+      ? "A site administrator did not approve your account request. If you believe this is a mistake, contact a site administrator."
+      : "A site administrator needs to approve your account before you can use BudgetTracker. There is nothing more to do here — you will be able to continue as soon as that happens." }),
+    el("p", {}, [el("a", { class: "btn", href: AUTH.logout, text: "Sign out" })]),
+  ]);
+}
+
+// Usage (BT-012-01), Design Gallery (BT-013), the Workspaces directory (BT-014-03/04) and Account
+// requests (BT-014-17) are not workspace sections, so navRoutes() leaves them out of the main nav
+// (like "join"). Terry, 2026-09-17: grouped under one "Site Settings" entry with its own sub-tab
+// row, instead of flat top-level items — each route, view, test and URL is unchanged; only how it
+// is reached changed.
+const SITE_ADMIN_ROUTE_IDS = Object.freeze(new Set(["analytics", "gallery", "admin-workspaces", "account-requests"]));
 
 export function createShell({ mountPoint, store, router, theme, api }) {
   const header = el("header", { class: "app__header" });
@@ -88,6 +104,8 @@ export function createShell({ mountPoint, store, router, theme, api }) {
   let menu = null;
   let wsPicker = null;
   let landingEl = null;
+  let pendingEl = null;
+  let pendingKind = null;
 
   // Leaving a page with unsaved changes asks first (UX/accessibility review of eefd115, finding 3); the
   // browser asks on its own when the tab is closed or reloaded (main.js).
@@ -179,6 +197,8 @@ export function createShell({ mountPoint, store, router, theme, api }) {
         user.siteAdmin ? el("a", { class: "menu__item", href: "#/gallery", text: "Design Gallery" }) : null,
         // Workspace directory and administrative permanent deletion (BT-014-03/04): same reasoning.
         user.siteAdmin ? el("a", { class: "menu__item", href: "#/admin-workspaces", text: "Workspaces" }) : null,
+        // Account-request approval (BT-014-17): same reasoning.
+        user.siteAdmin ? el("a", { class: "menu__item", href: "#/account-requests", text: "Account requests" }) : null,
         el("a", { class: "menu__item", href: AUTH.logout, text: "Sign out" }),
       ]),
     );
@@ -265,16 +285,16 @@ export function createShell({ mountPoint, store, router, theme, api }) {
     mount(nav, ...items);
   }
 
-  // The three site-admin pages' own sub-tab row (Workspaces, Design Gallery, Usage), shown only for
-  // a site administrator, only while one of them is the current route — never for anyone else, even
-  // one who opens the URL directly (each page's own view still refuses them independently either
-  // way; this only stops the row itself from appearing). Each is still its own real
-  // route/URL/view/test — grouping them under "Site Settings" changed only how they are reached.
+  // The site-admin pages' own sub-tab row (Workspaces, Design Gallery, Usage, Account requests),
+  // shown only for a site administrator, only while one of them is the current route — never for
+  // anyone else, even one who opens the URL directly (each page's own view still refuses them
+  // independently either way; this only stops the row itself from appearing). Each is still its own
+  // real route/URL/view/test — grouping them under "Site Settings" changed only how they are reached.
   function renderSiteAdminNav(route, state) {
     const show = !!(state.auth.user && state.auth.user.siteAdmin) && SITE_ADMIN_ROUTE_IDS.has(route.id);
     siteAdminNav.hidden = !show;
     if (!show) { mount(siteAdminNav); return; }
-    mount(siteAdminNav, ...["admin-workspaces", "gallery", "analytics"].map((id) => navLink(ROUTES.find((r) => r.id === id), route.id)));
+    mount(siteAdminNav, ...["admin-workspaces", "gallery", "analytics", "account-requests"].map((id) => navLink(ROUTES.find((r) => r.id === id), route.id)));
   }
 
   function renderFooter(state) {
@@ -327,6 +347,20 @@ export function createShell({ mountPoint, store, router, theme, api }) {
       document.title = "BudgetTracker — sign in"; return;
     }
     landingEl = null;
+    // BT-014-17: a pending or rejected account sees only this screen, nothing else — no nav, no
+    // workspace picker, no view (a site administrator is never pending/rejected, so this never
+    // conflicts with reaching Site Settings to approve someone else).
+    if (state.auth.user.pendingApproval || state.auth.user.rejected) {
+      const kind = state.auth.user.rejected ? "rejected" : "pending";
+      if (!pendingEl || pendingKind !== kind) { pendingKind = kind; pendingEl = renderPendingApproval({ rejected: state.auth.user.rejected }); }
+      if (!mountPoint.contains(pendingEl)) { clear(mountPoint); mountPoint.appendChild(pendingEl); }
+      menu = null;
+      if (wsPicker) { wsPicker.destroy(); wsPicker = null; }
+      document.title = `${state.auth.user.rejected ? "Account not approved" : "Waiting for approval"} · BudgetTracker`;
+      return;
+    }
+    pendingEl = null;
+    pendingKind = null;
     if (!mountPoint.contains(main)) mount(mountPoint, header, nav, siteAdminNav, main, footer);
     renderHeader(state);
     renderFooter(state);
