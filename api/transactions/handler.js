@@ -22,6 +22,7 @@ const people = require('../_shared/people');
 const audit = require('../_shared/audit');
 const merchants = require('../_shared/merchants');
 const bills = require('../_shared/bills');
+const deletion = require('../_shared/deletion');
 
 const CREATE_KEYS = ['accountId', 'kind', 'amount', 'date', 'postedDate', 'payeeId', 'categoryId', 'splits', 'tags', 'notes', 'status', 'responsibleRef', 'transfer', 'original', 'links'];
 const PATCH_KEYS = ['transactionId', 'revision', 'reason', 'kind', 'amount', 'date', 'postedDate', 'payeeId', 'categoryId', 'splits', 'tags', 'notes', 'status', 'responsibleRef', 'original', 'toAmount'];
@@ -751,11 +752,44 @@ async function amendmentHistory(ctx, req) {
   };
 }
 
+// Permanent deletion (BT-014). Shared-expense-recorded and reconciled entries, and either half of
+// a hand-entered owed pair, stay blocked here exactly as they are for the existing soft delete
+// above — this session did not build the fuller Shared-expenses severance/download flow Terry
+// described (see PROJECT_STATE.md), so those stay refused rather than guessed at. A transfer's
+// other leg, or a reversal pair, is removed together as the same event (never a cascade).
+const permanentRoutes = deletion.makeRoutes({
+  type: 'transaction', idField: 'transactionId',
+  find: (doc, id, ctx) => {
+    const t = (doc.transactions || []).find((x) => x.id === id);
+    const account = t && (doc.accounts || []).find((a) => a.id === t.accountId);
+    return t && account && can(doc, ctx.principal, account, 'view-transactions', ctx.now()) ? t : null;
+  },
+  authorize: (doc, member, t, ctx) => {
+    const now = ctx.now();
+    const account = (doc.accounts || []).find((a) => a.id === t.accountId);
+    if (!account || !canChangeRecord(doc, ctx.principal, account, t, 'delete', now)) throw forbidden('You cannot permanently delete this entry.');
+    // The other half of the same event (a transfer leg or a reversal pair) is removed together, so
+    // permission is required on it too — it is never on a different, untouched account (the
+    // ledger's own invariant), but may still belong to a workspace role that cannot change it.
+    const partnerId = t.transferId
+      ? ((doc.transactions || []).find((x) => x.transferId === t.transferId && x.id !== t.id) || {}).id
+      : (t.links && t.links.reverses) || t.reversedBy;
+    const partner = partnerId ? (doc.transactions || []).find((x) => x.id === partnerId) : null;
+    if (partner) {
+      const partnerAccount = (doc.accounts || []).find((a) => a.id === partner.accountId);
+      if (!partnerAccount || !canChangeRecord(doc, ctx.principal, partnerAccount, partner, 'delete', now)) throw forbidden('You cannot permanently delete the linked entry, so you cannot delete this one either.');
+    }
+  },
+  scopeFor: (t) => `account:${t.accountId}`,
+});
+
 async function post(ctx, req) {
   const action = query(req, 'action');
   if (action === 'restore') return setDeleted(false)(ctx, req);
   if (action === 'reverse') return reverse(ctx, req);
   if (action === 'move') return move(ctx, req);
+  if (action === 'delete-impact') return permanentRoutes.impactRoute(ctx, req);
+  if (action === 'delete-permanent') return permanentRoutes.permanentRoute(ctx, req);
   if (action !== undefined) throw notFound();
   return create(ctx, req);
 }

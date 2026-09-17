@@ -47,14 +47,35 @@ assumptions.
 - An identifier from another workspace fails as not found. Errors, logs and notifications never
   disclose another workspace or financial details.
 - Sensitive actions are audited atomically with the mutation (never best-effort).
-- **Nothing is ever physically deleted** (Terry, 2026-09-13; BT-001-05): merchants, payees,
-  contacts, members, accounts, transactions, bills, trips, budgets, categories, attachments,
-  settings, audit records, backups and restore history use archived, inactive, closed, cancelled
-  or superseded states. Historical financial records are immutable: corrections are amendments
-  (before/after values with who, when and why), reversals, replacements or adjustments that keep
-  the original. Archived or closed records are excluded from new-entry choices by default but stay
-  in history, search, reports, audits and authorized administrative views. Never truncate history
-  or audit arrays; size limits are solved by partitioning (ADR-003), never by deletion.
+- **Archiving is never the only option; users have real, permanent deletion too** (Terry,
+  2026-09-17; BT-001-05, updated by BT-014 — supersedes the 2026-09-13 blanket "nothing is ever
+  physically deleted" rule below it in earlier revisions of this file). Terry's own words: "Users
+  must have meaningful control over their own data. Especially during initial setup, they may name
+  things incorrectly, create unwanted records, or make mistakes while learning the application.
+  They must be able to clean up their workspace, including permanently deleting records when
+  needed. This replaces the earlier blanket 'nothing can ever be deleted' requirement. Archiving
+  may remain available, but it must not be the only option. Audit history must remain preserved."
+  What stays true: **historical financial records are still immutable in the sense that corrections
+  remain amendments** (before/after values with who, when and why), reversals, replacements or
+  adjustments that keep the original — a correction is never a silent rewrite, and this did not
+  change. Archived or closed records are still excluded from new-entry choices by default but stay
+  in history, search, reports, audits and authorized administrative views; that soft-delete/archive
+  path is unchanged and remains available everywhere it exists today. What is new: a genuinely
+  separate, explicit, double-confirmed PERMANENT deletion action exists alongside archiving (never
+  replacing it) for a member's own or managed records (accounts, transactions, merchants,
+  categories, recurring bills, budgets, contacts — `api/_shared/deletion.js`, BT-014), governed by
+  a cascade rule (a record alone, or one single dependent relationship with no further dependents
+  of its own, may be deleted after two confirmations; branching to more than one kind of dependent,
+  or a second hop, is refused) so it can never silently take more than was shown and confirmed. A
+  workspace owner may also permanently delete their whole workspace, and a site administrator may
+  perform the same administrative deletion without ever gaining visibility into its private
+  financial content (`api/_shared/workspace-deletion.js`) — an explicit, narrow exception to the
+  per-record cascade restriction, not a general site-admin bypass. Every permanent deletion is
+  audited (actor, time, target, affected counts, outcome including blocked/cancelled); a deleted
+  record's own audit trail survives it, and a deleted workspace's summary audit record is kept
+  OUTSIDE the workspace (`site/deletions.json`) so it survives the workspace itself being wiped.
+  Never truncate history or audit arrays for a record that is only archived; size limits are solved
+  by partitioning (ADR-003), never by deletion of live history.
 - Backups are encrypted and independently protected. Restores are isolated, previewed without
   mutation, atomic, and never resurrect revoked or expired access.
 - Client state guards against stale responses: synchronous reset on workspace switch,

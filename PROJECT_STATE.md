@@ -742,3 +742,135 @@ authoritative for whether/when this lands on `origin/feature/project-foundation`
    per house convention.
 4. [Terry] Run `scripts/deploy/deploy.ps1 -Environment preview` from a checkout that has
    `.local/deploy-target.json`, once satisfied with the merged tree, to see the Gallery on Preview.
+## Checkpoint U — permanent deletion, rename and cascade, backend (BT-014, 2026-09-17)
+
+**Terry's instruction (2026-09-17), verbatim in part:** "Users must have meaningful control over
+their own data... They must be able to clean up their workspace, including permanently deleting
+records when needed. This replaces the earlier blanket 'nothing can ever be deleted' requirement.
+Archiving may remain available, but it must not be the only option. Audit history must remain
+preserved." Plus a detailed cascade rule (a record alone, or one dependent relationship with no
+further dependents, may be permanently deleted after two confirmations; branching to more than one
+relationship, or a second hop, is refused), explicit resolutions for cross-account transfer legs
+and Shared-expenses involvement, whole-workspace permanent deletion as an explicit exception to the
+cascade restriction (owners, and administratively site administrators without financial-content
+visibility), and instructions not to defer the site-admin half. Built by an agent in an isolated
+worktree (`.claude/worktrees/agent-a1b37f2b7041dfce6`, branch `feature/record-deletion`).
+
+**Base-commit discrepancy found and worked around, not silently ignored.** The dispatch said to
+base this work on `feature/project-foundation` at `0e43e86` (which the outer session's `git log`
+showed, including `BT-013` Design Gallery commits). This worktree's actual `HEAD` was `fe48b15`
+("Merge pull request #4 from Stripeman/feature/project-foundation") — earlier than `0e43e86` by
+this file's own history for `docs/REQUIREMENTS.md` (`git log --oneline -1 -- docs/REQUIREMENTS.md`
+gives `3ad6001`, the deploy-consolidation commit, not the later BT-013 registration commit
+`e77afc9`, even though `e77afc9` and `0e43e86` both exist somewhere in this repository's history
+per `git log --all`). In other words: BT-013 (Design Gallery) work appears to live on a separate,
+not-yet-merged branch (`feature/layout-gallery`, per the outer session's own `git status`) and was
+never visible inside this worktree. Rather than either guessing that `BT-013` was free to reuse, or
+stalling the whole feature on a branch reconciliation this agent has no authority to perform,
+**BT-014 was used instead of BT-013** for every new identifier in this work, specifically to avoid
+a future id collision once the branches merge. **Flagged for Terry/the coordinator:** reconcile
+`feature/layout-gallery` and `feature/record-deletion` against the true tip of
+`feature/project-foundation` before merging either, and confirm/renumber if needed — do not assume
+BT-014 is uncontested either, only that BT-013 was known-taken and BT-014 was not, as of this
+worktree's base.
+
+**Built (backend only — see "Deliberately not built" below for the frontend and other honest
+scope-downs).**
+
+1. **`api/_shared/deletion.js`** — the one cascade/impact engine for per-record permanent
+   deletion, used identically by seven record types (accounts, transactions, merchants/payees,
+   categories, recurring bills, budgets, workspace contacts): `computeImpact` (what would cascade,
+   what would only be severed/lose a pointer, what blocks it, fingerprinted into a short-lived
+   token), `execute` (recomputes fresh, refuses on drift or a wrong typed confirmation, applies the
+   removal/severance and writes one atomic audit entry, then re-validates the result with the exact
+   invariant checker `api/_shared/backup.js` already uses for backups — so a bug here can never
+   ship a dangling reference), and `makeRoutes` (the `?action=delete-impact` /
+   `?action=delete-permanent` pair each handler wires in, keeping every handler's own addition to
+   ~10–20 lines while authorization stays exactly where each handler already had it, mirroring
+   existing edit authority rather than inventing a new permission model).
+2. Wired into `api/accounts`, `api/transactions`, `api/payees` (gained permanent deletion for the
+   first time; its header comment "There is NO DELETE" is now historical and was corrected),
+   `api/categories`, `api/recurring`, `api/budgets`, `api/contacts` (workspace-scoped contacts
+   only — see limitation below).
+3. **`api/_shared/workspace-deletion.js` + `api/_shared/site-deletions.js`** — whole-workspace
+   permanent deletion, an explicit exception to the per-record cascade restriction. Owners reach it
+   through `api/workspaces` (`?action=delete-impact` / `delete-permanent`, never confused with the
+   existing `DELETE` archive action, which is unchanged and still called "Delete workspace" in the
+   app today — a terminology collision flagged for whoever builds the UI, see below). The summary
+   audit record (actor, time, workspace id/kind, dataset counts, outcome) is written to a new,
+   small, bounded, append-only `site/deletions.json` OUTSIDE the workspace before/around the wipe,
+   so it survives the workspace's own audit trail being cleared with everything else.
+4. **`store.mutateWorkspaceAdmin`** (`api/_shared/store.js`) — documented as the ONLY
+   site-administration bypass of the membership gate anywhere in this authorization model, used
+   exclusively by the one new administrative-deletion route below, never exported for anything
+   else. **`api/analytics`** (the existing BT-012-01 site-admin usage page) gained `GET
+   ?action=directory` (enumerates every workspace via `storage.list('workspaces/')`, exactly the
+   technique the usage dashboard's own workspace counts already used — id, kind, status,
+   timestamps, active member count, the same dataset counts as `delete-impact`, approximate size;
+   never a name, balance or any financial content) and `POST ?action=delete-impact /
+   delete-permanent&workspaceId=` reusing the EXACT SAME impact/apply/log logic the owner's route
+   uses, so a site administrator can never do anything different to a workspace than its owner
+   could, only reach workspaces they are not a member of.
+5. Rename needed no new work for any of the seven per-record types: each already accepts a `name`
+   change through its existing PATCH route (verified with a dedicated test), so "authority mirrors
+   edit authority" falls out automatically.
+6. **Docs:** `CLAUDE.md` §3's BT-001-05 bullet rewritten to Terry's 2026-09-17 wording (archiving
+   stays, permanent deletion is added, corrections-as-amendments stays true); `AGENTS.md`'s "Never"
+   list updated to match; `docs/REQUIREMENTS.md` gained BT-014 and four child rows (BT-014-01
+   through 04, the last being the frontend, not built).
+
+**Evidence.** `api/test/deletion.test.js` (15 tests) and `api/test/workspace-deletion.test.js` (5
+tests), both new. `npm --prefix api test`: **574/574**, exit 0. `npm run validate`: ok, 23 routes,
+exit 0. Both quoted directly from real runs, not summarized from memory. `git status`/`branch`/`log`
+were read before every batch of edits; no file outside this feature's own scope was modified except
+the two governance documents and the requirement register, all explicitly in scope per the dispatch.
+
+**Deliberately not built this session (scoped down, not silently dropped — see BT-014-01/02/03/04
+in `docs/REQUIREMENTS.md` for the full detail per item):**
+- **The full Shared-expenses download/sever/preserve flow** (Terry's resolution 2: offer a
+  PDF/CSV/XLSX download of the departing workspace's authorized data, sever only its own connection
+  for a cross-workspace shared expense, preserve names/history for the other side, resolve a
+  sole-manager handoff first). Any account, transaction or whole workspace with ANY Shared-expenses
+  involvement is hard-BLOCKED with an explanatory message instead — safe, but not the full feature.
+  No PDF/CSV/XLSX/JSON export infrastructure exists anywhere in this codebase yet (confirmed by
+  search before starting); building it was out of this session's reach without either a large scope
+  increase or a new dependency, and CLAUDE.md says not to add one lightly.
+- **Private contacts** (a person's own cross-workspace address book) keep archive-only; this build
+  has no safe way to scan every workspace they might be referenced in.
+- **The site-admin workspace directory PAGE.** The API (`?action=directory`) is built and tested;
+  no frontend surface was added. The recent design-gallery work's small site-admin surface
+  (`app/js/ui/shell.js`, the account-menu "Usage" entry) is the natural place to extend, per Terry's
+  own instruction to extend rather than duplicate navigation — not touched this session.
+- **All frontend UI** for every part of this feature: impact-review dialogs, the two-step
+  confirm/type-the-name flow, rename affordances (the backend already accepts them via PATCH), the
+  site-admin Workspaces tab. None of it could be honestly claimed tested in a real browser
+  (CLAUDE.md §8, the multi-user harness requirement) without existing, so none of it was built
+  half-finished. This is the single largest remaining gap before this feature is usable by anyone.
+- **Independent security and financial review.** This agent's own tool set in this session had no
+  way to invoke `security-privacy-reviewer` or `financial-accuracy-reviewer` as separate
+  subagents (no Agent/Task-style tool was available) — this is flagged plainly rather than
+  fabricated. A self-review against both lenses was done instead (see the coordinator report), but
+  a real independent pass by both reviewer roles is strongly recommended before any Preview
+  deployment of this branch, given it touches BT-001-05 and financial data across most record
+  types.
+
+**Terminology risk to fix in the UI (flagged, not fixed — no frontend touched this session):** the
+app already calls the existing recoverable workspace action "Delete workspace" (My settings →
+Deleted workspaces → Bring back). The new PERMANENT action needs unmistakably distinct wording
+(e.g. "Permanently delete workspace" vs "Delete workspace"/"Archive workspace") wherever both are
+ever shown together, or a person could pick the wrong one expecting to be able to undo it.
+
+**Waiting on Terry / the coordinator:**
+- Reconcile `feature/record-deletion` (this branch) against the true, current tip of
+  `feature/project-foundation` (and against `feature/layout-gallery`'s BT-013 work) before any
+  merge; confirm or renumber BT-014.
+- Decide whether the Shared-expenses download/sever flow and export formats are a follow-up
+  increment of BT-014 or of BT-012 (Reporting), since both would need the same
+  PDF/CSV/XLSX-generation infrastructure this codebase does not have yet.
+- Preview deploy: gate is green (`npm test`, `npm run validate` both exit 0) but
+  `.local/deploy-target.json` does not exist in this worktree (confirmed by directory listing only;
+  its contents were never read, matching this agent's role instructions), so no deploy was
+  attempted. Run `.\deploy.ps1 -Environment preview` from a normal checkout once ready.
+- Dispatch `security-privacy-reviewer` and `financial-accuracy-reviewer` on this branch before
+  Preview or Production, per CLAUDE.md §8 — not run this session for the tool-availability reason
+  above.

@@ -9,7 +9,9 @@ const ROUTES = Object.freeze({
   grants: { methods: ['GET', 'POST', 'DELETE'] },
   accounts: { methods: ['GET', 'POST', 'PATCH', 'DELETE'] },
   transactions: { methods: ['GET', 'POST', 'PATCH', 'DELETE'] },
-  // Merchants are never deleted (BT-001-05): closing and reopening are POST actions.
+  // Merchants are archived, never a blind overwrite (BT-001-05): closing and reopening are POST
+  // actions. Permanent deletion (BT-014) is also a POST action (?action=delete-impact /
+  // delete-permanent), never a bare DELETE, so it can never be reached by mistake.
   payees: { methods: ['GET', 'POST', 'PATCH'] },
   categories: { methods: ['GET', 'POST', 'PATCH'] },
   contacts: { methods: ['GET', 'POST', 'PATCH', 'DELETE'] },
@@ -27,8 +29,11 @@ const ROUTES = Object.freeze({
   restore: { methods: ['POST'] },
   'site-settings': { methods: ['GET', 'PUT'], options: { anonymous: true } },
   roles: { methods: ['POST'], options: { anonymous: true, csrfExempt: true } },
-  // Site usage/activity aggregate (BT-012-01): site administrators only, never financial data.
-  analytics: { methods: ['GET'] },
+  // Site usage/activity aggregate (BT-012-01) and, since BT-014, the site-wide workspace directory
+  // (?action=directory) and administrative workspace deletion (?action=delete-impact /
+  // delete-permanent): site administrators only, never financial data — counts and operational
+  // metadata only, enforced the same way as the usage dashboard above.
+  analytics: { methods: ['GET', 'POST'] },
   // Design Gallery (BT-013): 20 layout-theme concepts for review, site administrators only. GET
   // returns the manifests, catalog overrides and Terry's recorded picks; PATCH records a catalog
   // change or a pick. Never financial data; never wired to a real workspace's data.

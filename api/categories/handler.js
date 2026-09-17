@@ -19,6 +19,7 @@ const fields = require('../_shared/fields');
 const audit = require('../_shared/audit');
 const colors = require('../_shared/colors');
 const icons = require('../_shared/icons');
+const deletion = require('../_shared/deletion');
 
 // ICONS (BT-011-05) follow the same rules as colours: stored by id with the default the category
 // was created with (`defaultIcon`), the workspace icon for managers and owners (`icon: null`
@@ -107,4 +108,22 @@ async function patch(ctx, req) {
   return { body: result };
 }
 
-module.exports = { GET: list, POST: create, PATCH: patch };
+// Permanent deletion (BT-014): categories were archived-only ("never deleted") until now. A
+// budget that still uses this category, or a subcategory under it, blocks the operation rather
+// than being silently rewritten; transactions, splits and merchant defaults keep everything else
+// and just lose the category.
+const permanentRoutes = deletion.makeRoutes({
+  type: 'category', idField: 'categoryId',
+  find: (doc, id) => (doc.categories || []).find((c) => c.id === id) || null,
+  authorize: (doc, member) => { if (!mayManage(doc, member)) throw forbidden('Only owners and managers can change categories in this workspace.'); },
+});
+
+async function post(ctx, req) {
+  const action = query(req, 'action');
+  if (action === 'delete-impact') return permanentRoutes.impactRoute(ctx, req);
+  if (action === 'delete-permanent') return permanentRoutes.permanentRoute(ctx, req);
+  if (action !== undefined) throw notFound();
+  return create(ctx, req);
+}
+
+module.exports = { GET: list, POST: post, PATCH: patch };

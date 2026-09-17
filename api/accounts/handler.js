@@ -22,6 +22,7 @@ const money = require('../_shared/money');
 const fields = require('../_shared/fields');
 const audit = require('../_shared/audit');
 const icons = require('../_shared/icons');
+const deletion = require('../_shared/deletion');
 
 // The icon catalogue is read only when an icon is being chosen (BT-011-05).
 const catalogFor = async (ctx, body) => (body.icon !== undefined ? (await icons.readCatalog(ctx.storage)).catalog : null);
@@ -253,10 +254,22 @@ function lifecycle(action) {
   };
 }
 
+// Permanent deletion (BT-014): a genuinely new action alongside remove/close above, never
+// replacing them. Authority mirrors edit authority (mayManage): the private owner, or whoever
+// manages shared lists for a shared account.
+const permanentRoutes = deletion.makeRoutes({
+  type: 'account', idField: 'accountId',
+  find: (doc, id, ctx) => (doc.accounts || []).find((a) => a.id === id && capabilitiesFor(doc, ctx.principal, a, ctx.now()).size > 0) || null,
+  authorize: (doc, member, account) => { if (!mayManage(doc, account, member)) throw forbidden('Only the account owner (or a manager for shared accounts) can permanently delete this account.'); },
+  scopeFor: (account) => `account:${account.id}`,
+});
+
 async function post(ctx, req) {
   const action = query(req, 'action');
   if (action === 'restore') return setDeleted(false)(ctx, req);
   if (action === 'close' || action === 'reopen') return lifecycle(action)(ctx, req);
+  if (action === 'delete-impact') return permanentRoutes.impactRoute(ctx, req);
+  if (action === 'delete-permanent') return permanentRoutes.permanentRoute(ctx, req);
   if (action !== undefined) throw notFound();
   return create(ctx, req);
 }

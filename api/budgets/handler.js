@@ -17,6 +17,7 @@ const budgeting = require('../_shared/budgeting');
 const ledger = require('../_shared/ledger');
 const icons = require('../_shared/icons');
 const workspaceSettings = require('../_shared/workspace-settings');
+const deletion = require('../_shared/deletion');
 
 const PERIODS = ['monthly', 'weekly', 'biweekly'];
 // The icon catalogue is read only when an icon is being chosen (BT-011-05).
@@ -235,10 +236,24 @@ function lifecycle(archive) {
   };
 }
 
+// Permanent deletion (BT-014). Nothing else in the workspace references a budget by id, so it has
+// no cascade dependents; its own plan, versions and history simply go with it.
+const permanentRoutes = deletion.makeRoutes({
+  type: 'budget', idField: 'budgetId',
+  find: (doc, id, ctx) => {
+    const b = (doc.budgets || []).find((x) => x.id === id);
+    return b && visibleTo(b, { subject: ctx.principal.subject }, { archived: true }) ? b : null;
+  },
+  authorize: (doc, member, b) => { if (!mayEdit(doc, b, member)) throw forbidden('You cannot change this budget.'); },
+  scopeFor: (b) => (b.scope === 'shared' ? 'members' : `self:${b.ownerSubject}`),
+});
+
 async function post(ctx, req) {
   const action = query(req, 'action');
   if (action === undefined) return create(ctx, req);
   if (action === 'restore') return lifecycle(false)(ctx, req);
+  if (action === 'delete-impact') return permanentRoutes.impactRoute(ctx, req);
+  if (action === 'delete-permanent') return permanentRoutes.permanentRoute(ctx, req);
   throw notFound();
 }
 

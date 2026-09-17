@@ -22,6 +22,7 @@ const fields = require('../_shared/fields');
 const audit = require('../_shared/audit');
 const merchants = require('../_shared/merchants');
 const icons = require('../_shared/icons');
+const deletion = require('../_shared/deletion');
 
 const DETAIL_KEYS = ['name', 'type', 'aliases', 'contact', 'customerNumber', 'openedOn', 'defaultCategoryId', 'defaultAccountId', 'defaultCurrency', 'tags', 'notes', 'icon'];
 // The icon catalogue is read only when an icon is being chosen (BT-011-05).
@@ -356,10 +357,23 @@ function lifecycle(action) {
   };
 }
 
+// Permanent deletion (BT-014): supersedes the "there is NO DELETE" rule in the header comment
+// above for this one, explicit, double-confirmed action. Entries that referenced this merchant
+// keep everything else about themselves; only the merchant link is cleared (Terry's own example,
+// applied in reverse: removing a merchant must not remove the entries that reference it).
+const permanentRoutes = deletion.makeRoutes({
+  type: 'payee', idField: 'payeeId',
+  find: (doc, id, ctx) => (doc.payees || []).find((p) => p.id === id && (p.visibility === 'shared' || p.ownerSubject === ctx.principal.subject)) || null,
+  authorize: (doc, member, payee) => { if (!mayEdit(doc, payee, member)) throw forbidden('You cannot delete this merchant.'); },
+  scopeFor: (payee) => (payee.visibility === 'shared' ? 'members' : `self:${payee.ownerSubject}`),
+});
+
 async function post(ctx, req) {
   const action = query(req, 'action');
   if (action === undefined) return create(ctx, req);
   if (action === 'archive' || action === 'reopen') return lifecycle(action)(ctx, req);
+  if (action === 'delete-impact') return permanentRoutes.impactRoute(ctx, req);
+  if (action === 'delete-permanent') return permanentRoutes.permanentRoute(ctx, req);
   throw notFound();
 }
 
