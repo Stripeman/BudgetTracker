@@ -12,6 +12,7 @@
 import { el, mount, clear, focusFirst, announce } from "./dom.js";
 import { createDayNightControl } from "./daynight.js";
 import { initials } from "./components.js";
+import { withIcon } from "./icons.js";
 import { createThemePicker } from "./themepicker.js";
 import { createWorkspacePicker } from "./workspacepicker.js";
 import { createStagingMenuEntry, openPersonalStagingEditor } from "./staginglink.js";
@@ -239,21 +240,22 @@ export function createShell({ mountPoint, store, router, theme, api }) {
   }
 
   // Sections depend on the workspace: Shared expenses only while it is on (its setting, bounded by
-  // the site). Usage (BT-012-01) is not a workspace section, so it is not in navRoutes() (like
-  // "join"); it is added here only for a signed-in site administrator, and left out of the nav
-  // entirely for everyone else.
+  // the site).
+  // Each nav item shows its icon beside its label (Terry, 2026-09-17): the icon is decorative
+  // (aria-hidden, set by icon()/withIcon()) and never the only way to tell items apart — the label
+  // is always real text alongside it, same rule as every other icon+label pairing in the app.
+  const navLink = (r, currentId) => el("a", { href: `#${r.path}`, "aria-current": r.id === currentId ? "page" : null }, [withIcon(r.icon, r.label)]);
+
   function renderNav(route, state) {
     const ws = state.workspaces.find((w) => w.id === state.selectedWorkspaceId);
-    const items = navRoutes(ws || null, state.site).map((r) => el("a", { href: `#${r.path}`, "aria-current": r.id === route.id ? "page" : null, text: r.label }));
+    const items = navRoutes(ws || null, state.site).map((r) => navLink(r, route.id));
     if (state.auth.user && state.auth.user.siteAdmin) {
-      const usageRoute = ROUTES.find((r) => r.id === "analytics");
-      items.push(el("a", { href: `#${usageRoute.path}`, "aria-current": route.id === "analytics" ? "page" : null, text: usageRoute.label }));
-      // Design Gallery (BT-013): not a workspace section either, same reasoning as Usage above.
-      const galleryRoute = ROUTES.find((r) => r.id === "gallery");
-      items.push(el("a", { href: `#${galleryRoute.path}`, "aria-current": route.id === "gallery" ? "page" : null, text: galleryRoute.label }));
-      // Workspace directory and administrative permanent deletion (BT-014-03/04): same reasoning.
-      const adminWsRoute = ROUTES.find((r) => r.id === "admin-workspaces");
-      items.push(el("a", { href: `#${adminWsRoute.path}`, "aria-current": route.id === "admin-workspaces" ? "page" : null, text: adminWsRoute.label }));
+      // Usage (BT-012-01), Design Gallery (BT-013) and the Workspaces directory (BT-014-03/04) are
+      // site-admin-only surfaces, not workspace sections, so navRoutes() leaves them out (like
+      // "join"); they are added here only for a signed-in site administrator.
+      items.push(navLink(ROUTES.find((r) => r.id === "analytics"), route.id));
+      items.push(navLink(ROUTES.find((r) => r.id === "gallery"), route.id));
+      items.push(navLink(ROUTES.find((r) => r.id === "admin-workspaces"), route.id));
     }
     mount(nav, ...items);
   }

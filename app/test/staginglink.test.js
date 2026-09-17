@@ -50,6 +50,7 @@ function recordingStore(preferences, { result = { ok: true }, environment = "tes
         return result;
       },
       refreshTransactions: noop, refreshBills: noop, refreshForecast: noop, refreshGroup: noop, refreshPreferences: noop,
+      refreshWeekActivity: noop, refreshMonthActivity: noop,
       selectWorkspace: noop, createWorkspace: async () => { throw new Error("not in this test"); },
     },
   };

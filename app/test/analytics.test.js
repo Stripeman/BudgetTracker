@@ -108,7 +108,7 @@ function recordingStore(overrides = {}) {
   return {
     commit, getState: () => state,
     subscribe(fn) { listeners.add(fn); return () => listeners.delete(fn); },
-    actions: { refreshTransactions: noop, refreshBills: noop, refreshForecast: noop, refreshGroup: noop, savePreferences: async () => ({ ok: true }) },
+    actions: { refreshTransactions: noop, refreshBills: noop, refreshForecast: noop, refreshGroup: noop, refreshWeekActivity: noop, refreshMonthActivity: noop, savePreferences: async () => ({ ok: true }) },
   };
 }
 

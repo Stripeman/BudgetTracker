@@ -176,14 +176,22 @@ async function list(ctx, req) {
     if (t.deletedAt || bucket === 'transfer' || removed.has(t.accountId) || leftBehind(t)) continue;
     let amount = t.amountMinor;
     if (f.categoryId && (t.splits || []).length) amount = money.sum(t.splits.filter((s) => s.categoryId === f.categoryId).map((s) => s.amountMinor));
-    const s = summary[t.currency] || (summary[t.currency] = { gross: 0, refunds: 0, income: 0, adjustments: 0, advances: 0, reimbursements: 0, payables: 0, repayments: 0, receivable: 0, count: 0 });
+    const s = summary[t.currency] || (summary[t.currency] = { gross: 0, refunds: 0, income: 0, adjustments: 0, advances: 0, reimbursements: 0, payables: 0, repayments: 0, receivable: 0, count: 0, byCategory: new Map() });
     // advances − reimbursements − payables + repayments is −(the sum of their signed amounts). Counted on
     // the viewer's own private accounts, and for the viewer's own entries from Shared expenses wherever
     // they can see them (financial recheck N-1: a part kept where the money moved still counts).
     const ownGroupEntry = t.createdBy === ctx.principal.subject && t.links && (t.links.groupExpenseId || t.links.groupSettlementId);
     if (OWED.has(bucket) && (ownPrivate.has(t.accountId) || ownGroupEntry)) s.receivable = money.sum([s.receivable, -amount]);
     s.count += 1;
-    if (bucket === 'spending') s.gross = money.sum([s.gross, -amount]);
+    if (bucket === 'spending') {
+      s.gross = money.sum([s.gross, -amount]);
+      // Spending by category (Dashboard, BT-014-14): a split entry's own lines carry the true
+      // per-category breakdown; an unsplit entry's whole amount goes under its one category. Never
+      // double-counted against `gross` above, which already sums the whole entry either way.
+      const bump = (categoryId, minor) => s.byCategory.set(categoryId, money.sum([s.byCategory.get(categoryId) || 0, minor]));
+      if (!f.categoryId && (t.splits || []).length) for (const sp of t.splits) bump(sp.categoryId || 'uncategorized', -sp.amountMinor);
+      else bump(f.categoryId || t.categoryId || 'uncategorized', -amount);
+    }
     else if (bucket === 'refund') s.refunds = money.sum([s.refunds, amount]);
     else if (bucket === 'income') s.income = money.sum([s.income, amount]);
     else if (bucket === 'adjustment') s.adjustments = money.sum([s.adjustments, amount]);
@@ -238,6 +246,7 @@ async function list(ctx, req) {
         // − repaid to them − owed to others + repaid by them. For an account that records shared
         // expenses it is the group balance.
         receivable: money.toDecimal(s.receivable, currency),
+        byCategory: [...s.byCategory.entries()].map(([categoryId, minor]) => ({ categoryId, amount: money.toDecimal(minor, currency) })),
       })),
     },
   };

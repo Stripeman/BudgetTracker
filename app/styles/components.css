@@ -282,6 +282,13 @@ fieldset.budget-line { margin: 0; padding: var(--space-3); border: 1px solid var
 .chart__bar { fill: var(--accent); }
 .chart__line { fill: none; stroke: var(--accent); stroke-width: 2; }
 .chart__point { fill: var(--accent); }
+/* Dashboard spending-by-category donut (BT-014-14): each segment sets its own `stroke` (a category
+   colour), passed as a plain SVG attribute rather than through CSS, so it needs no rule here; only
+   the empty track (no spending yet) and overall sizing are styled. */
+.chart--donut { width: 100%; max-width: 11rem; margin: 0 auto; display: block; }
+.chart__donut-track { stroke: var(--border); }
+.chart__legend { list-style: none; margin: var(--space-3) 0 0; padding: 0; display: grid; gap: var(--space-2); font-size: var(--text-sm); }
+.chart__legend li { display: flex; align-items: center; gap: var(--space-2); }
 .history-list { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--space-2); font-size: var(--text-sm); }
 .history-list li { border-left: 2px solid var(--border-strong); padding-left: var(--space-2); }
 .breakdown { list-style: none; margin: var(--space-2) 0 0; padding: 0; font-size: var(--text-xs); color: var(--text-muted); display: grid; gap: 2px; }

@@ -8,26 +8,26 @@ import { sharedExpensesOn } from "./workspacesettings.js";
 // setting, today's rule by kind: groups, trips and households, where couples and housemates split costs
 // too, and not personal workspaces. When it is off the page says so and the server refuses its routes.
 export const ROUTES = Object.freeze([
-  { id: "dashboard", path: "/dashboard", label: "Dashboard" },
-  { id: "group", path: "/group", label: "Shared expenses", feature: "sharedExpenses" },
-  { id: "transactions", path: "/transactions", label: "Transactions" },
-  { id: "bills", path: "/bills", label: "Bills" },
-  { id: "planning", path: "/planning", label: "Planning" },
-  { id: "accounts", path: "/accounts", label: "Accounts" },
-  { id: "payees", path: "/payees", label: "Merchants" },
-  { id: "workspace", path: "/workspace", label: "Workspace" },
-  { id: "settings", path: "/settings", label: "My settings" },
+  { id: "dashboard", path: "/dashboard", label: "Dashboard", icon: "home" },
+  { id: "group", path: "/group", label: "Shared expenses", feature: "sharedExpenses", icon: "users" },
+  { id: "transactions", path: "/transactions", label: "Transactions", icon: "receipt" },
+  { id: "bills", path: "/bills", label: "Bills", icon: "calendar" },
+  { id: "planning", path: "/planning", label: "Planning", icon: "chart-line" },
+  { id: "accounts", path: "/accounts", label: "Accounts", icon: "bank" },
+  { id: "payees", path: "/payees", label: "Merchants", icon: "store" },
+  { id: "workspace", path: "/workspace", label: "Workspace", icon: "building" },
+  { id: "settings", path: "/settings", label: "My settings", icon: "user" },
   { id: "join", path: "/join", label: "Join", hidden: true },
   // Site usage (BT-012-01): site administrators only. Not a workspace section, so it is left out of
   // navRoutes() (like "join") and added to the nav directly by the shell, only for site admins.
-  { id: "analytics", path: "/analytics", label: "Usage", hidden: true },
+  { id: "analytics", path: "/analytics", label: "Usage", hidden: true, icon: "chart-pie" },
   // Design Gallery (BT-013): site administrators only, for the same reason as Usage above — not a
   // workspace section, added to the nav directly by the shell, only for site admins.
-  { id: "gallery", path: "/gallery", label: "Design Gallery", hidden: true },
+  { id: "gallery", path: "/gallery", label: "Design Gallery", hidden: true, icon: "target" },
   // Site-admin workspace directory and administrative permanent deletion (BT-014-03/04): site
   // administrators only, extending the same small site-admin surface as Usage and Design Gallery
   // above rather than a new nav paradigm (Terry's own instruction). Never financial content.
-  { id: "admin-workspaces", path: "/admin-workspaces", label: "Workspaces", hidden: true },
+  { id: "admin-workspaces", path: "/admin-workspaces", label: "Workspaces", hidden: true, icon: "briefcase" },
 ]);
 
 // The sections shown in the nav for this workspace (a workspace summary, or just its kind) and site.

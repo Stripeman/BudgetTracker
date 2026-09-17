@@ -41,7 +41,7 @@ function recordingStore() {
     actions: {
       async selectWorkspace(id) { selected.push(id); commit({ selectedWorkspaceId: id }); },
       // refreshGroup: the dashboard of a group workspace ("Shared flat") loads Shared expenses (BT-009).
-      refreshTransactions: noop, refreshBills: noop, refreshForecast: noop, refreshGroup: noop, savePreferences: async () => ({ ok: true }),
+      refreshTransactions: noop, refreshBills: noop, refreshForecast: noop, refreshGroup: noop, refreshWeekActivity: noop, refreshMonthActivity: noop, savePreferences: async () => ({ ok: true }),
       createWorkspace: async () => { throw new Error("not in this test"); },
     },
   };
