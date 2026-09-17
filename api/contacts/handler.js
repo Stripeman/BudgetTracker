@@ -18,6 +18,7 @@ const store = require('../_shared/store');
 const workspaceSettings = require('../_shared/workspace-settings');
 const fields = require('../_shared/fields');
 const audit = require('../_shared/audit');
+const deletion = require('../_shared/deletion');
 
 const TRACKED = ['name', 'email', 'kind', 'notes'];
 
@@ -141,10 +142,24 @@ function change(action) {
   };
 }
 
+// Permanent deletion (BT-014): WORKSPACE contacts only, addressed by workspaceId + contactId like
+// every other action on this route (never `scope`, which the shared/private actions above use).
+// `doc.contacts` never holds a private contact (those live only in the person's own document, and
+// this build cannot safely scan every workspace for cross-workspace references to one), so a
+// private contact id simply is not found here and archive-only stays its only option — flagged in
+// PROJECT_STATE.md, not silently guessed at.
+const permanentRoutes = deletion.makeRoutes({
+  type: 'contact', idField: 'contactId',
+  find: (doc, id) => (doc.contacts || []).find((c) => c.id === id) || null,
+  authorize: (doc, member, c) => { if (c.createdBy !== member.subject && !workspaceSettings.managesSharedLists(doc, member)) throw forbidden('Only the creator or a manager can change this contact.'); },
+});
+
 async function post(ctx, req) {
   const action = query(req, 'action');
   if (action === undefined) return create(ctx, req);
   if (action === 'restore') return change('restore')(ctx, req);
+  if (action === 'delete-impact') return permanentRoutes.impactRoute(ctx, req);
+  if (action === 'delete-permanent') return permanentRoutes.permanentRoute(ctx, req);
   throw notFound();
 }
 

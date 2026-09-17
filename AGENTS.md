@@ -25,10 +25,16 @@ engineering standard; nothing here contradicts it.
   identifier cross a workspace boundary (it fails as not found).
 - Use binary floating point for money, overwrite concurrent writes, treat corrupt documents as
   empty, or make financial audit best-effort.
-- Physically delete any record, truncate history or audit, or overwrite a financial record in
-  place. Use archived, inactive, closed, cancelled or superseded states; corrections are
-  amendments, reversals, replacements or adjustments that keep the original with who, when and
-  why (BT-001-05).
+- Truncate history or audit, or overwrite a financial record in place: a correction is always an
+  amendment, reversal, replacement or adjustment that keeps the original with who, when and why
+  (BT-001-05). Archiving stays available and is not replaced. Permanent deletion IS allowed, but
+  only through the explicit, double-confirmed, cascade-limited path in `api/_shared/deletion.js`
+  (a member's own/managed records) and `api/_shared/workspace-deletion.js` (a whole workspace, by
+  its owner or, administratively and without financial-content visibility, a site administrator) —
+  BT-014, 2026-09-17. Never delete a record any other way, and never let deleting one record delete
+  another it merely references (a merchant, category or account a transaction points to is never
+  removed just because the transaction referencing it is deleted, or vice versa, without going
+  through that module's cascade/severance rule).
 - Link merchants by name or free text (they are managed records with stable ids), rewrite recorded
   entries when a recurring bill changes, or copy TaskTracker secrets or data, touch its Azure
   resources, change DNS or deploy Production without Terry's explicit authorization.
