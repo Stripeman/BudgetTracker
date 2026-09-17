@@ -1344,29 +1344,39 @@ existing test files needed `refreshWeekActivity`/`refreshMonthActivity` no-op mo
 Dashboard's new mount-time fetches didn't throw against their hand-built stores. Not committed/pushed
 as of this checkpoint note — see exact next step.
 
+**BT-014-15 (done this checkpoint): Site Settings nav grouping.** Terry: "create a tab for Site
+Settings and MOVE Workspaces, Design Gallery and Usage under the new Site Settings, each with their
+own sub tab." Navigation-only — see `docs/REQUIREMENTS.md` BT-014-15 for full detail. The three
+routes/views/URLs/tests are unchanged; the main nav now shows one "Site Settings" entry, and a new
+`app__nav--sub` row (site-admin only, shown only on one of the three routes) holds the real sub-tab
+links. Both BT-014-14 and BT-014-15 are on the SAME branch/PR (`feature/dashboard-widgets-BT-014-14`,
+PR #9 — BT-014-15 depends on BT-014-14's `ROUTES` icon field and `navLink`/`withIcon` nav rendering,
+so stacking it as a second commit on the same not-yet-merged branch was simpler than a dependent PR).
+**Evidence:** `npm test` 39/612/457 (exit 0); `npm run e2e -- --only gallery,analytics,permanentdelete`
+139/139 in real Edge. The account menu's three existing direct links were deliberately left flat, not
+also nested under Site Settings — worth confirming with Terry.
+
 **Waiting/queued from Terry, in the order he gave them (this same conversation, not yet started):**
-1. A new "Site Settings" nav tab grouping the three existing site-admin-only pages (Usage, Design
-   Gallery, Workspaces) as sub-tabs underneath it, instead of three flat top-level nav entries.
-2. A site-admin on/off toggle for a "request account" feature, where a requested account needs
+1. A site-admin on/off toggle for a "request account" feature, where a requested account needs
    site-admin approval before it can sign in — a new access-control feature, not yet designed.
-3. The site-admin Workspaces directory listing should show each member's real email address (today
+2. The site-admin Workspaces directory listing should show each member's real email address (today
    it shows no name or email at all, by design — see `analytics.js`'s header comment: "no name or
    email, because nothing else today shows a site administrator another person's name or email
    either" — Terry is now explicitly asking to change that boundary for this one listing).
-4. **Bug, reported with a screenshot:** permanently deleting a workspace correctly wipes its data
-   (status shows `deleted-permanent`, 0 members, `empty` records, size shrunk to 600 B) but the
-   workspace ROW ITSELF still appears in the site-admin Workspaces directory, with a "Delete
-   permanently" button still shown as if there's something left to delete. Not yet investigated:
-   whether the directory is supposed to keep a permanent audit-trail row forever (in which case the
-   dead action button is the real bug) or whether the workspace document itself should stop
-   appearing in the default listing after permanent deletion. Check `api/_shared/workspace-deletion.js`
-   and whatever handler backs `admin-workspaces` before assuming either way.
+3. **Bug, reported with a screenshot, and independently reproduced in this checkpoint's own e2e
+   screenshot** (`permdel-dave-permdel-admin-directory.png`, `permanentdelete.mjs`'s existing "site
+   administrator can permanently delete a workspace" test data): permanently deleting a workspace
+   correctly wipes its data (status shows `deleted-permanent`, 0 members, `empty` records, size
+   shrunk to ~577 B–600 B) but the workspace ROW ITSELF still appears in the site-admin Workspaces
+   directory, with a "Delete permanently" button still shown as if there's something left to delete.
+   Not yet investigated: whether the directory is supposed to keep a permanent audit-trail row
+   forever (in which case the dead action button is the real bug) or whether the workspace document
+   itself should stop appearing in the default listing after permanent deletion. Check
+   `api/_shared/workspace-deletion.js` and whatever handler backs `admin-workspaces` before assuming
+   either way.
 
-Items 2 and 3 both touch the same admin Workspaces listing as item 4 — worth investigating together.
+Items 1 and 2 both touch the same admin Workspaces listing as item 3 — worth investigating together.
 
-**Exact next step:** commit and push BT-014-14 (this checkpoint's Dashboard work) on its own branch/
-PR; the BT-013-05 Gallery cut (previous checkpoint note) is already pushed as PR #8, awaiting Terry's
-merge. Then start on the queued items above, in Terry's given order, beginning with the Site Settings
-nav restructuring (#1), then the account-request approval feature and admin-listing email (#2/#3
-together), then the permanent-deletion listing bug (#4) once the admin-listing code is already loaded
-from #2/#3's work.
+**Exact next step:** start on the queued items above, in Terry's given order, beginning with the
+account-request approval feature and admin-listing email together (#1/#2), then the
+permanent-deletion listing bug (#3) once the admin-listing code is already loaded from that work.
