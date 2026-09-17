@@ -129,6 +129,41 @@ describe('BT-014 permanent deletion — cascade rule', () => {
     assert.deepEqual(survivor.payers, exp.payers.map((p) => ({ ref: p.ref, amountMinor: p.amountMinor })), 'payers/amounts unchanged');
   });
 
+  test('an ENDED Shared-expenses ledger link is not silently erased: the impact preview shows it and the audit trail records its cleanup (financial review fix, 2026-09-17)', async () => {
+    const h = harness();
+    const f = await household(h);
+    const aliceRef = `member:${f.memberId('Alice')}`;
+    const other = ok(await h.call('accounts', 'POST', { as: 'alice', query: f.q, body: { name: 'Alice Wallet', type: 'cash', currency: 'EUR' } }), 201).account;
+    ok(await h.call('group', 'POST', {
+      as: 'alice', query: f.q,
+      body: {
+        description: 'First run', amount: '10.00',
+        payers: [{ ref: aliceRef }], split: { method: 'equal', lines: [{ ref: aliceRef }] },
+        ledger: { accountId: f.aliceSavings.id },
+      },
+    }), 201);
+    // A second expense linked to a DIFFERENT account ends the first link (Alice's own ledger sync
+    // moves to the new account) — f.aliceSavings now has only a historical, ended link.
+    ok(await h.call('group', 'POST', {
+      as: 'alice', query: f.q,
+      body: {
+        description: 'Second run', amount: '5.00',
+        payers: [{ ref: aliceRef }], split: { method: 'equal', lines: [{ ref: aliceRef }] },
+        ledger: { accountId: other.id },
+      },
+    }), 201);
+    const before = await rawDoc(h, f.ws.id);
+    const endedLink = before.groupLedgers.find((l) => l.accountId === f.aliceSavings.id);
+    assert.ok(endedLink && endedLink.endedAt, 'fixture: the link to aliceSavings is ended, not active');
+    const imp = await impact(h, 'accounts', 'accountId', f.aliceSavings.id, 'alice', f.q);
+    assert.equal(imp.groupInvolved, true, 'an ended link is still Shared-expenses history being erased, and must be disclosed');
+    assert.ok(imp.autoCleanup.some((c) => c.type === 'group-link' && c.count >= 1), 'counted, not silently dropped');
+    await execute(h, 'accounts', 'accountId', f.aliceSavings.id, 'alice', f.q, imp);
+    const after = await rawDoc(h, f.ws.id);
+    const entry = after.audit.filter((e) => e.targetId === f.aliceSavings.id).find((e) => e.action === 'account.delete-permanent');
+    assert.ok(entry.fields.some((s) => s.startsWith('cleanup:group-link=')), 'the audit trail records that Shared-expenses history was cleaned up, not silently erased');
+  });
+
   test('permission mirrors edit authority: a member cannot permanently delete a shared account; a manager can', async () => {
     const h = harness();
     const f = await household(h);

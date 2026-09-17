@@ -1125,3 +1125,37 @@ merged, never deployed.
   the tool-availability reason above.
 - Run `.\deploy.ps1 -Environment preview` from a normal checkout (with `.local/deploy-target.json`
   present) once the above are satisfied.
+
+## Checkpoint X — BT-014-07: review of BT-014-04/06, and fixes (2026-09-17)
+
+Three independent reviews (`security-privacy-reviewer`, `financial-accuracy-reviewer`,
+`accessibility-reviewer`) ran against `87d6768` (the reconciled merge of Checkpoint W's frontend UI
+onto Checkpoint V's earlier backend fixes). All three found real defects; all fixed directly by the
+coordinator. Full detail in `docs/REQUIREMENTS.md` BT-014-07. Summary:
+
+- **HIGH security:** CSV/formula injection in `sharedexport.js`'s CSV writer — fixed with a leading
+  apostrophe on any cell starting with `=+-@` or a tab/CR; regression test added.
+- **MEDIUM financial:** an ENDED Shared-expenses ledger link was silently erased on account
+  deletion with no impact-preview disclosure and no audit trace — fixed (`accountImpact` now
+  counts ended links too); regression test added.
+- **LOW financial (informational):** `sharedexport.js` didn't pass the workspace's `countReported`
+  setting to `groups.balances()` — currently harmless, fixed for future-proofing.
+- **Two SERIOUS accessibility findings, both fixed:** `permanentdelete.js`'s `renderFoot([])` never
+  moved focus, dropping it to `<body>` (permanently, in the blocked-record case) — fixed. The
+  confirm-phrase mismatch error lacked `aria-errormessage`, unlike 10+ other sites in this app —
+  fixed to match the existing pattern.
+- **Deliberately not fixed:** the accessibility reviewer's lower-priority Finding 3 (impact-review
+  content isn't in a live region on the initial, non-blocked screen) — a common step-dialog
+  trade-off, left open by choice.
+
+**Evidence:** `npm test` 39/607/432, `npm run validate` ok (24 routes), both exit 0.
+
+**Not done:** a fourth review pass after these fixes (judged unnecessary for this scope); real
+screen reader / High Contrast / 400% zoom / touch-device testing (none of the three reviews ran
+one). XLSX/PDF export — Terry explicitly approved adding a small vetted dependency for this
+(2026-09-17), not yet implemented; tracked as the next piece of work.
+
+**Exact next step:** commit and push this checkpoint's fixes to `feature/project-foundation`,
+then pursue the XLSX/PDF export addition (new scope, needs a dependency choice) as its own unit of
+work before a Preview deploy, since Terry wants member deletion, whole-workspace deletion and
+site-admin management all verified together on Preview.

@@ -20,6 +20,7 @@
 // `api/group/handler.js` renders, reused here rather than re-derived.
 const groups = require('./groups');
 const money = require('./money');
+const groupSettings = require('./group-settings');
 
 // Builds the same authorized report regardless of output format: participants, every expense
 // (description, date, currency, amount, split, payers, shares), every settlement (from/to,
@@ -52,7 +53,12 @@ function buildReport(doc, principal) {
     status: s.voidedAt ? 'void' : s.status,
   }));
 
-  const balances = groups.balances(doc, parts.map((p) => p.ref), { ensureCurrency: null })
+  // Same parameters the live Shared Expenses page passes (api/group/handler.js), not just the
+  // same function (financial review finding, 2026-09-17): countReported must follow the
+  // workspace's own group setting so this report can never silently disagree with what the page
+  // itself shows, even for figures this export doesn't currently surface (defense-in-depth for
+  // any future addition, per CLAUDE.md §4's "one canonical model ... per concept").
+  const balances = groups.balances(doc, parts.map((p) => p.ref), { ensureCurrency: null, countReported: groupSettings.get(doc, 'countReported') })
     .flatMap((b) => b.rows
       .filter((r) => r.netMinor !== 0 || r.paidMinor !== 0 || r.shareMinor !== 0)
       .map((r) => ({ name: label(r.ref), currency: b.currency, outstanding: money.toDecimal(r.netMinor, b.currency) })));
@@ -64,8 +70,15 @@ function buildReport(doc, principal) {
   };
 }
 
+// Neutralizes CSV/formula injection (security review finding, 2026-09-17): a cell starting with
+// =, +, -, @, tab or CR is treated as a formula by Excel/Sheets/LibreOffice when the file is
+// opened. User-controlled text (expense descriptions, participant/contact names, settlement
+// labels) reaches this function unescaped from api/_shared/fields.js, which does not forbid a
+// leading formula character. A leading apostrophe forces spreadsheet applications to read the
+// cell as literal text without changing what a plain CSV/text reader sees.
 function csvCell(value) {
-  const s = String(value ?? '');
+  let s = String(value ?? '');
+  if (/^[=+\-@\t\r]/.test(s)) s = `'${s}`;
   return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
 }
 function csvRow(values) {

@@ -93,9 +93,15 @@ function accountImpact(doc, account) {
   // participation model exists yet) — so this always cascades rather than blocking. If a future
   // change ever gives a shared expense a real foreign workspace, this refuses instead of guessing
   // at the sever/preserve flow that would then be required.
-  const ledgerLinks = (doc.groupLedgers || []).filter((l) => l.accountId === account.id && !l.endedAt);
+  // Counts ENDED links too, not only active ones (financial review finding, 2026-09-17):
+  // accountApply below removes every matching groupLedgers/ledgerLinks entry regardless of
+  // endedAt (an ended pointer at a now-deleted account would itself be a dangling reference the
+  // invariant checker refuses — see the comment there), so the impact preview and the audit
+  // entry's counts must reflect that too, or a piece of Shared-expenses history is erased with
+  // no warning shown and no trace of it in the audit trail.
+  const ledgerLinks = (doc.groupLedgers || []).filter((l) => l.accountId === account.id);
   const affectedRecords = [...(doc.groupExpenses || []), ...(doc.groupSettlements || [])]
-    .filter((rec) => (rec.ledgerLinks || []).some((l) => l.accountId === account.id && !l.endedAt));
+    .filter((rec) => (rec.ledgerLinks || []).some((l) => l.accountId === account.id));
   const groupLinkedTxns = txns.filter((t) => t.links && (t.links.groupExpenseId || t.links.groupSettlementId));
   const foreign = groups.foreignWorkspaceIds(doc);
   const groupInvolved = ledgerLinks.length > 0 || affectedRecords.length > 0 || groupLinkedTxns.length > 0;

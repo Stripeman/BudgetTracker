@@ -136,8 +136,15 @@ export function openDeleteDialog(ctx, {
   function renderFoot(nodes) {
     const foot = modal.element.querySelector(".modal__foot");
     const wanted = nodes.filter(Boolean);
-    mount(foot, button("Cancel", () => modal.close()), ...wanted);
-    if (wanted.length) wanted[wanted.length - 1].focus();
+    // mount() always rebuilds these (button() makes a new node every call), so a fresh Cancel
+    // button replaces the old one on every render — focus must move to whichever button is
+    // actually mounted, every time, never left implicit. Without this, calling renderFoot([])
+    // (both loading interstitials, and permanently in the blocked-record terminal state — no
+    // further render ever follows there) silently dropped focus to <body>, outside the open
+    // dialog (accessibility review finding, 2026-09-17).
+    const cancelBtn = button("Cancel", () => modal.close());
+    mount(foot, cancelBtn, ...wanted);
+    (wanted.length ? wanted[wanted.length - 1] : cancelBtn).focus();
   }
 
   async function loadAndShowStep1() {
@@ -197,12 +204,19 @@ export function openDeleteDialog(ctx, {
     const match = () => typed.value.trim().toLowerCase() === String(impact.confirmPhrase || "").trim().toLowerCase();
     const confirmBtn = button(deleteLabel, async () => {
       modal.setError("");
+      typed.removeAttribute("aria-errormessage");
       if (!match()) {
         typed.setAttribute("aria-invalid", "true");
+        // Links the field to the error text, same pattern as every other inline validation error
+        // in this app (accounts.js, transactions.js, group.js, ...) — without it, a screen-reader
+        // user who tabs away and back gets only "invalid entry," never the specific message
+        // (accessibility review finding, 2026-09-17).
+        typed.setAttribute("aria-errormessage", modal.errorId);
         modal.setError(`Type "${impact.confirmPhrase}" exactly to confirm.`);
         typed.focus();
         return;
       }
+      typed.removeAttribute("aria-invalid");
       modal.setBusy(true);
       try {
         await execute(impact, typed.value.trim());
@@ -217,6 +231,8 @@ export function openDeleteDialog(ctx, {
           await loadAndShowStep1();
           return;
         }
+        typed.setAttribute("aria-invalid", "true");
+        typed.setAttribute("aria-errormessage", modal.errorId);
         modal.setError(err);
       }
     }, { variant: danger ? "danger" : "primary" });

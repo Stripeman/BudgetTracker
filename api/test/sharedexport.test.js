@@ -59,6 +59,27 @@ describe('BT-014 Part A: shared-expenses export (CSV/JSON)', () => {
     assert.match(csvRes.content, /# Outstanding balances/);
   });
 
+  test('a description starting with a formula character is neutralized in CSV, so Excel/Sheets never treat it as a formula (security review fix, 2026-09-17)', async () => {
+    const h = harness();
+    const f = await fixture(h);
+    await ok(await h.call('group', 'POST', {
+      as: 'alice', query: f.q,
+      body: { description: '=HYPERLINK("http://attacker.example")', amount: '10.00', date: '2026-09-10', payers: [{ ref: f.refs.alice, amount: '10.00' }], split: equal(f.refs.alice, f.refs.bob) },
+    }), 201);
+    const csvRes = ok(await h.call('group', 'GET', { as: 'alice', query: { ...f.q, action: 'export', format: 'csv' } }));
+    // Every field is delimited by a comma or CRLF (or starts a quoted field, "..."); a formula
+    // character right after one of those, with no neutralizing apostrophe, is what a spreadsheet
+    // application would execute. None may appear unprefixed.
+    assert.doesNotMatch(csvRes.content, /(^|[,\r\n]"?)=HYPERLINK/, 'a bare, unprefixed formula must never reach the file');
+    // Doubled internal quotes: the cell's own literal " characters are CSV-escaped per RFC 4180,
+    // same as any other quoted cell — that escaping is unrelated to, and unaffected by, the
+    // leading-apostrophe neutralization this test is about.
+    assert.match(csvRes.content, /'=HYPERLINK\(""http:\/\/attacker\.example""\)/, 'neutralized with a leading apostrophe, still human-readable — the raw text is expected to still appear, just as literal data');
+    // JSON is plain data, never opened as a spreadsheet, so it needs no neutralization.
+    const jsonRes = ok(await h.call('group', 'GET', { as: 'alice', query: { ...f.q, action: 'export', format: 'json' } }));
+    assert.match(jsonRes.content, /"description": "=HYPERLINK/);
+  });
+
   test('downloading never deletes, disconnects or requires a confirmation — a viewer-less member can export and the workspace is unchanged', async () => {
     const h = harness();
     const f = await fixture(h);
