@@ -30,9 +30,10 @@ import * as move from "./move.mjs";
 import * as analytics from "./analytics.mjs";
 import * as login from "./login.mjs";
 import * as gallery from "./gallery.mjs";
+import * as permanentdelete from "./permanentdelete.mjs";
 
-const SCENARIOS = [privacy, shared, concurrency, guards, dropdown, staging, recheck, settings, accounts, remove, deleteworkspace, move, analytics, login, gallery];
-const ALIASES = { group: "shared", "shared-expenses": "shared", picker: "dropdown", dropdowns: "dropdown", "route-guards": "guards", "staging-link": "staging", "workspace-settings": "settings", "edit-account": "accounts", "remove-account": "remove", "delete-workspace": "deleteworkspace", archive: "deleteworkspace", "move-entry": "move", "move-account": "move", usage: "analytics", "site-usage": "analytics", "sign-in": "login", landing: "login", "design-gallery": "gallery", layouts: "gallery" };
+const SCENARIOS = [privacy, shared, concurrency, guards, dropdown, staging, recheck, settings, accounts, remove, deleteworkspace, move, analytics, login, gallery, permanentdelete];
+const ALIASES = { group: "shared", "shared-expenses": "shared", picker: "dropdown", dropdowns: "dropdown", "route-guards": "guards", "staging-link": "staging", "workspace-settings": "settings", "edit-account": "accounts", "remove-account": "remove", "delete-workspace": "deleteworkspace", archive: "deleteworkspace", "move-entry": "move", "move-account": "move", usage: "analytics", "site-usage": "analytics", "sign-in": "login", landing: "login", "design-gallery": "gallery", layouts: "gallery", "permanent-delete": "permanentdelete", "bt-014": "permanentdelete", "record-deletion": "permanentdelete" };
 const rel = (p) => path.relative(ROOT, p).replace(/\\/g, "/");
 
 let args;

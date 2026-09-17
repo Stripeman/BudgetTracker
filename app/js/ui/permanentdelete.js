@@ -29,6 +29,29 @@ function cleanupText(c) {
   return `${c.count} related item${c.count === 1 ? "" : "s"} will be cleaned up automatically.`;
 }
 
+const DATASET_LABEL = {
+  accounts: "account", transactions: "entry", payees: "merchant", categories: "category",
+  recurring: "recurring bill", budgets: "budget", contacts: "contact", grants: "access grant",
+  invitations: "invitation", groupExpenses: "Shared expense", groupSettlements: "Shared-expenses payment",
+  groupLedgers: "Shared-expenses ledger link", members: "member",
+};
+function datasetPlural(key, count) {
+  const noun = DATASET_LABEL[key] || key;
+  if (count === 1) return noun;
+  return /y$/.test(noun) ? `${noun.slice(0, -1)}ies` : `${noun}s`;
+}
+
+// Whole-workspace impact (api/_shared/workspace-deletion.js) has a different shape from a
+// per-record impact: dataset COUNTS by key, not cascade/severed/autoCleanup groups.
+function workspaceImpactBody(impact) {
+  const entries = Object.entries(impact.datasets || {}).filter(([, count]) => count > 0);
+  if (!entries.length) return [el("p", { text: "This workspace is empty. It will be permanently deleted alone." })];
+  return [
+    el("p", { text: "Everything in this workspace will be permanently deleted:" }),
+    el("ul", { class: "stack" }, entries.map(([key, count]) => el("li", { text: `${count} ${datasetPlural(key, count)}` }))),
+  ];
+}
+
 // The impact, in plain language: what is permanently deleted, what only loses a pointer, what
 // blocks it. A blocked operation never shows an enabled path forward (BT-014-04 requirement 1).
 function impactBody(impact) {
@@ -40,6 +63,7 @@ function impactBody(impact) {
     ]));
     return rows;
   }
+  if (impact.datasets && !impact.cascade) return workspaceImpactBody(impact);
   if (!impact.cascade.length && !impact.severed.length && !(impact.autoCleanup || []).length && !(impact.together || []).length) {
     rows.push(el("p", { text: "Nothing else references this. It will be permanently deleted alone." }));
   }
@@ -66,7 +90,7 @@ export function downloadFile(name, mime, content) {
   URL.revokeObjectURL(url);
 }
 
-async function offerGroupDownload(ctx, modal, wsId, onDone) {
+function offerGroupDownload(ctx, modal, wsId, onDone) {
   const status = el("p", { class: "muted small", role: "status" });
   const doDownload = async (format) => {
     status.textContent = `Preparing the ${format.toUpperCase()} download…`;
@@ -106,9 +130,14 @@ export function openDeleteDialog(ctx, {
   const body = el("div", { class: "stack" }, [el("p", { role: "status", text: "Checking what this would affect…" })]);
   const modal = openModal({ title, body: [body], actions: [button("Cancel", () => modal.close())] });
 
+  // Each step's own primary action gets focus once it appears (never left on a control that was
+  // just replaced, and never silently on the page body): the same rule openModal itself uses when
+  // it first opens, applied again at every step transition inside this one dialog.
   function renderFoot(nodes) {
     const foot = modal.element.querySelector(".modal__foot");
-    mount(foot, button("Cancel", () => modal.close()), ...nodes.filter(Boolean));
+    const wanted = nodes.filter(Boolean);
+    mount(foot, button("Cancel", () => modal.close()), ...wanted);
+    if (wanted.length) wanted[wanted.length - 1].focus();
   }
 
   async function loadAndShowStep1() {
@@ -146,8 +175,11 @@ export function openDeleteDialog(ctx, {
     if (impact.blocked) { mount(body, ...impactBody(impact)); renderFoot([]); return; }
     const toConfirm = () => {
       if (impact.groupInvolved && wsIdForExport) {
-        mount(body, ...impactBody(impact), offerGroupDownload(ctx, modal, wsIdForExport, () => showConfirmStep(impact)));
+        const offer = offerGroupDownload(ctx, modal, wsIdForExport, () => showConfirmStep(impact));
+        mount(body, ...impactBody(impact), offer);
         renderFoot([]);
+        const first = offer.querySelector("button");
+        if (first) first.focus();
         return;
       }
       showConfirmStep(impact);
