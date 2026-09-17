@@ -61,7 +61,12 @@ function impact(doc, { adminSafe = false } = {}) {
   const shared = (doc.groupExpenses || []).length + (doc.groupSettlements || []).length + (doc.groupLedgers || []).length;
   const foreign = groups.foreignWorkspaceIds(doc);
   const blockers = [];
-  if (shared && foreign.length) {
+  // Bug (Terry, 2026-09-17): a permanently-deleted workspace's tombstone document still exists (by
+  // design — see tombstoneOf's comment), so a repeat call here must refuse rather than silently
+  // re-wiping an already-empty document, which would otherwise look like a harmless no-op.
+  if (doc.status === 'deleted-permanent') {
+    blockers.push('This workspace has already been permanently deleted. There is nothing left to remove.');
+  } else if (shared && foreign.length) {
     blockers.push(`This workspace's Shared expenses involve ${foreign.length} other workspace${foreign.length === 1 ? '' : 's'}. Deleting it needs the full download/sever/preserve flow, which is not available in this version. Resolve or remove that involvement in Shared expenses first.`);
   }
   const datasets = datasetCounts(doc);
