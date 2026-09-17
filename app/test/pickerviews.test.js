@@ -12,6 +12,7 @@ import { createView as createAccounts } from "../js/ui/views/accounts.js";
 import { createView as createMerchants, openMerchantEditor } from "../js/ui/views/payees.js";
 import { createView as createSettings } from "../js/ui/views/settings.js";
 import { createView as createWorkspace } from "../js/ui/views/workspace.js";
+import { todayIso } from "../js/core/format.js";
 
 let dom;
 beforeEach(() => { dom = installDom(); });
@@ -161,10 +162,16 @@ function merchantsCtx() {
       { id: "p_video", name: "Fictional Video Store", status: "closed", visibility: "shared", stats: [], canEdit: true },
     ] }),
     bills: ready({ recurring: [
-      { id: "bill_netflix", name: "Fictional Netflix", kind: "expense", payeeId: null, ended: false, canEdit: true, revision: 2, nextDue: "2026-10-01" },
-      { id: "bill_rent", name: "Fictional rent", kind: "expense", payeeId: "p_bakery", ended: false, canEdit: true, revision: 1, nextDue: "2026-10-01" },
-      { id: "bill_xfer", name: "Fictional savings transfer", kind: "transfer", payeeId: null, ended: false, canEdit: true, revision: 1, nextDue: "2026-10-01" },
-      { id: "bill_ended", name: "Fictional old gym", kind: "expense", payeeId: null, ended: true, canEdit: true, revision: 1, nextDue: null },
+      // Already started (schedule.startDate in the past) — the common case: linking a merchant
+      // should take effect TODAY, not on nextDue (financial/UX review fix, 2026-09-17).
+      { id: "bill_netflix", name: "Fictional Netflix", kind: "expense", payeeId: null, ended: false, canEdit: true, revision: 2, nextDue: "2026-10-01", schedule: { startDate: "2026-01-01" } },
+      { id: "bill_rent", name: "Fictional rent", kind: "expense", payeeId: "p_bakery", ended: false, canEdit: true, revision: 1, nextDue: "2026-10-01", schedule: { startDate: "2026-01-01" } },
+      { id: "bill_xfer", name: "Fictional savings transfer", kind: "transfer", payeeId: null, ended: false, canEdit: true, revision: 1, nextDue: "2026-10-01", schedule: { startDate: "2026-01-01" } },
+      { id: "bill_ended", name: "Fictional old gym", kind: "expense", payeeId: null, ended: true, canEdit: true, revision: 1, nextDue: null, schedule: { startDate: "2026-01-01" } },
+      // Terry's exact repro: a bill scheduled to start NEXT MONTH, nextDue equal to that same
+      // future start date. Linking a merchant here can't take effect any earlier than the bill's
+      // own start (the server refuses it) — but must use that start date, not something later.
+      { id: "bill_future", name: "Fictional Electric Repayment", kind: "expense", payeeId: null, ended: false, canEdit: true, revision: 1, nextDue: "2099-01-15", schedule: { startDate: "2099-01-15" } },
     ] }),
   };
   const billUpdates = [];
@@ -272,12 +279,40 @@ describe("BT-014-11 'Bills without a merchant' (Terry, 2026-09-17: \"add merchan
     assert.equal(calls.length, 1);
     assert.equal(calls[0].name, "Fictional Netflix");
     assert.equal(billUpdates.length, 1);
-    assert.deepEqual(billUpdates[0], { recurringId: "bill_netflix", revision: 2, payeeId: "p_new", effectiveFrom: "2026-10-01" });
+    // Takes effect TODAY, not on nextDue (2026-10-01) — the bug fix (2026-09-17): the bill already
+    // started (schedule.startDate is in the past), so there's no reason to delay the link.
+    assert.deepEqual(billUpdates[0], { recurringId: "bill_netflix", revision: 2, payeeId: "p_new", effectiveFrom: todayIso() });
+  });
+
+  test("a bill that hasn't started yet (Terry's exact repro): linking a merchant uses the bill's own start date, not something later — never silently invisible on the bill's current view once it starts", async () => {
+    const { ctx, state, calls, billUpdates } = merchantsCtx();
+    const view = createMerchants(ctx);
+    dom.body.appendChild(view.element);
+    view.update(state);
+    const section = view.element.querySelector("#payees-missing").closest(".card");
+    assert.match(section.textContent, /Fictional Electric Repayment/);
+    const row = [...section.querySelectorAll("li")].find((li) => li.textContent.includes("Fictional Electric Repayment"));
+    buttonNamed(row, "Add as merchant").click();
+    const root = dom.body.querySelector(".modal");
+    root.querySelector("input").value = "Fictional Electric Repayment";
+    buttonNamed(root, "Add merchant").click();
+    await tick();
+    await tick();
+    assert.equal(billUpdates.length, 1);
+    assert.deepEqual(billUpdates[0], { recurringId: "bill_future", revision: 1, payeeId: "p_new", effectiveFrom: "2099-01-15" });
+    // The bill leaves the list right away — even though (this mock never mutates state, matching a
+    // bill whose own schedule hasn't started yet and so can never show a merchant as "current"
+    // today) nothing about state.bills actually changed. Real-browser bug (2026-09-17): the list
+    // kept re-offering an already-linked, not-yet-started bill forever without this.
+    const cardAfter = view.element.querySelector("#payees-missing");
+    const textAfter = cardAfter ? cardAfter.closest(".card").textContent : "";
+    assert.doesNotMatch(textAfter, /Fictional Electric Repayment/, "does not keep re-offering a bill that was just linked");
+    assert.match(textAfter, /Fictional Netflix/, "an untouched bill is still offered");
   });
 
   test("nothing shown when every bill already has a merchant, is a transfer, or has ended", () => {
     const { ctx, state } = merchantsCtx();
-    state.bills.data.recurring = state.bills.data.recurring.filter((b) => b.id !== "bill_netflix");
+    state.bills.data.recurring = state.bills.data.recurring.filter((b) => b.id !== "bill_netflix" && b.id !== "bill_future");
     const view = createMerchants(ctx);
     dom.body.appendChild(view.element);
     view.update(state);

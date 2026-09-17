@@ -48,6 +48,17 @@ export function createView(ctx) {
   void ctx.store.actions.refreshPayees();
   void ctx.store.actions.refreshBills();
 
+  // A bill's CURRENT payeeId (what the list below filters on) reflects only what is in effect
+  // TODAY (api/_shared/bills.js termsAt) — for a bill whose own schedule hasn't started yet, no
+  // change can be "in effect" any earlier than that start date, so a just-linked merchant keeps
+  // reading as unlinked here until then, even though the link genuinely succeeded (bug found by
+  // Terry, 2026-09-17, then re-confirmed happening for real in npm run e2e's real browser after
+  // the effectiveFrom fix alone didn't fully resolve it — the fix was necessary but not
+  // sufficient, since NO valid date can make a future-scheduled bill's term "current" today).
+  // Remembered for this page visit only (not persisted) so the list stops repeating a bill the
+  // person has already handled, rather than leaving it looking permanently stuck.
+  const recentlyLinked = new Set();
+
   // "Bills without a merchant" (BT-014-11, Terry, 2026-09-17: "add merchants for ones that are
   // used in bills but not added there yet"). A bill can only ever reference a merchant that
   // already exists (BT-007-01: merchants are managed records, never free text), so nothing here
@@ -56,7 +67,7 @@ export function createView(ctx) {
   // yet, one click from becoming one. Never for a transfer (no payee) or an ended bill.
   function renderMissing(state) {
     const bills = sliceFor(state, "bills");
-    const list = ((bills.data || {}).recurring || []).filter((b) => !b.payeeId && !b.ended && b.kind !== "transfer" && b.canEdit);
+    const list = ((bills.data || {}).recurring || []).filter((b) => !b.payeeId && !b.ended && b.kind !== "transfer" && b.canEdit && !recentlyLinked.has(b.id));
     if (!list.length) { mount(missingBox); return; }
     mount(missingBox, el("section", { class: "card", "aria-labelledby": "payees-missing" }, [
       el("h2", { class: "card__title", id: "payees-missing", text: "Bills without a merchant" }),
@@ -65,7 +76,7 @@ export function createView(ctx) {
         withIcon(b.icon || "receipt", el("span", { text: b.name })),
         button("Add as merchant", () => openMerchantEditor(ctx, null, {
           prefillName: b.name,
-          onCreated: (payee) => void linkBillToMerchant(ctx, b, payee),
+          onCreated: (payee) => void linkBillToMerchant(ctx, b, payee, { onLinked: () => { recentlyLinked.add(b.id); renderMissing(ctx.store.getState()); } }),
         }), { small: true, attrs: { "aria-label": `Add a merchant for ${b.name}` } }),
       ]))),
     ]));
@@ -285,13 +296,39 @@ export function openMerchantEditor(ctx, merchant = null, { prefillName = "", onC
 // Merchant field already makes, refreshing both slices so the "Bills without a merchant" list and
 // the bill itself immediately reflect it. A failure here is surfaced but the merchant itself is
 // already saved either way — never silently lost even if the link fails.
-async function linkBillToMerchant(ctx, bill, payee) {
+//
+// Bug fix (2026-09-17, Terry: the merchant "is not recorded" and the bill never leaves this list
+// even after adding one): a bill's CURRENT view shows whichever version has the latest
+// `effectiveFrom` that is still <= today (api/_shared/bills.js termsAt) — using `bill.nextDue`
+// here versioned the new payeeId to start on the bill's NEXT occurrence, which is very often in
+// the future (sometimes weeks or months away), so the link was genuinely saved but invisible,
+// and this bill's payeeId kept reading as its OLD (null) version until that date arrived. Fixed:
+// take effect as soon as the bill's own schedule allows — today, or the bill's own start date if
+// that is later (a bill scheduled to start next month cannot have a term "in effect" any earlier
+// than its own start; the server refuses an effectiveFrom before it, api/recurring/handler.js).
+//
+// That fix alone is NOT sufficient for a bill whose own schedule hasn't started yet (re-confirmed
+// happening for real in a real browser, not just guessed at): nothing can be "in effect today" for
+// such a bill, so its CURRENT payeeId keeps reading as unlinked until its start date arrives, even
+// though the link genuinely succeeded — the exact same characteristic every other term change
+// (amount, category, responsible person) on an unstarted bill already has, not something new this
+// feature introduced. `onLinked()` fires only on a real success, so the caller can stop offering
+// this bill again for the rest of this page visit, and the confirmation says plainly when to
+// expect it to show, rather than implying it should appear immediately.
+async function linkBillToMerchant(ctx, bill, payee, { onLinked } = {}) {
+  const today = todayIso();
+  const startDate = bill.schedule && bill.schedule.startDate;
+  const delayed = !!(startDate && startDate > today);
+  const effectiveFrom = delayed ? startDate : today;
   const out = await ctx.store.actions.write(
-    (ws) => ctx.api.updateBill(ws, { recurringId: bill.id, revision: bill.revision, payeeId: payee.id, effectiveFrom: bill.nextDue || todayIso() }),
+    (ws) => ctx.api.updateBill(ws, { recurringId: bill.id, revision: bill.revision, payeeId: payee.id, effectiveFrom }),
     ["bills", "payees"],
   );
   if (!out.ok) { announce(`“${payee.name}” was added, but linking it to “${bill.name}” failed. Choose it from the bill's own Edit dialog instead.`); return; }
-  announce(`“${payee.name}” added and linked to “${bill.name}”.`);
+  announce(delayed
+    ? `“${payee.name}” added. It's linked to “${bill.name}”, but won't show on it until the bill starts on ${effectiveFrom} — the same as any other change to a bill that hasn't started yet.`
+    : `“${payee.name}” added and linked to “${bill.name}”.`);
+  if (onLinked) onLinked();
 }
 
 function openLifecycle(ctx, merchant, action) {
