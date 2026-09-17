@@ -143,9 +143,9 @@ async function mutateWorkspace(ctx, wsId, fn, { idempotencyKey, idempotencyScope
   return { result, etag: out.etag, written: out.written };
 }
 
-// THE ONLY site-administration bypass of the membership gate anywhere in this model (BT-014,
-// Terry 2026-09-17: "Site administrators must also be able to perform administrative workspace
-// deletion without gaining visibility into private financial content"). It is used exclusively by
+// A site-administration bypass of the membership gate (BT-014, Terry 2026-09-17: "Site
+// administrators must also be able to perform administrative workspace deletion without gaining
+// visibility into private financial content"). It is used exclusively by
 // api/_shared/workspace-deletion.js for whole-workspace PERMANENT deletion, itself an explicit,
 // narrow exception to "nothing is physically deleted" (see CLAUDE.md BT-001-05). `fn(doc)` gets
 // the raw document and must return only operational metadata (ids, kind, status, dataset counts)
@@ -153,7 +153,9 @@ async function mutateWorkspace(ctx, wsId, fn, { idempotencyKey, idempotencyScope
 // enforced by review, not by this function, so any change to it or its caller needs the same
 // scrutiny as authz.js itself. Skips `activeMember`/`assertReachable` (a site administrator is
 // never a member) and the size/quota bookkeeping normal writes need (a permanent deletion only
-// ever shrinks the document).
+// ever shrinks the document). `mutateUserAdmin` below is the other, narrower bypass: a site
+// administrator's own document is never gated by workspace membership at all, so that one only
+// needs to reach a PERSON'S document by subject, not skip a financial-content check.
 async function mutateWorkspaceAdmin(ctx, wsId, fn) {
   let result;
   const nowMs = ctx.now();
@@ -169,19 +171,45 @@ async function mutateWorkspaceAdmin(ctx, wsId, fn) {
   return { result, etag: out.etag, written: out.written };
 }
 
-function newUserDoc(principal, nowIso) {
+// Account-request approval (BT-014-17, Terry 2026-09-17): a site administrator approves or rejects
+// a PENDING account by subject — the one thing a site administrator may change on another
+// person's own document, and only their `approvalStatus`; `fn(doc)` gets the raw document and is
+// expected to touch only that field. Never used to read or change anything else in a person's
+// document (preferences, contacts, name) — those stay exclusively the person's own to change.
+async function mutateUserAdmin(ctx, subject, fn) {
+  let result;
+  const nowIso = new Date(ctx.now()).toISOString();
+  const out = await update(ctx.storage, paths.user(subject), (value) => {
+    const doc = readDocument('user', value);
+    if (!doc) throw notFound('Unknown account.');
+    result = fn(doc);
+    if (result === undefined) return undefined;
+    doc.updatedAt = nowIso;
+    return stampDocument('user', doc);
+  });
+  return { result, etag: out.etag, written: out.written };
+}
+
+// `approvalStatus` (BT-014-17, Terry 2026-09-17: account requests, off by default): 'approved'
+// unless the site has account requests turned on at the moment this document is FIRST created —
+// once set, it is never recomputed from the site setting again (turning the setting on later never
+// retroactively pends an existing account; turning it off leaves an already-pending account pending
+// until a site administrator acts, never silently auto-approved).
+function newUserDoc(principal, nowIso, approvalStatus = 'approved') {
   return stampDocument('user', {
-    subject: principal.subject, email: principal.email, name: principal.name || '',
+    subject: principal.subject, email: principal.email, name: principal.name || '', approvalStatus,
     createdAt: nowIso, updatedAt: nowIso, workspaceIds: [], preferences: {}, contacts: [], idempotency: {},
   });
 }
 
 // Creates the person's document on first use and keeps email/name current. Returns the doc.
-async function ensureUser(ctx) {
+// `approvalStatus` is used only on first creation (see newUserDoc above); an existing document's
+// value is always preserved, never recomputed here.
+async function ensureUser(ctx, { approvalStatus = 'approved' } = {}) {
   const nowIso = new Date(ctx.now()).toISOString();
   const out = await update(ctx.storage, paths.user(ctx.principal.subject), (value) => {
     const doc = readDocument('user', value);
-    if (!doc) return newUserDoc(ctx.principal, nowIso);
+    if (!doc) return newUserDoc(ctx.principal, nowIso, approvalStatus);
     if (doc.subject !== ctx.principal.subject) throw conflict('Stored profile does not match this identity.', 'identity_mismatch');
     // A name the person set themselves (PATCH /api/me) wins over the provider's; without either the
     // stored name is kept. Written only when something actually changes.
@@ -265,4 +293,4 @@ function recordCreation(ctx, user, id) {
   user.workspaceCreations = [...(user.workspaceCreations || []), { id, at: new Date(nowMs).toISOString() }];
 }
 
-module.exports = { paths, loadWorkspace, mutateWorkspace, mutateWorkspaceAdmin, ensureUser, mutateUser, newUserDoc, requestHash, assertFits, assertRoomForHeadroomWrite, assertCanCreateWorkspace, recordCreation, MAX_WORKSPACE_BYTES, MAX_WORKSPACES_PER_PERSON };
+module.exports = { paths, loadWorkspace, mutateWorkspace, mutateWorkspaceAdmin, mutateUserAdmin, ensureUser, mutateUser, newUserDoc, requestHash, assertFits, assertRoomForHeadroomWrite, assertCanCreateWorkspace, recordCreation, MAX_WORKSPACE_BYTES, MAX_WORKSPACES_PER_PERSON };
