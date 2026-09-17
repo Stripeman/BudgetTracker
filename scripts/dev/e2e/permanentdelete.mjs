@@ -1,0 +1,187 @@
+// PERMANENT DELETION, RENAME AND CASCADE UI (BT-014-04, Terry 2026-09-17: "Users must have
+// meaningful control over their own data... including permanently deleting records when needed").
+// Real browser, fictional data only. Carol (owner — alice and bob already own or co-own several
+// throwaway workspaces in other scenarios, and workspace creation is bounded to 10 a day per
+// person, SEC-R5) permanently deletes an account with one entry (the impact dialog, wrong-then-
+// right confirmation phrase); a branching account (transactions AND a bill) shows a blocked dialog
+// with no enabled delete action and no confirmation field; an account linked to a solely-owned
+// Shared expense shows the "Download before continuing" / "Continue without downloading" offer
+// before the confirmation step, and the shared expense survives with its amount unchanged; Carol
+// sees the PERMANENT workspace-deletion card as unmistakably distinct from the existing recoverable
+// "Delete workspace" card and permanently deletes her own throwaway workspace, after which Bob (a
+// member) loses access entirely; Dave (site administrator) reaches the new Workspaces directory
+// (counts only, never a name) and administratively permanently deletes a second throwaway
+// workspace he was never a member of, after which its owner (Bob) loses access too.
+import { createWorkspace, firstRecord } from "../harness/fixtures.mjs";
+
+export const name = "permanentdelete";
+export const title = "BT-014-04: permanent deletion (impact dialog, blocked case, Shared-expenses download offer), the distinct PERMANENT workspace-delete card, and the site-admin Workspaces directory";
+export const needsBrowser = true;
+
+const MODAL = ".modal";
+const modalGone = (s, what) => s.waitFor("!document.querySelector('.modal')", { what });
+const modalText = (s) => s.evaluate("(() => { const m = document.querySelector('.modal'); return m ? m.innerText : ''; })()");
+const footButtons = (s) => s.evaluate("[...document.querySelectorAll('.modal .modal__foot button')].map((b) => b.textContent)");
+const modalButtons = (s) => s.evaluate("[...document.querySelectorAll('.modal button')].map((b) => b.textContent)");
+
+export async function run(h, t) {
+  const api = (u) => h.api(u);
+
+  // ---- fixtures --------------------------------------------------------------------------------
+  const W = await createWorkspace(h, { owner: "carol", name: "E2E Permanent Delete Household", kind: "household", members: { bob: "member" } });
+  const q = W.q;
+  const wallet = firstRecord(await api("carol").ok("accounts", { method: "POST", query: q, body: { name: "E2E Perm Wallet", type: "cash", currency: "EUR", openingBalance: "20.00" } }));
+  await api("carol").ok("transactions", { method: "POST", query: q, body: { accountId: wallet.id, kind: "expense", amount: "5.00", notes: "E2E one entry" } });
+
+  const branching = firstRecord(await api("carol").ok("accounts", { method: "POST", query: q, body: { name: "E2E Perm Branching", type: "checking", currency: "EUR", openingBalance: "100.00" } }));
+  await api("carol").ok("transactions", { method: "POST", query: q, body: { accountId: branching.id, kind: "expense", amount: "3.00" } });
+  await api("carol").ok("recurring", { method: "POST", query: q, body: { name: "E2E Perm Bill", accountId: branching.id, amount: "9.00", schedule: { freq: "monthly", startDate: "2026-10-01" } } });
+
+  const shared = firstRecord(await api("carol").ok("accounts", { method: "POST", query: q, body: { name: "E2E Perm Shared Link", type: "savings", currency: "EUR", openingBalance: "0.00" } }));
+  const members = (await api("carol").ok("members", { query: q })).members;
+  const carolRef = `member:${members.find((m) => m.name.startsWith("Carol")).id}`;
+  const expense = (await api("carol").ok("group", {
+    method: "POST", query: q,
+    body: { description: "E2E solo grocery run", amount: "40.00", payers: [{ ref: carolRef }], split: { method: "equal", lines: [{ ref: carolRef }] }, ledger: { accountId: shared.id } },
+  })).expense;
+  t.note(`workspace ${W.name}: ${W.id}`);
+
+  const b = await h.browsers(["carol", "bob", "dave"], { prefix: "permdel-" });
+  await b.carol.open("accounts");
+  await b.carol.useWorkspace(W.name);
+  await b.bob.open("dashboard");
+  await b.bob.useWorkspace(W.name);
+
+  // ---- 1. an account with one entry: impact, wrong phrase refused, right phrase deletes it -------
+  await b.carol.goto("accounts");
+  await b.carol.waitForText("E2E Perm Wallet", { scope: "main" });
+  await b.carol.click({ role: "button", name: "Permanently delete E2E Perm Wallet" });
+  await b.carol.waitFor("!!document.querySelector('.modal')", { what: "the impact dialog" });
+  await b.carol.waitForText("1 entry will be permanently deleted with it.", { scope: MODAL });
+  await b.carol.click({ role: "button", name: "Continue", scope: MODAL });
+  await b.carol.waitForText('Type "E2E Perm Wallet" to confirm', { scope: MODAL });
+  await b.carol.fill({ label: 'Type "E2E Perm Wallet" to confirm', scope: MODAL }, "not the right name");
+  await b.carol.click({ role: "button", name: "Permanently delete", scope: MODAL });
+  await b.carol.waitForText('Type "E2E Perm Wallet" exactly to confirm.', { scope: MODAL });
+  const stillOpen1 = await b.carol.exists(MODAL);
+  t.note(`screenshot of the wrong-phrase refusal: ${await b.carol.shot("permdel-wrong-phrase")}`);
+  await b.carol.fill({ label: 'Type "E2E Perm Wallet" to confirm', scope: MODAL }, "E2E Perm Wallet");
+  await b.carol.click({ role: "button", name: "Permanently delete", scope: MODAL });
+  await modalGone(b.carol, "the dialog to close after deleting");
+  await b.carol.settle();
+  const walletGone = !(await api("carol").ok("accounts", { query: q })).accounts.some((a) => a.id === wallet.id);
+  t.check("a wrong phrase is refused inside the dialog; the exact name permanently deletes it and closes the dialog", { expected: { stillOpen: true, gone: true }, actual: { stillOpen: stillOpen1, gone: walletGone } });
+
+  // ---- 2. a branching account (its own transactions AND its own bill): blocked, no way forward ---
+  await b.carol.goto("accounts");
+  await b.carol.waitForText("E2E Perm Branching", { scope: "main" });
+  await b.carol.click({ role: "button", name: "Permanently delete E2E Perm Branching" });
+  await b.carol.waitFor("!!document.querySelector('.modal')", { what: "the blocked impact dialog" });
+  await b.carol.waitForText("This cannot be permanently deleted yet.", { scope: MODAL });
+  const blockedText = await modalText(b.carol);
+  const blockedButtons = await footButtons(b.carol);
+  t.note(`screenshot of the blocked dialog: ${await b.carol.shot("permdel-blocked")}`);
+  // Keyboard: Escape closes it (nothing was ever enabled to confirm).
+  await b.carol.press("Escape");
+  await modalGone(b.carol, "Escape to close the blocked dialog");
+  const stillThere = (await api("carol").ok("accounts", { query: q })).accounts.some((a) => a.id === branching.id);
+  t.check("a blocked operation explains why and offers no enabled delete action (no Continue, no confirmation field); Escape closes it and nothing changed", {
+    expected: { explains: true, buttons: ["Cancel"], stillThere: true },
+    actual: { explains: blockedText.includes("more than one kind of related record"), buttons: blockedButtons, stillThere },
+  });
+
+  // ---- 3. an account linked to a solely-owned Shared expense: the download offer, then confirm ---
+  await b.carol.goto("accounts");
+  await b.carol.waitForText("E2E Perm Shared Link", { scope: "main" });
+  await b.carol.click({ role: "button", name: "Permanently delete E2E Perm Shared Link" });
+  await b.carol.waitFor("!!document.querySelector('.modal')", { what: "the impact dialog for the shared-linked account" });
+  await b.carol.waitForText("Its Shared-expenses link will be disconnected.", { scope: MODAL });
+  await b.carol.click({ role: "button", name: "Continue", scope: MODAL });
+  await b.carol.waitForText("linked to Shared expenses", { scope: MODAL });
+  const offerButtons = await modalButtons(b.carol);
+  t.note(`screenshot of the download-before-continuing offer: ${await b.carol.shot("permdel-group-offer")}`);
+  await b.carol.click({ role: "button", name: "Continue without downloading", scope: MODAL });
+  await b.carol.waitForText('Type "E2E Perm Shared Link" to confirm', { scope: MODAL });
+  await b.carol.fill({ label: 'Type "E2E Perm Shared Link" to confirm', scope: MODAL }, "E2E Perm Shared Link");
+  await b.carol.click({ role: "button", name: "Permanently delete", scope: MODAL });
+  await modalGone(b.carol, "the dialog to close after deleting the shared-linked account");
+  await b.carol.settle();
+  const sharedAfter = await api("carol").ok("accounts", { query: q });
+  const groupAfter = await api("carol").ok("group", { query: q });
+  const survivor = groupAfter.expenses.find((e) => e.id === expense.id);
+  t.check("downloading before continuing is offered (never deleting by itself); after Continue without downloading and confirming, the account is gone and the shared expense survives unchanged", {
+    expected: { offered: true, accountGone: true, expenseSurvives: true, amount: "40.00" },
+    actual: {
+      offered: ["Download as CSV", "Download as JSON", "Continue without downloading"].every((x) => offerButtons.includes(x)),
+      accountGone: !sharedAfter.accounts.some((a) => a.id === shared.id), expenseSurvives: !!survivor, amount: survivor && survivor.amount,
+    },
+  });
+
+  // ---- 4. the PERMANENT workspace-deletion card: unmistakably distinct, owner only ----------------
+  await b.carol.goto("workspace");
+  await b.carol.waitForText("Permanently delete workspace (cannot be undone)", { scope: "main" });
+  const cardHeadings = await b.carol.evaluate("[...document.querySelectorAll('section.card h2')].map((h) => h.textContent)");
+  const permCardClass = await b.carol.evaluate("(() => { const s = document.querySelector('section[aria-labelledby=\"ws-delete-permanent\"]'); return s ? s.className : ''; })()");
+  t.note(`screenshot of both workspace-deletion cards: ${await b.carol.shot("permdel-workspace-cards")}`);
+  t.check("both the recoverable 'Delete workspace' card and the new PERMANENT one are present, with different headings and an extra style class on the permanent one", {
+    expected: { hasRecoverable: true, hasPermanent: true, extraClass: true },
+    actual: { hasRecoverable: cardHeadings.includes("Delete workspace"), hasPermanent: cardHeadings.includes("Permanently delete workspace (cannot be undone)"), extraClass: permCardClass.includes("card--danger-permanent") },
+  });
+  // Bob, a plain member, sees neither the recoverable nor the PERMANENT card.
+  await b.bob.goto("workspace");
+  const bobHeadings = await b.bob.evaluate("[...document.querySelectorAll('section.card h2')].map((h) => h.textContent)");
+  t.check("a member sees neither the recoverable nor the PERMANENT deletion card", {
+    expected: { hasRecoverable: false, hasPermanent: false },
+    actual: { hasRecoverable: bobHeadings.includes("Delete workspace"), hasPermanent: bobHeadings.includes("Permanently delete workspace (cannot be undone)") },
+  });
+
+  await b.carol.click({ role: "button", name: "Permanently delete workspace…" });
+  await b.carol.waitFor("!!document.querySelector('.modal')", { what: "the permanent workspace-deletion dialog" });
+  await b.carol.waitForText("Everything in this workspace will be permanently deleted:", { scope: MODAL });
+  await b.carol.click({ role: "button", name: "Continue", scope: MODAL });
+  await b.carol.waitForText("This cannot be undone.", { scope: MODAL });
+  await b.carol.waitForText("Continue without a backup", { scope: MODAL });
+  await b.carol.click({ role: "button", name: "Continue without a backup", scope: MODAL });
+  // The workspace still has one surviving Shared expense (from step 3, deliberately left in place),
+  // so the Shared-expenses download offer appears here too, exactly as it did for the single account.
+  await b.carol.waitForText("linked to Shared expenses", { scope: MODAL });
+  await b.carol.click({ role: "button", name: "Continue without downloading", scope: MODAL });
+  await b.carol.waitForText(`Type "${W.name}" to confirm`, { scope: MODAL });
+  await b.carol.fill({ label: `Type "${W.name}" to confirm`, scope: MODAL }, W.name);
+  await b.carol.click({ role: "button", name: "Permanently delete workspace", scope: MODAL });
+  await modalGone(b.carol, "the dialog to close after permanently deleting the workspace");
+  await b.carol.settle();
+
+  const carolAfter = await api("carol").request("accounts", { query: q });
+  const bobBefore = await api("bob").request("accounts", { query: q });
+  t.check("after permanent deletion, the workspace is gone for the owner too, and for a member with no reload needed on the API", {
+    expected: { carol: 404, bob: 404 }, actual: { carol: carolAfter.status, bob: bobBefore.status },
+  });
+
+  // ---- 5. site-admin Workspaces directory and administrative permanent deletion ------------------
+  const W2 = await createWorkspace(h, { owner: "bob", name: "E2E Admin Permanent Delete", kind: "household" });
+  await b.dave.open("dashboard");
+  t.check("dave: an 'Workspaces' entry pointing at #/admin-workspaces exists in the DOM (account menu or nav)", { expected: true, actual: await b.dave.exists('a[href="#/admin-workspaces"]') });
+  await b.dave.goto("admin-workspaces");
+  await b.dave.waitForText("Workspaces", { scope: "main" });
+  await b.dave.waitForText(W2.id, { scope: "main" });
+  const directoryText = await b.dave.text("main");
+  t.note(`screenshot of the site-admin Workspaces directory: ${await b.dave.shot("permdel-admin-directory")}`);
+  t.check("the directory lists the throwaway workspace by id (counts only) and never shows its name", {
+    expected: { hasId: true, hasName: false }, actual: { hasId: directoryText.includes(W2.id), hasName: directoryText.includes(W2.name) },
+  });
+
+  await b.dave.click({ role: "button", name: `Permanently delete workspace ${W2.id}` });
+  await b.dave.waitFor("!!document.querySelector('.modal')", { what: "the admin permanent-delete dialog" });
+  await b.dave.waitForText("Everything in this workspace will be permanently deleted:", { scope: MODAL });
+  await b.dave.click({ role: "button", name: "Continue", scope: MODAL });
+  await b.dave.waitForText(`Type "${W2.name}" to confirm`, { scope: MODAL });
+  await b.dave.fill({ label: `Type "${W2.name}" to confirm`, scope: MODAL }, W2.name);
+  await b.dave.click({ role: "button", name: "Permanently delete workspace", scope: MODAL });
+  await modalGone(b.dave, "the dialog to close after the administrative permanent deletion");
+  await b.dave.settle();
+  const bobAfter = await api("bob").request("accounts", { query: W2.q });
+  t.check("a site administrator can permanently delete a workspace they were never a member of, reusing the exact same flow; its owner then loses access entirely", { expected: 404, actual: bobAfter.status });
+
+  for (const s of Object.values(b)) { await s.settle(); t.check(`${s.name}: no exceptions, console errors or failed requests in the browser`, { expected: [], actual: s.problems({ allowHttp: [{ status: 404, path: /\/api\/accounts/ }] }) }); }
+}

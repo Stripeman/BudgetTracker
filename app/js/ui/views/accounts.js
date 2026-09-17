@@ -4,6 +4,7 @@
 import { el, mount, announce } from "../dom.js";
 import { pageHead, stateView, money, accessBadge, button, field, input, pickerSelect, badge, uid } from "../components.js";
 import { openModal } from "../modal.js";
+import { openDeleteDialog } from "../permanentdelete.js";
 import { sliceFor } from "../../core/store.js";
 import { newIdempotencyKey } from "../../core/api.js";
 import { messageFor } from "../../core/errors.js";
@@ -225,6 +226,7 @@ export function createView(ctx) {
           canManage(a, sharedLists) ? button("Edit", () => openEditAccount(ctx, a), { small: true, attrs: { "aria-label": `Edit ${a.name}` } }) : null,
           canManage(a, sharedLists) ? button(a.status === "closed" ? "Reopen" : "Close", () => openLifecycle(ctx, a), { small: true, attrs: { "aria-label": `${a.status === "closed" ? "Reopen" : "Close"} ${a.name}` } }) : null,
           canManage(a, sharedLists) ? button("Remove", () => openRemove(ctx, a, afterRemove), { small: true, attrs: { "aria-label": `Remove ${a.name}` } }) : null,
+          canManage(a, sharedLists) ? button("Delete permanently", () => openPermanentDelete(ctx, a, state.selectedWorkspaceId, afterRemove), { small: true, variant: "danger", attrs: { "aria-label": `Permanently delete ${a.name}` } }) : null,
         ])]),
       ]))),
     ])]));
@@ -277,6 +279,24 @@ function openRemove(ctx, account, onRemoved = () => {}) {
       el("div", { class: "form-grid" }, [field("Reason", reason, { wide: true, help: empty ? "Kept with the account's history. Change it if you like." : "Required. It is kept with the account's history." })]),
     ],
     actions: [button("Cancel", () => modal.close()), closeInstead, confirm].filter(Boolean),
+  });
+}
+
+// BT-014-04: permanent deletion, distinct from Remove above (which is recoverable). Reuses the one
+// impact-review / double-confirmation dialog every record type shares.
+function openPermanentDelete(ctx, account, wsId, onDeleted = () => {}) {
+  openDeleteDialog(ctx, {
+    title: `Permanently delete ${account.name}?`,
+    wsIdForExport: wsId,
+    fetchImpact: async () => (await ctx.api.permanentDeleteImpact("accounts", { workspaceId: wsId }, { accountId: account.id })).impact,
+    execute: async (impact, typedConfirmation) => {
+      const out = await ctx.store.actions.write(
+        (ws) => ctx.api.permanentDeleteExecute("accounts", { workspaceId: ws }, { accountId: account.id, impactToken: impact.token, typedConfirmation }),
+        ["accounts", "transactions", "bills", "group"],
+      );
+      if (!out.ok) throw out.error;
+    },
+    onDeleted,
   });
 }
 

@@ -86,6 +86,13 @@ fieldset.budget-line { margin: 0; padding: var(--space-3); border: 1px solid var
 /* "Delete workspace" (Terry, 2026-09-14): a danger-style card, set apart from the ordinary ones. */
 .card--danger { border-color: var(--color-danger); }
 .card--danger .card__title { color: var(--color-danger-text); }
+/* BT-014-04: PERMANENT workspace deletion must never be mistaken for the recoverable "Delete
+   workspace" card above (the backend implementer's own flagged terminology risk) — a thicker
+   double border and a tinted background on top of the ordinary danger styling, never colour alone
+   (the heading text and warning icon say the same thing in words). */
+.card--danger-permanent { border-width: 3px; border-style: double; background: color-mix(in srgb, var(--color-danger) 8%, var(--surface)); }
+.card--danger-permanent .card__title { display: flex; align-items: center; gap: var(--space-2); }
+.permdelete-warning { border: 1px solid var(--color-danger); border-radius: var(--radius-lg); padding: var(--space-3); }
 .catrow { display: grid; gap: var(--space-2) var(--space-3); align-items: start; grid-template-columns: repeat(auto-fit, minmax(min(13rem, 100%), 1fr)); padding-block: var(--space-2); border-top: 1px solid var(--border); }
 .catrow__name { margin: 0; padding-top: var(--space-4); font-size: var(--text-base); }
 .catrow__meta, .catrow > .error-text { grid-column: 1 / -1; }

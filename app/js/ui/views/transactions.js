@@ -16,6 +16,7 @@ import { el, mount, announce } from "../dom.js";
 import { stateView, money, button, field, input, pickerSelect, categoryBadges, iconBadges, badge, categoryLabel } from "../components.js";
 import { categoryIndex } from "../../core/categories.js";
 import { openModal } from "../modal.js";
+import { openDeleteDialog } from "../permanentdelete.js";
 import { createMerchantPicker } from "../merchantpicker.js";
 import { sliceFor } from "../../core/store.js";
 import { newIdempotencyKey } from "../../core/api.js";
@@ -261,6 +262,9 @@ export function createView(ctx) {
         t.canEdit && !t.transferId && !t.reversedBy && !(t.links && t.links.reverses) && !sharedLinked(t) ? button("Reverse", () => openReverse(ctx, t), { small: true, attrs: { "aria-label": `Reverse ${t.payeeName || "entry"} on ${t.date}` } }) : null,
         t.amendmentCount ? button("History", () => void openHistory(ctx, t), { small: true, attrs: { "aria-label": `History of ${t.payeeName || "entry"} on ${t.date}` } }) : null,
         t.canDelete && t.status !== "reconciled" && !sharedLinked(t) ? button("Delete", () => openDelete(ctx, t), { small: true, variant: "danger", attrs: { "aria-label": `Delete ${t.payeeName || "entry"} on ${t.date}` } }) : null,
+        // BT-014-04: permanent deletion, distinct from the recoverable Delete above. No rename here —
+        // a transaction has no name field; the server's fixed confirmation phrase is "DELETE".
+        t.canDelete ? button("Delete permanently", () => openPermanentDelete(ctx, t), { small: true, variant: "danger", attrs: { "aria-label": `Permanently delete ${t.payeeName || "entry"} on ${t.date}` } }) : null,
       ])]),
     ]));
     mount(tableBox, el("div", { class: "table-wrap" }, [el("table", { class: "table table--cards" }, [
@@ -311,6 +315,24 @@ function openDelete(ctx, t) {
     if (!out.ok) { modal.setError(out.error); return; }
     announce("Entry deleted. It stays in the history.");
     modal.close();
+  });
+}
+
+// BT-014-04: permanent deletion. A transfer's other leg, or a reversal pair, is removed together
+// as the same event; entries recorded from Shared expenses, a hand-entered owed pair or a
+// reconciled entry are refused with a plain reason (api/_shared/deletion.js).
+function openPermanentDelete(ctx, t) {
+  const wsId = ctx.store.getState().selectedWorkspaceId;
+  openDeleteDialog(ctx, {
+    title: `Permanently delete ${t.payeeName ? `the entry with ${t.payeeName}` : "this entry"}?`,
+    fetchImpact: async () => (await ctx.api.permanentDeleteImpact("transactions", { workspaceId: wsId }, { transactionId: t.id })).impact,
+    execute: async (impact, typedConfirmation) => {
+      const out = await ctx.store.actions.write(
+        (ws) => ctx.api.permanentDeleteExecute("transactions", { workspaceId: ws }, { transactionId: t.id, impactToken: impact.token, typedConfirmation }),
+        ["transactions", "accounts"],
+      );
+      if (!out.ok) throw out.error;
+    },
   });
 }
 

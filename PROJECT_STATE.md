@@ -956,3 +956,172 @@ frontend-UI/Shared-expenses-severance agent (dispatched separately, worktree
 re-gate, and only then consider a Preview deploy — Terry explicitly wants all three surfaces (member
 deletion, whole-workspace deletion, site-admin management) verified on Preview together before any
 Production discussion.
+## Checkpoint W — BT-014 Part A (shared-expenses-aware deletion, CSV/JSON export) and BT-014-04 (full frontend UI) (2026-09-17)
+
+**Base and branch.** `feature/project-foundation` at `c016876` (the merged BT-014 backend from
+Checkpoint U); worked in a fresh worktree, on a new branch `feature/record-deletion-ui`. Commits so
+far: `e7447fc` (Part A backend), `3495cf2` (frontend UI), `9ddd1fd` (real-browser e2e, two real bugs
+found and fixed), plus this docs commit. Not pushed, not merged, not deployed.
+
+**Part A — the shared-expenses-aware deletion Checkpoint U deliberately deferred, now built.**
+Terry's exact rule (2026-09-17) has two branches — "managed solely by this workspace" (cascade/
+delete it) versus "shared with another workspace" (sever only this workspace's connection, preserve
+for the other side, resolve a sole-manager handoff first). Before writing any code, searched the
+whole repository for any field that could represent a shared expense's involvement with ANOTHER
+workspace — none exists: every participant is either an active member of THIS workspace or a
+contact recorded IN this workspace's own `contacts[]` (`api/_shared/groups.js`
+`participantChecker` already refuses a private, cross-workspace contact outright). BT-009's Shared
+expenses feature has no cross-workspace participation model at all yet (BT-010, trip/multicurrency,
+remains planned). So every shared expense in this codebase today is, by construction, "managed
+solely by this workspace" — the sever/preserve/handoff branch is not reachable YET. Documented this
+finding as `groups.foreignWorkspaceIds(doc)` (always returns `[]` today, with a long comment
+explaining why and giving that branch exactly one place to become real later) rather than silently
+assuming it away at each call site, and implemented accordingly:
+- `api/_shared/deletion.js` `accountImpact`/`accountApply`: an account linked to Shared expenses is
+  no longer hard-blocked. Its `groupLedgers` entry (and any legacy `ledgerLinks` entry) is REMOVED
+  (not merely marked `endedAt`, because `groups.js` `invariantProblem` requires every such entry's
+  `accountId` to resolve to a real account, ended or not — an "ended" pointer at a deleted account
+  would itself be the dangling reference this deletion must never ship) as a non-branching
+  auto-cleanup step, exactly like the pre-existing grants cleanup; the shared expense's amounts,
+  splits, payers, shares, settlements and history are untouched. The impact token's fingerprint now
+  also covers `autoCleanup` (previously it did not, for grants either — a small, strictly-stricter
+  fix to the existing staleness check, not a new gap).
+- `api/_shared/workspace-deletion.js` `impact()`: a workspace with Shared-expenses records is no
+  longer hard-blocked; the existing `DATASET_KEYS`/tombstone wipe already correctly cleared them
+  once the blocker was relaxed. Blocks only if `foreignWorkspaceIds` ever finds a real foreign id
+  (never, today). Both impacts now expose `groupInvolved` for the client's download offer.
+- `api/_shared/sharedexport.js` (new) + `api/group/handler.js` `?action=export&format=csv|json`:
+  the authorized Shared-expenses report (participants, dates, descriptions, currencies, amounts,
+  splits, settlements, outstanding balances) Terry's spec requires be offered before deletion/
+  disconnection — read-only, member-authorized, proven never to mutate the workspace document.
+  **XLSX/PDF deliberately NOT built**: no export infrastructure of any kind existed in this
+  codebase before this change; CSV/JSON needed no dependency, but a correct XLSX or PDF writer by
+  hand is real engineering risk (a subtly wrong file is the realistic failure mode, not an obvious
+  test failure) — flagged as a case where CLAUDE.md's "don't add a dependency lightly" is judged NOT
+  to clearly apply, with a small vetted dependency recommended to whoever picks this up, not added
+  unilaterally.
+- `api/test/deletion.test.js`, `api/test/workspace-deletion.test.js` (one pre-existing test rewritten
+  to match the new, correct behaviour — not weakened, the assertions got MORE specific), `api/test/
+  sharedexport.test.js` (new). `npm --prefix api test`: 603/603, exit 0.
+
+**BT-014-04 — the frontend, the single largest remaining gap Checkpoint U flagged, now built.**
+`app/js/ui/permanentdelete.js`: one reusable impact-review/double-confirmation dialog
+(`openDeleteDialog`) used identically by every record type with an existing management view
+(accounts, merchants, recurring bills, budgets, transactions — delete-only, no name field) and, via
+`openWorkspacePermanentDeleteDialog`, the whole-workspace case (owner and, through
+`adminworkspaces.js`, site administrator). Flow: fetch impact → plain-language summary, no enabled
+path forward while blocked → (if `groupInvolved`) offer "Download as CSV"/"Download as JSON"/
+"Continue without downloading", never itself deleting, kept open on a failed download for retry →
+re-fetch fresh right before the destructive step → type the exact confirmation phrase → execute; a
+stale-token refusal re-reviews the impact automatically with a plain explanation rather than a
+generic error. Rename needed no new UI for any of the five types above — their existing Edit
+dialogs already expose `name` via the pre-existing PATCH routes (verified, not assumed). The whole-
+workspace flow is a NEW card in Settings/Workspace, deliberately styled and worded to be
+unmistakably distinct from the existing recoverable "Delete workspace" card (different heading
+"Permanently delete workspace (cannot be undone)", a warning icon, an extra `.card--danger-
+permanent` CSS class with a thicker double border and a tinted background) — the exact terminology-
+confusion risk Checkpoint U flagged. A new site-admin "Workspaces" tab (`adminworkspaces.js`, route
+`admin-workspaces`) extends the existing Usage/Design Gallery site-admin surface in `shell.js`/
+`router.js` (same account-menu entry, same nav-when-signed-in-as-admin pattern, same onboarding-
+guard exemption) rather than inventing new navigation, lists the directory (`?action=directory`,
+counts only — id, kind, status, timestamps, member count, dataset counts, approximate size, never a
+name or balance) and runs the identical impact/confirm/execute flow by workspace id.
+
+**Two real bugs found by real-browser testing, not by reading the code** (both fixed in the same
+session): `offerGroupDownload` was an unnecessary `async function` — its returned Promise was
+handed to the DOM `mount()` helper instead of a node, silently wedging the dialog on "Checking once
+more before continuing…" forever whenever a Shared-expenses-linked deletion was continued; and
+`impactBody()` assumed every impact carries `cascade`/`severed`/`autoCleanup` arrays, true for a
+per-record impact but not the whole-workspace one (dataset COUNTS by key instead), crashing step 1
+of the workspace-deletion dialog — a dedicated `workspaceImpactBody()` was added. The same review
+also noticed the dialog moved no focus between its steps and added explicit focus management (the
+newly shown primary action, or the group-offer's first button, receives focus at every transition)
+— a real accessibility gap, fixed rather than left for a future pass.
+
+**Real-browser evidence (CLAUDE.md §8; `scripts/dev/e2e/permanentdelete.mjs`, new).** Isolated dev
+server, fresh fictional seed, real headless Edge (not simulated): an account with one entry (impact
+dialog, wrong-then-right confirmation phrase, real permanent deletion, verified via the API
+afterwards); a branching account (its own transactions AND its own bill) shows the blocked dialog
+with no enabled delete action and no confirmation field, closed with a real Escape keypress, nothing
+changed; an account linked to a solely-owned Shared expense shows the download offer, "Continue
+without downloading" advances it, the account is really gone and the shared expense survives with
+its exact amount (40.00) and payers unchanged; both workspace-deletion cards present with different
+headings and the extra style class, a plain member sees neither; the permanent flow's backup offer,
+then (since the workspace still holds that one surviving Shared expense) the SAME download offer,
+then real confirmation, then the workspace is gone for its owner AND a member with no reload needed;
+the site-admin Workspaces directory lists a second throwaway workspace by id only (its name is
+proven absent from the page text) and administratively permanently deletes it, after which its
+owner loses access too. **12/12 checks passed, exit 0, no console errors or failed requests, clean
+process cleanup** (proved by the harness's own end-of-run accounting). Workspaces in this scenario
+are deliberately owned by `carol`/`bob`, never `alice` — she already owns or co-owns several
+throwaway workspaces across the rest of the suite and workspace creation is bounded to 10/day per
+person (SEC-R5); this was a deliberate design choice after finding the risk, not an accident.
+
+A full `npm run e2e` (all 16 scenarios, one run): **479 passed, 1 failed** — `scripts/dev/e2e/
+accounts.mjs` hits the pre-existing `workspace_rate` 10/day cap for `alice`, caused by workspace
+creation in `privacy`/`shared`/`concurrency`/`guards`/`recheck`/`settings` (all of which run BEFORE
+`accounts` in the scenario list and none of which this session touched); confirmed unrelated by
+inspection (this session's own new scenario creates its workspaces as carol/bob specifically to
+avoid contributing to that count) — a pre-existing, order-dependent fragility of running the full
+suite in one fictional day, not fixed here, flagged for whoever next touches scenario ordering or
+the rate limit itself. One PRE-EXISTING e2e assertion (`recheck.mjs` "N2", an exact row-button-list
+check) needed updating for the new, correctly-enabled "Delete permanently" button on a Shared-
+expenses-recorded entry's row (it is the impact dialog that explains the block, never the row
+itself) — updated, not weakened; the underlying N2 behaviour (Move disabled and explained) is
+unchanged and still asserted.
+
+**Gate.** `npm test` (repo+api+app): all green, exit 0 (432/432 app, 603/603 api). `npm run
+validate`: ok, 24 routes, exit 0. `npm run e2e -- --only permanentdelete`: 12/12, exit 0.
+
+**Deliberately not built, flagged plainly rather than guessed at:**
+- **Rename/permanent-delete affordances for categories and workspace contacts.** Neither has an
+  existing frontend management surface to extend: categories have no add/rename UI anywhere in this
+  codebase (only personal colour/icon overrides in Settings, and `api/categories` GET is the only
+  category call in `app/js/core/api.js`); workspace-scoped contacts have no list page either — the
+  "Private contacts" card in Settings is a different, cross-workspace, user-level concept BT-014-01
+  deliberately excludes from permanent deletion. Building that base management UI first was judged
+  out of this feature's honest scope rather than rushed in; flagged for whoever picks this up next.
+- **XLSX/PDF export formats** — see Part A above (BT-014-06).
+- **The full cross-workspace sever/preserve/sole-manager-handoff flow** — architecturally
+  unreachable today (see Part A above); `groups.foreignWorkspaceIds` is the one place it needs to
+  plug in once a real cross-workspace participation model exists (BT-010 or a BT-009 increment).
+- **Independent security, financial and accessibility/UX review by a separate reviewer subagent.**
+  This session's own tool set had no Agent/Task-style dispatch tool available (confirmed, the same
+  finding Checkpoint U reported) — flagged plainly rather than fabricated. A careful self-review
+  against all three lenses was done instead:
+  - *Security:* every new route reuses the EXISTING `authorize()` function for its type (mirrors
+    edit authority, unchanged by this session); the export and directory routes are read-only GETs
+    (no CSRF surface); the site-admin directory and export never return a name, balance or content,
+    proven by tests; all new UI builds DOM nodes through `el()` (no `innerHTML`); the CSV writer
+    escapes quotes/commas/newlines; the download uses a same-origin Blob URL, revoked after use, with
+    a filename derived only from the workspace's own internal id (no injection surface).
+  - *Financial:* the account-severance test proves the shared expense's amounts/splits/payers survive
+    byte-for-byte; the workspace-wipe test proves it (and its groupExpenses) are actually gone; the
+    export module formats money only through the canonical `money.toDecimal` (no new arithmetic); the
+    fingerprint/staleness check got strictly stricter, not weaker.
+  - *Accessibility/UX:* the dialog reuses the existing `openModal` (focus trap, `aria-modal`, inert
+    background, Escape handling — all inherited); new buttons carry descriptive `aria-label`s; the
+    confirm-phrase field uses the shared `field()` helper with `aria-invalid` on mismatch; explicit
+    focus management was added between steps (see "two real bugs" above). **Not verified:** a real
+    screen reader (NVDA/JAWS/Narrator), Windows High Contrast, 400% zoom reflow, a physical touch
+    device — consistent with every prior BT-014/BT-004 session's own disclosed gaps.
+  A real independent pass by `security-privacy-reviewer`, `financial-accuracy-reviewer` and an
+  accessibility/UX reviewer is still recommended before any Preview or Production deploy of this
+  branch, per CLAUDE.md §8, given the scope (destructive, irreversible financial-record actions).
+
+**Deploy status.** Gate is green but `.local/deploy-target.json` does not exist in this worktree
+(confirmed by directory listing only, contents never read, matching this agent's role
+instructions) — no deploy was attempted, none should be inferred. Never pushed to `main`, never
+merged, never deployed.
+
+**Waiting on Terry / the coordinator:**
+- Reconcile and merge `feature/record-deletion-ui` into `feature/project-foundation` when ready.
+- Decide whether categories/workspace-contacts management UI (a prerequisite for their BT-014
+  rename/delete affordances) is a follow-up of BT-014, or of BT-007 (merchant/category directory)
+  and BT-009 (Shared expenses) respectively, since both already own the closest existing surfaces.
+- Decide the XLSX/PDF dependency question (BT-014-06) — recommended but not added unilaterally.
+- Dispatch `security-privacy-reviewer`, `financial-accuracy-reviewer` and an accessibility/UX
+  reviewer on this branch before Preview or Production, per CLAUDE.md §8 — not run this session for
+  the tool-availability reason above.
+- Run `.\deploy.ps1 -Environment preview` from a normal checkout (with `.local/deploy-target.json`
+  present) once the above are satisfied.

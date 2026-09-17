@@ -35,6 +35,7 @@ const { requireId } = require('./ids');
 const store = require('./store');
 const fields = require('./fields');
 const audit = require('./audit');
+const groups = require('./groups');
 
 function fingerprint(value) {
   return createHash('sha256').update(JSON.stringify(value)).digest('hex').slice(0, 32);
@@ -85,35 +86,64 @@ function accountImpact(doc, account) {
   if (reconciled.length) {
     blockers.push(`${reconciled.length} reconciled transaction${reconciled.length === 1 ? '' : 's'} on this account cannot be permanently deleted. Reverse ${reconciled.length === 1 ? 'it' : 'them'} first, then try again.`);
   }
-  // Shared expenses linked to this account (Terry's resolution 2: a download offer, and a sever
-  // for another workspace's connection versus a cascade delete when solely owned here, are not
-  // built yet in this version — see PROJECT_STATE.md). Refusing rather than guessing at partial
-  // behaviour keeps this safe until that flow exists.
+  // Shared expenses linked to this account (Terry, 2026-09-17): "The behavior depends on whether
+  // the shared expense involves another workspace ... Contacts without their own participating
+  // workspace do not count as another workspace." groups.foreignWorkspaceIds documents why every
+  // shared expense in this codebase today is managed solely by this workspace (no cross-workspace
+  // participation model exists yet) — so this always cascades rather than blocking. If a future
+  // change ever gives a shared expense a real foreign workspace, this refuses instead of guessing
+  // at the sever/preserve flow that would then be required.
   const ledgerLinks = (doc.groupLedgers || []).filter((l) => l.accountId === account.id && !l.endedAt);
-  const groupRefs = [...(doc.groupExpenses || []), ...(doc.groupSettlements || [])]
+  const affectedRecords = [...(doc.groupExpenses || []), ...(doc.groupSettlements || [])]
     .filter((rec) => (rec.ledgerLinks || []).some((l) => l.accountId === account.id && !l.endedAt));
   const groupLinkedTxns = txns.filter((t) => t.links && (t.links.groupExpenseId || t.links.groupSettlementId));
-  const sharedCount = ledgerLinks.length + groupRefs.length + groupLinkedTxns.length;
-  if (sharedCount) {
-    blockers.push(`This account is linked to Shared expenses (${sharedCount} record${sharedCount === 1 ? '' : 's'}). Permanently deleting a Shared-expenses-linked account is not available in this version; end the link in Shared expenses first.`);
+  const foreign = groups.foreignWorkspaceIds(doc);
+  const groupInvolved = ledgerLinks.length > 0 || affectedRecords.length > 0 || groupLinkedTxns.length > 0;
+  if (groupInvolved && foreign.length) {
+    blockers.push('This account is linked to Shared expenses that involve another workspace. Disconnecting from the other workspace is not available in this version; resolve it in Shared expenses first.');
   }
   const relationships = [
     relationship('transactions', txns),
     relationship('recurring', bills, { reason: 'These bills are sourced from this account and have no meaning without it.' }),
   ];
   const out = evaluate({ relationships, blockers });
+  const autoCleanup = [];
+  if (grants.length) autoCleanup.push({ type: 'grant', count: grants.length });
+  // Never a branching cascade of its own (like grants above): the account's own Shared-expenses
+  // ledger link and any legacy per-record link are ended, and the shared expense itself — its
+  // participants, amounts, splits, settlements and history — is preserved exactly as Terry
+  // required ("Preserve the shared expense ... amounts, splits, settlements, and relevant
+  // history"), just no longer pointing at this deleted account (falls back to no-account
+  // recording, already supported — BT-009 increment 1, "shared expenses without accounts").
+  if (!out.blocked && groupInvolved) autoCleanup.push({ type: 'group-link', count: ledgerLinks.length + affectedRecords.length });
   return {
     target: { type: 'account', id: account.id, label: account.name, confirmPhrase: account.name },
-    ...out, together: [], autoCleanup: grants.length ? [{ type: 'grant', count: grants.length }] : [], severed: [],
+    ...out, together: [], autoCleanup, severed: [], groupInvolved: !out.blocked && groupInvolved,
   };
 }
-function accountApply(doc, account, impact) {
+function accountApply(doc, account, impact, nowIso) {
   const group = (key) => new Set((impact.cascade.find((g) => g.key === key) || { ids: [] }).ids);
   const txnIds = group('transactions');
   const billIds = group('recurring');
   doc.transactions = (doc.transactions || []).filter((t) => !txnIds.has(t.id));
   doc.recurring = (doc.recurring || []).filter((r) => !billIds.has(r.id));
   doc.grants = (doc.grants || []).filter((g) => !(g.resourceType === 'account' && g.resourceId === account.id));
+  // Sever this account's Shared-expenses synchronization so a later edit cannot recreate the
+  // deleted entries or reconnect it automatically (Terry, 2026-09-17). The link cannot be kept as
+  // an "ended" tombstone the way api/group/handler.js's stop-recording does it: the same invariant
+  // check this deletion re-validates with (api/_shared/groups.js invariantProblem, reused by
+  // api/_shared/backup.js) requires EVERY groupLedgers/ledgerLinks entry's accountId to resolve to
+  // a real account, ended or not — an ended link pointing at a now-deleted account would itself be
+  // a dangling reference, exactly what this deletion must never ship. So the pointer entries are
+  // removed outright instead; the shared expense records themselves, their splits, settlements,
+  // amounts, participants and history are untouched.
+  void nowIso;
+  doc.groupLedgers = (doc.groupLedgers || []).filter((l) => l.accountId !== account.id);
+  for (const rec of [...(doc.groupExpenses || []), ...(doc.groupSettlements || [])]) {
+    if (Array.isArray(rec.ledgerLinks) && rec.ledgerLinks.some((l) => l.accountId === account.id)) {
+      rec.ledgerLinks = rec.ledgerLinks.filter((l) => l.accountId !== account.id);
+    }
+  }
   doc.accounts = (doc.accounts || []).filter((a) => a.id !== account.id);
 }
 
@@ -272,6 +302,10 @@ function computeImpact(type, doc, record) {
     // group (e.g. its amount or status changing) that leaves group membership unchanged, which the
     // id-list hash above alone would not detect.
     revision: doc.revision || 0,
+    // Closes a pre-existing staleness-detection gap for autoCleanup (e.g. grants, Shared-expenses
+    // links) the same way: a change there between preview and confirm now also invalidates the
+    // token, strictly stricter than before, not a new risk.
+    autoCleanup: (out.autoCleanup || []).map((g) => ({ type: g.type, count: g.count })),
   });
   return out;
 }
@@ -290,7 +324,7 @@ function execute(ctx, doc, member, type, record, { token, typedConfirmation, rea
   const expected = String(impact.target.confirmPhrase || impact.target.label || '').trim().toLowerCase();
   const typed = String(typedConfirmation || '').trim().toLowerCase();
   if (!expected || typed !== expected) throw badRequest('Type the confirmation text exactly as shown to permanently delete this.', 'confirmation_mismatch');
-  TYPES[type].apply(doc, record, impact);
+  TYPES[type].apply(doc, record, impact, ctx.nowIso());
   // Defence in depth: refuses (aborting the whole write) if this would leave any dangling
   // reference the backup/restore invariant checker would also refuse.
   require('./backup').checkInvariants(doc);
@@ -312,6 +346,10 @@ function toClientImpact(impact) {
     blocked: impact.blocked, blockers: impact.blockers,
     cascade: impact.cascade.map((g) => ({ type: g.key, count: g.count, reason: g.reason })),
     together: impact.together || [], severed: impact.severed, autoCleanup: impact.autoCleanup || [], token: impact.token,
+    // Set only for the account type today (BT-014, Terry 2026-09-17): true when this account is
+    // linked to Shared expenses this workspace solely manages, so the client should offer the
+    // pre-deletion "Download before continuing" step for that data before the final confirmation.
+    groupInvolved: !!impact.groupInvolved,
   };
 }
 

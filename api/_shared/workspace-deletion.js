@@ -19,6 +19,7 @@
 // gate deletion on it.
 const { createHash } = require('node:crypto');
 const { conflict, badRequest } = require('./http');
+const groups = require('./groups');
 
 function fingerprint(value) {
   return createHash('sha256').update(JSON.stringify(value)).digest('hex').slice(0, 32);
@@ -45,24 +46,39 @@ function datasetCounts(doc) {
 // financial content"). When `adminSafe` is true, `label` is omitted and `confirmPhrase` is the
 // workspace's own id instead — information the admin already legitimately has (it's the id they
 // supplied to call this route, and the same id the ?action=directory listing already returns).
+//
+// Terry, 2026-09-17: "The behavior depends on whether the shared expense involves another
+// workspace. If it is managed solely by this workspace ... delete the shared expense as part of
+// the cleanup, subject to the cascade rules and double confirmation ... If it is shared with
+// another workspace, sever only the deleting workspace's connection." groups.foreignWorkspaceIds
+// documents why every shared expense in this codebase is managed solely by one workspace today
+// (no cross-workspace participation model exists yet): so a workspace with Shared-expenses
+// records is allowed to proceed — those records are wiped with everything else, exactly like
+// every other dataset (`DATASET_KEYS` below already includes them) — and is refused only in the
+// (today unreachable) case a foreign workspace id is actually found, rather than guessing at the
+// sever/preserve/sole-manager-handoff flow that branch would then require.
 function impact(doc, { adminSafe = false } = {}) {
   const shared = (doc.groupExpenses || []).length + (doc.groupSettlements || []).length + (doc.groupLedgers || []).length;
+  const foreign = groups.foreignWorkspaceIds(doc);
   const blockers = [];
-  if (shared) {
-    blockers.push(`This workspace has ${shared} Shared-expenses record${shared === 1 ? '' : 's'} (expenses, settlements or personal-ledger links). Deleting a workspace with Shared-expenses involvement needs the full download/sever/preserve flow, which is not available in this version. Resolve or remove them in Shared expenses first.`);
+  if (shared && foreign.length) {
+    blockers.push(`This workspace's Shared expenses involve ${foreign.length} other workspace${foreign.length === 1 ? '' : 's'}. Deleting it needs the full download/sever/preserve flow, which is not available in this version. Resolve or remove that involvement in Shared expenses first.`);
   }
   const datasets = datasetCounts(doc);
   const target = adminSafe
     ? { type: 'workspace', id: doc.id, label: null, confirmPhrase: doc.id }
     : { type: 'workspace', id: doc.id, label: doc.name, confirmPhrase: doc.name };
-  const out = { target, kind: doc.kind, status: doc.status, blocked: blockers.length > 0, blockers, datasets };
+  const out = { target, kind: doc.kind, status: doc.status, blocked: blockers.length > 0, blockers, datasets, groupInvolved: shared > 0 && !blockers.length };
   out.token = fingerprint({ id: doc.id, blocked: out.blocked, blockers: out.blockers, datasets, revision: doc.revision || 0 });
   return out;
 }
 
 function toClientImpact(imp) {
   return { type: 'workspace', id: imp.target.id, label: imp.target.label, confirmPhrase: imp.target.confirmPhrase,
-    kind: imp.kind, status: imp.status, blocked: imp.blocked, blockers: imp.blockers, datasets: imp.datasets, token: imp.token };
+    kind: imp.kind, status: imp.status, blocked: imp.blocked, blockers: imp.blockers, datasets: imp.datasets, token: imp.token,
+    // BT-014, Terry 2026-09-17: true when this workspace has Shared-expenses records that will be
+    // permanently deleted along with it, so the client offers "Download before continuing" first.
+    groupInvolved: !!imp.groupInvolved };
 }
 
 // A tombstone: no financial content, no members, unreachable to anyone from this point on

@@ -6,6 +6,7 @@
 import { el, mount, announce } from "../dom.js";
 import { stateView, badge, button, amountText, field, input, pickerSelect, categoryBadges, iconBadges } from "../components.js";
 import { openModal } from "../modal.js";
+import { openDeleteDialog } from "../permanentdelete.js";
 import { sliceFor } from "../../core/store.js";
 import { formatDate, todayIso, MERCHANT_TYPE_LABELS } from "../../core/format.js";
 import { normalize } from "../merchantpicker.js";
@@ -82,6 +83,7 @@ export function createView(ctx) {
             p.canEdit ? button("Edit", () => openMerchantEditor(ctx, p), { small: true, attrs: { "aria-label": `Edit ${p.name}` } }) : null,
             p.canEdit && p.status !== "closed" ? button("Close", () => openLifecycle(ctx, p, "archive"), { small: true, attrs: { "aria-label": `Close ${p.name}` } }) : null,
             p.canEdit && p.status === "closed" ? button("Reopen", () => openLifecycle(ctx, p, "reopen"), { small: true, attrs: { "aria-label": `Reopen ${p.name}` } }) : null,
+            p.canEdit ? button("Delete permanently", () => openPermanentDelete(ctx, p, state.selectedWorkspaceId), { small: true, variant: "danger", attrs: { "aria-label": `Permanently delete ${p.name}` } }) : null,
           ])] : []),
         ]));
       })),
@@ -274,5 +276,21 @@ function openLifecycle(ctx, merchant, action) {
     if (!out.ok) { modal.setError(out.error); return; }
     announce(closing ? `${merchant.name} closed.` : `${merchant.name} reopened.`);
     modal.close();
+  });
+}
+
+// BT-014-04: permanent deletion, distinct from Close above (which is recoverable). An entry that
+// referenced this merchant keeps everything else and only loses the link (api/_shared/deletion.js).
+function openPermanentDelete(ctx, merchant, wsId) {
+  openDeleteDialog(ctx, {
+    title: `Permanently delete ${merchant.name}?`,
+    fetchImpact: async () => (await ctx.api.permanentDeleteImpact("payees", { workspaceId: wsId }, { payeeId: merchant.id })).impact,
+    execute: async (impact, typedConfirmation) => {
+      const out = await ctx.store.actions.write(
+        (ws) => ctx.api.permanentDeleteExecute("payees", { workspaceId: ws }, { payeeId: merchant.id, impactToken: impact.token, typedConfirmation }),
+        ["payees", "transactions", "bills"],
+      );
+      if (!out.ok) throw out.error;
+    },
   });
 }

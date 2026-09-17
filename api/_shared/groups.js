@@ -513,8 +513,30 @@ function memberIds(doc) {
   return out;
 }
 
+// BT-014, Terry 2026-09-17: deletion behaviour depends on "whether the shared expense involves
+// another workspace ... Contacts without their own participating workspace do not count as
+// another workspace." Every participant a shared expense can name today is either an active
+// member of THIS workspace (`member:<id>`) or a contact recorded IN this workspace's own
+// `contacts[]` (`contact:<id>`, created by api/contacts, scoped to `workspaceId` — see
+// participantChecker above, which refuses a private, cross-workspace contact outright). No field
+// anywhere in this codebase links a shared-expense record, a contact or a workspace to ANOTHER
+// workspace's id (confirmed by a repository-wide search before writing this); BT-010 (trip/
+// multicurrency) and the rest of BT-009-11 remain planned, not built. So every shared expense
+// this workspace holds today is, by construction, "managed solely by this workspace" — the
+// sever-and-preserve-for-the-other-side branch of Terry's rule is not reachable YET. This
+// function exists so that branch has exactly one place to become real later (once a contact or
+// record can carry another workspace's id) instead of being silently assumed away at every call
+// site: it returns the (today always empty) list of foreign workspace ids a shared expense would
+// need severing from, so callers can plainly show "no foreign participation found" rather than
+// having to know the reason themselves.
+function foreignWorkspaceIds(doc) {
+  void doc;
+  return [];
+}
+
 module.exports = {
   METHODS, SETTLEMENT_STATES, MAX_LINES, MAX_GROUP_MINOR, HUNDRED_PERCENT,
   percentUnits, percentText, positiveAmount, computeShares, normalizeSplit, normalizePayers, participantChecker,
   participants, recordRefs, sumByRef, balances, openCurrencies, desiredEntries, recordedOutside, invariantProblem, memberIds,
+  foreignWorkspaceIds,
 };

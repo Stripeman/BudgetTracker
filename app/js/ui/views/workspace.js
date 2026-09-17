@@ -16,6 +16,7 @@ import { ACCOUNT_TYPE_LABELS, BILL_TYPE_LABELS, MERCHANT_TYPE_LABELS } from "../
 import { createIconPicker } from "../iconpicker.js";
 import { builtInIconFor, withIcon } from "../icons.js";
 import { managesSharedLists } from "../../core/workspacesettings.js";
+import { openWorkspacePermanentDeleteDialog } from "../permanentdelete.js";
 
 // Icons for the workspace's types (BT-011-05): accounts, bills and merchants of a type show this icon
 // unless one was chosen on the record itself.
@@ -538,11 +539,20 @@ export function createView(ctx) {
     if (sig === deleteSig) return;
     deleteSig = sig;
     if (!owner) { mount(deleteBox); return; }
-    mount(deleteBox, el("section", { class: "card card--danger", "aria-labelledby": "ws-delete" }, [
-      el("h2", { class: "card__title", id: "ws-delete", text: "Delete workspace" }),
-      el("p", { class: "field__help", text: "Everyone in this workspace loses access. It can be brought back from Deleted workspaces in My settings." }),
-      button("Delete workspace…", () => { openDeleteDialog(ctx, workspace); }, { variant: "danger" }),
-    ]));
+    mount(deleteBox,
+      el("section", { class: "card card--danger", "aria-labelledby": "ws-delete" }, [
+        el("h2", { class: "card__title", id: "ws-delete", text: "Delete workspace" }),
+        el("p", { class: "field__help", text: "Everyone in this workspace loses access. It can be brought back from Deleted workspaces in My settings." }),
+        button("Delete workspace…", () => { openDeleteDialog(ctx, workspace); }, { variant: "danger" }),
+      ]),
+      // BT-014-04: an UNMISTAKABLY distinct action from "Delete workspace" above — this one has no
+      // undo, no "Bring back". Different heading, wording, icon and a stronger border/background
+      // (flagged by the backend implementer as a terminology-confusion risk to avoid).
+      el("section", { class: "card card--danger card--danger-permanent", "aria-labelledby": "ws-delete-permanent" }, [
+        el("h2", { class: "card__title", id: "ws-delete-permanent" }, [withIcon("alert", "Permanently delete workspace (cannot be undone)")]),
+        el("p", { class: "field__help", text: "This is not the recoverable action above. Once confirmed, this workspace and everything in it are gone for good — no \"Bring back\". You can take a backup first." }),
+        button("Permanently delete workspace…", () => { openWorkspacePermanentDeleteDialog(ctx, { wsId: workspace.id, onDeleted: () => { if (ctx.navigate) ctx.navigate("dashboard"); } }); }, { variant: "danger" }),
+      ]));
   }
   // Leaving the page (the shell asked first) forgets the card's unsaved mark.
   return { element, update, destroy: () => form.destroy() };
