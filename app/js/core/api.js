@@ -125,5 +125,21 @@ export function createApiClient({ fetchImpl = globalThis.fetch.bind(globalThis),
     savePreferences: (body) => request("preferences", { method: "PUT", body }),
     // Site usage (BT-012-01): site administrators only. Never financial data.
     analytics: () => request("analytics"),
+    // Design Gallery (BT-013): site administrators only. Never financial data; never a real
+    // workspace's data.
+    designGallery: () => request("design-gallery"),
+    saveDesignGallery: (body) => request("design-gallery", { method: "PATCH", body }),
+    // BT-014 permanent deletion: one pair of generic calls reused by every record type (accounts,
+    // transactions, payees, categories, recurring, budgets, contacts — each its own `route` and
+    // idField in the body), the owner's whole-workspace route (`route: "workspaces"`, `query: {
+    // id }`) and the site administrator's route (`route: "analytics"`, `query: { workspaceId }`).
+    // See app/js/ui/permanentdelete.js, the one reusable impact/confirm dialog that calls these.
+    permanentDeleteImpact: (route, query, body) => request(route, { method: "POST", query: { ...query, action: "delete-impact" }, body }),
+    permanentDeleteExecute: (route, query, body) => request(route, { method: "POST", query: { ...query, action: "delete-permanent" }, body }),
+    // The authorized Shared-expenses download offered before a deletion/disconnection that would
+    // affect it (BT-014 Part A). Read-only; never itself deletes or disconnects anything.
+    sharedExport: (id, format) => request("group", { query: { ...ws(id), action: "export", format } }),
+    // Site-admin workspace directory (BT-014-03): operational metadata only, never financial content.
+    workspaceDirectory: () => request("analytics", { query: { action: "directory" } }),
   };
 }

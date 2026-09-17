@@ -6,6 +6,7 @@
 import { el, mount, announce } from "../dom.js";
 import { stateView, badge, button, amountText, field, input, pickerSelect, categoryBadges, iconBadges } from "../components.js";
 import { openModal } from "../modal.js";
+import { openDeleteDialog } from "../permanentdelete.js";
 import { sliceFor } from "../../core/store.js";
 import { formatDate, todayIso, MERCHANT_TYPE_LABELS } from "../../core/format.js";
 import { normalize } from "../merchantpicker.js";
@@ -22,6 +23,7 @@ const stamp = (iso) => String(iso || "").replace("T", " ").slice(0, 16);
 
 export function createView(ctx) {
   const box = el("div");
+  const missingBox = el("div");
   // The dropdowns are TaskTracker's command picker (BT-004-05).
   const show = pickerSelect([{ value: "active", label: "Active" }, { value: "closed", label: "Closed" }, { value: "all", label: "All" }], "active", {}, { search: false });
   const search = input({ type: "search", placeholder: "Name or other name" });
@@ -29,6 +31,7 @@ export function createView(ctx) {
   const element = el("section", {}, [
     el("div", { class: "page-head" }, [el("h1", { text: "Merchants" }), add]),
     el("p", { class: "muted", text: "Totals include only entries you are allowed to see. Merchants are never deleted: close one you no longer use and its history stays." }),
+    missingBox,
     el("div", { class: "filters" }, [field("Show", show), field("Search", search)]),
     box,
   ]);
@@ -43,6 +46,30 @@ export function createView(ctx) {
     if (n >= 0) timer = setTimeout(() => announce(n === 0 ? "No merchants match." : `${n} merchant${n === 1 ? "" : "s"} shown.`), 400);
   });
   void ctx.store.actions.refreshPayees();
+  void ctx.store.actions.refreshBills();
+
+  // "Bills without a merchant" (BT-014-11, Terry, 2026-09-17: "add merchants for ones that are
+  // used in bills but not added there yet"). A bill can only ever reference a merchant that
+  // already exists (BT-007-01: merchants are managed records, never free text), so nothing here
+  // is silently "used" without being a real merchant — this instead surfaces bills whose own name
+  // very often IS the merchant (a "Netflix" bill, a "Rent" bill) but that have no merchant linked
+  // yet, one click from becoming one. Never for a transfer (no payee) or an ended bill.
+  function renderMissing(state) {
+    const bills = sliceFor(state, "bills");
+    const list = ((bills.data || {}).recurring || []).filter((b) => !b.payeeId && !b.ended && b.kind !== "transfer" && b.canEdit);
+    if (!list.length) { mount(missingBox); return; }
+    mount(missingBox, el("section", { class: "card", "aria-labelledby": "payees-missing" }, [
+      el("h2", { class: "card__title", id: "payees-missing", text: "Bills without a merchant" }),
+      el("p", { class: "field__help", text: "These bills have no merchant linked yet. Add one using the bill's own name, or a different name if you'd rather — it's linked to the bill either way." }),
+      el("ul", { class: "stack" }, list.map((b) => el("li", { class: "row" }, [
+        withIcon(b.icon || "receipt", el("span", { text: b.name })),
+        button("Add as merchant", () => openMerchantEditor(ctx, null, {
+          prefillName: b.name,
+          onCreated: (payee) => void linkBillToMerchant(ctx, b, payee),
+        }), { small: true, attrs: { "aria-label": `Add a merchant for ${b.name}` } }),
+      ]))),
+    ]));
+  }
 
   function render(state) {
     const prefs = state.preferences;
@@ -82,6 +109,7 @@ export function createView(ctx) {
             p.canEdit ? button("Edit", () => openMerchantEditor(ctx, p), { small: true, attrs: { "aria-label": `Edit ${p.name}` } }) : null,
             p.canEdit && p.status !== "closed" ? button("Close", () => openLifecycle(ctx, p, "archive"), { small: true, attrs: { "aria-label": `Close ${p.name}` } }) : null,
             p.canEdit && p.status === "closed" ? button("Reopen", () => openLifecycle(ctx, p, "reopen"), { small: true, attrs: { "aria-label": `Reopen ${p.name}` } }) : null,
+            p.canEdit ? button("Delete permanently", () => openPermanentDelete(ctx, p, state.selectedWorkspaceId), { small: true, variant: "danger", attrs: { "aria-label": `Permanently delete ${p.name}` } }) : null,
           ])] : []),
         ]));
       })),
@@ -94,6 +122,7 @@ export function createView(ctx) {
     // A viewer cannot add entries, so a merchant of theirs could never be used (UX2-009).
     const role = ((state.workspaces || []).find((w) => w.id === state.selectedWorkspaceId) || {}).role;
     mount(add, role && role !== "viewer" ? button("Add merchant", () => openMerchantEditor(ctx), { variant: "primary" }) : null);
+    renderMissing(state);
     render(state);
   }
   return { element, update };
@@ -125,7 +154,10 @@ function historyList(merchant, lookups) {
   return el("details", { class: "more" }, [el("summary", { text: `Change history (${items.length})` }), el("ul", { class: "history-list" }, items)]);
 }
 
-export function openMerchantEditor(ctx, merchant = null) {
+// `prefillName` starts a NEW merchant (never edit mode) with its name already filled in, e.g. from
+// a bill's own name (BT-014-11); `onCreated(payee)` fires once, only on a successful create, for a
+// caller that wants to link the new merchant back to whatever prompted it.
+export function openMerchantEditor(ctx, merchant = null, { prefillName = "", onCreated } = {}) {
   const state = ctx.store.getState();
   const editing = !!merchant;
   const role = ((state.workspaces || []).find((w) => w.id === state.selectedWorkspaceId) || {}).role;
@@ -136,7 +168,7 @@ export function openMerchantEditor(ctx, merchant = null) {
   const m = merchant || {};
   const c = m.contact || {};
 
-  const name = input({ maxlength: "80", value: m.name || "", required: true, autocomplete: "off" });
+  const name = input({ maxlength: "80", value: m.name || prefillName || "", required: true, autocomplete: "off" });
   const canShare = role !== "viewer";
   const visibility = pickerSelect([{ value: "private", label: "Private to me" }].concat(canShare ? [{ value: "shared", label: "Shared with the workspace" }] : []), editing ? m.visibility : (canShare ? "shared" : "private"), {}, { search: false });
   const visibilityEditable = !editing || (m.visibility === "private" && m.ownedBySelf && canShare);
@@ -244,7 +276,22 @@ export function openMerchantEditor(ctx, merchant = null) {
     }
     announce(editing ? "Merchant saved." : "Merchant added.");
     modal.close();
+    if (!editing && onCreated) onCreated(out.result.payee);
   }
+}
+
+// Links a just-created merchant back to the bill that prompted it (BT-014-11) — a normal term
+// change like any other (payeeId, versioned from a date), the same write the bill editor's own
+// Merchant field already makes, refreshing both slices so the "Bills without a merchant" list and
+// the bill itself immediately reflect it. A failure here is surfaced but the merchant itself is
+// already saved either way — never silently lost even if the link fails.
+async function linkBillToMerchant(ctx, bill, payee) {
+  const out = await ctx.store.actions.write(
+    (ws) => ctx.api.updateBill(ws, { recurringId: bill.id, revision: bill.revision, payeeId: payee.id, effectiveFrom: bill.nextDue || todayIso() }),
+    ["bills", "payees"],
+  );
+  if (!out.ok) { announce(`“${payee.name}” was added, but linking it to “${bill.name}” failed. Choose it from the bill's own Edit dialog instead.`); return; }
+  announce(`“${payee.name}” added and linked to “${bill.name}”.`);
 }
 
 function openLifecycle(ctx, merchant, action) {
@@ -274,5 +321,21 @@ function openLifecycle(ctx, merchant, action) {
     if (!out.ok) { modal.setError(out.error); return; }
     announce(closing ? `${merchant.name} closed.` : `${merchant.name} reopened.`);
     modal.close();
+  });
+}
+
+// BT-014-04: permanent deletion, distinct from Close above (which is recoverable). An entry that
+// referenced this merchant keeps everything else and only loses the link (api/_shared/deletion.js).
+function openPermanentDelete(ctx, merchant, wsId) {
+  openDeleteDialog(ctx, {
+    title: `Permanently delete ${merchant.name}?`,
+    fetchImpact: async () => (await ctx.api.permanentDeleteImpact("payees", { workspaceId: wsId }, { payeeId: merchant.id })).impact,
+    execute: async (impact, typedConfirmation) => {
+      const out = await ctx.store.actions.write(
+        (ws) => ctx.api.permanentDeleteExecute("payees", { workspaceId: ws }, { payeeId: merchant.id, impactToken: impact.token, typedConfirmation }),
+        ["payees", "transactions", "bills"],
+      );
+      if (!out.ok) throw out.error;
+    },
   });
 }

@@ -160,10 +160,26 @@ function merchantsCtx() {
       { id: "p_bakery", name: "Fictional Bakery", status: "active", visibility: "shared", stats: [], canEdit: true },
       { id: "p_video", name: "Fictional Video Store", status: "closed", visibility: "shared", stats: [], canEdit: true },
     ] }),
+    bills: ready({ recurring: [
+      { id: "bill_netflix", name: "Fictional Netflix", kind: "expense", payeeId: null, ended: false, canEdit: true, revision: 2, nextDue: "2026-10-01" },
+      { id: "bill_rent", name: "Fictional rent", kind: "expense", payeeId: "p_bakery", ended: false, canEdit: true, revision: 1, nextDue: "2026-10-01" },
+      { id: "bill_xfer", name: "Fictional savings transfer", kind: "transfer", payeeId: null, ended: false, canEdit: true, revision: 1, nextDue: "2026-10-01" },
+      { id: "bill_ended", name: "Fictional old gym", kind: "expense", payeeId: null, ended: true, canEdit: true, revision: 1, nextDue: null },
+    ] }),
   };
-  const api = { createMerchant: async (ws, body) => { calls.push(body); return {}; } };
-  const store = { getState: () => state, actions: { write: async (fn) => { await fn("ws_1"); return { ok: true }; }, refreshPayees: async () => {} } };
-  return { ctx: { store, api, navigate() {} }, state, calls };
+  const billUpdates = [];
+  const api = {
+    createMerchant: async (ws, body) => { calls.push(body); return { payee: { id: "p_new", name: body.name } }; },
+    updateBill: async (ws, body) => { billUpdates.push(body); return {}; },
+  };
+  const store = {
+    getState: () => state,
+    actions: {
+      write: async (fn) => { const result = await fn("ws_1"); return { ok: true, result }; },
+      refreshPayees: async () => {}, refreshBills: async () => {},
+    },
+  };
+  return { ctx: { store, api, navigate() {} }, state, calls, billUpdates };
 }
 
 describe("BT-004-05 merchants: the Show filter and the merchant editor", () => {
@@ -226,6 +242,46 @@ describe("BT-004-05 merchants: the Show filter and the merchant editor", () => {
     openMerchantEditor(ctx, { id: "p_bakery", name: "Fictional Bakery", visibility: "shared", status: "active", revision: 1, history: [] });
     const root = dom.body.querySelector(".modal");
     assert.equal(triggerFor(pickerNamed(root, "Sharing")).disabled, true);
+  });
+});
+
+describe("BT-014-11 'Bills without a merchant' (Terry, 2026-09-17: \"add merchants for ones that are used in bills but not added there yet\")", () => {
+  test("lists only bills with no merchant, excluding transfers and ended bills; 'Add as merchant' pre-fills the bill's name and links the new merchant back to it", async () => {
+    const { ctx, state, calls, billUpdates } = merchantsCtx();
+    const view = createMerchants(ctx);
+    dom.body.appendChild(view.element);
+    view.update(state);
+    const section = view.element.querySelector("#payees-missing").closest(".card");
+    const text = section.textContent;
+    assert.match(text, /Fictional Netflix/);
+    assert.doesNotMatch(text, /Fictional rent/, "already has a merchant");
+    assert.doesNotMatch(text, /Fictional savings transfer/, "a transfer has no payee");
+    assert.doesNotMatch(text, /Fictional old gym/, "ended bills don't need one");
+    buttonNamed(section, "Add as merchant").click();
+    const root = dom.body.querySelector(".modal");
+    assert.equal(root.querySelector("h2").textContent, "Add merchant", "creating, never editing");
+    const nameInput = root.querySelector("input");
+    assert.equal(nameInput.getAttribute("value"), "Fictional Netflix", "pre-filled from the bill's name");
+    // The DOM double doesn't reflect a value ATTRIBUTE into the live .value property the way a
+    // real browser does (see app/test/accounteditor.test.js's own syncValues note) — set directly,
+    // matching this exact dialog's other test above (line ~231).
+    nameInput.value = "Fictional Netflix";
+    buttonNamed(root, "Add merchant").click();
+    await tick();
+    await tick();
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0].name, "Fictional Netflix");
+    assert.equal(billUpdates.length, 1);
+    assert.deepEqual(billUpdates[0], { recurringId: "bill_netflix", revision: 2, payeeId: "p_new", effectiveFrom: "2026-10-01" });
+  });
+
+  test("nothing shown when every bill already has a merchant, is a transfer, or has ended", () => {
+    const { ctx, state } = merchantsCtx();
+    state.bills.data.recurring = state.bills.data.recurring.filter((b) => b.id !== "bill_netflix");
+    const view = createMerchants(ctx);
+    dom.body.appendChild(view.element);
+    view.update(state);
+    assert.equal(view.element.querySelector("#payees-missing"), null);
   });
 });
 

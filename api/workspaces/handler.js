@@ -7,6 +7,12 @@
 //   DELETE ?id=      archive (owner) — shown as "Delete workspace"; recoverable, never a permanent delete.
 //                    Nobody reaches an archived workspace until an owner brings it back (store.loadWorkspace).
 //   POST ?id=&action=restore   unarchive (owner) — "Bring back" under Deleted workspaces in My settings
+//   POST ?id=&action=delete-impact     (BT-014) owner only: what permanently deleting this whole
+//          workspace would remove — counts only, never financial values
+//   POST ?id=&action=delete-permanent  (BT-014) owner only, after two confirmations: wipes the
+//          workspace for good (an explicit exception to "nothing is physically deleted" — see
+//          CLAUDE.md BT-001-05 and api/_shared/workspace-deletion.js). Never confused with DELETE
+//          above, which stays the recoverable archive.
 const { readBody, query, header, badRequest, forbidden, notFound, conflict } = require('../_shared/http');
 const { newId, requireId, isIdempotencyKey } = require('../_shared/ids');
 const { PreconditionFailed } = require('../_shared/storage');
@@ -20,6 +26,8 @@ const audit = require('../_shared/audit');
 const groups = require('../_shared/groups');
 const workspaceSettings = require('../_shared/workspace-settings');
 const siteSettings = require('../_shared/site');
+const workspaceDeletion = require('../_shared/workspace-deletion');
+const siteDeletions = require('../_shared/site-deletions');
 
 async function list(ctx) {
   const user = await store.ensureUser(ctx);
@@ -153,7 +161,80 @@ async function archive(ctx, req) {
   return { body: result };
 }
 
+// BT-014 whole-workspace permanent deletion, owner-only branch. Reuses the exact same
+// impact/apply/log logic the administrative branch uses (api/analytics/handler.js), only the
+// authorization and the write path (a normal member-gated mutateWorkspace here, versus
+// store.mutateWorkspaceAdmin there) differ.
+async function permanentDeleteImpact(ctx, req) {
+  const id = requireId(query(req, 'id'), 'id');
+  const { doc, member } = await store.loadWorkspace(ctx, id, { archived: true });
+  if (member.role !== 'owner') throw forbidden('Only an owner can permanently delete this workspace.');
+  return { body: { impact: workspaceDeletion.toClientImpact(workspaceDeletion.impact(doc)) } };
+}
+
+async function permanentDeleteExecute(ctx, req) {
+  const id = requireId(query(req, 'id'), 'id');
+  const body = fields.onlyKeys(readBody(req), ['impactToken', 'typedConfirmation', 'reason']);
+  const reason = fields.text(body.reason, { field: 'Reason', max: 200 });
+  // Checked once outside the write so a genuinely blocked attempt is still audited: throwing
+  // INSIDE the write below aborts the whole transaction, so it cannot itself persist a log entry.
+  let preImpact;
+  let actorSubject;
+  let workspaceKind;
+  {
+    const { doc, member } = await store.loadWorkspace(ctx, id, { archived: true });
+    if (member.role !== 'owner') throw forbidden('Only an owner can permanently delete this workspace.');
+    actorSubject = member.subject;
+    workspaceKind = doc.kind;
+    preImpact = workspaceDeletion.impact(doc);
+    if (preImpact.blocked) {
+      await siteDeletions.recordWorkspaceDeletion(ctx.storage, {
+        id: `wsdel_${id}_${ctx.now()}`, workspaceId: id, workspaceKind: doc.kind, at: ctx.nowIso(),
+        actor: member.subject, actorRole: 'owner', datasets: preImpact.datasets, reason: reason || null, outcome: 'blocked',
+      });
+      throw conflict(`This workspace cannot be permanently deleted yet: ${preImpact.blockers.join(' ')}`, 'delete_blocked');
+    }
+  }
+  // Security/financial-review fix (2026-09-17): the outside log entry is now written BEFORE the
+  // wipe commits, then updated to 'completed' after — never only-after. The prior design left a
+  // real window where a crash, timeout or storage failure between the wipe write and this log
+  // write would destroy the workspace (its own internal audit intentionally cleared with it,
+  // per tombstoneOf) with literally zero durable record anywhere that it ever existed or who
+  // deleted it — exactly what CLAUDE.md's "audited atomically, never best-effort" rule exists to
+  // prevent, for the single most destructive, least reversible action this app has.
+  const correlationId = `wsdel_${id}_${ctx.now()}`;
+  await siteDeletions.recordWorkspaceDeletion(ctx.storage, {
+    id: `${correlationId}#pending`, workspaceId: id, workspaceKind, at: ctx.nowIso(),
+    actor: actorSubject, actorRole: 'owner', datasets: preImpact.datasets, reason: reason || null, outcome: 'pending',
+  });
+  try {
+    let completedEntry = null;
+    const { result } = await store.mutateWorkspace(ctx, id, (doc, member) => {
+      if (member.role !== 'owner') throw forbidden('Only an owner can permanently delete this workspace.');
+      const before = workspaceDeletion.applyPermanentDelete(doc, {
+        token: body.impactToken, typedConfirmation: body.typedConfirmation, actor: member.subject, nowIso: ctx.nowIso(),
+      });
+      completedEntry = {
+        id: `${correlationId}#completed`, workspaceId: id, workspaceKind: before.kind, at: ctx.nowIso(),
+        actor: member.subject, actorRole: 'owner', datasets: before.datasets, reason: reason || null, outcome: 'completed',
+      };
+      return { deleted: true, id, datasets: before.datasets };
+    }, { allowHeadroom: true, archived: true });
+    await siteDeletions.recordWorkspaceDeletion(ctx.storage, completedEntry);
+    return { body: result };
+  } catch (err) {
+    await siteDeletions.recordWorkspaceDeletion(ctx.storage, {
+      id: `${correlationId}#failed`, workspaceId: id, workspaceKind, at: ctx.nowIso(),
+      actor: actorSubject, actorRole: 'owner', datasets: preImpact.datasets, reason: reason || null,
+      outcome: 'failed', errorCode: err && err.code ? err.code : null,
+    });
+    throw err;
+  }
+}
+
 async function post(ctx, req) {
+  if (query(req, 'action') === 'delete-impact') return permanentDeleteImpact(ctx, req);
+  if (query(req, 'action') === 'delete-permanent') return permanentDeleteExecute(ctx, req);
   if (query(req, 'action') === 'restore') {
     const id = requireId(query(req, 'id'), 'id');
     const body = fields.onlyKeys(readBody(req), ['reason']);

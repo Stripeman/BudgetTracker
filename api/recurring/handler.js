@@ -504,10 +504,30 @@ async function remove(ctx, req) {
   return { body: result };
 }
 
+// Permanent deletion (BT-014). A bill has no separate child records (its skips/pauses/resumes are
+// embedded, not their own record type); entries already recorded from it keep everything else and
+// just lose the link back to this bill.
+const deletion = require('../_shared/deletion');
+const permanentRoutes = deletion.makeRoutes({
+  type: 'recurring', idField: 'recurringId',
+  find: (doc, id, ctx) => {
+    const r = (doc.recurring || []).find((x) => x.id === id);
+    const a = r && (doc.accounts || []).find((x) => x.id === r.accountId);
+    return r && a && !a.deletedAt && can(doc, ctx.principal, a, 'view-transactions', ctx.now()) ? r : null;
+  },
+  authorize: (doc, member, r, ctx) => {
+    const a = (doc.accounts || []).find((x) => x.id === r.accountId);
+    if (!a || !mayChangeBill(doc, ctx.principal, a, r, 'delete', ctx.now())) throw forbidden('You cannot permanently delete this bill.');
+  },
+  scopeFor: (r) => `account:${r.accountId}`,
+});
+
 async function post(ctx, req) {
   const action = query(req, 'action');
   if (action === undefined) return create(ctx, req);
   if (action === 'record') return record(ctx, req);
+  if (action === 'delete-impact') return permanentRoutes.impactRoute(ctx, req);
+  if (action === 'delete-permanent') return permanentRoutes.permanentRoute(ctx, req);
   if (Object.prototype.hasOwnProperty.call(CHANGE_KEYS, action)) return change(action)(ctx, req);
   throw notFound();
 }

@@ -4,6 +4,7 @@
 import { el, mount, announce } from "../dom.js";
 import { pageHead, stateView, money, accessBadge, button, field, input, pickerSelect, badge, uid } from "../components.js";
 import { openModal } from "../modal.js";
+import { openDeleteDialog } from "../permanentdelete.js";
 import { sliceFor } from "../../core/store.js";
 import { newIdempotencyKey } from "../../core/api.js";
 import { messageFor } from "../../core/errors.js";
@@ -19,9 +20,11 @@ const GRANTABLE = [["view-balances", "See balance"], ["view-transactions", "See 
 const CREDIT_TERM_TYPES = new Set(["credit-card", "merchant-credit"]);
 const LOAN_TERM_TYPES = new Set(["loan", "mortgage", "other-liability"]);
 
-// Type and currency cannot be changed once an account exists (BT-006): every entry, category rule
-// and, for loans/credit cards, the terms above assume them. Shown read-only with this explanation.
-const TYPE_CURRENCY_LOCKED = "Type and currency are set when an account is created and can't be changed, because every entry and rule on this account depends on them. To fix a wrong type or currency, remove this account (if it has no entries) or close it, and create a new one.";
+// Type and currency may still be fixed while nothing has been recorded against the account yet
+// (BT-014-08); once anything is, every entry, category rule and, for loans/credit cards, the terms
+// below assume them, so they lock — shown read-only with this explanation.
+const TYPE_CURRENCY_LOCKED = "This account already has activity recorded against it (an entry, a bill, a grant or a Shared-expenses link), so type and currency are locked — every entry and rule on it depends on them.";
+const TYPE_CURRENCY_EDITABLE = "Nothing has been recorded against this account yet, so its type and currency can still be fixed if you picked the wrong one. Once anything is recorded, they lock.";
 const OPENING_LOCKED = "This account has reconciled entries, so this is locked to keep reconciled statements correct.";
 
 // The same shape `termsControls(...).collect()` produces, built directly from the account's data
@@ -225,6 +228,7 @@ export function createView(ctx) {
           canManage(a, sharedLists) ? button("Edit", () => openEditAccount(ctx, a), { small: true, attrs: { "aria-label": `Edit ${a.name}` } }) : null,
           canManage(a, sharedLists) ? button(a.status === "closed" ? "Reopen" : "Close", () => openLifecycle(ctx, a), { small: true, attrs: { "aria-label": `${a.status === "closed" ? "Reopen" : "Close"} ${a.name}` } }) : null,
           canManage(a, sharedLists) ? button("Remove", () => openRemove(ctx, a, afterRemove), { small: true, attrs: { "aria-label": `Remove ${a.name}` } }) : null,
+          canManage(a, sharedLists) ? button("Delete permanently", () => openPermanentDelete(ctx, a, state.selectedWorkspaceId, afterRemove), { small: true, variant: "danger", attrs: { "aria-label": `Permanently delete ${a.name}` } }) : null,
         ])]),
       ]))),
     ])]));
@@ -280,6 +284,24 @@ function openRemove(ctx, account, onRemoved = () => {}) {
   });
 }
 
+// BT-014-04: permanent deletion, distinct from Remove above (which is recoverable). Reuses the one
+// impact-review / double-confirmation dialog every record type shares.
+function openPermanentDelete(ctx, account, wsId, onDeleted = () => {}) {
+  openDeleteDialog(ctx, {
+    title: `Permanently delete ${account.name}?`,
+    wsIdForExport: wsId,
+    fetchImpact: async () => (await ctx.api.permanentDeleteImpact("accounts", { workspaceId: wsId }, { accountId: account.id })).impact,
+    execute: async (impact, typedConfirmation) => {
+      const out = await ctx.store.actions.write(
+        (ws) => ctx.api.permanentDeleteExecute("accounts", { workspaceId: ws }, { accountId: account.id, impactToken: impact.token, typedConfirmation }),
+        ["accounts", "transactions", "bills", "group"],
+      );
+      if (!out.ok) throw out.error;
+    },
+    onDeleted,
+  });
+}
+
 // Closing keeps the account, its balance and its history; it only stops new entries and bills.
 function openLifecycle(ctx, account) {
   const closing = account.status !== "closed";
@@ -322,12 +344,20 @@ function openLifecycle(ctx, account) {
 
 // Every currently-editable field (BT-006): name, institution, account number, opening balance and
 // date (locked once the account has a reconciled entry), icon, notes, and — for loans and credit
-// cards — the terms. Type and currency are shown read-only; they are fixed after creation because
-// every entry and rule on the account depends on them. Every change is kept in the account's
-// history with the reason (BT-011-05, BT-001-05).
+// cards — the terms. Type and currency are editable too, but only while nothing has been recorded
+// against the account yet (Terry, 2026-09-17: "to minimize deleting... edit account type,
+// currency") — the same boundary as account deletion eligibility (BT-006-05, `account.hasEntries`
+// already returned by the API); once anything is recorded they lock, since every entry and rule on
+// the account depends on them. Every change is kept in the account's history with the reason
+// (BT-011-05, BT-001-05).
 function openEditAccount(ctx, account) {
   const locked = !!account.reconciledLocked;
+  const typeCurrencyEditable = account.hasEntries === false;
   const name = input({ required: true, maxlength: "80", value: account.name, autocomplete: "off" });
+  const typePick = typeCurrencyEditable
+    ? pickerSelect(Object.entries(ACCOUNT_TYPE_LABELS).map(([value, label]) => ({ value, label })), account.type, {}, { search: false, badgeOf: (v) => icon(defaultIconFor("account", v)) })
+    : null;
+  const currencyPick = typeCurrencyEditable ? pickerSelect(CURRENCIES.map((c) => ({ value: c, label: c })), account.currency) : null;
   const institution = input({ maxlength: "80", value: account.institution || "", autocomplete: "off" });
   const last = input({ inputmode: "numeric", maxlength: "4", placeholder: "Last 2–4 digits only", value: account.maskedNumber || "", autocomplete: "off" });
   const opening = input({ inputmode: "decimal", placeholder: "0.00", value: account.openingBalance || "", disabled: locked });
@@ -336,13 +366,33 @@ function openEditAccount(ctx, account) {
   const chosen = account.iconSource === "record" ? account.icon : null;
   const iconPick = createIconPicker({ value: chosen, inherited: chosen ? defaultIconFor("account", account.type) : account.icon, name: account.name });
   const reason = input({ maxlength: "200", placeholder: "Optional", autocomplete: "off" });
-  const terms = termsControls(account.type, account.terms);
-  const initialTerms = terms ? JSON.stringify(canonicalTerms(account.type, account.terms)) : null;
+  // Terms are type-specific (credit limit, APR, ...): if the type picker changes, the terms shown
+  // must follow the NEWLY chosen type, not the account's original one, or the form would offer
+  // fields the server would refuse (and drop any it no longer recognises) for the type about to be
+  // saved. Rebuilt in place whenever the type selection changes.
+  const termsBox = el("div");
+  let terms = termsControls(typePick ? typePick.value : account.type, account.terms);
+  let initialTerms = terms ? JSON.stringify(canonicalTerms(account.type, account.terms)) : null;
+  const renderTerms = () => {
+    mount(termsBox, terms ? el("fieldset", { class: "form-grid budget-line field--wide" }, [el("legend", { class: "field__label", text: terms.legend }), ...terms.fields]) : null);
+  };
+  if (typePick) {
+    typePick.addEventListener("change", () => {
+      // A type change (this session's own case) clears terms server-side too — the form mirrors
+      // that rather than offering stale, possibly-invalid fields for the new type.
+      terms = typePick.value === account.type ? termsControls(account.type, account.terms) : termsControls(typePick.value, null);
+      initialTerms = typePick.value === account.type && terms ? JSON.stringify(canonicalTerms(account.type, account.terms)) : (terms ? JSON.stringify(terms.collect()) : null);
+      renderTerms();
+    });
+  }
+  renderTerms();
   const save = button("Save changes", async () => {
     modal.setError("");
     if (!name.value.trim()) { name.setAttribute("aria-invalid", "true"); name.setAttribute("aria-errormessage", modal.errorId); modal.setError("Give the account a name."); name.focus(); return; }
     const body = { accountId: account.id, revision: account.revision };
     if (name.value.trim() !== account.name) body.name = name.value.trim();
+    if (typePick && typePick.value !== account.type) body.type = typePick.value;
+    if (currencyPick && currencyPick.value !== account.currency) body.currency = currencyPick.value;
     if (institution.value.trim() !== (account.institution || "")) body.institution = institution.value.trim();
     if (last.value.trim() !== (account.maskedNumber || "")) body.maskedNumber = last.value.trim();
     if (!locked && opening.value.trim() !== (account.openingBalance || "")) body.openingBalance = opening.value.trim() || "0";
@@ -350,9 +400,11 @@ function openEditAccount(ctx, account) {
     if (notes.value !== (account.notes || "")) body.notes = notes.value;
     const icon = iconChange(chosen, iconPick.getValue());
     if (icon !== undefined) body.icon = icon;
-    if (terms) {
-      const current = JSON.stringify(terms.collect());
-      if (current !== initialTerms) body.terms = terms.collect();
+    // Terms are sent explicitly only when the type is NOT also changing (a type change already
+    // clears/reapplies terms server-side); when it is, and the user configured new terms for the
+    // new type in this same save, those are sent too.
+    if (terms && (body.type !== undefined || (() => { const current = JSON.stringify(terms.collect()); return current !== initialTerms; })())) {
+      body.terms = terms.collect();
     }
     if (Object.keys(body).length === 2) { announce("Nothing changed."); modal.close(); return; }
     if (reason.value.trim()) body.reason = reason.value.trim();
@@ -367,15 +419,19 @@ function openEditAccount(ctx, account) {
     title: `Edit ${account.name}`,
     body: [el("div", { class: "form-grid" }, [
       field("Name", name),
-      field("Type", input({ readonly: true, value: ACCOUNT_TYPE_LABELS[account.type] || account.type }), { help: TYPE_CURRENCY_LOCKED }),
-      field("Currency", input({ readonly: true, value: account.currency }), { help: TYPE_CURRENCY_LOCKED }),
+      typePick
+        ? field("Type", typePick, { help: TYPE_CURRENCY_EDITABLE })
+        : field("Type", input({ readonly: true, value: ACCOUNT_TYPE_LABELS[account.type] || account.type }), { help: TYPE_CURRENCY_LOCKED }),
+      currencyPick
+        ? field("Currency", currencyPick, { help: TYPE_CURRENCY_EDITABLE })
+        : field("Currency", input({ readonly: true, value: account.currency }), { help: TYPE_CURRENCY_LOCKED }),
       field("Institution", institution),
       field("Account number", last, { help: "Never store a full account or card number." }),
       field("Opening balance", opening, { help: locked ? OPENING_LOCKED : "Loans and other debts: enter the amount owed as a negative number, e.g. -20000.00." }),
       field("Opening date", openingDate, locked ? { help: OPENING_LOCKED } : {}),
       iconPick.element,
       field("Notes", notes, { wide: true }),
-      terms ? el("fieldset", { class: "form-grid budget-line field--wide" }, [el("legend", { class: "field__label", text: terms.legend }), ...terms.fields]) : null,
+      termsBox,
       field("Reason for this change", reason, { wide: true }),
     ])],
     actions: [button("Cancel", () => modal.close()), save],
@@ -424,6 +480,53 @@ function openAddAccount(ctx) {
     ])],
     actions: [button("Cancel", () => modal.close()), save],
   });
+}
+
+// A minimal, self-contained "quick add account" form (BT-014-09, Terry, 2026-09-17: "I should be
+// able to add an account from the add bill modal > Account, same same type and features that drop
+// down as when I select workspaces") — the same "+ New X" pinned action already used by the
+// workspace picker (`enhanceSelect`'s `create` option, `app/js/ui/selectpicker.js`), reused for
+// account pickers wherever it makes sense to add one without losing what's already been typed
+// elsewhere in the surrounding form. Just the essentials (name, type, currency, visibility) — full
+// details (institution, account number, opening balance/date) can be filled in afterward from the
+// Accounts page; this exists to unblock "I need an account that doesn't exist yet" mid-flow, not to
+// replace the full Add Account form. Returns a DOM node ready to mount; `onCreated(account)` fires
+// with the server's own account view on success, `onCancel()` if the person backs out.
+export function quickAddAccountForm(ctx, { name: initialName = "", onCreated, onCancel }) {
+  const key = newIdempotencyKey();
+  const name = input({ required: true, maxlength: "80", value: initialName, autocomplete: "off" });
+  const type = pickerSelect(Object.entries(ACCOUNT_TYPE_LABELS).map(([value, label]) => ({ value, label })), "checking", {}, { search: false, badgeOf: (v) => icon(defaultIconFor("account", v)) });
+  const currency = pickerSelect(CURRENCIES.map((c) => ({ value: c, label: c })), (ctx.store.getState().workspaces.find((w) => w.id === ctx.store.getState().selectedWorkspaceId) || {}).reportingCurrency || "EUR");
+  const visibility = pickerSelect([{ value: "private", label: "Private — only you (you can share it later)" }, { value: "shared", label: "Shared — every workspace member per their role" }], "private", {}, { search: false });
+  const errorBox = el("p", { class: "state state--error", role: "alert", hidden: true });
+  const create = button("Create account", async () => {
+    errorBox.hidden = true;
+    if (!name.value.trim()) {
+      name.setAttribute("aria-invalid", "true");
+      errorBox.textContent = "Give the account a name.";
+      errorBox.hidden = false;
+      name.focus();
+      return;
+    }
+    create.disabled = true;
+    cancel.disabled = true;
+    const body = { name: name.value.trim(), type: type.value, currency: currency.value, visibility: visibility.value };
+    const out = await ctx.store.actions.write((ws) => ctx.api.createAccount(ws, body, key), ["accounts"]);
+    create.disabled = false;
+    cancel.disabled = false;
+    if (!out.ok) { errorBox.textContent = messageFor(out.error); errorBox.hidden = false; return; }
+    announce(`Account “${out.result.account.name}” created.`);
+    onCreated(out.result.account);
+  }, { variant: "primary" });
+  const cancel = button("Cancel", () => onCancel());
+  return el("div", { class: "stack" }, [
+    el("div", { class: "form-grid" }, [
+      field("Name", name), field("Type", type), field("Currency", currency),
+      field("Who can see it", visibility, { wide: true }),
+    ]),
+    errorBox,
+    el("div", { class: "row" }, [cancel, create]),
+  ]);
 }
 
 async function openWhoCanSee(ctx, account) {

@@ -86,6 +86,13 @@ fieldset.budget-line { margin: 0; padding: var(--space-3); border: 1px solid var
 /* "Delete workspace" (Terry, 2026-09-14): a danger-style card, set apart from the ordinary ones. */
 .card--danger { border-color: var(--color-danger); }
 .card--danger .card__title { color: var(--color-danger-text); }
+/* BT-014-04: PERMANENT workspace deletion must never be mistaken for the recoverable "Delete
+   workspace" card above (the backend implementer's own flagged terminology risk) — a thicker
+   double border and a tinted background on top of the ordinary danger styling, never colour alone
+   (the heading text and warning icon say the same thing in words). */
+.card--danger-permanent { border-width: 3px; border-style: double; background: color-mix(in srgb, var(--color-danger) 8%, var(--surface)); }
+.card--danger-permanent .card__title { display: flex; align-items: center; gap: var(--space-2); }
+.permdelete-warning { border: 1px solid var(--color-danger); border-radius: var(--radius-lg); padding: var(--space-3); }
 .catrow { display: grid; gap: var(--space-2) var(--space-3); align-items: start; grid-template-columns: repeat(auto-fit, minmax(min(13rem, 100%), 1fr)); padding-block: var(--space-2); border-top: 1px solid var(--border); }
 .catrow__name { margin: 0; padding-top: var(--space-4); font-size: var(--text-base); }
 .catrow__meta, .catrow > .error-text { grid-column: 1 / -1; }
@@ -441,10 +448,10 @@ fieldset.budget-line { margin: 0; padding: var(--space-3); border: 1px solid var
 /* ---------- palette picker ---------- */
 .swatch { display: inline-block; width: 0.8rem; height: 0.8rem; border-radius: 50%; background: var(--swatch); border: 1px solid var(--border-strong); }
 
-/* A styled hint over a control that is unavailable yet, saying what to do first (Terry, 2026-09-13:
-   "a tool tip on hover, not the Windows alt text"). A disabled button receives no pointer events,
-   so the hint hangs off a wrapper; the same text is also written in the dialog for keyboard and
-   screen-reader users. Shown only while the wrapped control is disabled. */
+/* A styled hint over a DISABLED control, saying what to do first (Terry, 2026-09-13: "a tool tip
+   on hover, not the Windows alt text"). A disabled button receives no pointer events, so the hint
+   hangs off a wrapper; the same text is also written for keyboard and screen-reader users (a
+   visually-hidden span, `aria-describedby`). Shown only while the wrapped control is disabled. */
 .tip { position: relative; display: inline-flex; }
 .tip > :disabled { pointer-events: none; }
 .tip:has(> :disabled):hover::after,
@@ -467,6 +474,32 @@ fieldset.budget-line { margin: 0; padding: var(--space-3); border: 1px solid var
   box-shadow: 0 6px 18px rgb(0 0 0 / 0.25);
   pointer-events: none;
 }
+
+/* `infoTip()` (app/js/ui/components.js): a plain-language explanation for an already-ENABLED
+   control whose name alone isn't clear (Terry, 2026-09-17, "Record next"). Unlike `.tip` above,
+   this box is positioned in the VIEWPORT via JS (getBoundingClientRect), not CSS tied to a
+   positioned ancestor — the CSS-only approach was clipped inside a scrolling `.table-wrap`, found
+   and reported after the first version shipped without being checked in a real browser. `.tip-anchor`
+   is a plain inline wrapper; `.floating-tip` is the box itself, appended to `document.body`. */
+.tip-anchor { position: relative; display: inline-flex; }
+.floating-tip {
+  position: fixed;
+  z-index: 70;
+  width: max-content;
+  max-width: 17rem;
+  padding: 0.45rem 0.65rem;
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  background: var(--surface-raised);
+  color: var(--text);
+  font-size: var(--text-sm);
+  line-height: 1.35;
+  white-space: normal;
+  box-shadow: 0 6px 18px rgb(0 0 0 / 0.25);
+  pointer-events: none;
+}
+@media (prefers-reduced-motion: no-preference) { .floating-tip { animation: tip-in 0.1s ease-out; } }
+@keyframes tip-in { from { opacity: 0; } to { opacity: 1; } }
 
 /* ---------- shared expenses (BT-009) ---------- */
 .split-list { display: grid; gap: var(--space-2); }

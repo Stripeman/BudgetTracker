@@ -664,3 +664,68 @@ describe('Workspace settings: older documents, backups and restores', () => {
     assert.equal(valueOf(ok(await getWs(h, 'alice', id)).workspace, 'budgetPeriod'), 'monthly');
   });
 });
+
+// BT-013 (Terry's 2026-09-16 design brief): the real plumbing for the workspace "Layout theme"
+// setting — schema, API, audit, permissions, generic UI — proven now with the one real option
+// ("classic", today's existing implicit layout). The 20 concepts under review in the Design Gallery
+// (site administrators only, /api/design-gallery) are deliberately NOT options here yet.
+describe('BT-013 layout theme: the workspace setting\'s real plumbing (only "classic" is a real option today)', () => {
+  test('every workspace starts on "classic"; only owners and managers may change it; changing it is audited like every other setting', async () => {
+    const { h, id } = await setup();
+    const alice = ok(await getWs(h, 'alice', id)).workspace;
+    const setting = alice.settingsList.find((s) => s.key === 'layoutId');
+    assert.ok(setting, 'layoutId is in the one settings list');
+    assert.equal(setting.value, 'classic');
+    assert.equal(setting.default, 'classic');
+    assert.deepEqual(setting.options.map((o) => o.value), ['classic']);
+    assert.equal(setting.changedBy, 'manager');
+    assert.equal(setting.canChange, true, 'the owner may change it');
+    const bob = ok(await getWs(h, 'bob', id)).workspace;
+    assert.equal(bob.settingsList.find((s) => s.key === 'layoutId').canChange, false, 'a member may not');
+  });
+
+  test('an unknown or not-yet-approved layout id is refused (none of the 20 gallery concepts are selectable here)', async () => {
+    const { h, id } = await setup();
+    const res = await patchSettings(h, 'alice', id, { layoutId: 'executive-ledger' });
+    assert.equal(res.status, 400);
+    assert.equal(res.body.error.code, 'invalid_setting');
+    assert.equal(res.body.error.details.setting, 'layoutId');
+  });
+
+  test('re-choosing the only real option ("classic") after it is already set records no new history (an unchanged save records nothing)', async () => {
+    const { h, id } = await setup();
+    // A brand-new workspace document has no `history` array yet at all (it is created lazily on the
+    // first real change), so "records nothing" is checked by length staying at 0, not by comparing
+    // to an already-populated array.
+    const before = ((await readDoc(h, id)).history || []).length;
+    assert.equal(before, 0);
+    ok(await patchSettings(h, 'alice', id, { layoutId: 'classic' }));
+    assert.equal(((await readDoc(h, id)).history || []).length, before);
+  });
+
+  test('changing this workspace\'s layout never touches financial records, permissions or another setting\'s value', async () => {
+    const { h, f, id } = await setup();
+    const before = ok(await h.call('accounts', 'GET', { as: 'alice', query: { workspaceId: id } }));
+    const beforeWs = ok(await getWs(h, 'alice', id)).workspace;
+    // Only one real option exists today, so there is nothing else to switch TO yet; this proves the
+    // mechanism leaves everything else untouched even on the no-op path it actually has right now.
+    ok(await patchSettings(h, 'alice', id, { layoutId: 'classic' }, 'Keeping the current layout'));
+    const after = ok(await h.call('accounts', 'GET', { as: 'alice', query: { workspaceId: id } }));
+    assert.deepEqual(after, before, 'accounts are byte-identical');
+    const afterWs = ok(await getWs(h, 'alice', id)).workspace;
+    assert.equal(valueOf(afterWs, 'budgetPeriod'), valueOf(beforeWs, 'budgetPeriod'));
+    assert.equal(afterWs.role, beforeWs.role);
+    void f;
+  });
+
+  test('a document without the layoutId key reads the default and a backup tolerates a well-formed unknown value', async () => {
+    const { h, id } = await setup();
+    await editDoc(h, id, (doc) => { delete doc.settings.layoutId; });
+    assert.equal(valueOf(ok(await getWs(h, 'alice', id)).workspace, 'layoutId'), 'classic');
+    // A future layout id approved after this backup was made (or rolled back from a newer version)
+    // must not break restores today — same tolerant rule as every other choice setting.
+    await editDoc(h, id, (doc) => { doc.settings.layoutId = 'some-future-layout'; });
+    assert.equal((await h.call('backups', 'POST', { as: 'alice', query: { workspaceId: id }, body: {} })).status, 201);
+    assert.equal(valueOf(ok(await getWs(h, 'alice', id)).workspace, 'layoutId'), 'classic', 'an unknown stored value reads as the default');
+  });
+});

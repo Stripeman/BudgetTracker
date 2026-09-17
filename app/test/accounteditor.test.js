@@ -88,7 +88,7 @@ describe("BT-006-06 editing an account", () => {
     assert.equal(labelled(dialog, "Notes").textContent, "Existing note.");
   });
 
-  test("type and currency are shown read-only, never an editable control, with the locked explanation", () => {
+  test("type and currency are shown read-only once anything has been recorded (hasEntries not false), with the locked explanation", () => {
     const { dialog } = openEdit([account()]);
     const type = labelled(dialog, "Type");
     const currency = labelled(dialog, "Currency");
@@ -97,8 +97,34 @@ describe("BT-006-06 editing an account", () => {
     assert.ok(type.hasAttribute("readonly"), "type cannot be typed into");
     assert.ok(currency.hasAttribute("readonly"), "currency cannot be typed into");
     assert.equal(dialog.querySelectorAll("select").length, 0, "no dropdown offers another type or currency");
-    assert.match(helpFor(dialog, "Type"), /can't be changed/);
-    assert.match(helpFor(dialog, "Currency"), /can't be changed/);
+    assert.match(helpFor(dialog, "Type"), /locked/);
+    assert.match(helpFor(dialog, "Currency"), /locked/);
+  });
+
+  test("BT-014-08 type and currency ARE editable while nothing has been recorded yet (hasEntries: false), and both are sent when changed", async () => {
+    const { dialog, calls } = openEdit([account({ hasEntries: false, type: "checking", terms: {} })]);
+    assert.ok(dialog.querySelectorAll("select").length >= 2, "a dropdown offers another type and currency");
+    // Picker-enhanced selects are labelled through their trigger button (field()'s own comment);
+    // the raw <select> that actually holds the value is found by its own option content, the same
+    // way every other picker-based field is located elsewhere in this test suite.
+    const typeSelect = dialog.querySelectorAll("select").find((s) => s.querySelectorAll("option").some((o) => o.textContent === "Savings"));
+    const currencySelect = dialog.querySelectorAll("select").find((s) => s.querySelectorAll("option").some((o) => o.textContent === "USD"));
+    typeSelect.value = "savings";
+    currencySelect.value = "USD";
+    buttonNamed(dialog, "Save changes").click();
+    await tick();
+    assert.equal(calls.updated.length, 1);
+    assert.equal(calls.updated[0].type, "savings");
+    assert.equal(calls.updated[0].currency, "USD");
+  });
+
+  test("BT-014-08 leaving type and currency unchanged on an editable account sends neither", async () => {
+    const { dialog, calls } = openEdit([account({ hasEntries: false, type: "checking", terms: {} })]);
+    labelled(dialog, "Name").value = "Renamed";
+    buttonNamed(dialog, "Save changes").click();
+    await tick();
+    assert.equal(calls.updated[0].type, undefined);
+    assert.equal(calls.updated[0].currency, undefined);
   });
 
   test("changing name, institution, account number, opening balance/date and notes sends exactly those fields", async () => {

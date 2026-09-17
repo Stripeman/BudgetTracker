@@ -85,6 +85,69 @@ export function badge(text, variant = "") {
   return el("span", { class: ["badge", variant ? `badge--${variant}` : ""], text });
 }
 
+// Positions a floating tooltip box in the VIEWPORT, via getBoundingClientRect, rather than a CSS
+// `position: absolute` box tied to a positioned ancestor (bug fix, 2026-09-17 — Terry: "The tool
+// tip on 'All bills > record next' is clipped.. you would have seen this had you tested it on
+// localhost" — exactly right, this was never opened in a real browser before shipping). The
+// original CSS-only approach broke inside `.table-wrap` (`overflow-x: auto`), which per the CSS
+// spec forces `overflow-y` to `auto` too, clipping a box that tried to render above a row near the
+// container's own top edge. Preferring above the trigger, flipping below when there isn't room,
+// clamped horizontally to the viewport, and repositioned on scroll/resize while shown — the box
+// lives on `document.body`, outside every ancestor's clipping.
+function placeFloatingTip(box, trigger) {
+  // No layout geometry in this environment (a DOM double in tests, or any host missing these,
+  // including `window` itself not existing outside a real browser) — the box still exists (and is
+  // still reachable via aria-describedby) but isn't positioned.
+  if (typeof trigger.getBoundingClientRect !== "function" || typeof window === "undefined") return;
+  const r = trigger.getBoundingClientRect();
+  const vw = window.innerWidth || 1024;
+  const vh = window.innerHeight || 768;
+  const margin = 8;
+  const bw = box.offsetWidth || 0;
+  const bh = box.offsetHeight || 0;
+  let top = r.top - bh - margin;
+  if (top < margin) top = Math.min(r.bottom + margin, vh - bh - margin);
+  let left = r.right - bw;
+  left = Math.max(margin, Math.min(left, vw - bw - margin));
+  box.style.top = `${Math.max(margin, top)}px`;
+  box.style.left = `${left}px`;
+}
+
+// Wraps an already-enabled control with a plain-language explanation, shown on hover/focus and to
+// screen readers via `aria-describedby` (Terry, 2026-09-17: "add nice tool tips" for an action
+// whose name alone wasn't clear — "Record next"). `id` must be unique on the page; the wrapped
+// control must accept `aria-describedby` (every `button()` does). The floating box itself is
+// `aria-hidden` — the description is announced through `aria-describedby`, never twice.
+export function infoTip(node, text, id) {
+  node.setAttribute("aria-describedby", [node.getAttribute("aria-describedby"), id].filter(Boolean).join(" "));
+  let box = null;
+  const reposition = () => { if (box) placeFloatingTip(box, node); };
+  const show = () => {
+    if (box || !text) return;
+    box = el("div", { class: "floating-tip", "aria-hidden": "true", text });
+    document.body.appendChild(box);
+    placeFloatingTip(box, node);
+    if (typeof window !== "undefined") {
+      window.addEventListener("scroll", reposition, { capture: true, passive: true });
+      window.addEventListener("resize", reposition, { passive: true });
+    }
+  };
+  const hide = () => {
+    if (!box) return;
+    if (box.remove) box.remove(); else if (box.parentNode) box.parentNode.removeChild(box);
+    box = null;
+    if (typeof window !== "undefined") {
+      window.removeEventListener("scroll", reposition, { capture: true });
+      window.removeEventListener("resize", reposition);
+    }
+  };
+  node.addEventListener("mouseenter", show);
+  node.addEventListener("mouseleave", hide);
+  node.addEventListener("focus", show);
+  node.addEventListener("blur", hide);
+  return el("span", { class: "tip-anchor" }, [node, el("span", { class: "sr-only", id, text })]);
+}
+
 // Three states, as the brief asks (UX-009): a value you chose, a value inherited from the site or
 // the built-in default, or a value the site has locked.
 const SOURCE_LABELS = { personal: "Customized", site: "Inherited", default: "Inherited", locked: "Locked by site" };

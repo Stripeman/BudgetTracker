@@ -53,6 +53,7 @@ const fields = require('../_shared/fields');
 const audit = require('../_shared/audit');
 const ledger = require('../_shared/ledger');
 const groups = require('../_shared/groups');
+const sharedExport = require('../_shared/sharedexport');
 const groupSettings = require('../_shared/group-settings');
 const entries = require('../_shared/entries');
 const model = require('../_shared/workspace-model');
@@ -647,9 +648,30 @@ function balancesView(doc, parts) {
 
 const newestFirst = (a, b) => (a.date === b.date ? String(b.createdAt).localeCompare(String(a.createdAt)) : String(b.date).localeCompare(String(a.date)));
 
+// BT-014, Terry 2026-09-17: "offer the deleting workspace a download of its authorized
+// shared-expense information ... before either deletion or disconnection ... Downloading is
+// optional and must not execute or confirm deletion." Any active member may download exactly the
+// data their own Shared expenses page already shows them (same authority as ?action=balances
+// above) — this route never deletes or disconnects anything by itself; it is read-only. The raw
+// text or base64-encoded binary is returned inside the normal JSON envelope (`content` plus
+// `encoding`), not as a binary response body, because this codebase's one shared HTTP responder
+// (api/_shared/http.js `respond`) always JSON-encodes `body` for every route; the client builds
+// the downloadable file from `content` (decoding base64 first for XLSX/PDF) with a Blob, so no
+// change was needed to that shared response path. CSV, JSON, XLSX and PDF (BT-014-06) — see
+// api/_shared/sharedexport.js.
+async function exportReport(ctx, req) {
+  const wsId = requireId(query(req, 'workspaceId'), 'workspaceId');
+  const format = query(req, 'format') || 'json';
+  const { doc } = await store.loadWorkspace(ctx, wsId);
+  const out = await sharedExport.render(doc, ctx.principal, format, ctx.nowIso());
+  if (!out) throw badRequest(`Unsupported export format. Choose one of: ${sharedExport.FORMATS.join(', ')}.`, 'invalid_format');
+  return { body: { format, filename: out.filename, mime: out.mime, content: out.body, encoding: out.encoding } };
+}
+
 async function list(ctx, req) {
   const action = query(req, 'action');
   if (action === 'history') return recordHistory(ctx, req);
+  if (action === 'export') return exportReport(ctx, req);
   if (action !== undefined && action !== 'balances') throw notFound();
   const wsId = requireId(query(req, 'workspaceId'), 'workspaceId');
   const { doc, member } = await store.loadWorkspace(ctx, wsId);

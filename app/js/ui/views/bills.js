@@ -5,15 +5,18 @@
 // real entry. Changes to a bill's terms take effect from a chosen date and never rewrite payments
 // already recorded; bills are ended, never deleted (BT-001-05). The server enforces every rule.
 import { el, mount, announce } from "../dom.js";
-import { stateView, money, button, field, input, pickerSelect, categoryBadges, iconBadges, badge } from "../components.js";
+import { stateView, money, button, field, input, pickerSelect, categoryBadges, iconBadges, badge, infoTip } from "../components.js";
 import { openModal } from "../modal.js";
+import { openDeleteDialog } from "../permanentdelete.js";
 import { createMerchantPicker } from "../merchantpicker.js";
+import { quickAddAccountForm } from "./accounts.js";
 import { choosableMerchants, canAddEntries, addEntriesBlocked } from "./transactions.js";
 import { sliceFor } from "../../core/store.js";
 import { newIdempotencyKey } from "../../core/api.js";
 import { formatDate, formatAmount, todayIso, BILL_TYPE_LABELS } from "../../core/format.js";
 import { icon, withIcon, defaultIconFor, iconLabel } from "../icons.js";
 import { createIconPicker, iconChange } from "../iconpicker.js";
+import { pickerOf } from "../selectpicker.js";
 
 const PRESETS = [
   { value: "weekly", label: "Weekly", freq: "weekly", interval: 1 },
@@ -189,7 +192,13 @@ export function createView(ctx) {
       el("td", { "data-label": "Schedule", text: scheduleLabel(b.schedule, eff.dateFormat) }),
       el("td", { "data-label": "Next due", text: b.ended ? "Ended" : b.inactiveReason ? "Not active" : b.nextDue ? formatDate(b.nextDue, eff.dateFormat) : "—" }),
       el("td", { "data-label": "" }, [el("div", { class: "row-actions" }, [
-        b.canRecord && b.nextDue ? button("Record next", () => void openRecord(ctx, b, b.nextDue), { small: true, attrs: { "aria-label": `Record next: ${b.name}` } }) : null,
+        // "Record next" wasn't self-explanatory (Terry, 2026-09-17) — a hover/focus tooltip and a
+        // screen-reader description spell out what it does: review, then record, the upcoming payment.
+        b.canRecord && b.nextDue ? infoTip(
+          button("Record next", () => void openRecord(ctx, b, b.nextDue), { small: true, attrs: { "aria-label": `Record next: ${b.name}` } }),
+          `Review this bill's next due payment (${formatDate(b.nextDue, eff.dateFormat)}) and record it as a real entry.`,
+          `${b.id}-record-next-tip`,
+        ) : null,
         b.canEdit ? button("Edit", () => openBillEditor(ctx, b), { small: true, attrs: { "aria-label": `Edit ${b.name}` } }) : null,
         b.canEdit ? (b.pausedNow
           ? button("Resume", () => openResume(ctx, b), { small: true, attrs: { "aria-label": `Resume ${b.name}` } })
@@ -197,10 +206,28 @@ export function createView(ctx) {
         // Ending is explicit and explains that history stays (UX2-007).
         b.canEdit && !b.ended ? button("End", () => openEnd(ctx, b), { small: true, attrs: { "aria-label": `End ${b.name}` } }) : null,
         button("History", () => openHistory(ctx, b), { small: true, attrs: { "aria-label": `History of ${b.name}` } }),
+        b.canEdit ? button("Delete permanently", () => openPermanentDelete(ctx, b, state.selectedWorkspaceId), { small: true, variant: "danger", attrs: { "aria-label": `Permanently delete ${b.name}` } }) : null,
       ])]),
     ])), "All bills"));
   }
   return { element, update };
+}
+
+// BT-014-04: permanent deletion, distinct from End above (which is recoverable). No cascade
+// dependents (skips/pauses/resumes are embedded, not a separate record); an entry already
+// recorded from it keeps its amount and just loses the link (api/_shared/deletion.js).
+function openPermanentDelete(ctx, bill, wsId) {
+  openDeleteDialog(ctx, {
+    title: `Permanently delete ${bill.name}?`,
+    fetchImpact: async () => (await ctx.api.permanentDeleteImpact("recurring", { workspaceId: wsId }, { recurringId: bill.id })).impact,
+    execute: async (impact, typedConfirmation) => {
+      const out = await ctx.store.actions.write(
+        (ws) => ctx.api.permanentDeleteExecute("recurring", { workspaceId: ws }, { recurringId: bill.id, impactToken: impact.token, typedConfirmation }),
+        ["bills", "transactions"],
+      );
+      if (!out.ok) throw out.error;
+    },
+  });
 }
 
 // ---- review and record one payment ----------------------------------------------------------
@@ -421,8 +448,12 @@ export function openBillEditor(ctx, bill = null) {
   const direction = pickerSelect(DIRECTIONS, b.kind === "transfer" ? "transfer" : b.kind === "income" ? "income" : defaultDirection(b.billType || "housing"), { disabled: editing }, { search: false });
   const accountMarks = iconBadges(allAccounts);
   // Natural empty-field text, not the label-built "Choose to account…" (UX review U6).
-  const account = pickerSelect(accounts.map((a) => ({ value: a.id, label: `${a.name} (${a.currency})` })), b.accountId || (accounts[0] || {}).id, { disabled: editing }, { badgeOf: accountMarks, placeholder: "Choose an account…" });
-  const toAccount = pickerSelect(accounts.map((a) => ({ value: a.id, label: `${a.name} (${a.currency})` })), b.toAccountId || "", { disabled: editing }, { badgeOf: accountMarks, placeholder: "Choose an account…" });
+  // "+ New account" (BT-014-09, Terry, 2026-09-17), the same pinned create action the workspace
+  // picker already offers (app/js/ui/workspacepicker.js) — only on a NEW bill (an existing bill's
+  // account is locked; nothing here is relevant to change on an edit). Wired below, once the modal
+  // and its swappable body exist.
+  const account = pickerSelect(accounts.map((a) => ({ value: a.id, label: `${a.name} (${a.currency})` })), b.accountId || (accounts[0] || {}).id, { disabled: editing }, { badgeOf: accountMarks, placeholder: "Choose an account…", create: editing ? null : { label: "New account", onPick: (term) => startQuickAddAccount(term, account) } });
+  const toAccount = pickerSelect(accounts.map((a) => ({ value: a.id, label: `${a.name} (${a.currency})` })), b.toAccountId || "", { disabled: editing }, { badgeOf: accountMarks, placeholder: "Choose an account…", create: editing ? null : { label: "New account", onPick: (term) => startQuickAddAccount(term, toAccount) } });
   const amount = input({ inputmode: "decimal", autocomplete: "off" });
   amount.value = b.amount || "";
   const amountType = pickerSelect([{ value: "fixed", label: "Always the same" }, { value: "variable", label: "Varies (estimate)" }], b.amountType || "fixed", {}, { search: false });
@@ -495,7 +526,43 @@ export function openBillEditor(ctx, bill = null) {
   // The footer button belongs to the form, so Enter in a field submits it (UX2-006).
   const save = el("button", { type: "submit", class: "btn btn--primary", text: editing ? "Save changes" : "Add bill", form: `bill-form-${key}` });
   const cancel = button("Cancel", () => modal.close());
-  const modal = openModal({ title: editing ? `Edit ${b.name}` : "Add bill", body: [form], actions: [cancel, save] });
+  // A single wrapper so "+ New account" can swap the bill form out for a moment without losing
+  // anything already typed (BT-014-09) — the form node itself is only detached, never discarded,
+  // so every field's value survives the round trip. Focus is moved explicitly on every swap
+  // (never left implicit — the exact bug class found and fixed in permanentdelete.js's own
+  // sub-steps this same session): into the quick-add form's Name field when it appears, back to
+  // the account picker's trigger when the bill form returns, after modal.setBusy(false) (whose own
+  // stale-focus restore would otherwise try to refocus the "+ New account" button, which is gone
+  // once its picker panel closes).
+  const bodyBox = el("div", {}, [form]);
+  const modal = openModal({ title: editing ? `Edit ${b.name}` : "Add bill", body: [bodyBox], actions: [cancel, save] });
+  function startQuickAddAccount(term, targetSelect) {
+    modal.setError("");
+    modal.setBusy(true);
+    const returnFocus = () => { const p = pickerOf(targetSelect); (p ? p.trigger : targetSelect).focus(); };
+    const quickForm = quickAddAccountForm(ctx, {
+      name: term || "",
+      onCreated: (created) => {
+        allAccounts.push(created);
+        accounts.push(created);
+        // accountMarks (its icon badge) was captured once at modal-open time, so the new account's
+        // option shows no icon until this bill editor is reopened — cosmetic only, not worth a
+        // second badge-lookup indirection for a just-created, empty account.
+        for (const sel of [account, toAccount]) {
+          sel.appendChild(el("option", { value: created.id, text: `${created.name} (${created.currency})` }));
+        }
+        targetSelect.value = created.id;
+        targetSelect.dispatchEvent(new Event("change", { bubbles: true }));
+        mount(bodyBox, form);
+        modal.setBusy(false);
+        returnFocus();
+      },
+      onCancel: () => { mount(bodyBox, form); modal.setBusy(false); returnFocus(); },
+    });
+    mount(bodyBox, quickForm);
+    const nameInput = quickForm.querySelector("input");
+    if (nameInput) nameInput.focus();
+  }
   save.addEventListener("click", (e) => { e.preventDefault(); void submit(); });
   form.addEventListener("submit", (e) => { e.preventDefault(); void submit(); });
 

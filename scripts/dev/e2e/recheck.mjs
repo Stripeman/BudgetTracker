@@ -252,8 +252,11 @@ export async function run(h, t) {
   })))()`);
   // BT-006-05: an entry recorded from Shared expenses also offers "Move to another account" now, but
   // disabled and explained (N2 applies to a move too — change it in Shared expenses), never enabled.
-  t.check("N2: Bob's owed entry offers only Edit as a working action; Move to another account is present but disabled and explains why (N2), never Reverse or Delete", {
-    expected: { buttons: [["Edit", "Move to another account"]], enabled: [["Edit"]], tipMentionsShared: true },
+  // BT-014-04: "Delete permanently" is also offered (mirrors edit authority, like every other action
+  // here) — enabled, because opening it is always reachable; the impact dialog it opens is what
+  // explains the block (Shared-expenses-recorded entries stay refused there), never the row itself.
+  t.check("N2: Bob's owed entry offers Edit and Delete permanently as working actions; Move to another account is present but disabled and explains why (N2), never Reverse or the recoverable Delete", {
+    expected: { buttons: [["Edit", "Move to another account", "Delete permanently"]], enabled: [["Edit", "Delete permanently"]], tipMentionsShared: true },
     actual: { buttons: rows.map((r) => r.buttons), enabled: rows.map((r) => r.enabled), tipMentionsShared: rows.every((r) => /Shared expenses/.test(r.moveTip || "")) },
   });
   // L4 (Terry's arrow rule): his share of the dinner Alice paid shows the |==| mark and "Paid by someone

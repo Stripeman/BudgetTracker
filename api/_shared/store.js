@@ -26,6 +26,13 @@ const paths = Object.freeze({
   user: (subject) => `users/${userKey(subject)}.json`,
   site: () => 'site/settings.json',
   usage: () => 'site/usage.json',
+  // Design Gallery (BT-013): site-admin catalog overrides and Terry's recorded implementation
+  // picks. No financial data; never part of any workspace document.
+  gallery: () => 'site/gallery.json',
+  // Outside every workspace, never containing financial content (BT-014): the summary record of a
+  // whole-workspace permanent deletion (actor, time, workspace id/kind, dataset counts, outcome),
+  // so it survives the workspace it describes being wiped.
+  deletionLog: () => 'site/deletions.json',
 });
 
 const IDEMPOTENCY_TTL_MS = 48 * 60 * 60 * 1000;
@@ -136,6 +143,32 @@ async function mutateWorkspace(ctx, wsId, fn, { idempotencyKey, idempotencyScope
   return { result, etag: out.etag, written: out.written };
 }
 
+// THE ONLY site-administration bypass of the membership gate anywhere in this model (BT-014,
+// Terry 2026-09-17: "Site administrators must also be able to perform administrative workspace
+// deletion without gaining visibility into private financial content"). It is used exclusively by
+// api/_shared/workspace-deletion.js for whole-workspace PERMANENT deletion, itself an explicit,
+// narrow exception to "nothing is physically deleted" (see CLAUDE.md BT-001-05). `fn(doc)` gets
+// the raw document and must return only operational metadata (ids, kind, status, dataset counts)
+// — never account, transaction, member, merchant, budget or contact content. That constraint is
+// enforced by review, not by this function, so any change to it or its caller needs the same
+// scrutiny as authz.js itself. Skips `activeMember`/`assertReachable` (a site administrator is
+// never a member) and the size/quota bookkeeping normal writes need (a permanent deletion only
+// ever shrinks the document).
+async function mutateWorkspaceAdmin(ctx, wsId, fn) {
+  let result;
+  const nowMs = ctx.now();
+  const out = await update(ctx.storage, paths.workspace(wsId), (value) => {
+    const doc = readDocument('workspace', value);
+    if (!doc) throw notFound('Unknown workspace.');
+    result = fn(doc);
+    if (result === undefined) return undefined;
+    doc.revision = (Number.isSafeInteger(doc.revision) ? doc.revision : 0) + 1;
+    doc.updatedAt = new Date(nowMs).toISOString();
+    return stampDocument('workspace', doc);
+  });
+  return { result, etag: out.etag, written: out.written };
+}
+
 function newUserDoc(principal, nowIso) {
   return stampDocument('user', {
     subject: principal.subject, email: principal.email, name: principal.name || '',
@@ -232,4 +265,4 @@ function recordCreation(ctx, user, id) {
   user.workspaceCreations = [...(user.workspaceCreations || []), { id, at: new Date(nowMs).toISOString() }];
 }
 
-module.exports = { paths, loadWorkspace, mutateWorkspace, ensureUser, mutateUser, newUserDoc, requestHash, assertFits, assertRoomForHeadroomWrite, assertCanCreateWorkspace, recordCreation, MAX_WORKSPACE_BYTES, MAX_WORKSPACES_PER_PERSON };
+module.exports = { paths, loadWorkspace, mutateWorkspace, mutateWorkspaceAdmin, ensureUser, mutateUser, newUserDoc, requestHash, assertFits, assertRoomForHeadroomWrite, assertCanCreateWorkspace, recordCreation, MAX_WORKSPACE_BYTES, MAX_WORKSPACES_PER_PERSON };
