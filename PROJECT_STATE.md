@@ -1324,25 +1324,59 @@ PROJECT_STATE update at the time; recorded here together, after the fact, from G
   validate` ok; `npm run e2e -- --only gallery` 106/106 (exit 0). Not yet committed/pushed as of this
   checkpoint — see exact next step.
 
-**Terry's separate, larger ask (in progress, same conversation):** bring three things into the REAL
-`classic` layout now (not the Gallery): (1) more prominent colour-coded category icons on the real
-Dashboard (inspired by Executive Ledger's table-first hero, which is really just the existing shared
-`categoryLabel()` component made prominent — no new mechanism needed); (2) nav polish on the real top
-nav (`app/js/ui/shell.js`) matching Modern Banking's icon+label items and active-item highlight — the
-real nav is already `top`, this is a visual/polish change, not a structural one; (3) three genuinely
-new Dashboard widgets that do not exist anywhere in the codebase yet, inspired by reference screenshots
-Terry shared (BudgetBuddie, Ledger, Jeamstar): a donut "spending by category" chart (no pie/donut chart
-primitive exists yet — only bar and multi-line), a ranked "Top Merchants" list sorted by spend
-descending (closest existing thing, the Gallery's `merchant-feed` pattern, is an unordered feed, not
-ranked), and weekly income/expense recap cards (nothing like this exists; needs a new
-this-week-vs-last-week aggregation, server-authorized per the security invariants in `CLAUDE.md` §3
-since this is a financial report). Terry approved this scope explicitly via `AskUserQuestion` ("Real
-app, now" / "Yes, build all three"). Not yet started as of this checkpoint.
+**BT-014-14 (done this checkpoint): real Dashboard — coloured category icons, nav polish, 3 new
+widgets.** Terry's ask (approved explicitly via `AskUserQuestion`: "Real app, now" / "Yes, build all
+three") — see `docs/REQUIREMENTS.md` BT-014-14 for full detail. Summary: investigated first (neither
+"Executive Ledger" nor "Modern Banking" had a real coded feature to port — both were the shared
+`categoryLabel()` component and the existing top nav, respectively, just more prominent in one
+concept's composition); shipped icon+label nav items (`ROUTES` gained an `icon` field, `shell.js`
+`renderNav` wraps labels in `withIcon()`, active-state `[aria-current="page"]` styling untouched); a
+coloured category chip on Recent entries; and three genuinely new widgets — a spending-by-category
+donut (new `app/js/ui/charts.js`, the real app's first pie/donut primitive, same accessible pattern as
+`analytics.js`'s bar/line charts), Top merchants ranked by spend (reuses the Merchants page's existing
+per-payee `stats`, just sorted differently — no new calculation), and a this-week income/expense
+recap. Added an additive `byCategory` field to `GET /api/transactions`'s existing `summary` (exact
+minor-unit server arithmetic, never summed client-side) and two new store slices
+(`weekActivity`/`monthActivity`, deliberately separate from `transactions` so "Recent entries" keeps
+its own true-most-recent-8 behaviour). **Evidence:** `npm test` 39/612/457 (exit 0); `npm run
+validate` ok; `scripts/dev/e2e/dashboard.mjs` (new) 13/13 in real Edge, screenshot-verified. Nine
+existing test files needed `refreshWeekActivity`/`refreshMonthActivity` no-op mocks added so
+Dashboard's new mount-time fetches didn't throw against their hand-built stores. Not committed/pushed
+as of this checkpoint note — see exact next step.
 
-**Exact next step:** commit and push the BT-013-05 Gallery cut on its own branch/PR (small, contained,
-already gated green); then start the real-Dashboard/nav/widgets work as a separate PR, beginning with
-an investigation of the real `dashboard.js`/`shell.js` and whatever existing aggregation (budget
-envelopes, merchant totals, forecast) can be reused rather than rebuilt, and whether the new weekly/
-top-merchants/category-spend aggregations belong in a new API route or an extension of an existing one
-(`api/analytics` or a new `api/reports`-style route) — trace consumers before choosing, per CLAUDE.md
-"Before Modifying Code."
+**BT-014-15 (done this checkpoint): Site Settings nav grouping.** Terry: "create a tab for Site
+Settings and MOVE Workspaces, Design Gallery and Usage under the new Site Settings, each with their
+own sub tab." Navigation-only — see `docs/REQUIREMENTS.md` BT-014-15 for full detail. The three
+routes/views/URLs/tests are unchanged; the main nav now shows one "Site Settings" entry, and a new
+`app__nav--sub` row (site-admin only, shown only on one of the three routes) holds the real sub-tab
+links. Both BT-014-14 and BT-014-15 are on the SAME branch/PR (`feature/dashboard-widgets-BT-014-14`,
+PR #9 — BT-014-15 depends on BT-014-14's `ROUTES` icon field and `navLink`/`withIcon` nav rendering,
+so stacking it as a second commit on the same not-yet-merged branch was simpler than a dependent PR).
+**Evidence:** `npm test` 39/612/457 (exit 0); `npm run e2e -- --only gallery,analytics,permanentdelete`
+139/139 in real Edge. The account menu's three existing direct links were deliberately left flat, not
+also nested under Site Settings — worth confirming with Terry.
+
+**Waiting/queued from Terry, in the order he gave them (this same conversation, not yet started):**
+1. A site-admin on/off toggle for a "request account" feature, where a requested account needs
+   site-admin approval before it can sign in — a new access-control feature, not yet designed.
+2. The site-admin Workspaces directory listing should show each member's real email address (today
+   it shows no name or email at all, by design — see `analytics.js`'s header comment: "no name or
+   email, because nothing else today shows a site administrator another person's name or email
+   either" — Terry is now explicitly asking to change that boundary for this one listing).
+3. **Bug, reported with a screenshot, and independently reproduced in this checkpoint's own e2e
+   screenshot** (`permdel-dave-permdel-admin-directory.png`, `permanentdelete.mjs`'s existing "site
+   administrator can permanently delete a workspace" test data): permanently deleting a workspace
+   correctly wipes its data (status shows `deleted-permanent`, 0 members, `empty` records, size
+   shrunk to ~577 B–600 B) but the workspace ROW ITSELF still appears in the site-admin Workspaces
+   directory, with a "Delete permanently" button still shown as if there's something left to delete.
+   Not yet investigated: whether the directory is supposed to keep a permanent audit-trail row
+   forever (in which case the dead action button is the real bug) or whether the workspace document
+   itself should stop appearing in the default listing after permanent deletion. Check
+   `api/_shared/workspace-deletion.js` and whatever handler backs `admin-workspaces` before assuming
+   either way.
+
+Items 1 and 2 both touch the same admin Workspaces listing as item 3 — worth investigating together.
+
+**Exact next step:** start on the queued items above, in Terry's given order, beginning with the
+account-request approval feature and admin-listing email together (#1/#2), then the
+permanent-deletion listing bug (#3) once the admin-listing code is already loaded from that work.

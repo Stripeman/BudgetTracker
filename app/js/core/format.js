@@ -31,6 +31,21 @@ export function todayIso(now = new Date()) {
   return new Date(now.getTime() - offset).toISOString().slice(0, 10);
 }
 
+// The viewer's own local calendar, same technique as todayIso above (Dashboard weekly/monthly
+// widgets, BT-014-14). Weeks start Monday, a plain default — there is no "week starts on" setting.
+export function startOfWeekIso(now = new Date()) {
+  const local = new Date(now.getTime() - now.getTimezoneOffset() * 60000);
+  const dayIndex = (local.getUTCDay() + 6) % 7; // 0 = Monday .. 6 = Sunday
+  local.setUTCDate(local.getUTCDate() - dayIndex);
+  return local.toISOString().slice(0, 10);
+}
+
+export function startOfMonthIso(now = new Date()) {
+  const local = new Date(now.getTime() - now.getTimezoneOffset() * 60000);
+  local.setUTCDate(1);
+  return local.toISOString().slice(0, 10);
+}
+
 export const ACCOUNT_TYPE_LABELS = Object.freeze({
   checking: "Checking", savings: "Savings", cash: "Cash", "credit-card": "Credit card", loan: "Loan", mortgage: "Mortgage",
   "merchant-credit": "Merchant credit", investment: "Investment", "other-asset": "Other asset", "other-liability": "Other liability",

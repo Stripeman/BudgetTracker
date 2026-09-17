@@ -108,7 +108,7 @@ function recordingStore(overrides = {}) {
   return {
     commit, getState: () => state,
     subscribe(fn) { listeners.add(fn); return () => listeners.delete(fn); },
-    actions: { refreshTransactions: noop, refreshBills: noop, refreshForecast: noop, refreshGroup: noop, savePreferences: async () => ({ ok: true }) },
+    actions: { refreshTransactions: noop, refreshBills: noop, refreshForecast: noop, refreshGroup: noop, refreshWeekActivity: noop, refreshMonthActivity: noop, savePreferences: async () => ({ ok: true }) },
   };
 }
 
@@ -119,7 +119,7 @@ function boot(store, routeId = "dashboard") {
   dom.body.appendChild(mountPoint);
   const shell = createShell({ mountPoint, store, router, theme, api: { analytics: async () => FIXTURE } });
   shell.render();
-  return { mountPoint, header: mountPoint.querySelector(".app__header"), nav: mountPoint.querySelector(".app__nav") };
+  return { mountPoint, header: mountPoint.querySelector(".app__header"), nav: mountPoint.querySelector(".app__nav"), subnav: mountPoint.querySelector(".app__nav--sub") };
 }
 
 describe("BT-012-01 the nav entry: site administrators only", () => {
@@ -130,19 +130,21 @@ describe("BT-012-01 the nav entry: site administrators only", () => {
     assert.ok(!links.includes("Usage"), links.join(", "));
   });
 
-  test("'Usage' appears in the nav for a site administrator, and links to #/analytics", () => {
+  test("'Site Settings' appears in the main nav for a site administrator, and 'Usage' appears in its own sub-tab row, linking to #/analytics", () => {
     const store = recordingStore({ auth: { status: "ready", user: { name: "Dave Siteadmin", siteAdmin: true } } });
-    const { nav } = boot(store);
-    const usage = [...nav.querySelectorAll("a")].find((a) => a.textContent === "Usage");
-    assert.ok(usage, "Usage link is present");
+    const { nav, subnav } = boot(store, "analytics");
+    assert.ok([...nav.querySelectorAll("a")].some((a) => a.textContent === "Site Settings"), "Site Settings entry is present in the main nav");
+    const usage = [...subnav.querySelectorAll("a")].find((a) => a.textContent === "Usage");
+    assert.ok(usage, "Usage sub-tab is present");
     assert.equal(usage.getAttribute("href"), "#/analytics");
   });
 
   test("a non-admin who opens #/analytics directly gets no content and no nav entry, not a crash", () => {
     const store = recordingStore();
-    const { mountPoint, nav } = boot(store, "analytics");
+    const { mountPoint, nav, subnav } = boot(store, "analytics");
     const links = [...nav.querySelectorAll("a")].map((a) => a.textContent);
-    assert.ok(!links.includes("Usage"));
+    assert.ok(!links.includes("Site Settings"));
+    assert.equal(subnav.hidden, true, "the site-admin sub-tab row never shows for a non-admin");
     assert.match(mountPoint.querySelector("main").textContent, /only shown to site administrators/);
   });
 

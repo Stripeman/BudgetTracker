@@ -77,9 +77,16 @@ export async function run(h, t) {
   t.check("alice: no exceptions or console errors", { expected: [], actual: alice.problems({ allowHttp: [{ status: 403, path: /\/api\/design-gallery$/ }] }) });
 
   await dave.open("dashboard");
-  t.check("dave: a 'Design Gallery' entry pointing at #/gallery exists in the DOM", { expected: true, actual: await dave.exists('a[href="#/gallery"]') });
+  // Usage, Design Gallery and Workspaces are grouped under one "Site Settings" nav entry (Terry,
+  // 2026-09-17); from the Dashboard, only that grouping entry is reachable — the three sub-tabs
+  // appear once inside it, not from every other page.
+  t.check("dave: a 'Site Settings' entry exists in the DOM from the Dashboard", { expected: true, actual: await dave.exists('a[href="#/admin-workspaces"]') });
   await dave.goto("gallery");
   await dave.waitForText("All 15 concepts");
+  const subTabHrefs = await dave.evaluate("[...document.querySelectorAll('.app__nav--sub a')].map((a) => a.getAttribute('href'))");
+  t.check("dave: all three Site Settings sub-tabs (Workspaces, Design Gallery, Usage) are present once inside the group", {
+    expected: ["#/admin-workspaces", "#/gallery", "#/analytics"], actual: subTabHrefs,
+  });
   const cardCount = await dave.evaluate("document.querySelectorAll('.gcard-outer').length");
   t.check("dave: all 15 concept cards render", { expected: 15, actual: cardCount });
   const thumbCount = await dave.evaluate("document.querySelectorAll('.gcard-outer .gframe').length");

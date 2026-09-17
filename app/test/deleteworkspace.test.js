@@ -129,7 +129,7 @@ describe("the store never opens a deleted workspace and switches away from one i
 function boot(workspaces, selectedWorkspaceId) {
   const state = { auth: { status: "ready", user: { name: "Alice Fictional" } }, workspaces, selectedWorkspaceId, preferences: null, site: null, app: { version: "0.0.0-test", environment: "test" } };
   const noop = async () => {};
-  const store = { getState: () => state, subscribe() {}, actions: { selectWorkspace: noop, refreshTransactions: noop, refreshBills: noop, refreshForecast: noop, refreshGroup: noop, savePreferences: async () => ({ ok: true }) } };
+  const store = { getState: () => state, subscribe() {}, actions: { selectWorkspace: noop, refreshTransactions: noop, refreshBills: noop, refreshForecast: noop, refreshGroup: noop, refreshWeekActivity: noop, refreshMonthActivity: noop, savePreferences: async () => ({ ok: true }) } };
   const theme = createThemeController({ root: { setAttribute() {} }, storage: { getItem: () => null, setItem() {} }, media: { matches: false, addEventListener() {} } });
   const router = { current: () => ({ id: "dashboard", params: {} }), subscribe() {}, navigate() {} };
   const mountPoint = document.createElement("div");

@@ -384,7 +384,7 @@ describe("Settings card (shared by the workspace and group settings; UX review o
         workspaces: [{ id: "ws_1", name: "Fictional household", kind: "household", role: "member", ...(settingValues ? { settingValues } : {}) }],
         group: { workspaceId: "ws_1", status: "ready", error: null, data: { currency: "EUR", permissions: { canAdd: true, selfRef: "member:a", role: "member" }, participants: [], expenses: [], settlements: [], balances: [] } },
       };
-      const store = { getState: () => state, actions: { refreshGroup: async () => { refreshed += 1; }, refreshTransactions: async () => {}, refreshBills: async () => {}, refreshForecast: async () => {} } };
+      const store = { getState: () => state, actions: { refreshGroup: async () => { refreshed += 1; }, refreshTransactions: async () => {}, refreshBills: async () => {}, refreshForecast: async () => {}, refreshWeekActivity: async () => {}, refreshMonthActivity: async () => {} } };
       const view = createDashboard({ store, api: {}, state });
       dom.body.appendChild(view.element);
       view.update(state);
