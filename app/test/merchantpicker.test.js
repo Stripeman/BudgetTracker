@@ -67,6 +67,18 @@ describe("BT-007-01 merchant picker", () => {
     assert.equal(key(p.input, "Escape").defaultPrevented, false);
   });
 
+  test("Bills → Merchant fix (review, 2026-09-18): clicking or focusing the empty input opens the full list without typing first", () => {
+    const p = createMerchantPicker({ merchants: MERCHANTS });
+    assert.equal(p.input.getAttribute("aria-expanded"), "false");
+    p.input.dispatchEvent(new DomEvent("focus", { bubbles: true }));
+    assert.equal(p.input.getAttribute("aria-expanded"), "true", "focusing alone opens the list");
+    assert.deepEqual(options(p), ["Fictional Grocer", "Corner Cafe", "Café Rouge · private"], "unfiltered — nothing was typed");
+    p.input.dispatchEvent(new DomEvent("blur", { bubbles: true }));
+    assert.equal(p.input.getAttribute("aria-expanded"), "false");
+    p.input.dispatchEvent(new DomEvent("click", { bubbles: true }));
+    assert.equal(p.input.getAttribute("aria-expanded"), "true", "clicking alone also opens the list");
+  });
+
   test("editing the text after a choice clears the selection; an existing closed merchant is kept", () => {
     const changes = [];
     const p = createMerchantPicker({ merchants: MERCHANTS, onChange: (m) => changes.push(m && m.id) });

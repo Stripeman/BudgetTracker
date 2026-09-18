@@ -59,27 +59,58 @@ export function createView(ctx) {
   // person has already handled, rather than leaving it looking permanently stuck.
   const recentlyLinked = new Set();
 
-  // "Bills without a merchant" (BT-014-11, Terry, 2026-09-17: "add merchants for ones that are
-  // used in bills but not added there yet"). A bill can only ever reference a merchant that
-  // already exists (BT-007-01: merchants are managed records, never free text), so nothing here
-  // is silently "used" without being a real merchant — this instead surfaces bills whose own name
-  // very often IS the merchant (a "Netflix" bill, a "Rent" bill) but that have no merchant linked
-  // yet, one click from becoming one. Never for a transfer (no payee) or an ended bill.
+  // "Pending merchants" (BT-014-11, extended by the Bills → Merchant fix, 2026-09-18). A bill can
+  // only ever reference a merchant that already exists (BT-007-01: merchants are managed records,
+  // never free text). Before this fix this section guessed the merchant's name from the BILL's own
+  // title (a "Netflix" bill, a "Rent" bill) — confirmed wrong by review: a bill named "September
+  // internet" with a typed merchant "Northstar Fiber" must show "Northstar Fiber", never "September
+  // internet". Two genuinely different situations are shown separately:
+  //   - a typed name WAS entered on the bill (`payeeDraftName`, api/recurring/handler.js) but
+  //     matches no real merchant yet: shown here AS TYPED, grouped so the same name typed on
+  //     several bills shows once with every bill it applies to; "Add as merchant" links all of them.
+  //   - no name was ever typed (older bills, or a bill saved before this feature existed): nothing
+  //     is guessed or recovered — the person is asked to edit the bill themselves.
+  // Never for a transfer (no payee) or an ended bill.
   function renderMissing(state) {
     const bills = sliceFor(state, "bills");
     const list = ((bills.data || {}).recurring || []).filter((b) => !b.payeeId && !b.ended && b.kind !== "transfer" && b.canEdit && !recentlyLinked.has(b.id));
     if (!list.length) { mount(missingBox); return; }
-    mount(missingBox, el("section", { class: "card", "aria-labelledby": "payees-missing" }, [
-      el("h2", { class: "card__title", id: "payees-missing", text: "Bills without a merchant" }),
-      el("p", { class: "field__help", text: "These bills have no merchant linked yet. Add one using the bill's own name, or a different name if you'd rather — it's linked to the bill either way." }),
-      el("ul", { class: "stack" }, list.map((b) => el("li", { class: "row" }, [
-        withIcon(b.icon || "receipt", el("span", { text: b.name })),
+    const pending = list.filter((b) => b.payeeDraftName);
+    const unnamed = list.filter((b) => !b.payeeDraftName);
+    const groups = new Map();
+    for (const b of pending) {
+      const key = normalize(b.payeeDraftName);
+      if (!groups.has(key)) groups.set(key, { name: b.payeeDraftName, bills: [] });
+      groups.get(key).bills.push(b);
+    }
+    const sections = [];
+    if (groups.size) {
+      sections.push(el("h2", { class: "card__title", id: "payees-missing", text: "Pending merchants" }));
+      sections.push(el("p", { class: "field__help", text: "These names were typed on a bill but don't match a merchant yet. “Add as merchant” links every bill listed below it; you can also open a bill and choose an existing merchant instead." }));
+      sections.push(el("ul", { class: "stack" }, [...groups.values()].map((g) => el("li", { class: "row" }, [
+        el("div", {}, [
+          el("strong", { text: g.name }),
+          el("div", { class: "muted small", text: `On: ${g.bills.map((b) => b.name).join(", ")}` }),
+        ]),
         button("Add as merchant", () => openMerchantEditor(ctx, null, {
-          prefillName: b.name,
-          onCreated: (payee) => void linkBillToMerchant(ctx, b, payee, { onLinked: () => { recentlyLinked.add(b.id); renderMissing(ctx.store.getState()); } }),
-        }), { small: true, attrs: { "aria-label": `Add a merchant for ${b.name}` } }),
-      ]))),
-    ]));
+          prefillName: g.name,
+          onCreated: (payee) => {
+            for (const b of g.bills) {
+              void linkBillToMerchant(ctx, b, payee, { onLinked: () => { recentlyLinked.add(b.id); renderMissing(ctx.store.getState()); } });
+            }
+          },
+        }), { small: true, attrs: { "aria-label": `Add ${g.name} as a merchant` } }),
+      ]))));
+    }
+    if (unnamed.length) {
+      sections.push(el("h2", { class: "card__title", id: groups.size ? undefined : "payees-missing", text: "Bills with no merchant name recorded" }));
+      sections.push(el("p", { class: "field__help", text: "No merchant name was ever typed for these — nothing is guessed from the bill's own name. Open Bills and edit one to add a merchant." }));
+      sections.push(el("ul", { class: "stack" }, unnamed.map((b) => el("li", { class: "row" }, [
+        withIcon(b.icon || "receipt", el("span", { text: b.name })),
+        button("Go to Bills", () => ctx.navigate("bills"), { small: true, attrs: { "aria-label": `Go to Bills to edit ${b.name}` } }),
+      ]))));
+    }
+    mount(missingBox, el("section", { class: "card", "aria-labelledby": "payees-missing" }, sections));
   }
 
   function render(state) {
