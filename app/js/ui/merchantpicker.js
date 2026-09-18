@@ -98,8 +98,15 @@ export function createMerchantPicker({ merchants, current = null, onChange = () 
   });
   // Bills → Merchant fix (review, 2026-09-18): "clicking/tapping opens existing eligible merchants"
   // — before this, the list opened only while typing or on ArrowDown, so a pointer/touch user who
-  // just wanted to browse the list (never having typed anything) saw nothing happen.
-  input.addEventListener("focus", () => { if (!open) setOpen(true); });
+  // just wanted to browse the list (never having typed anything) saw nothing happen. Deliberately
+  // CLICK only, never a plain `focus` listener: a real-browser regression found by e2e (2026-09-18)
+  // — a dialog's own `openModal()` auto-focuses its first focusable control on open, and this field
+  // is sometimes that control; a `focus` listener cannot tell that apart from a genuine user
+  // interaction, so it force-opened the full list (pushing the dialog's own footer buttons out of
+  // view) on every dialog that merely happened to open with this field focused, whether or not
+  // anyone ever touched it. A real click or tap always fires `click` regardless, so the requirement
+  // ("clicking/tapping opens it") is still met without that side effect; ArrowDown/typing already
+  // open it for keyboard-only use.
   input.addEventListener("click", () => { if (!open) setOpen(true); });
   input.addEventListener("keydown", (e) => {
     if (e.key === "ArrowDown") {
