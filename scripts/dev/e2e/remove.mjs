@@ -14,7 +14,17 @@ export const needsBrowser = true;
 
 const MODAL = ".modal";
 const accountRows = (s) => s.evaluate("[...document.querySelectorAll('table[aria-label=\"Accounts\"] tbody th strong')].map((x) => x.textContent)");
-const rowButtons = (s) => s.evaluate("[...document.querySelectorAll('table[aria-label=\"Accounts\"] tbody button')].map((b) => b.getAttribute('aria-label') || b.textContent)");
+// BT-015: a row's actions are inside its own compact "::" menu now, never inline buttons — open the
+// named record's menu, read its items by accessible name (or text), then close it again so only one
+// is ever open at a time (registerPopup would otherwise close a PREVIOUS one anyway, but this keeps
+// each read scoped to exactly the row it asked about).
+async function menuItemsFor(s, recordName, { scope = "main" } = {}) {
+  await s.openRecordMenu(recordName, { scope });
+  const items = await s.evaluate("[...document.querySelectorAll('.actionsmenu__panel:not([hidden]) .actionsmenu__item')].map((b) => b.getAttribute('aria-label') || b.textContent.trim())");
+  await s.press("Escape");
+  await s.waitFor("!document.querySelector('.actionsmenu__panel:not([hidden])')", { what: `the actions menu for "${recordName}" to close` });
+  return items;
+}
 // The account choices in quick entry: the native select behind the "Account" command picker.
 const entryAccounts = (s) => s.evaluate("(() => { const sel = [...document.querySelectorAll('.modal select')].find((x) => [...x.options].some((o) => / \\(EUR\\)$/.test(o.text))); return sel ? [...sel.options].map((o) => o.text) : null; })()");
 const modalGone = (s, what) => s.waitFor("!document.querySelector('.modal')", { what });
@@ -52,16 +62,18 @@ export async function run(h, t) {
   const created = (await api("alice").ok("accounts", { query: q })).accounts.find((a) => a.name === "E2E Wrong wallet");
   const offeredBefore = await quickEntryAccounts(alice);
   await alice.goto("accounts");
-  const aliceButtons = await rowButtons(alice);
+  const wrongWalletItems = await menuItemsFor(alice, "E2E Wrong wallet");
+  const jointItemsForAlice = await menuItemsFor(alice, "E2E Joint");
   t.check("Alice's new account is on her Accounts page with Remove, the server says it has no entries, and quick entry offers it; as a member she has no Remove on the shared Joint", {
     expected: { listed: true, remove: true, hasEntries: false, offered: true, jointRemove: false },
     actual: {
-      listed: (await accountRows(alice)).includes("E2E Wrong wallet"), remove: aliceButtons.includes("Remove E2E Wrong wallet"), hasEntries: created && created.hasEntries,
-      offered: (offeredBefore || []).includes("E2E Wrong wallet (EUR)"), jointRemove: aliceButtons.includes("Remove E2E Joint"),
+      listed: (await accountRows(alice)).includes("E2E Wrong wallet"), remove: wrongWalletItems.includes("Remove E2E Wrong wallet"), hasEntries: created && created.hasEntries,
+      offered: (offeredBefore || []).includes("E2E Wrong wallet (EUR)"), jointRemove: jointItemsForAlice.includes("Remove E2E Joint"),
     },
   });
 
   // ---- the empty-account dialog ----------------------------------------------------------------------
+  await alice.openRecordMenu("E2E Wrong wallet", { scope: "main" });
   await alice.click({ role: "button", name: "Remove E2E Wrong wallet" });
   await alice.waitFor("!!document.querySelector('.modal')", { what: "the Remove dialog" });
   const dialog = await alice.evaluate(`(() => { const m = document.querySelector('.modal'); const i = m.querySelector('input'); return {
@@ -107,6 +119,7 @@ export async function run(h, t) {
 
   // ---- an account with entries: the stricter dialog ----------------------------------------------------
   await alice.goto("accounts");
+  await alice.openRecordMenu("E2E Everyday", { scope: "main" });
   await alice.click({ role: "button", name: "Remove E2E Everyday" });
   await alice.waitFor("!!document.querySelector('.modal')", { what: "the Remove dialog for an account with entries" });
   const strict = await alice.evaluate("(() => { const m = document.querySelector('.modal'); return { text: m.querySelector('.modal__body p').textContent, reason: m.querySelector('input').value, buttons: [...m.querySelectorAll('.modal__foot button')].map((x) => x.textContent) }; })()");
@@ -136,13 +149,14 @@ export async function run(h, t) {
   // ---- Bob owns the workspace, yet cannot see or remove Alice's private accounts -----------------------
   await b.bob.goto("accounts");
   await b.bob.waitForText("E2E Joint", { scope: "main" });
-  const bob = { rows: await accountRows(b.bob), buttons: await rowButtons(b.bob) };
+  const bobRows = await accountRows(b.bob);
+  const bobJointItems = await menuItemsFor(b.bob, "E2E Joint");
   const bobPrivate = await api("bob").request("accounts", { method: "DELETE", query: q, body: { accountId: created.id, reason: "E2E try" } });
   const aliceShared = await api("alice").request("accounts", { method: "DELETE", query: q, body: { accountId: joint.id, reason: "E2E try" } });
   const bobList = await api("bob").ok("accounts", { query: { ...q, includeDeleted: "1" } });
   t.check("Bob (the owner) sees none of Alice's private accounts and has Remove only on the shared Joint; the API answers 404 to him for her private account and 403 to Alice (a member) for the shared one; none of her removed accounts is counted for him", {
     expected: { rows: ["E2E Joint"], remove: ["Remove E2E Joint"], bobOnPrivate: 404, aliceOnShared: 403, removedCount: 0 },
-    actual: { rows: bob.rows, remove: bob.buttons.filter((x) => x.startsWith("Remove")), bobOnPrivate: bobPrivate.status, aliceOnShared: aliceShared.status, removedCount: bobList.removedCount },
+    actual: { rows: bobRows, remove: bobJointItems.filter((x) => x.startsWith("Remove")), bobOnPrivate: bobPrivate.status, aliceOnShared: aliceShared.status, removedCount: bobList.removedCount },
   });
 
   for (const s of Object.values(b)) { await s.settle(); t.check(`${s.name}: no exceptions, console errors or failed requests in the browser`, { expected: [], actual: s.problems() }); }

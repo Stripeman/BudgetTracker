@@ -113,10 +113,13 @@ export function createView(ctx) {
 
   function renderMatrix() {
     mount(matrixBox, el("table", { class: "table", "aria-label": "Comparison matrix of all 15 concepts" }, [
-      el("thead", {}, [el("tr", {}, ["Concept", "Audience", "Density", "Navigation", "Dashboard", "Transactions", "Bills", "Budget", "Accounts", "Settings", "Fidelity", "Recommended", "Status"].map((h) => el("th", { text: h })))]),
+      el("thead", {}, [el("tr", {}, ["Concept", "Audience", "Typography", "Charts", "Density", "Navigation", "Dashboard", "Transactions", "Bills", "Budget", "Accounts", "Settings", "Fidelity", "Recommended", "Status"].map((h) => el("th", { text: h })))]),
       el("tbody", {}, (data.concepts || []).map((c) => el("tr", {}, [
         el("td", { "data-label": "Concept" }, [el("strong", { text: c.name })]),
         el("td", { "data-label": "Audience", text: c.audience }),
+        // Typography and chart family (Terry, 2026-09-18: "deliberate typography… graphics, metrics").
+        el("td", { "data-label": "Typography", text: c.typeVoice }),
+        el("td", { "data-label": "Charts", text: c.chartEmphasis }),
         el("td", { "data-label": "Density", text: c.density }),
         el("td", { "data-label": "Navigation", text: c.navStyle }),
         el("td", { "data-label": "Dashboard", text: c.dashboardPattern }),

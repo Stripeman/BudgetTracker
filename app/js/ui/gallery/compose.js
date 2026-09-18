@@ -65,6 +65,49 @@ function multiLineChart(points, series, { width = 420, height = 120 } = {}) {
   return svg;
 }
 
+// A single filled trend area (Terry's reference 5, "Forecasts · executive overview": a large filled
+// forecast chart), with the same three expected/cautious/hopeful lines drawn over the fill so the
+// detail the multi-line chart already gave is not lost — never colour alone (the lines keep their own
+// dash pattern), and it pairs with the identical sr-only figure table/legend every other chart uses.
+function areaChart(points, series, { width = 420, height = 120 } = {}) {
+  const all = points.flatMap((p) => series.map((s) => Number(p[s.key])));
+  const max = Math.max(1, ...all);
+  const min = Math.min(0, ...all);
+  const range = Math.max(1, max - min);
+  const stepX = points.length > 1 ? width / (points.length - 1) : width;
+  const y = (v) => Math.round(height - ((v - min) / range) * (height - 4) - 2);
+  const lead = series[0];
+  const coords = points.map((p, i) => [Math.round(i * stepX), y(Number(p[lead.key]))]);
+  const areaPoints = [[0, height], ...coords, [width, height]].map(([x, yy]) => `${x},${yy}`).join(" ");
+  const svg = svgEl("svg", { class: "chart chart--area", viewBox: `0 0 ${width} ${height}`, "aria-hidden": "true", focusable: "false" });
+  svg.appendChild(svgEl("polygon", { class: "chart__area-fill", points: areaPoints }));
+  for (const s of series) {
+    const c = points.map((p, i) => [Math.round(i * stepX), y(Number(p[s.key]))]);
+    svg.appendChild(svgEl("polyline", { class: `chart__line chart__line--${s.dash}`, points: c.map(([x, yy]) => `${x},${yy}`).join(" ") }));
+  }
+  return svg;
+}
+
+// A circular progress gauge (Terry's reference 1, "Financial health" ring, and reference 6's debt-
+// payoff ring): decorative SVG plus the SAME "figure is stated in real text beside it, never colour
+// or the arc alone" rule every meter/envelope already follows — the percentage is real text content
+// here (via the caller), this is only the accessible-labelled illustration.
+function radialGauge(pct, label, { size = 96, stroke = 10 } = {}) {
+  const r = size / 2 - stroke;
+  const cx = size / 2;
+  const cy = size / 2;
+  const circumference = 2 * Math.PI * r;
+  const clamped = Math.max(0, Math.min(100, pct));
+  const offset = circumference * (1 - clamped / 100);
+  const svg = svgEl("svg", { class: "chart chart--gauge", width: size, height: size, viewBox: `0 0 ${size} ${size}`, role: "img", "aria-label": label });
+  svg.appendChild(svgEl("circle", { class: "gauge__track", cx, cy, r, "stroke-width": stroke, fill: "none" }));
+  svg.appendChild(svgEl("circle", {
+    class: "gauge__fill", cx, cy, r, "stroke-width": stroke, fill: "none",
+    "stroke-dasharray": circumference, "stroke-dashoffset": offset, transform: `rotate(-90 ${cx} ${cy})`,
+  }));
+  return el("div", { class: "ggauge" }, [svg, el("span", { class: "ggauge__pct", "aria-hidden": "true", text: `${clamped}%` })]);
+}
+
 // ---- shared small building blocks -----------------------------------------------------------------
 // A module-level counter (like themepicker.js's) guarantees unique heading ids even when two
 // concepts are rendered side by side in "Compare" and happen to share a card title (e.g. both
@@ -121,7 +164,9 @@ function heroMetricGrid() {
 function heroChartFirst(concept) {
   const series = [{ key: "expected", dash: "solid" }, { key: "cautious", dash: "dashed" }, { key: "hopeful", dash: "dotted" }];
   const trendLabel = concept.id === "wealth-overview" ? "Net worth trend, last 4 weeks" : "Cash-flow forecast, next 30 days";
-  const chart = multiLineChart(fx.forecast.points, series);
+  // Reference 5 ("Forecasts · executive overview"): a large FILLED forecast area, not a bare line —
+  // used only where the concept's own chartEmphasis asks for it (never decoration for its own sake).
+  const chart = concept.chartEmphasis === "area" ? areaChart(fx.forecast.points, series) : multiLineChart(fx.forecast.points, series);
   const rows = fx.forecast.points.map((p) => [p.date, p.expected, p.cautious, p.hopeful]);
   const blocks = [
     gcard(trendLabel, "chart-line", [
@@ -167,16 +212,20 @@ function heroCardStack(concept) {
   ]));
 }
 
-function heroGoalProgress() {
+function heroGoalProgress(concept) {
   const loan = account("acc-loan");
   const savings = account("acc-savings");
   const pct = (paid, total) => Math.round((paid / total) * 100);
   const loanPct = pct(3520, 15000);
   const savingsPct = pct(8420, 12000);
   const meter = (p) => el("div", { class: "gmeter", role: "img", "aria-label": `${p}% of the way there` }, [el("div", { class: "gmeter__fill", vars: { "--pct": `${p}%` } })]);
+  // References 1 ("Financial health" ring) and 6 (debt-payoff ring): a circular gauge leads instead
+  // of the plain linear meter, only where the concept's own chartEmphasis chooses it.
+  const useGauge = concept && concept.chartEmphasis === "donut";
+  const progress = (p, label) => (useGauge ? radialGauge(p, label) : meter(p));
   return [
-    gcard("Car loan payoff", "loan", [meter(loanPct), el("p", { text: `${loanPct}% paid — ${formatAmount("3520.00", "EUR")} of ${formatAmount("15000.00", "EUR")}` }), el("p", { class: "muted small", text: `Balance remaining: ${loan.balance} EUR` })]),
-    gcard("Savings goal: Emergency fund", "target", [meter(savingsPct), el("p", { text: `${savingsPct}% of the way to 12,000.00 EUR` }), el("p", { class: "muted small", text: `Current: ${savings.balance} EUR` })]),
+    gcard("Car loan payoff", "loan", [progress(loanPct, `${loanPct}% of the loan paid off`), el("p", { text: `${loanPct}% paid — ${formatAmount("3520.00", "EUR")} of ${formatAmount("15000.00", "EUR")}` }), el("p", { class: "muted small", text: `Balance remaining: ${loan.balance} EUR` })]),
+    gcard("Savings goal: Emergency fund", "target", [progress(savingsPct, `${savingsPct}% of the way to the savings goal`), el("p", { text: `${savingsPct}% of the way to 12,000.00 EUR` }), el("p", { class: "muted small", text: `Current: ${savings.balance} EUR` })]),
   ];
 }
 
@@ -200,13 +249,23 @@ function heroEnvelopeGrid() {
   })), { full: true })];
 }
 
-function heroCommandConsole() {
-  return [
+function heroCommandConsole(concept) {
+  const panels = [
     gcard("Needs attention", "bell", el("ul", { class: "stack" }, fx.alerts.map((a) => el("li", { class: "iconlabel" }, [icon(a.icon), el("span", { text: a.text })])))),
     gcard("Forecast", "chart-line", [barChart(fx.forecast.points.map((p) => ({ value: p.expected })))]),
     gcard("Bills due", "calendar", el("ul", { class: "stack" }, fx.bills.slice(0, 3).map(billRow))),
     gcard("Balances", "bank", fx.accounts.map((a) => el("div", { class: "row" }, [withIcon(a.icon, a.name), el("span", { class: "app__spacer" }), money(a.balance, a.currency, fx.prefs)]))),
   ];
+  // Reference 1's "Financial health" ring, for the one concept whose chartEmphasis asks for a
+  // second, denser chart family alongside the bar forecast (never a total computed independently —
+  // the same spent/planned figures already shown on Budget are only sized for the ring here).
+  if (concept && concept.chartEmphasis === "mixed") {
+    const spent = fx.budget.lines.reduce((s, l) => s + Number(l.spent), 0);
+    const planned = fx.budget.lines.reduce((s, l) => s + Number(l.planned), 0);
+    const pct = Math.round((spent / planned) * 100);
+    panels.push(gcard("Budget used", "target", [radialGauge(pct, `${pct}% of this month's budget used`), el("p", { class: "muted small", text: `${spent.toFixed(2)} of ${planned.toFixed(2)} EUR planned` })]));
+  }
+  return panels;
 }
 
 function heroSplitFocus(concept) {
@@ -559,7 +618,7 @@ function renderNav(concept, activeId, onNavigate, requiredPages) {
 export function renderConceptFrame(concept, pageId, onNavigate, { requiredPages = Object.keys(PAGE_LABEL) } = {}) {
   const page = (PAGE_RENDERERS[pageId] || renderDashboard)(concept);
   return el("div", {
-    class: "gframe", dataset: { nav: concept.navStyle, density: concept.density, card: concept.cardStyle, page: pageId },
+    class: "gframe", dataset: { nav: concept.navStyle, density: concept.density, card: concept.cardStyle, page: pageId, voice: concept.typeVoice, chart: concept.chartEmphasis },
     "aria-label": `${concept.name} preview, ${PAGE_LABEL[pageId] || pageId} page`,
   }, [
     renderNav(concept, pageId, onNavigate, requiredPages),

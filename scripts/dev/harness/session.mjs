@@ -293,6 +293,27 @@ class Session {
     return this.click({ text, ...(scope ? { scope } : {}) });
   }
 
+  // BT-015: opens a record's own compact "::" actions menu — the row/card containing `recordName`
+  // AND a `.actionsmenu__toggle` (never a plain text match alone, since some pages legitimately show
+  // a record's name a second time somewhere that carries no actions menu at all, e.g. Bills' own
+  // "Needs attention" summary table). Once open, its items are real role="menuitem" elements
+  // reachable by the ordinary `click({ role: "button", name })`/`click({ text })`, since the panel is
+  // a floating overlay on document.body (or the enclosing dialog) that `locate()` already searches by
+  // default. Waits for the panel to actually open before returning.
+  async openRecordMenu(recordName, { scope = "body" } = {}) {
+    const at = await this.evaluate(`(() => {
+      const root = document.querySelector(${JSON.stringify(scope)}) || document.body;
+      const row = [...root.querySelectorAll("tr, li")].find((n) => n.textContent.includes(${JSON.stringify(recordName)}) && n.querySelector(".actionsmenu__toggle"));
+      const toggle = row && row.querySelector(".actionsmenu__toggle");
+      if (!toggle) return null;
+      const r = toggle.getBoundingClientRect();
+      return { x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2) };
+    })()`);
+    if (!at) throw new Error(`${this.name}: no actions menu found for a record named "${recordName}".`);
+    await this.mouseClick(at.x, at.y);
+    await this.waitFor("!!document.querySelector('.actionsmenu__panel:not([hidden])')", { what: `the actions menu for "${recordName}" to open` });
+  }
+
   // Clicks into a text field (found by its label, by default), selects what is there and types.
   async fill(spec, value) {
     const s = typeof spec === "string" ? { label: spec } : spec;

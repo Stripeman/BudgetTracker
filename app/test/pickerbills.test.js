@@ -143,12 +143,15 @@ describe("BT-014-10/12 'Record next' has a plain-language tooltip that doesn't g
     const view = createView(ctx);
     dom.body.appendChild(view.element);
     view.update(state);
-    const recordNext = view.element.querySelectorAll("button").find((b) => b.textContent === "Record next");
+    // BT-015: Record next is inside the row's compact actions menu — open it first (a floating
+    // overlay on document.body once open, never a child of view.element).
+    view.element.querySelector(".actionsmenu__toggle").click();
+    const recordNext = dom.body.querySelectorAll("button").find((b) => b.textContent === "Record next");
     assert.ok(recordNext, "the All bills table row has a Record next button");
     assert.ok(recordNext.closest(".tip-anchor"), "wrapped, not styled directly (the floating box lives elsewhere)");
     const describedById = recordNext.getAttribute("aria-describedby");
     assert.ok(describedById, "linked to a description for screen readers, not hover-only");
-    const hidden = view.element.querySelector(`#${describedById}`);
+    const hidden = dom.body.querySelector(`#${describedById}`);
     assert.ok(hidden && hidden.classList.contains("sr-only"), "the same text is available off-screen");
     assert.match(hidden.textContent, /review.*record.*(entry|payment)/i);
     // Still keeps its own accessible name distinct from the description (name != description).
@@ -160,9 +163,10 @@ describe("BT-014-10/12 'Record next' has a plain-language tooltip that doesn't g
     const view = createView(ctx);
     dom.body.appendChild(view.element);
     view.update(state);
-    const recordNext = view.element.querySelectorAll("button").find((b) => b.textContent === "Record next");
+    view.element.querySelector(".actionsmenu__toggle").click();
+    const recordNext = dom.body.querySelectorAll("button").find((b) => b.textContent === "Record next");
     const describedById = recordNext.getAttribute("aria-describedby");
-    const expectedText = view.element.querySelector(`#${describedById}`).textContent;
+    const expectedText = dom.body.querySelector(`#${describedById}`).textContent;
     assert.equal(dom.body.querySelectorAll(".floating-tip").length, 0, "nothing shown before hover/focus");
     recordNext.dispatchEvent(new DomEvent("focus", {}));
     const tips = dom.body.querySelectorAll(".floating-tip");
@@ -213,7 +217,9 @@ describe("Bills → Merchant regression (Terry, 2026-09-18): a typed-but-unlinke
     const view = createView(ctx);
     dom.body.appendChild(view.element);
     view.update(state);
-    buttonNamed(view.element, "History").click();
+    // BT-015: History is inside the row's compact actions menu — open it first.
+    view.element.querySelector(".actionsmenu__toggle").click();
+    buttonNamed(dom.body, "History").click();
     const root = dom.body.querySelector(".modal");
     const merchantCell = root.querySelector('td[data-label="Merchant"]');
     assert.ok(merchantCell, "the Terms over time table has a Merchant cell");

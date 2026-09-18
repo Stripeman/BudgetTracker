@@ -5,7 +5,7 @@
 // front of Terry.
 const { test, describe } = require('node:test');
 const assert = require('node:assert/strict');
-const { CONCEPTS, CONCEPT_IDS, REQUIRED_PAGES, REAL_LAYOUT_OPTIONS, REAL_DEFAULT_LAYOUT_ID, NAV_STYLES, DENSITIES, DASHBOARD_PATTERNS, CARD_STYLES, CHART_EMPHASES,
+const { CONCEPTS, CONCEPT_IDS, REQUIRED_PAGES, REAL_LAYOUT_OPTIONS, REAL_DEFAULT_LAYOUT_ID, NAV_STYLES, DENSITIES, DASHBOARD_PATTERNS, CARD_STYLES, CHART_EMPHASES, TYPE_VOICES,
   TRANSACTIONS_PATTERNS, BILLS_PATTERNS, BUDGET_PATTERNS, ACCOUNTS_PATTERNS, SETTINGS_PATTERNS, SHARED_PATTERNS, TRIPS_PATTERNS } = require('../_shared/layouts');
 
 describe('BT-013 layout manifests', () => {
@@ -30,6 +30,10 @@ describe('BT-013 layout manifests', () => {
       assert.ok(DASHBOARD_PATTERNS.includes(c.dashboardPattern), `${c.id} dashboardPattern ${c.dashboardPattern}`);
       assert.ok(CARD_STYLES.includes(c.cardStyle), `${c.id} cardStyle ${c.cardStyle}`);
       assert.ok(CHART_EMPHASES.includes(c.chartEmphasis), `${c.id} chartEmphasis ${c.chartEmphasis}`);
+      // Typographic voice (Terry, 2026-09-18: "at least 15... deliberate typography"): a real,
+      // visible heading/figure typeface treatment (app/styles/gallery.css [data-voice]), distinct
+      // from chartEmphasis/cardStyle/dashboardPattern above.
+      assert.ok(TYPE_VOICES.includes(c.typeVoice), `${c.id} typeVoice ${c.typeVoice}`);
       assert.ok(['flagship', 'standard'].includes(c.fidelity), `${c.id} fidelity`);
       assert.equal(typeof c.recommended, 'boolean', `${c.id} recommended`);
       // Secondary-page composition axes (review, 2026-09-18): every concept must declare which
@@ -65,6 +69,16 @@ describe('BT-013 layout manifests', () => {
   test('at least 4 distinct nav styles and all 4 densities appear', () => {
     assert.ok(new Set(CONCEPTS.map((c) => c.navStyle)).size >= 4);
     assert.ok(new Set(CONCEPTS.map((c) => c.density)).size === 4);
+  });
+
+  test('every typographic voice is genuinely used, and every chart emphasis including the new ring/area charts', () => {
+    assert.equal(new Set(CONCEPTS.map((c) => c.typeVoice)).size, TYPE_VOICES.length);
+    assert.equal(new Set(CONCEPTS.map((c) => c.chartEmphasis)).size, CHART_EMPHASES.length);
+    // Exactly one concept each for the two new chart primitives (radial gauge / area chart) — assigned
+    // by persona fit, not spread arbitrarily: Goal Navigator's whole hero IS progress, Wealth
+    // Overview's whole hero IS a trend (see api/_shared/layouts.js's comment on each).
+    assert.deepEqual(CONCEPTS.filter((c) => c.chartEmphasis === 'donut').map((c) => c.id), ['goal-navigator']);
+    assert.deepEqual(CONCEPTS.filter((c) => c.chartEmphasis === 'area').map((c) => c.id), ['wealth-overview']);
   });
 
   test('exactly 8 of the remaining 15 concepts are marked recommended (2 of the original top-10 were among the 5 Terry cut)', () => {

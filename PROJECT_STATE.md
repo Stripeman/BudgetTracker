@@ -8,6 +8,79 @@
 - **Checkpoint commit.** The commit containing this file; resolve it with `git log -1 --format=%H`.
 - **PR #1.** Merged as `ebc45f8` (2026-09-14, one-time authorization). PR #2 (the deploy-script fix) merged as `31b17b1`, deployed to Production and verified — see "PRODUCTION DEPLOYED" below and Checkpoint R. Preview tracks `feature/project-foundation`, currently well ahead of `31b17b1`; the next Production release needs a new PR from the feature branch, merged after all checks and reviews pass (Terry: standing permission for the agent to merge, he runs the deploy — see "Answered").
 
+## BACKLOG — authorized for after this release (Terry, 2026-09-18; survives a session restart)
+
+**The work sequence, verbatim (do not skip or reorder):**
+1. Finish and verify all currently authorized work (BT-004-08 dropdown overlay, BT-013-08 Gallery
+   typography/graphics, BT-014-18 Bills→Merchant Preview verification, the e2e harness isolation fix
+   below).
+2. Report release readiness and ASK for Terry's explicit authorization to merge into `main` and
+   deploy to Preview and Production. **This message does NOT itself authorize a main merge or a
+   Production deployment** — only Preview, and only after the ask.
+3. Once (and only once) Terry explicitly authorizes it: use the existing workflow to merge/push
+   `main`, deploy and verify Preview, then deploy and verify Production.
+4. After that release is complete: begin the backlog below, on a feature branch, targeting Preview
+   only until Terry separately authorizes a further Production release for it.
+
+**BT-015 — Compact record action menus (Accounts, Bills, Merchants, Transactions).** Move each
+record's row actions into a menu right-aligned on the same row as its title/name — a four-dot "::"
+icon (two rows, two columns; a real icon, never literal punctuation), one shared component reused on
+all four screens. **Exact preserved action order per type** (never reordered):
+- Accounts: Edit, Close, Who can see this, Remove, Delete permanently.
+- Bills: Edit, Record next, Pause, End, History, Delete permanently.
+- Merchants: Edit, History (renamed from "View history"), Close, Delete permanently.
+- Transactions: Edit, Reverse, Move (renamed from "Move to another account"), History, Delete, Delete
+  permanently.
+Preserve every existing permission, availability rule, confirmation, audit record and behavior
+exactly, including lifecycle alternatives (Reopen/Resume) where they already exist; Remove/Delete and
+Delete permanently keep their distinct meanings, never merged. Menu requirements: opening it must
+NEVER shift surrounding content or resize the form (reuse the BT-004-08 overlay engine,
+`app/js/ui/overlay.js` — this is exactly the defect class that fix already solves); overlay the page
+without clipping, repositioning to stay in the viewport; keyboard navigation, Escape, outside-click
+dismissal and touch all work; a comfortable mobile touch target and an accessible label such as
+"Actions for Household Checking"; the trigger stays visible beside long/wrapping titles; destructive
+actions are visually separated and clearly identified; desktop and mobile use the same pattern.
+
+**BT-016 — Shared expenses: contacts and external participation without an application account.**
+Let Terry add a participant's name and email to a shared expense without requiring that person to
+have an account. Distinguish three separate concepts, never conflated: (1) a contact included only in
+expense calculations; (2) someone invited to VIEW shared information; (3) an authenticated person
+AUTHORIZED to add or edit expenses. Adding a name/email must never itself send an invitation or grant
+access. **Before writing code:** inspect the existing contacts, shared-expense, membership and
+permission models, then give Terry a concise recommendation and proposed workflow/access boundaries —
+implementation waits for his decision on this point specifically (continue other unblocked backlog
+items meanwhile, per his standing instruction). Evaluate: tracking expenses with contacts who never
+sign in; when participants DO need to sign in and contribute, offering creation of a dedicated
+group/trip workspace OR selection of an existing appropriate shared workspace (never forcing a new
+workspace per expense); including only the intended shared information; keeping personal banking,
+private accounts, unrelated contacts and other workspaces inaccessible; using the real verified-
+identity invitation/acceptance flow already in place (knowing an email must never itself grant
+access); making roles/visibility/revocation clear before anything is shared. If sharing a single
+expense within an EXISTING workspace turns out preferable to a dedicated one, explain exactly how
+access stays restricted across every API, list, search, export and attachment path — never a broad
+workspace grant or a public link as a shortcut.
+
+**BT-017 — Redesign My Settings and Workspace Settings.** Not another column added to the current
+arrangement — a coherent, professional, task-oriented reorganization. Inventory every existing
+setting first; preserve every capability and permission exactly. Requirements: clearly distinguish
+personal preferences from workspace-wide settings; consistent headings/labels/control widths/spacing/
+concise help text; consistent presentation of inherited default vs personal/workspace override vs
+locked, everywhere it already applies; two columns where sensible on desktop (reuse/extend the real
+`.settings-group__body` CSS Grid mechanism from BT-011, item 5), one column on mobile; complex
+controls/tables/long content stay full-width; advanced/infrequently-used options collapse into
+clearly labelled expandable sections; destructive operations live in their own clearly identified
+area; consistent save behavior with visible unsaved/saved/error states; sections are findable via
+navigation or search; logical keyboard order, accessibility and theme behavior preserved throughout;
+verified on mobile, with long labels, validation messages, and both light and dark modes.
+
+**Tracking discipline for all three:** each is its own tracked backlog item (BT-015/016/017 in
+`docs/REQUIREMENTS.md`) with its own acceptance criteria; once started, complete and verify each
+without repeatedly pausing to ask whether to continue — ask specifically where BT-016 needs Terry's
+design decision, and keep moving on the other unblocked items meanwhile. Real-browser checks
+including mobile for all three; preserve privacy, financial correctness, deletion safeguards and the
+one established deployment workflow (`deploy.ps1`, Preview only until Production is separately
+authorized for this work).
+
 ## Waiting on Terry (keep current; repeat open items in every status update)
 
 Terry asked (2026-09-14) for one list of what he still has to answer or do, so he never has to search the chat. Move an item to "Answered" with the date and his decision; never delete it.
@@ -1687,3 +1760,763 @@ six), the next deploy will need combining again from whatever he picks.
 `5939e6a`. The next session should check whether Terry has reviewed/merged any of PR #13–#19,
 rebase/re-verify the others if `main` has moved, and pick up his feedback — including on the live
 Preview build itself now that it's actually reachable.
+
+## Checkpoint AC — Design Gallery: closed the Shared expenses/Trips gap, redeployed to Preview
+## (2026-09-18, same session, Terry's explicit instruction: "continue working on the complete
+## gallery as told", then "then you shouldnt be stopping")
+
+**What this closes.** Checkpoint AB's own honest disclosure named Shared expenses and Trips as the
+two required Gallery pages still sharing one template across all 15 concepts, after Transactions/
+Bills/Budget/Accounts/Settings had already been fixed (PR #18 / BT-013-06). This checkpoint closes
+that specific, previously-disclosed gap — it is not the full from-scratch "15 fully bespoke,
+screenshot-grade designs" the original brief describes, and that larger scope is still not done
+(see "Known gaps" below, carried forward honestly rather than re-declared complete).
+
+**BT-013-07**, on `feature/design-gallery-secondary-pages` (commit `261d015`, pushed): two new
+pattern axes in `api/_shared/layouts.js` — `sharedPattern` (`balance-list` / `ledger-table` /
+`settlement-focus`) and `tripsPattern` (`card-grid` / `list` / `timeline`) — each of the 15
+concepts assigned a persona-appropriate value (e.g. Executive Ledger's dense/authoritative identity
+gets `ledger-table` shared expenses and a plain `list` of trips; Financial Command Center's
+command-console identity gets `settlement-focus`, leading with "Settle up" suggestions). Applying
+the 15×2 field assignments hit a real environment limitation worth recording: the planned approach
+(`python3 -c "..."` to edit specific lines) failed outright — `python3` is not available in this
+Git Bash environment (exit 127/49, Windows Store app-execution-alias redirect) — fixed by using
+`node -e "..."` instead (Node.js is confirmed available), reading the file, asserting each target
+line's exact expected content before editing it, and writing back; verified after with
+`node --check` and a `grep -c` count. A first pass mechanically assigned `sharedPattern: 'card-grid'`
+to four concepts (Modern Banking, Household Hub, Merchant Insights, Card Workspace) — `'card-grid'`
+is a valid `tripsPattern` value but NOT a valid `sharedPattern` value (which only has
+`balance-list`/`ledger-table`/`settlement-focus`); caught immediately by the new
+`api/test/layouts.test.js` assertion failing (`modern-banking sharedPattern`), never shipped or
+deployed — corrected to a balanced 5/5/5 split across the three real values before continuing.
+
+`app/js/ui/gallery/compose.js` gained `sharedBalanceList`/`sharedLedgerTable`/
+`sharedSettlementFocus` behind a `SHARED_RENDERERS` dispatch map and `renderShared(concept)`, and
+`tripsCardGrid`/`tripsList`/`tripsTimeline` behind a `TRIPS_RENDERERS` map and
+`renderTrips(concept)` — keyed exactly like every other pattern axis (`DASHBOARD_RENDERERS`,
+`TRANSACTIONS_RENDERERS`, etc.), never a per-concept branch. The Trips page's illustrative-only
+disclosure (BT-010 is not yet a real feature) is preserved unconditionally across all three
+patterns — verified by a dedicated test, not assumed. `api/_shared/layouts.js`'s own header comment
+(which previously said Shared expenses/Trips/Settings all "still use one template each") was
+corrected to say only the read-only Settings summary still does, by design (a label-value list),
+not oversight.
+
+**Evidence, all real, all rerun after the fix above:**
+- New assertions in `api/test/layouts.test.js` and `app/test/gallerypatterns.test.js`: every
+  concept declares a valid value for both new axes; all 3 values of each are genuinely used (not
+  just declared); a `ledger-table` shared concept renders a real `<table>` and no "Settle up" text;
+  a `settlement-focus` concept renders a literal "Settle up" heading and no table; a `balance-list`
+  concept renders neither; a `timeline` trips concept renders one `ol.gtimeline` and no card grid; a
+  `card-grid`/`list` concept renders a card grid or plain list instead; every trips pattern keeps
+  the illustrative-only disclosure regardless of pattern.
+- `npm test` 39/627/481, exit 0. `npm run validate` ok, 24 routes, exit 0.
+- Real headless Edge, `npm run e2e -- --only gallery` (extended with dedicated structural-proof
+  checks for the two new axes, screenshots included): **128 passed, 0 failed, 0 skipped, exit 0**,
+  cleanup verified (no dev server, Edge process or profile of the run left behind). Confirms live in
+  a real browser: Executive Ledger's Shared expenses page is a real ledger table with no "Settle
+  up" text; Financial Command Center's leads with "Settle up" and no table, for the identical
+  fictional data; Wealth Overview's Trips page is one chronological ordered list with the
+  disclosure still present; Modern Banking's is a card grid instead.
+- `docs/REQUIREMENTS.md` gained a new `BT-013-07` row; `BT-013-06`'s own "not yet done" cell was
+  corrected to say this gap was closed the same session, rather than left stale.
+
+**Re-combined and redeployed to Preview.** Merged `feature/design-gallery-secondary-pages`
+(`261d015`) into `integration/preview-2026-09-18` (clean merge, no conflicts), pushed to
+`origin/integration/preview-2026-09-18` (`b987c75`), full gate rerun on the combined tree (`npm
+test` 39/651/496 (repo/API/app) exit 0; `npm run validate` ok, 24 routes,
+exit 0), then deployed via the one supported entry point, `scripts/deploy/deploy.ps1 -Environment
+preview`:
+```
+target  : budget-tracker / budget-tracker (preview)
+url     : https://polite-plant-03bb7570f-preview.eastus2.3.azurestaticapps.net
+sha     : b987c7575d5d93b1e55a2ff2eec16d8dfd2fd638
+version : 0.1.0-alpha.1
+checks  : ok target, ok gitState, ok confirmation, ok azureResource, ok settings, ok test,
+          ok validate, ok build, ok secretScan, ok upload, ok commitSetting, ok healthCheck
+result  : SUCCESS
+```
+Independently verified live, separately from the script's own receipt: `GET .../api/site-settings`
+reports `environment: "preview"`, `commit: "b987c7575d5d93b1e55a2ff2eec16d8dfd2fd638"` (exact
+match); `GET /` returns 200; anonymous `GET /api/me` returns 401 (auth still enforced).
+
+**Git hygiene.** Also noticed and fixed while working on this branch: `.gitignore` did not actually
+contain the three ignore rules for `docs/Claude-handoff.md`, `docs/BudgetTracker-review.md` and
+`docs/BudgetTracker-references.html` that Checkpoint AA's own text claimed were "added to
+`.gitignore` immediately" — `git status -sb` still showed them as untracked (`??`) at the start of
+this checkpoint's work. Added now, confirmed with `git check-ignore -v` against all three paths, and
+confirmed `git status` no longer lists them. They were never staged or committed at any point
+(verified with `git log --all --full-history -- docs/Claude-handoff.md` etc. returning nothing), so
+this was a documentation/gitignore-completeness gap, not an actual leak — but worth flagging plainly
+rather than silently fixing without a note, since a prior checkpoint's text had overstated the
+state.
+
+**Known gaps, stated plainly, carried forward:**
+- Still true from BT-013-06/Checkpoint AB: the Design Gallery is a real, evidenced improvement, not
+  the full "at least 15 fully bespoke, screenshot-grade designs across every page" the original
+  brief describes. This checkpoint closes the LAST page-level "one shared template" gap (Shared
+  expenses, Trips) — every required page except the read-only Settings summary (by design) now has
+  genuine per-concept structural variety — but no concept has bespoke hand-crafted art direction
+  beyond pattern composition; this is still fifteen compositions of shared building blocks, not
+  fifteen independently designed interfaces.
+- None of PR #13–#19 is merged to `main` or deployed to Production. Preview's live commit is now
+  `b987c75` (this checkpoint's combined work); Terry's review/merge order for the individual PRs is
+  still his decision.
+- No independent security/financial/UX/accessibility reviewer subagent was available this session
+  (same limitation as prior checkpoints).
+
+**Waiting on Terry:**
+- Everything already listed under Checkpoint AA/AB's "Waiting on Terry" (PR review/merge order,
+  Preview storage key rotation, his final Gallery concept selection, whether to expand the
+  two-column settings layout or curved-accent popover pattern elsewhere).
+- Whether the remaining Gallery scope (bespoke art direction beyond composition, if he wants it) is
+  worth pursuing further, given how large the original "15 fully bespoke designs" ask is.
+
+**Exact next step:** none queued. Preview reflects all six PRs plus this checkpoint's Gallery
+follow-up, combined, as of commit `b987c75`. The next session should check whether Terry has
+reviewed/merged any of PR #13–#19, rebase/re-verify the others if `main` has moved, and pick up his
+feedback — including on the live Preview build itself.
+
+## Checkpoint AD — Bills → Merchant: fixed a REAL regression Terry found on Preview, redeployed
+## (2026-09-18, same session, Terry's explicit report: "The Bills → Merchant workflow is still
+## incorrect. Treat this as an unfinished requirement and regression, not a new feature request.")
+
+**Terry's report, verbatim in substance:** the exact "September internet" / "Northstar Fiber"
+acceptance scenario from the original review still failed on the live Preview build (deployed at
+Checkpoint AB's `5939e6a`, still live at Checkpoint AC's `b987c75` when this report arrived) — a
+bill's saved-but-unlinked typed merchant name went blank in places it should have shown, even
+though PR #14 (`fix/bills-merchant-2026-09-18`, Checkpoint AA) had already shipped real, tested
+work on this exact feature.
+
+**First step, as explicitly instructed: checked the actual Preview build against the branch before
+touching anything**, to know whether this was missing code, incorrect code, or an outdated
+deployment. Traced every consumer of `payeeId`/`payeeName`/`payeeDraftName` across
+`api/recurring/handler.js` and `app/js/ui/views/bills.js`. Verdict: **incorrect code, already
+deployed** — not missing, not stale. The server's `termsView()` projection already returned
+`payeeDraftName` correctly on every bill and every version (confirmed by reading the handler
+directly); the bill editor's own Merchant picker already read it correctly as `current`. The real
+bug was narrower and specific: **two READ-ONLY display sites in `bills.js` checked only
+`payeeName`, with no fallback to `payeeDraftName`:**
+1. The All-bills list row's merchant sub-line (`b.payeeName ? el(...) : null` — showed nothing at
+   all once a merchant record didn't exist yet for the typed name).
+2. The bill's own "Terms over time" history table (`v.payeeName || "—"` — showed an em dash for
+   any version that only ever had a typed, unmatched name).
+
+Both were real, both matched Terry's report exactly, and both are now `payeeName || payeeDraftName`
+fallbacks — the two values are mutually exclusive by construction (the server clears the draft the
+moment a real merchant is linked), so this is a fallback, never a merge of two live values. Also,
+while tracing every acceptance-scenario detail literally against the current code: renamed the
+Pending-merchants section's button from "Add as merchant" to the exact label **"Add merchant"**
+Terry's report specified (same action, wording only), and added a real-browser check that an
+already-resolved merchant is selectable on a BRAND NEW bill by typing part of its name and choosing
+it from the filtered list — the literal last line of Terry's acceptance scenario ("Add another
+bill: 'Northstar Fiber' is now selectable in the Merchant dropdown, which behaves like Category"),
+which nothing before this session had actually exercised end to end.
+
+**New regression coverage, both layers:**
+- `app/test/pickerbills.test.js`: 4 new DOM-double tests against the REAL `createView`/`bills.js`
+  (a typed-but-unlinked name shows on the list row and in "Terms over time"; a linked merchant's
+  real name is shown, not a stale draft; a bill with neither shows no merchant line at all, nothing
+  guessed from its own title). One real test-authoring bug caught and fixed while writing these,
+  before it ever reached the browser: this DOM-double's `querySelectorAll` only supports simple
+  compound selectors (`tag.class[attr]`), never a descendant combinator like `"tbody tr"` — it
+  silently matches nothing rather than erroring, which the first draft of these tests didn't
+  realize until they failed for the wrong reason. Fixed to `"tr"` plus a `.find()` filter.
+- `app/test/pickerviews.test.js`: existing "Add as merchant" assertions renamed to "Add merchant"
+  (same behavior, matching the label change).
+- `scripts/dev/e2e/bills.mjs` (real headless Edge): extended with the exact same list-row and
+  history-table checks against a REAL running server and REAL browser DOM, plus the new-bill
+  merchant-search-and-select check. **This real-browser run caught two genuine test-authoring bugs
+  of its own that the unit tests could not have caught, since they depend on real seeded data
+  interacting across two separate tables on the same page:**
+  1. The list-row checks initially used a bare `document.querySelectorAll("tbody tr")` text search
+     — a real browser DOES support that selector (unlike the DOM double above), but the SAME bill
+     text also legitimately appears in the separate "Needs attention" table above (since the test's
+     bills are due soon/overdue on purpose), which has no merchant column at all; `.find()` matched
+     that row first and failed. Fixed by requiring a `td[data-label="Schedule"]` cell too — a
+     column only the "All bills" table has.
+  2. The "Terms over time" check initially read version row index `[0]` — but versions are appended
+     chronologically (`r.versions.push(version)`, server-side), so index 0 is the bill's ORIGINAL
+     version from creation (correctly "—", nothing was ever typed on it); the version that gained
+     the typed name is the LAST row. Fixed to read the last cell, not the first.
+  Both were caught and root-caused by actually reading the failing checks' own reported actual
+  values (not assumed), then verified fixed by a clean rerun — exactly the kind of thing real
+  seeded data with multiple genuinely different bills exposes that a single hand-built DOM-double
+  fixture does not.
+
+**Evidence, most recent, all real:**
+- `npm test` 500/500 app-suite count on the fix branch (477/477 in isolation before combining, then
+  500/500 again after re-merging into the six-PR integration branch), exit 0 both times.
+- `npm run validate` ok, 24 routes, exit 0.
+- Real headless Edge, `npm run e2e -- --only bills`: 30/30 on the fix branch alone (no popover
+  section — that belongs to a different PR), then **36/36 on the full six-PR combination** (bills +
+  the BT-011-09 popover/curved-accent checks together, since both branches touch the same e2e
+  file), exit 0 both times, cleanup verified.
+- A broader real-browser sanity pass on the combined tree before redeploying:
+  `npm run e2e -- --only settings,accountrequests,gallery,permanentdelete` — **182 passed, 0
+  failed, exit 0** — confirms the `payees.js` button-rename didn't disturb anything else that
+  touches that page.
+
+**Git hygiene.** Fixed on `fix/bills-merchant-2026-09-18` (PR #14's own branch — the natural home
+for a fix to that PR's own feature, never a new branch for what is clearly a continuation of the
+same unit of work), commit `cd9e745`, pushed. Re-merged into `integration/preview-2026-09-18`
+(`fe57d15`) with one real merge conflict in `scripts/dev/e2e/bills.mjs` (both this fix and PR #16's
+popover work independently added checks after the same "a real merchant, once linked" line) —
+resolved by keeping both, in two separate "Add bill" dialog openings (one for the merchant-search
+proof, one for the popover proof), verified with `node --check` and the full real-browser rerun
+above, not just a clean git merge.
+
+**Redeployed to Preview**, same one supported entry point:
+```
+target  : budget-tracker / budget-tracker (preview)
+url     : https://polite-plant-03bb7570f-preview.eastus2.3.azurestaticapps.net
+sha     : fe57d157cba78ef27b975a663deed45336c2cbab
+version : 0.1.0-alpha.1
+checks  : ok target, ok gitState, ok confirmation, ok azureResource, ok settings, ok test,
+          ok validate, ok build, ok secretScan, ok upload, ok commitSetting, ok healthCheck
+result  : SUCCESS
+```
+Independently verified live, separately from the script's own receipt: `GET .../api/site-settings`
+reports `commit: "fe57d157cba78ef27b975a663deed45336c2cbab"` (exact match); `GET /` returns 200;
+anonymous `GET /api/me` returns 401 (auth still enforced).
+
+**What was preserved, as instructed:** no persisted-data shape changed (`payeeDraftName` already
+existed and was already being written and read correctly server-side); this checkpoint fixed only
+how two READ-ONLY views render an existing field, so older bills' real data is unaffected. Where an
+older bill genuinely never had a typed name stored (created before PR #14 shipped, or via direct
+API without one), nothing is invented or guessed from its title — confirmed by a dedicated test
+("a bill with neither a linked merchant nor a typed name shows no merchant line at all").
+
+**Known gaps, stated plainly:** everything already listed under Checkpoint AB/AC's own "Known gaps"
+sections is still true and not repeated here. This checkpoint is scoped narrowly to the one
+regression Terry reported; it does not re-review the rest of Bills → Merchant beyond what his exact
+report named.
+
+**Waiting on Terry:** everything already listed under Checkpoint AA/AB/AC's "Waiting on Terry",
+plus: confirmation that the exact acceptance scenario now holds on the redeployed Preview build
+(`fe57d15`) from his own browser, not just this session's automated evidence.
+
+**Terry's own follow-up (2026-09-18, verbatim):** "ok its not exaclty what i asked for but it
+works." Accepted as working but flagged as not an exact match to what he pictured — he did not yet
+say which part. Asked him directly which of the following (or something else) it is, rather than
+guessing and polishing the wrong thing: the "Add merchant" button's exact wording/placement, the
+merchant picker's interaction feel versus Category's own dropdown (built as a separate but
+similarly-behaving `combo__*` component, never literally swapped to reuse `pickerSelect` itself —
+that could be the actual gap if he meant "the same component", not just "the same pattern"), how
+the list row or history now shows the pending name, or something else in the overall flow. Do not
+close this until his answer arrives; do not silently mark Bills → Merchant fully resolved based on
+"it works" alone.
+
+**Exact next step:** none queued. Preview reflects all six PRs, the Gallery Shared/Trips follow-up,
+and this Bills → Merchant display fix, combined, as of commit `fe57d15`. The next session should
+check whether Terry has reviewed/merged any of PR #13–#19, rebase/re-verify the others if `main`
+has moved, and pick up his feedback on the live Preview build.
+
+## Checkpoint AE — Bills → Merchant: the Merchant field is now the SAME dropdown component as
+## Category, not a lookalike (2026-09-18, same session, Terry's follow-up: "what i did ask for was
+## the drop down to look like that of the category field ... I KEEP CALLING FOR CONSISTENCY")
+
+**What Checkpoint AD actually got wrong.** Terry confirmed the FUNCTIONAL flow (Checkpoint AD)
+matched what he wanted, then named the real remaining gap precisely: the Merchant field's dropdown
+was a bespoke ARIA combobox (`merchantpicker.js`, its own `.combo__*` markup and styling) — it
+behaved correctly but looked like nothing else in the app, when every other dropdown (Category,
+Account, Status, Workspace, member roles, …) is the SAME shared "TaskTracker command picker"
+(`commandpicker.js`, `.cmdpick__*`). This is the third time in this app's history Terry has stated
+this exact principle (2026-09-14, twice, per commandpicker.js's own header comment) — a durable
+preference, not a one-off ask.
+
+**Root fix, in the shared component, not a Merchant-only patch.** The tension: a fixed picklist
+(Category, Account) never needs typed text that matches nothing to become a real value, but the
+Merchant field's whole point (BT-014-11) is exactly that — type a name, leave it, resolve later.
+Added ONE opt-in extension to `commandpicker.js` itself, `allowCustom` (documented as "A16" beside
+the component's existing A1–A15 adaptations), used by nothing else — every existing picker is
+provably unaffected (all 67 pre-existing `commandpicker.test.js` tests still pass unmodified,
+proving Category/Account/Status/Workspace/etc. behave exactly as before). When `allowCustom` is on:
+typed text matching no real option is kept as a single reusable synthetic `<option>` (prefixed with
+an exported `TYPED_OPTION_PREFIX` so a consumer can tell "a real option was chosen" from "this was
+typed and nothing matched" without a second channel), committed on Enter (nothing highlighted), Tab
+out of the panel in either direction, or an outside click/dismissal — deliberately NEVER on Escape,
+which stays "never mind" exactly like every other picker. Choosing a REAL option afterward removes
+the abandoned synthetic draft so it can never linger as a phantom "existing merchant" in the list.
+A caller may also SEED an initial typed value (a bill reopened with a saved, still-unlinked name) by
+placing an option with that same prefix in the select before construction; the picker adopts it.
+
+**New `app/js/ui/merchantselect.js`** replaces the retired `merchantpicker.js` entirely (deleted,
+along with its own test file). `createMerchantSelect()` builds the Merchant field the exact same
+way `pickerSelect()` builds Category/Account — a plain `<select>` handed to `field()`, nothing
+bespoke — with `allowCustom: true` for a bill's own term (`openBillEditor`, `openRecord`'s "review
+and record" dialog reads `readMerchantSelect().payeeId` and ignores a draft there, since recording
+an actual payment always needs a real merchant, unlike the bill's own term) and `allowCustom: false`
+plus a `create: { label: "Add merchant", onPick }` pinned action (the exact same "+ New account"
+pattern already used elsewhere) for `transactions.js`'s quick-entry, which always needs a real
+merchant (BT-007-01) — its own existing inline "New merchant" fieldset is unchanged, only the
+DROPDOWN above it is now the shared component. The Transactions Merchant FILTER was already this
+same picker, unaffected. `setMerchantOptions()` replaces the merchant list on an account change
+(surgically, keeping any live typed-draft option's own DOM node intact) exactly like the old
+`.setItems()` did; `selectMerchant()` replaces `.select()`.
+
+**Real, environment-specific bugs found and fixed while verifying in an actual browser (not
+guessed, not something a unit test could have caught, since they depend on real focus/DOM-event
+sequencing):**
+1. A raw JS `dispatchEvent(new MouseEvent("click"))` used by an EARLIER check (testing "opens on
+   click") opened the picker's panel and then called `.focus()` on the TRIGGER directly — never
+   moving real browser focus into the search box the way a genuine click does (`show()`'s own
+   `holder.focus()`). A later step's `Input.insertText` then landed in whatever WAS actually
+   focused (the bill's own Name field), not the Merchant search box at all. Fixed by having the
+   e2e helper always click the SEARCH BOX directly once the panel is confirmed open, never assuming
+   focus followed a panel-open state.
+2. A short merchant list (under the twelve-option `SEARCH_THRESHOLD`) got no search box at all —
+   correct default behaviour for a closed picklist (Category/Account), but WRONG for Merchant,
+   whose whole purpose is typing free text regardless of list size; a short list's type-ahead-only
+   trigger has no surface for that at all. Fixed by having `createMerchantSelect()` always pass
+   `search: true`, never "auto" — Merchant is now always searchable no matter how few merchants
+   exist yet.
+3. Committing a typed draft by clicking a "neutral" point (the dialog's own title) was unreliable:
+   if the panel happened to open UPWARD and visually overlap the title, the click would land on the
+   panel itself (which does not count as "outside", so nothing commits). Fixed by committing via
+   Shift+Tab out of the search box instead (commandpicker.js's own "first element, backward"
+   edge — works identically whether or not a "+ Add merchant" pinned action is also present, unlike
+   a plain forward Tab which would first land ON that pinned button).
+4. The pinned action's rendered label uses curly quotes (“ ”), not straight ones (") — a
+   copy-paste assumption in the first draft of the e2e check, corrected against the actual
+   `commandpicker.js` template string.
+None of these were product defects in the FINAL shipped code — all four were caught and fixed
+during verification, before anything reached a commit.
+
+**Evidence:**
+- `app/test/commandpicker.test.js`: 9 new tests for `allowCustom` (A16) appended after all 67
+  pre-existing ones, which are unmodified and still pass — direct proof no other picker changed
+  behaviour. Covers: default (no `allowCustom`) commits nothing; Enter commits; Tab-out commits
+  without stealing focus back to the trigger; a click outside commits; Escape does NOT commit;
+  typing the exact name of a real option selects that option instead of duplicating it; editing an
+  already-typed value reuses the same synthetic option; choosing a real option afterward removes
+  the abandoned draft; a caller-seeded initial typed value is adopted, not duplicated.
+- `app/test/pickerbills.test.js` and `app/test/pickertransactions.test.js`: updated to reflect
+  Merchant now appearing as a real picker in `pickerLabels()`, with its own spoken value/instructions
+  matching Category's own pattern exactly; `pickertransactions.test.js`'s merchant-suggestion test
+  rewritten to use the same `chooseOption()` helper every other picker test already uses, instead of
+  driving a now-nonexistent bespoke `input[role="combobox"]` directly.
+- `npm test` 39/651/502 (exit 0); `npm run validate` ok, 24 routes (exit 0).
+- Real headless Edge, `npm run e2e -- --only bills`: 37/37 passed (exit 0) on the fully combined
+  six-PR tree, including a NEW dedicated check with a screenshot confirming Merchant's trigger is
+  literally the same `.cmdpick__trigger` component as Category (same tag, same class, no `.combo`/
+  `.combo__*` markup anywhere on the page) — real DOM proof, not just matching behaviour. The
+  screenshot shows the open Merchant panel with the identical search-row/list/pinned-action/
+  key-hints chrome every other picker in the app already has.
+- A broad real-browser regression pass beyond bills itself, confirming the shared-component change
+  touched nothing else: `npm run e2e -- --only move,remove,shared,accounts,dashboard` (57/57),
+  `npm run e2e -- --only recheck` (38/38, exercises the Transactions quick-entry form's own "Add
+  expense" flow repeatedly without a dedicated merchant-specific scenario file — see "Known gaps"),
+  `npm run e2e -- --only dropdown,settings,accountrequests,gallery,permanentdelete,recheck` (249/249)
+  — all exit 0.
+
+**Git hygiene.** Committed to `fix/bills-merchant-2026-09-18` (PR #14's own branch, the natural
+continuation of the same unit of work), commit `66a5fae`, pushed. Re-merged into
+`integration/preview-2026-09-18` (`f42e95d`) — a CLEAN merge, no conflicts. Redeployed to Preview:
+```
+target  : budget-tracker / budget-tracker (preview)
+url     : https://polite-plant-03bb7570f-preview.eastus2.3.azurestaticapps.net
+sha     : f42e95d681be2142521d50a592480a52ba007fc0
+version : 0.1.0-alpha.1
+checks  : ok target, ok gitState, ok confirmation, ok azureResource, ok settings, ok test,
+          ok validate, ok build, ok secretScan, ok upload, ok commitSetting, ok healthCheck
+result  : SUCCESS
+```
+Independently verified live: `GET .../api/site-settings` reports `commit:
+"f42e95d681be2142521d50a592480a52ba007fc0"` (exact match); `GET /` returns 200; anonymous `GET
+/api/me` returns 401.
+
+**Known gaps, stated plainly:**
+- No DEDICATED new e2e scenario file was added for the Transactions quick-entry Merchant field
+  specifically (Terry's own words only ever named the BILL's merchant field; converting
+  transactions.js too was this session's own extension for full consistency, not something he
+  explicitly asked for). Confidence there rests on `pickertransactions.test.js`'s existing 22 unit
+  tests (all passing, rewritten to use the shared `chooseOption()` helper) plus `recheck.mjs`'s
+  existing, unrelated 38-check real-browser coverage of the same "Add expense" dialog continuing to
+  pass unmodified — real but indirect evidence, not a purpose-built proof the way bills.mjs now has.
+- Everything already listed under Checkpoint AA/AB/AC/AD's own "Known gaps" is still true.
+
+**Waiting on Terry:** everything already listed under Checkpoint AA–AD's "Waiting on Terry", plus:
+confirmation that THIS is what he meant by "look like Category" — the live Preview build now shows
+an actually identical dropdown, not just a similar one, and whether he wants the same purpose-built
+real-browser depth extended to the Transactions quick-entry Merchant field specifically.
+
+**Exact next step:** none queued. Preview reflects all six PRs, the Gallery Shared/Trips follow-up,
+and both Bills → Merchant fixes (display fallback, then component consistency), combined, as of
+commit `f42e95d`. The next session should check whether Terry has reviewed/merged any of PR
+#13–#19, rebase/re-verify the others if `main` has moved, and pick up his feedback on the live
+Preview build — starting with whether the Merchant field now genuinely matches what he pictured.
+
+## Checkpoint AF — the Transactions quick-entry Merchant field, dedicated real-browser proof, and a
+## real bug it found (2026-09-18, same session, Terry: "yes, build the transactions e2e check too.
+## after you done, merge commits if needed, and push to preview")
+
+**What Checkpoint AE left open.** AE's own "Known gaps" said plainly: no dedicated e2e scenario
+existed for the Transactions quick-entry form's Merchant field specifically — only indirect evidence
+(existing unit tests, and `recheck.mjs`'s incidental use of the same "Add expense" dialog for an
+unrelated purpose). Terry asked directly for the same purpose-built depth bills.mjs already has.
+
+**New `scripts/dev/e2e/transactions.mjs`** (registered in `run.mjs`, plus a few missing scenario
+names added to its `ALIASES` and to README's own scenario list, which was already stale before this
+— `bills`/`dashboard`/`accountrequests` were missing from it too). Mirrors bills.mjs's own rigor for
+the Transactions "Add expense" form: a screenshot-backed structural check that Merchant's trigger is
+the literal same `.cmdpick__trigger` component as Category (no bespoke `.combo`/`.combo__*` markup
+anywhere); searching for and selecting an existing merchant; typing a brand-new name offering the
+same "+ Add merchant" pinned action the Account picker's own "+ New account" already uses, opening
+the form's EXISTING inline "New merchant" fieldset — never a left-as-typed draft, since a real
+transaction always needs a real merchant (BT-007-01), unlike a bill's own term (BT-014-11); saving
+and verifying the link directly against the API; the existing duplicate-merchant "Use X" / "Add as a
+separate merchant" recovery path (exercises the SAME pinned action this fix rewired, so it is real
+regression coverage of code this session touched, not an unrelated feature check); and — the check
+that actually found something — switching to an account that cannot use the currently-chosen
+merchant clearing it, with the same accessible announcement as before.
+
+**A real, previously undetected bug, found by that last check, not guessed.** `setMerchantOptions()`
+(the account-change handler that rebuilds the choosable merchant list) removed the currently-selected
+`<option>` and then appended the new choosable ones — but a real `<select>` element, once its
+selected option is removed and options are re-added with nothing explicitly selected, AUTO-SELECTS
+whichever ends up first. Both the "still valid, keep it" and "no longer valid, clear it" checks were
+reading `select.value` AFTER this auto-select already happened, so a private merchant, cleared as
+intended when switching to an incompatible account, silently came back as whatever the FIRST
+remaining option happened to be instead of staying cleared — invisible to every unit test (the DOM
+double does not simulate native `<select>` auto-select behaviour) and to bills.mjs (which never
+exercises an account-change-clears-the-merchant path, since a bill's account is locked once created).
+Fixed by capturing `select.value` ONCE, before any option is touched, and deciding the restore/clear
+against that captured value only, then explicitly restoring or clearing rather than trusting whatever
+the browser landed on mid-rebuild.
+
+**Evidence:**
+- `npm test` 39/651/502 (exit 0); `npm run validate` ok, 24 routes (exit 0).
+- Real headless Edge: `npm run e2e -- --only transactions` 13/13 (exit 0) standalone (first run caught
+  the `setMerchantOptions` bug directly — "switching to a shared account clears a private merchant"
+  failed with the stale merchant still shown; fixed, then a clean rerun); `npm run e2e -- --only
+  bills,transactions` 44/44 together (exit 0) on the fix branch, 50/50 (exit 0) on the fully combined
+  six-PR integration tree — proving the fix and the new scenario coexist cleanly with everything else
+  built this session.
+- `docs/REQUIREMENTS.md` gained BT-014-18, consolidating both this session's Merchant fixes
+  (Checkpoint AD's display fallback and Checkpoint AE's component-consistency fix) into one entry,
+  since they are the same regression thread, not two separate requirements.
+
+**Git hygiene.** Committed to `fix/bills-merchant-2026-09-18` (still the same PR's own branch — this
+is the third checkpoint continuing that one unit of work, never a new branch for what is clearly the
+same thread), commit `b707aca`, pushed. Re-merged into `integration/preview-2026-09-18` (`75577c9`)
+— a clean merge, no conflicts. Redeployed to Preview:
+```
+target  : budget-tracker / budget-tracker (preview)
+url     : https://polite-plant-03bb7570f-preview.eastus2.3.azurestaticapps.net
+sha     : 75577c98422ce9ddcccc3b2197e3ce476d81795b
+version : 0.1.0-alpha.1
+checks  : ok target, ok gitState, ok confirmation, ok azureResource, ok settings, ok test,
+          ok validate, ok build, ok secretScan, ok upload, ok commitSetting, ok healthCheck
+result  : SUCCESS
+```
+Independently verified live: `GET .../api/site-settings` reports `commit:
+"75577c98422ce9ddcccc3b2197e3ce476d81795b"` (exact match); anonymous `GET /api/me` returns 401.
+
+**Known gaps, stated plainly:** everything already listed under Checkpoint AA–AE's own "Known gaps"
+is still true; this checkpoint specifically closes AE's own disclosed gap (no dedicated Transactions
+Merchant e2e coverage) and found a real bug while doing so, rather than merely adding a check that
+happened to pass.
+
+**Waiting on Terry:** everything already listed under Checkpoint AA–AE's "Waiting on Terry" — nothing
+new this checkpoint besides confirmation the fix is what he wanted.
+
+**Exact next step:** none queued. Preview reflects all six PRs, the Gallery Shared/Trips follow-up,
+and all three Bills/Transactions → Merchant fixes (display fallback, component consistency, the
+account-change-clear bug), combined, as of commit `75577c9`. The next session should check whether
+Terry has reviewed/merged any of PR #13–#19, rebase/re-verify the others if `main` has moved, and
+pick up his feedback on the live Preview build.
+
+## Checkpoint AG — NO DROPDOWN MAY SHIFT SURROUNDING CONTENT (BT-004-08), a new requirement from
+## Terry's screenshots, fixed at the root in the shared picker component (2026-09-18, same session)
+
+**What Terry reported.** Screenshots of Add Bill, Add Budget, Add Account and Add Merchant: opening
+the Icon dropdown "creates a large gap and pushes subsequent fields down" — unacceptable throughout
+the app. His instruction was explicit: fix the shared components, then audit every usage; do not
+apply four isolated CSS patches and leave the same defect elsewhere. He also authorized continuing
+every other open thread (Design Gallery, Bills/Merchant, review findings) without pausing to ask,
+and separately said not to touch the storage-key rotation.
+
+**Root cause, confirmed by reading the code, not guessed.** `createThemePicker`
+(`app/js/ui/themepicker.js`) — the ONE shared control behind the Icon picker (`iconpicker.js`, used
+by Accounts, Bills, Planning, Payees — exactly Terry's four named forms), the Colour-palette picker
+(My settings, Workspace, the account-menu header, the Design Gallery preview) and the category
+Colour picker — rendered its option list as a plain normal-flow sibling of its own toggle, with no
+`position` rule at all. `core/popover.js`'s own header comment already named this precisely as
+pre-existing, unfixed debt: "the theme and icon pickers open in normal flow." The command picker
+(Category/Account/Status/Merchant/Workspace/Type) had ALREADY solved this correctly with a
+`position: fixed`, viewport-aware, dialog-portaled overlay (BT-004-04/05/07) — the theme/icon/colour
+family had simply never been brought up to the same standard.
+
+**The fix, at the root, once.** `app/js/ui/overlay.js` (new) extracts the command picker's own
+private placement engine — `overlayHost`, `coarsePointer`, `viewportOf`, `triggerVisible`,
+`placePanel`, `usefulHeight`, `followTrigger` — into a shared module with no behaviour change
+(`commandpicker.js` now imports it instead of keeping a private copy; its own 76/76 unit tests and
+real-browser `dropdown.mjs` 29/29 passed unmodified, proving the extraction was faithful).
+`themepicker.js`'s list now opens through the exact same engine: portaled to the nearest
+`aria-modal` dialog or `document.body`, positioned and kept anchored on scroll/resize by
+`placePanel`/`followTrigger`, dismissed through the shared `registerPopup` registry (so outside-click
+and rival-popup closing work identically to the command picker), `position: fixed` in
+`components.css` reusing the same `--pop-top`/`--pop-left`/`--pop-max-height`/`--pop-min-width`
+custom properties. `modal.js`'s `escapeBelongsToControl` (so Escape closes the list before the
+dialog) and its Tab-trap `inPanel` helper both updated to recognise `.themepick__list` as a floating
+panel, matching the existing `.cmdpick__panel`/`.popover__panel` pattern. Every
+`createIconPicker`/`createThemePicker` call site was audited (`accounts.js`, `bills.js`,
+`planning.js`, `payees.js`, `settings.js`, `workspace.js`, `shell.js`, `gallery.js`) — one fix in the
+shared component reaches all of them; `daynight.js` has no dropdown of its own and needed nothing.
+
+**Downstream test fixes, all mechanical, none behavioural.** Because the list only exists in the
+document while open, and lives on `document.body`/the dialog rather than under the picker's own
+element, four test files needed updating to open the picker before querying its list, and to query
+from `document` rather than the picker's own subtree: `accounteditor.test.js`, `colours.test.js`,
+`icons.test.js` (4 tests). `themepicker.test.js` was rewritten with dedicated no-reflow regression
+tests (the list is never a child of the picker's own element even while open; closing removes it
+from the document entirely, not just hides it; a later field never moves when the list opens or
+closes).
+
+**New dedicated real-browser proof, exactly what Terry asked to see verified.**
+`scripts/dev/e2e/overlay.mjs` (`npm run e2e -- --only overlay`), 25/25 passed, exit 0:
+- Add Account, Add Bill, Add Budget, Add Merchant: the dialog's own primary Save/Create button and
+  its footer (`.modal__foot`) are at the pixel-identical position before and after opening the Icon
+  list, and the dialog's own height is unchanged; the open panel's computed `position` is `fixed`.
+- The 50+-entry Icon list scrolls inside its own height-capped panel, fully inside the viewport
+  (`overflow-y: auto`, a real `max-height`).
+- At a 1024×420 short viewport the list opens upward and stays fully visible — never clipped off
+  the bottom of the screen.
+- At a 390×844 phone layout the same no-reflow proof holds, and the panel stays fully inside the
+  viewport.
+- ArrowDown still moves focus among real, focusable options inside the floated panel; Escape closes
+  only the list (the dialog stays open); a click on the dialog's own title dismisses the panel
+  without closing the dialog (outside-click dismissal).
+- The non-modal My-Settings "Colour palette" picker (same shared component, no dialog involved at
+  all) does not move the next card ("Display and privacy") either before or after, and is also
+  `position: fixed`.
+- No console exceptions, errors or failed requests.
+
+**Evidence.**
+- `npm test` 39/651/505 (repo/api/app), exit 0. `npm run validate` ok, 24 routes, exit 0.
+- `npm run e2e -- --only overlay` 25/25, exit 0 (standalone, isolated fresh seed).
+- `npm run e2e -- --only dropdown,accounts,bills,settings,gallery,overlay` 247/247, exit 0 — a
+  combined regression check of every scenario that touches a modal, a command picker or the
+  theme/icon picker family together, proving the shared-engine refactor coexists cleanly.
+- A full, unfiltered `npm run e2e` (all 21 scenarios, no `--only`) reported 523 passed, 5 failed,
+  exit 1 — but every one of the 5 failures is the SAME pre-existing cause, reproduced starting at the
+  9th scenario (`accounts`), long before `overlay` (the 21st/last) even runs: the fictional `alice`
+  identity's `workspace_rate` limit (10 workspace creations/day, `api/_shared/store.js`) is exhausted
+  by the cumulative `createWorkspace` calls across the growing scenario suite (11 scenarios default
+  to owner `alice`) when they all run back-to-back in one calendar day against one seed. This is a
+  pre-existing e2e-harness scaling gap, not a regression this change introduces — confirmed because
+  the SAME failure mode appears at `accounts`/`bills`/`dashboard`/`transactions` (none of which this
+  session touched) before `overlay` is even reached. Left open as a known gap (see below); the
+  properly scoped combined run above is the real regression evidence for this specific change.
+- `docs/REQUIREMENTS.md` gains **BT-004-08**.
+
+**Git hygiene.** Committed directly to `integration/preview-2026-09-18` (the branch already
+contained checkpoints AE/AF from earlier this same session; continuing on it rather than opening a
+new branch for the same continuing session of work), commits `2f2bea5` (the fix) and `471b6d5`
+(this checkpoint), pushed to origin.
+
+**Deployed to Preview** via `scripts/deploy/deploy.ps1 -Environment preview`:
+```
+target  : budget-tracker / budget-tracker (preview)
+url     : https://polite-plant-03bb7570f-preview.eastus2.3.azurestaticapps.net
+sha     : 471b6d5611df46388d4c453cde038d9bed998d15
+version : 0.1.0-alpha.1
+checks  : ok target, ok gitState, ok confirmation, ok azureResource, ok settings, ok test,
+          ok validate, ok build, ok secretScan, ok upload, ok commitSetting, ok healthCheck
+result  : SUCCESS
+```
+Independently verified live: `GET .../api/site-settings` reports `app.commit:
+"471b6d5611df46388d4c453cde038d9bed998d15"` (exact match); anonymous `GET /api/me` returns 401.
+
+**Known gaps, stated plainly.** Everything already listed under Checkpoints AA–AF's own "Known
+gaps" is still true. New from this checkpoint: (1) the e2e harness's `workspace_rate` scaling limit
+described above — running the FULL suite unfiltered now needs either a higher
+`BT_MAX_WORKSPACE_CREATIONS_PER_DAY` for local/e2e runs, spreading scenarios' `createWorkspace`
+calls across more fictional owners, or running the suite in a few `--only` batches — not fixed here,
+out of scope for BT-004-08; (2) a real screen reader over the floated theme/icon list specifically
+was not checked (the command picker's own screen-reader gap is already tracked under BT-004-07 and
+applies here too); (3) Windows High Contrast and a physical touch device remain unverified (touch
+was emulated).
+
+**Waiting on Terry:** everything already listed under Checkpoints AA–AF's "Waiting on Terry."
+Additionally, this session received a direct contradiction on deployment scope that has NOT been
+acted on either way and needs his explicit word before anything touches `main` or Production: his
+main instruction for this unit of work ended with "No main merge or Production deployment is
+authorized," but a mid-session follow-up said "when all that is complete push to main, preview and
+then production." Per `AGENTS.md`/`CLAUDE.md` (never push to `main`/master, merge PRs or deploy
+Production without Terry's explicit, unambiguous authorization — "Terry controls promotion after
+review") and given the two instructions directly conflict, this session is treating Preview-only as
+the safe, authorized action and is NOT merging to `main` or deploying Production. This needs Terry's
+explicit clarification, not a judgment call, before either happens.
+
+**Exact next step:** deployed and independently verified live (see above, `471b6d5`). Continue
+straight into the Bills/Merchant completeness review and the Design Gallery bespoke-design
+continuation Terry re-authorized in the same instruction, without pausing to ask permission at each
+step; separately, get Terry's explicit word on the main/Production contradiction above before doing
+anything in that direction.
+
+## Checkpoint AH — Design Gallery typography/graphics (BT-013-08), Bills→Merchant verified against
+## deployed Preview (BT-014-18), e2e harness isolation fixed (BT-004-09), backlog recorded
+## (2026-09-18, same session — Terry: "You do not need another invitation to begin the gallery... The
+## Design Gallery is not unbounded... make reasonable design decisions... finish the work... verify
+## the exact acceptance scenario already supplied against the deployed Preview build... fix the E2E
+## harness isolation problem")
+
+**The main/Production contradiction from Checkpoint AG is now resolved**, by Terry's own follow-up
+mid-turn message: the explicit work sequence is finish/verify → report readiness and ASK → only once
+authorized, merge/deploy → then start the new backlog. This checkpoint follows that: everything below
+is finished and verified, deployed to Preview; `main`/Production are NOT touched, and the next message
+to Terry asks for his explicit authorization before either happens.
+
+**1. Design Gallery (BT-013-08).** Terry's screenshots and `docs/Claude-handoff.md` §4 are explicit
+that the Gallery is not unbounded scope and that shared components satisfy "at least 15 distinct,
+polished" designs — he asked for reasonable design decisions using the 7 reference screenshots, not
+another round of "which ones do you want" before delivering. Extracted and viewed all 7 reference
+images directly (from the private local HTML pack, never committed): Acru's sidebar dashboard with a
+circular "Financial health" ring and quick-metrics; Finexa's pill-nav budget bars; Monsy's calm
+transaction table (already matched by existing patterns); a mobile shared-expense split flow (already
+matched); a forecast dashboard's large FILLED trend area; a debt-payoff app's circular progress ring;
+reference 7 (the curved accent) already shipped in Checkpoint AA. Added, real and tested: a
+**`typeVoice` typographic axis** (`technical-mono`/`editorial-serif`/`friendly-rounded`/
+`bold-display` — real font-family/weight/letter-spacing via `[data-voice]` in `app/styles/gallery.css`,
+system fonts only, reused by 2+ concepts each, always combined with each concept's own existing
+structural variety, never a substitute for it) and **two new accessible chart primitives**
+(`areaChart()` — a filled forecast area matching reference 5, wired to Wealth Overview's chart-first
+hero via a new `chartEmphasis: 'area'`; `radialGauge()` — a circular progress ring matching references
+1/6, wired to Goal Navigator's goal-progress hero via `chartEmphasis: 'donut'`, and to Financial
+Command Center's command-console via `chartEmphasis: 'mixed'` — previously declared but never actually
+used by any concept, a real small pre-existing gap now closed too). Comparison matrix gained
+Typography/Charts columns. Found and fixed one real visual-polish bug during the session's own
+screenshot check, not assumed correct from code alone: the first area-chart fill (`--accent-soft`)
+was nearly invisible against a dark background; switched to `color-mix(in srgb, var(--accent) 22%,
+transparent)`, confirmed clearly visible by screenshot afterward.
+- Evidence: `api/test/layouts.test.js` +2 (every concept declares a real `typeVoice`; all voices and
+  chart emphases genuinely used; the two new chart families assigned to exactly the one concept each
+  they were built for). `app/test/gallerypatterns.test.js` +6 (against the REAL manifest through the
+  REAL engine: per-concept `data-voice` attribute; voice reuse; the area chart renders only for
+  Wealth Overview; the two gauges render with real percentages in their accessible labels; the
+  "Budget used" ring appears beside the existing bar chart for the mixed-emphasis concept).
+  `npm test` 39/652/511 (exit 0); `npm run validate` ok, 24 routes (exit 0).
+- Real headless Edge (`npm run e2e -- --only gallery`, extended, **133/133 passed, exit 0**):
+  Executive Ledger (technical-mono) and Wealth Overview (editorial-serif) render two different real
+  computed `font-family` values on their page heading; Wealth Overview's Dashboard shows a visibly
+  filled forecast area; Goal Navigator's Dashboard shows two real rings reading "23%"/"70%" in their
+  accessible labels; Financial Command Center shows the new "Budget used" ring beside its bar
+  forecast; every existing 320px/834px/palette-contrast (midnight/forest/rose × light/dark, all
+  >=4.5:1)/reduced-motion check re-verified against the changed CSS, unchanged.
+- **What this is not, stated plainly (same honest scope note as BT-013-06/07):** not fifteen
+  independently hand-crafted bespoke visual systems — Terry's own brief explicitly does not require
+  that ("shared components are welcome... fifteen separately coded applications are not required").
+  Not independently design/accessibility reviewed by a separate reviewer (none available this
+  session, same limitation as every prior Gallery checkpoint) — the accessibility checks above are
+  self-verified against the app's own established rules.
+
+**2. Bills → Merchant verified against the DEPLOYED Preview build (BT-014-18), not just local tests.**
+Terry: "verify the exact acceptance scenario already supplied against the deployed Preview build. Do
+not ask me to repeat the defect because the register says it is closed." Two complementary, honest
+checks, no forged identity, no live-data mutation:
+- **Byte-identical proof the fix is actually what's running live:** fetched
+  `app/js/ui/views/bills.js`, `payees.js`, `merchantselect.js` and `commandpicker.js` directly from
+  the live Preview HTTPS endpoint and diffed them (after CRLF normalization only) against
+  `git show 471b6d5:<path>` — the exact commit `GET /api/site-settings` reported live at the time.
+  **Zero differing lines in all four files.** This proves the tested code is literally what Preview
+  is serving, not merely "the same source once, somewhere."
+- **Fresh real-browser re-run of the exact acceptance scenario**, right now, against that same code:
+  `npm run e2e -- --only bills` **37/37 passed, exit 0** (Merchant's trigger is the identical
+  `.cmdpick__trigger` Category uses; the list opens on click/focus; a typed-but-unmatched name is
+  saved as `payeeDraftName`, survives reopening, shows on the bill row and its history instead of an
+  em dash; "Add … as a new merchant" links and clears the pending name; typing part of an existing
+  merchant's name filters and selects it like Category's own search); `npm run e2e -- --only
+  transactions` **13/13 passed, exit 0** (the same "+ Add merchant" pinned action from the
+  Transactions quick-entry form, including the duplicate-name "Use X" recovery path).
+- **Disclosed limitation, not silently skipped:** no authenticated interactive session was run
+  against Preview's own live Google sign-in UI — doing so would require either forging an identity
+  (explicitly prohibited: "Identity comes only from trusted server-side claims," and TaskTracker's own
+  rejected-approaches list names forged-identity seed scripts) or repeating the SAME operator-level
+  direct-storage technique already used once for DEMO seeding (which needs the Preview storage
+  account connection string, previously flagged as printed into a session transcript) — this session
+  chose not to re-expose that secret without asking first, rather than doing it silently. The
+  byte-identical-artifact plus fresh-real-browser-scenario evidence above is offered as the honest,
+  strong alternative; flagged to Terry rather than presented as equivalent to a live interactive
+  Preview session.
+
+**3. E2E harness isolation problem fixed (BT-004-09).** Terry: "A full suite that exhausts one shared
+fictional identity's daily quota is unfinished test infrastructure... Do not weaken the application's
+actual limits or silently skip failing scenarios." Root cause reproduced and confirmed (not guessed):
+`run.mjs` shared ONE isolated server/seed across the WHOLE invocation; 11 of the (then) 21 scenarios
+default their `createWorkspace()` owner to the same fictional "alice," so a full unfiltered run
+exhausted her real 10-a-day limit partway through, turning later, unrelated scenarios into false
+failures. Considered and rejected: namespacing identities per scenario (would either transplant real
+ownership away from the named cast, breaking role-based assertions, or break scenarios that depend on
+the ONE globally pre-seeded "Fictional Household" owned by the real alice/bob/carol/dave). **Fixed
+instead exactly as Terry's own alternative wording allowed — "fresh isolated test state":** `run.mjs`'s
+loop now creates a brand-new `createHarness()` (its own port, its own fresh fictional seed) for EVERY
+scenario, closes it and verifies its cleanup before the next scenario starts. Zero changes needed to
+any of the 21 existing scenario files or `fixtures.mjs`. New dedicated scenario `quota.mjs` (API-only,
+its own isolated server) is the "retaining dedicated quota coverage" half: tops alice up from the
+seed's own known 2 pre-existing workspace creations to the real, untouched 10/day limit, confirms the
+11th is refused with `409 workspace_rate` and nothing is written, confirms a different owner (bob) on
+the same server/day is unaffected (the limit is per person, not global), and confirms the refusal
+persists on a further attempt — the real limit, never lowered, never mocked.
+- Evidence: a full, **completely unfiltered** `npm run e2e` (all 22 scenarios) — **626 passed, 0
+  failed, 0 skipped, exit 0**; zero "CLEANUP INCOMPLETE" lines anywhere in the run's own log. `npm
+  test` 39/652/511 (exit 0); `npm run validate` ok, 24 routes (exit 0) — this fix touches only test
+  infrastructure, never application code.
+- Traded off, stated plainly: the full suite now pays the dev-server-boot-and-seed cost once PER
+  scenario instead of once for the whole run, so its total wall-clock time is longer than before.
+  Acceptable: not part of `npm test`'s gate, and correctness/isolation matters more than that time.
+
+**4. Backlog recorded for after this release (BT-015/016/017), per Terry's mid-turn message.** Added
+a new "BACKLOG — authorized for after this release" section near the top of this file (survives a
+session restart) with the exact work sequence (finish/verify → report readiness and ASK for explicit
+main/Production authorization → only once authorized, merge/deploy → then start the backlog on a
+feature branch, Preview-only until separately authorized) and Terry's full acceptance criteria for:
+BT-015 (compact "::" record-action menus on Accounts/Bills/Merchants/Transactions, exact preserved
+action order per type, built on the BT-004-08 overlay engine so opening one never shifts content);
+BT-016 (shared-expense contacts and external participation without an account — a design
+recommendation is required FIRST, before any implementation); BT-017 (My Settings/Workspace Settings
+redesign, task-oriented sections, not another column). Stub rows added to `docs/REQUIREMENTS.md`
+(BT-015/016/017, status Planned) linking back to this file for the full criteria. None of the three is
+started — explicitly authorized only to begin AFTER this release, on a feature branch.
+
+**Git hygiene.** Committed directly to `integration/preview-2026-09-18` (continuing the same session's
+branch, per the established pattern this session), commit `bc322a2`, pushed to origin.
+
+**Deployed to Preview** via `scripts/deploy/deploy.ps1 -Environment preview`:
+```
+target  : budget-tracker / budget-tracker (preview)
+url     : https://polite-plant-03bb7570f-preview.eastus2.3.azurestaticapps.net
+sha     : bc322a2cafa38ad624106937ca7eba047f74b10f
+version : 0.1.0-alpha.1
+checks  : ok target, ok gitState, ok confirmation, ok azureResource, ok settings, ok test,
+          ok validate, ok build, ok secretScan, ok upload, ok commitSetting, ok healthCheck
+result  : SUCCESS
+```
+Independently verified live: `GET .../api/site-settings` reports `app.commit:
+"bc322a2cafa38ad624106937ca7eba047f74b10f"` (exact match), `environment: "preview"`; anonymous
+`GET /api/me` returns 401.
+
+**Known gaps, stated plainly:** everything already listed under Checkpoints AA–AG's own "Known gaps"
+is still true (independent security/financial/UX/accessibility review by a separate reviewer remains
+un-run this whole session — no reviewer subagent was available). New from this checkpoint: (1) the
+Gallery's typography/graphics work is a real, tested, shared-component system, not fifteen bespoke
+hand-crafted designs — disclosed as in-scope per Terry's own brief, not a shortfall; (2) Bills→Merchant
+was verified against the live Preview ARTIFACT and a fresh real-browser run of the exact scenario, but
+NOT through an actual interactive Preview sign-in session (disclosed limitation, needs either Terry's
+own click-through or explicit authorization to re-expose the Preview storage key via the DEMO-seeding
+operator technique); (3) the e2e full suite is now slower in total wall-clock time (traded off
+deliberately for correctness).
+
+**Waiting on Terry:** everything already listed under Checkpoints AA–AG's "Waiting on Terry," plus —
+per his own explicit work sequence — **this session is now asking for his explicit authorization to
+merge `integration/preview-2026-09-18` into `main` and deploy to Preview and Production**, since every
+currently-authorized item above is finished, verified and already independently confirmed live on
+Preview at `bc322a2`.
+
+**Exact next step:** waiting on Terry's explicit authorization (main merge + Preview + Production, per
+his own work-sequence step 2) before doing anything on that front. Once given: merge to `main`
+(fast-forward or PR per his preference), redeploy Preview from `main`, verify, then deploy Production
+and verify, per the established `deploy.ps1` workflow only. After that release is complete: begin
+BT-015 on a feature branch (the most self-contained and least design-decision-blocked of the three
+backlog items), continuing straight into BT-017, and start BT-016 with the required design
+recommendation before any of its implementation.

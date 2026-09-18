@@ -124,7 +124,10 @@ describe("BT-011-05 icon pickers", () => {
     assert.match(toggle.getAttribute("aria-labelledby"), /^iconpick-\d+ /);
     assert.equal(toggle.querySelector("svg").getAttribute("data-icon"), "bag");
     assert.equal(toggle.querySelector("svg").getAttribute("aria-hidden"), "true");
-    const options = p.element.querySelectorAll('[role="option"]');
+    // 2026-09-18: the list is a floating overlay (app/js/ui/overlay.js) — in the document only
+    // while open, and appended to the body/dialog, never under the picker's own `element`.
+    toggle.click();
+    const options = document.querySelectorAll('[role="option"]');
     assert.ok(options.every((o) => o.querySelector("svg")), "every option shows its icon");
     assert.equal(p.getValue(), "bag");
     options.find((o) => o.dataset.theme === "").click();
@@ -140,9 +143,11 @@ describe("BT-011-05 icon pickers", () => {
     const p = createIconPicker({ value: null, inherited: "cart", name: "Groceries" });
     document.body.appendChild(p.element);
     const toggle = p.element.querySelector(".themepick__toggle");
-    const option = p.element.querySelectorAll('[role="option"]')[1];
     assert.equal(escapeBelongsToControl(toggle), false, "a closed picker leaves Escape to the dialog");
     toggle.click();
+    // The open list is a floating overlay (2026-09-18): looked up from the document, not the
+    // picker's own `element`, which no longer contains it while open.
+    const option = document.querySelectorAll('[role="option"]')[1];
     assert.equal(escapeBelongsToControl(option), true);
     assert.equal(escapeBelongsToControl(toggle), true);
     const esc = Object.assign(new DomEvent("keydown", { bubbles: true, key: "Escape" }), { key: "Escape" });
@@ -158,10 +163,12 @@ describe("BT-011-05 icon pickers", () => {
   test("UXI-2 long picker lists: type-ahead to the next matching name, and PageDown/PageUp", () => {
     const p = createIconPicker({ value: null, inherited: "cart", name: "Groceries" });
     const toggle = p.element.querySelector(".themepick__toggle");
-    const list = p.element.querySelector('[role="listbox"]');
-    const options = p.element.querySelectorAll('[role="option"]');
-    const key = (k) => list.dispatchEvent(Object.assign(new DomEvent("keydown", { bubbles: true, key: k }), { key: k }));
     toggle.click();
+    // Floating overlay (2026-09-18): the open list and its options live on the document body (or
+    // the nearest dialog), not under the picker's own `element`.
+    const list = document.querySelector('[role="listbox"]');
+    const options = document.querySelectorAll('[role="option"]');
+    const key = (k) => list.dispatchEvent(Object.assign(new DomEvent("keydown", { bubbles: true, key: k }), { key: k }));
     assert.equal(document.activeElement, options[0], "opens on the current (default) entry");
     key("h");
     assert.equal(document.activeElement.textContent, "Home");
@@ -175,7 +182,14 @@ describe("BT-011-05 icon pickers", () => {
 
   test("UXI-3 an icon picker for a category previews its icons in the category colour", () => {
     const p = createIconPicker({ value: null, inherited: "cart", name: "Groceries", tint: "#16a34a" });
-    const glyphs = p.element.querySelectorAll(".themepick__icon");
+    const toggle = p.element.querySelector(".themepick__toggle");
+    toggle.click();
+    // The list's own option icons are what this checks — they live on the document body while
+    // open (2026-09-18 overlay fix), not under the picker's own `element`. A simple class selector,
+    // not a descendant combinator: this DOM double only matches single compound selectors. The
+    // toggle's own glyph is included too (it carries the same tint), which only strengthens the
+    // "every one" assertion below.
+    const glyphs = document.querySelectorAll('.themepick__icon');
     assert.ok(glyphs.length > 1);
     assert.ok(glyphs.every((g) => g.style.getPropertyValue("--swatch") === "#16a34a" && !g.hasAttribute("style")));
   });

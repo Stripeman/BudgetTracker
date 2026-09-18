@@ -41,7 +41,11 @@ export async function run(h, t) {
   await b.alice.open("dashboard");
   await b.alice.useWorkspace(W.name);
   await b.alice.goto("bills");
-  await b.alice.waitForText("Record next", { scope: "main" });
+  await b.alice.waitForText(bill.name, { scope: "main" });
+  // BT-015: Record next is inside the row's compact "::" actions menu — open it first. The panel is
+  // a floating overlay portaled OUT of <main> once open, so the wait below is never scoped to it.
+  await b.alice.openRecordMenu(bill.name, { scope: "main" });
+  await b.alice.waitForText("Record next");
 
   const before = await b.alice.evaluate("!!document.querySelector('.floating-tip')");
   t.check("nothing shown before hover/focus", { expected: false, actual: before });
@@ -165,6 +169,7 @@ export async function run(h, t) {
     return row ? row.textContent : null;
   })()`);
   t.check("the All-bills list row shows the now-linked merchant's name", { expected: true, actual: !!(rentRowText && rentRowText.includes("E2E Rent Landlord Co")) });
+  await b.alice.openRecordMenu(bill.name, { scope: "main" });
   await b.alice.click({ role: "button", name: `Edit ${bill.name}` });
   await b.alice.waitFor("!!document.querySelector('.modal')", { what: "the bill's edit dialog" });
   const rentMerchant = await byLabelValue(b.alice, "Merchant");
@@ -221,6 +226,7 @@ export async function run(h, t) {
 
   await b.alice.goto("bills");
   await b.alice.waitForText(futureBill.name, { scope: "main" });
+  await b.alice.openRecordMenu(futureBill.name, { scope: "main" });
   await b.alice.click({ role: "button", name: `Edit ${futureBill.name}` });
   await b.alice.waitFor("!!document.querySelector('.modal')", { what: "the future bill's edit dialog" });
   const futureMerchant = await byLabelValue(b.alice, "Merchant");
@@ -252,6 +258,7 @@ export async function run(h, t) {
   // ---- the Merchant picker opens on click/tap, without typing first (review finding) --------------
   await b.alice.goto("bills");
   await b.alice.waitForText(noNameBill.name, { scope: "main" });
+  await b.alice.openRecordMenu(noNameBill.name, { scope: "main" });
   await b.alice.click({ role: "button", name: `Edit ${noNameBill.name}` });
   await b.alice.waitFor("!!document.querySelector('.modal')", { what: "the no-name bill's edit dialog" });
   const opensOnClick = await b.alice.evaluate(`(() => {
@@ -317,6 +324,7 @@ export async function run(h, t) {
     expected: true, actual: !!(draftRowText && draftRowText.includes("E2E Freshly Typed Merchant")),
   });
   t.note(`list row text: "${draftRowText}"; screenshot: ${shotDraftRow}`);
+  await b.alice.openRecordMenu(noNameBill.name, { scope: "main" });
   await b.alice.click({ role: "button", name: `History of ${noNameBill.name}` });
   await b.alice.waitFor("!!document.querySelector('.modal')", { what: "the bill's history dialog" });
   // The LAST row, not the first: versions are appended chronologically (server-side `.push`), so
@@ -337,6 +345,7 @@ export async function run(h, t) {
   // ---- inline "Add … as a new merchant" from the bill editor resolves it right away ---------------
   await b.alice.goto("bills");
   await b.alice.waitForText(noNameBill.name, { scope: "main" });
+  await b.alice.openRecordMenu(noNameBill.name, { scope: "main" });
   await b.alice.click({ role: "button", name: `Edit ${noNameBill.name}` });
   await b.alice.waitFor("!!document.querySelector('.modal')", { what: "the bill's edit dialog, reopened" });
   const beforeReplace = await byLabelValue(b.alice, "Merchant");

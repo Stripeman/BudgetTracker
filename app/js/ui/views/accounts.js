@@ -12,6 +12,7 @@ import { ACCOUNT_TYPE_LABELS, todayIso, formatDate } from "../../core/format.js"
 import { icon, withIcon, defaultIconFor } from "../icons.js";
 import { createIconPicker, iconChange } from "../iconpicker.js";
 import { managesSharedLists } from "../../core/workspacesettings.js";
+import { createActionsMenu } from "../actionsmenu.js";
 
 const CURRENCIES = ["EUR", "USD", "GBP", "CHF", "SEK", "NOK", "DKK", "PLN", "CZK", "HUF", "CAD", "AUD", "NZD", "JPY", "SGD", "HKD", "INR", "ZAR"];
 const GRANTABLE = [["view-balances", "See balance"], ["view-transactions", "See entries"], ["create", "Add entries"], ["edit", "Edit entries"], ["delete", "Delete entries"], ["comment", "Comment"], ["download-receipts", "Download receipts"], ["export", "Export"]];
@@ -223,13 +224,20 @@ export function createView(ctx) {
         el("td", { "data-label": "Type", text: `${ACCOUNT_TYPE_LABELS[a.type] || a.type} · ${a.currency}` }),
         el("td", { "data-label": "Who can see it" }, [accessBadge(a)]),
         el("td", { "data-label": "Balance", class: "num" }, [a.balance !== undefined ? money(a.balance, a.currency, prefs) : el("span", { class: "muted small", text: "Not shared with you" })]),
-        el("td", { "data-label": "" }, [el("div", { class: "row-actions" }, [
-          button("Who can see this", () => openWhoCanSee(ctx, a), { small: true, attrs: { "aria-label": `Who can see ${a.name}` } }),
-          canManage(a, sharedLists) ? button("Edit", () => openEditAccount(ctx, a), { small: true, attrs: { "aria-label": `Edit ${a.name}` } }) : null,
-          canManage(a, sharedLists) ? button(a.status === "closed" ? "Reopen" : "Close", () => openLifecycle(ctx, a), { small: true, attrs: { "aria-label": `${a.status === "closed" ? "Reopen" : "Close"} ${a.name}` } }) : null,
-          canManage(a, sharedLists) ? button("Remove", () => openRemove(ctx, a, afterRemove), { small: true, attrs: { "aria-label": `Remove ${a.name}` } }) : null,
-          canManage(a, sharedLists) ? button("Delete permanently", () => openPermanentDelete(ctx, a, state.selectedWorkspaceId, afterRemove), { small: true, variant: "danger", attrs: { "aria-label": `Permanently delete ${a.name}` } }) : null,
-        ])]),
+        // BT-015 compact record actions menu (Terry, 2026-09-18): one "::" trigger per row, right-
+        // aligned, replacing a row of separate buttons. Exact preserved order: Edit, Close (or
+        // Reopen), Who can see this, Remove, Delete permanently — same permission checks, same
+        // handlers, same confirmations, unchanged.
+        el("td", { "data-label": "" }, [createActionsMenu({
+          label: `Actions for ${a.name}`,
+          items: [
+            canManage(a, sharedLists) ? { text: "Edit", onClick: () => openEditAccount(ctx, a), attrs: { "aria-label": `Edit ${a.name}` } } : null,
+            canManage(a, sharedLists) ? { text: a.status === "closed" ? "Reopen" : "Close", onClick: () => openLifecycle(ctx, a), attrs: { "aria-label": `${a.status === "closed" ? "Reopen" : "Close"} ${a.name}` } } : null,
+            { text: "Who can see this", onClick: () => openWhoCanSee(ctx, a), attrs: { "aria-label": `Who can see ${a.name}` } },
+            canManage(a, sharedLists) ? { text: "Remove", onClick: () => openRemove(ctx, a, afterRemove), attrs: { "aria-label": `Remove ${a.name}` } } : null,
+            canManage(a, sharedLists) ? { text: "Delete permanently", danger: true, onClick: () => openPermanentDelete(ctx, a, state.selectedWorkspaceId, afterRemove), attrs: { "aria-label": `Permanently delete ${a.name}` } } : null,
+          ],
+        }).element]),
       ]))),
     ])]));
   }

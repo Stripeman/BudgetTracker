@@ -18,6 +18,7 @@ import { formatDate, formatAmount, todayIso, BILL_TYPE_LABELS } from "../../core
 import { icon, withIcon, defaultIconFor, iconLabel } from "../icons.js";
 import { createIconPicker, iconChange } from "../iconpicker.js";
 import { pickerOf } from "../selectpicker.js";
+import { createActionsMenu } from "../actionsmenu.js";
 
 const PRESETS = [
   { value: "weekly", label: "Weekly", freq: "weekly", interval: 1 },
@@ -210,23 +211,29 @@ export function createView(ctx) {
       el("td", { "data-label": "Amount", class: "num" }, [amountCell(b, plain)]),
       el("td", { "data-label": "Schedule", text: scheduleLabel(b.schedule, eff.dateFormat) }),
       el("td", { "data-label": "Next due", text: b.ended ? "Ended" : b.inactiveReason ? "Not active" : b.nextDue ? formatDate(b.nextDue, eff.dateFormat) : "—" }),
-      el("td", { "data-label": "" }, [el("div", { class: "row-actions" }, [
-        // "Record next" wasn't self-explanatory (Terry, 2026-09-17) — a hover/focus tooltip and a
-        // screen-reader description spell out what it does: review, then record, the upcoming payment.
-        b.canRecord && b.nextDue ? infoTip(
-          button("Record next", () => void openRecord(ctx, b, b.nextDue), { small: true, attrs: { "aria-label": `Record next: ${b.name}` } }),
-          `Review this bill's next due payment (${formatDate(b.nextDue, eff.dateFormat)}) and record it as a real entry.`,
-          `${b.id}-record-next-tip`,
-        ) : null,
-        b.canEdit ? button("Edit", () => openBillEditor(ctx, b), { small: true, attrs: { "aria-label": `Edit ${b.name}` } }) : null,
-        b.canEdit ? (b.pausedNow
-          ? button("Resume", () => openResume(ctx, b), { small: true, attrs: { "aria-label": `Resume ${b.name}` } })
-          : button("Pause", () => openPause(ctx, b), { small: true, attrs: { "aria-label": `Pause ${b.name}` } })) : null,
-        // Ending is explicit and explains that history stays (UX2-007).
-        b.canEdit && !b.ended ? button("End", () => openEnd(ctx, b), { small: true, attrs: { "aria-label": `End ${b.name}` } }) : null,
-        button("History", () => openHistory(ctx, b), { small: true, attrs: { "aria-label": `History of ${b.name}` } }),
-        b.canEdit ? button("Delete permanently", () => openPermanentDelete(ctx, b, state.selectedWorkspaceId), { small: true, variant: "danger", attrs: { "aria-label": `Permanently delete ${b.name}` } }) : null,
-      ])]),
+      // BT-015 compact record actions menu (Terry, 2026-09-18): exact preserved order Edit, Record
+      // next, Pause (or Resume), End, History, Delete permanently — same permission checks, same
+      // handlers, same confirmations, unchanged. "Record next"'s own explanatory hover/focus tooltip
+      // (Terry, 2026-09-17) keeps working unchanged: infoTip() only depends on the node's own
+      // hover/focus, not on where it lives in the DOM.
+      el("td", { "data-label": "" }, [createActionsMenu({
+        label: `Actions for ${b.name}`,
+        items: [
+          b.canEdit ? { text: "Edit", onClick: () => openBillEditor(ctx, b), attrs: { "aria-label": `Edit ${b.name}` } } : null,
+          b.canRecord && b.nextDue ? { node: infoTip(
+            el("button", { type: "button", text: "Record next", "aria-label": `Record next: ${b.name}`, onClick: () => void openRecord(ctx, b, b.nextDue) }),
+            `Review this bill's next due payment (${formatDate(b.nextDue, eff.dateFormat)}) and record it as a real entry.`,
+            `${b.id}-record-next-tip`,
+          ) } : null,
+          b.canEdit ? (b.pausedNow
+            ? { text: "Resume", onClick: () => openResume(ctx, b), attrs: { "aria-label": `Resume ${b.name}` } }
+            : { text: "Pause", onClick: () => openPause(ctx, b), attrs: { "aria-label": `Pause ${b.name}` } }) : null,
+          // Ending is explicit and explains that history stays (UX2-007).
+          b.canEdit && !b.ended ? { text: "End", onClick: () => openEnd(ctx, b), attrs: { "aria-label": `End ${b.name}` } } : null,
+          { text: "History", onClick: () => openHistory(ctx, b), attrs: { "aria-label": `History of ${b.name}` } },
+          b.canEdit ? { text: "Delete permanently", danger: true, onClick: () => openPermanentDelete(ctx, b, state.selectedWorkspaceId), attrs: { "aria-label": `Permanently delete ${b.name}` } } : null,
+        ],
+      }).element]),
     ])), "All bills"));
   }
   return { element, update };

@@ -60,8 +60,8 @@
 //   A15 A search box only above twelve options (unless a caller asks for one), decided at each open;
 //       on a coarse pointer a searched list opens with focus on the list, so no keyboard pops up unasked.
 import { el, clear } from "./dom.js";
-import { computePlacement } from "../core/popover.js";
 import { registerPopup } from "./popup.js";
+import { overlayHost, coarsePointer as coarsePointerOf, placePanel, usefulHeight, followTrigger } from "./overlay.js";
 
 let counter = 0;
 
@@ -527,12 +527,11 @@ export function createCommandPicker({ select, label = "Choose", placeholder = ""
     // box, takes focus, so the on-screen keyboard appears only when the person asks for it.
     applySearch();
     holder = searchable && !coarsePointer() ? search : list;
-    // A8 — INSIDE A MODAL DIALOG, THE PANEL LIVES IN THE DIALOG. `aria-modal` tells assistive technology
-    // that nothing outside the dialog exists, so a panel on the body could be unreachable there
-    // (VoiceOver/Safari). It stays `position: fixed`, so where it sits in the tree does not move it.
-    // Outside a dialog it floats on the body, as in TaskTracker.
-    const host = (typeof trigger.closest === "function" && trigger.closest('[aria-modal="true"]')) || doc.body;
-    host.appendChild(panel);
+    // A8 — INSIDE A MODAL DIALOG, THE PANEL LIVES IN THE DIALOG (app/js/ui/overlay.js). `aria-modal`
+    // tells assistive technology that nothing outside the dialog exists, so a panel on the body
+    // could be unreachable there (VoiceOver/Safari). It stays `position: fixed`, so where it sits
+    // in the tree does not move it. Outside a dialog it floats on the body, as in TaskTracker.
+    overlayHost(trigger).appendChild(panel);
     panel.removeAttribute("hidden");
     trigger.setAttribute("aria-expanded", "true");
     search.value = "";
@@ -562,123 +561,29 @@ export function createCommandPicker({ select, label = "Choose", placeholder = ""
     if (restoreFocus && doc && doc.body && doc.body.contains(trigger)) trigger.focus(preventScroll ? { preventScroll: true } : undefined);
   }
 
-  // A12 — THE PANEL FOLLOWS ITS TRIGGER. It is fixed to the viewport, so when the page or a dialog body
-  // scrolls, the window is resized or the on-screen keyboard shrinks the visual viewport, it is placed
-  // again against where the trigger is now. When the trigger has scrolled out of sight (out of the
-  // window, or out of the visible part of a scrolling ancestor), the list closes and focus goes back to
-  // the trigger without scrolling it into view (UX review U1).
+  // A12 — THE PANEL FOLLOWS ITS TRIGGER (app/js/ui/overlay.js, shared with themepicker.js's own
+  // icon/theme/colour lists). Fixed to the viewport, so when the page or a dialog body scrolls, the
+  // window is resized or the on-screen keyboard shrinks the visual viewport, it is placed again
+  // against where the trigger is now. When the trigger has scrolled out of sight (out of the
+  // window, or out of the visible part of a scrolling ancestor), the list closes and focus goes back
+  // to the trigger without scrolling it into view (UX review U1).
   let unfollow = null;
   function follow() {
     stopFollowing();
-    const doc = element.ownerDocument;
-    const view = doc && doc.defaultView;
-    const onMove = (event) => {
-      if (!open) return;
-      const from = event && event.target;
-      // The list's own scrolling moves nothing.
-      if (from && from !== doc && typeof from.getAttribute === "function" && panel.contains(from)) return;
-      if (!triggerVisible()) {
-        close({ preventScroll: true });
-        return;
-      }
-      place();
-    };
-    const vv = view && view.visualViewport;
-    if (doc && typeof doc.addEventListener === "function") doc.addEventListener("scroll", onMove, true);
-    if (view && typeof view.addEventListener === "function") view.addEventListener("resize", onMove);
-    if (vv && typeof vv.addEventListener === "function") {
-      vv.addEventListener("resize", onMove);
-      vv.addEventListener("scroll", onMove);
-    }
-    unfollow = () => {
-      if (doc && typeof doc.removeEventListener === "function") doc.removeEventListener("scroll", onMove, true);
-      if (view && typeof view.removeEventListener === "function") view.removeEventListener("resize", onMove);
-      if (vv && typeof vv.removeEventListener === "function") {
-        vv.removeEventListener("resize", onMove);
-        vv.removeEventListener("scroll", onMove);
-      }
-    };
+    unfollow = followTrigger({
+      trigger, boundary: element, panel, isOpen: () => open,
+      onReposition: place,
+      onOutOfView: () => close({ preventScroll: true }),
+    });
   }
   function stopFollowing() {
     if (unfollow) unfollow();
     unfollow = null;
   }
 
-  // Whether any of the trigger is still visible: inside the viewport and inside every ancestor that
-  // clips its content (a dialog body with overflow:auto).
-  function triggerVisible() {
-    const doc = element.ownerDocument;
-    const view = doc && doc.defaultView;
-    if (!view || typeof trigger.getBoundingClientRect !== "function") return true;
-    const r = trigger.getBoundingClientRect();
-    const vp = viewportOf(view);
-    let top = 0;
-    let left = 0;
-    let bottom = vp.height;
-    let right = vp.width;
-    if (typeof view.getComputedStyle === "function") {
-      for (let n = element.parentNode; n && n !== doc.body && n !== doc.documentElement && typeof n.getBoundingClientRect === "function"; n = n.parentNode) {
-        const style = view.getComputedStyle(n);
-        if (!style || !/(auto|scroll|hidden|clip)/.test(`${style.overflowX} ${style.overflowY}`)) continue;
-        const b = n.getBoundingClientRect();
-        top = Math.max(top, b.top);
-        left = Math.max(left, b.left);
-        bottom = Math.min(bottom, b.bottom);
-        right = Math.min(right, b.right);
-      }
-    }
-    return r.bottom > top && r.top < bottom && r.right > left && r.left < right;
-  }
-
-  // The part of the window that can be seen: the visual viewport when the browser has one (an on-screen
-  // keyboard shrinks it, not the window), in the fixed layout's coordinates.
-  function viewportOf(view) {
-    const width = view.innerWidth;
-    const height = view.innerHeight;
-    const vv = view.visualViewport;
-    if (vv && vv.height > 0 && vv.width > 0) {
-      return { width: Math.min(width, (vv.offsetLeft || 0) + vv.width), height: Math.min(height, (vv.offsetTop || 0) + vv.height) };
-    }
-    return { width, height };
-  }
-
-  // A11 — the least height worth showing: everything in the panel that is not the list (search row,
-  // create button, key hints) plus about two and a half rows, or the whole list when it is shorter.
-  function usefulHeight(panelHeight) {
-    if (typeof list.getBoundingClientRect !== "function") return 0;
-    const listHeight = list.getBoundingClientRect().height || 0;
-    const chrome = Math.max(0, (panelHeight || 0) - listHeight);
-    const content = typeof list.scrollHeight === "number" && list.scrollHeight > 0 ? list.scrollHeight : listHeight;
-    const row = list.querySelector(".cmdpick__opt");
-    const rowHeight = row && typeof row.getBoundingClientRect === "function" ? row.getBoundingClientRect().height || 0 : 0;
-    return Math.ceil(chrome + (rowHeight > 0 ? Math.min(content, rowHeight * 2.5) : content));
-  }
-
-  // Placed against the viewport, outside whatever is scrolling. The position reaches CSS as two
-  // custom properties through the CSSOM — never a style attribute (CSP).
+  // A11 — never a panel too short to read: below this it spans the viewport (popover.js rule 6).
   function place() {
-    const doc = element.ownerDocument;
-    const view = doc && doc.defaultView;
-    if (!view || typeof trigger.getBoundingClientRect !== "function") return;
-    panel.style.removeProperty("--pop-max-height");
-    // A6 — AT LEAST AS WIDE AS THE TRIGGER, set before measuring, so a long option in a wide field
-    // is never cut short by a narrower panel.
-    panel.style.setProperty("--pop-min-width", `${Math.round(trigger.getBoundingClientRect().width)}px`);
-    const natural = panel.getBoundingClientRect();
-    const at = computePlacement({
-      anchor: trigger.getBoundingClientRect(),
-      panel: natural,
-      viewport: viewportOf(view),
-      // A11 — never a panel too short to read: below this it spans the viewport (popover.js rule 6).
-      minUseful: usefulHeight(natural.height),
-    });
-    if (!at) return;
-    panel.style.setProperty("--pop-left", `${Math.round(at.left)}px`);
-    panel.style.setProperty("--pop-top", `${Math.round(at.top)}px`);
-    // CAPPED ONLY WHEN IT DOES NOT FIT (adaptation: TaskTracker sets no cap). `maxHeight` is rounded,
-    // so capping a panel that fits could cut a fraction of a pixel and give a one-row list a
-    // scrollbar — seen in headless Edge before this rule.
-    if (at.maxHeight < natural.height - 0.5) panel.style.setProperty("--pop-max-height", `${Math.floor(at.maxHeight)}px`);
+    placePanel({ trigger, panel, minUseful: usefulHeight({ panel, list, rowSelector: ".cmdpick__opt" }) });
   }
 
   // ---- keyboard -----------------------------------------------------------
@@ -792,10 +697,9 @@ export function createCommandPicker({ select, label = "Choose", placeholder = ""
     markActive({ scroll: false });
   });
 
-  // A15 — a phone or tablet: its primary pointer is coarse.
+  // A15 — a phone or tablet: its primary pointer is coarse (app/js/ui/overlay.js).
   function coarsePointer() {
-    const view = element.ownerDocument && element.ownerDocument.defaultView;
-    return !!(view && typeof view.matchMedia === "function" && view.matchMedia("(pointer: coarse)").matches);
+    return coarsePointerOf(element.ownerDocument && element.ownerDocument.defaultView);
   }
 
   // A14 — a page from `from`, never past either end; an unavailable row is stepped over in the same

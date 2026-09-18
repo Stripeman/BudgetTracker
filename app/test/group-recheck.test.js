@@ -78,8 +78,12 @@ describe("N2: entries recorded from Shared expenses are locked on the Transactio
   });
 
   test("the list offers Edit but no Reverse or Delete for them", () => {
-    // The DOM double has no descendant selectors; the page's other buttons are not Edit, Reverse or Delete.
-    const labels = listOf([OWED]).querySelectorAll("button").map((b) => b.textContent);
+    // BT-015: the row's actions are inside a compact "::" menu — open it first (a floating overlay
+    // on document.body once open). The DOM double has no descendant selectors; the page's other
+    // buttons are not Edit, Reverse or Delete.
+    const root = listOf([OWED]);
+    root.querySelectorAll("button").find((b) => b.classList.contains("actionsmenu__toggle")).click();
+    const labels = document.body.querySelectorAll("button").map((b) => b.textContent);
     assert.ok(labels.includes("Edit"), labels.join(", "));
     assert.equal(labels.includes("Reverse"), false);
     assert.equal(labels.includes("Delete"), false);

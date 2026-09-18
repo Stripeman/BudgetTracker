@@ -243,21 +243,39 @@ export async function run(h, t) {
   // ---- N2 + D: Bob's entries from Shared expenses on his Transactions page ------------------------
   await b.bob.goto("transactions");
   const rows = await b.bob.evaluate(`(() => [...document.querySelectorAll('tbody tr')].filter((r) => r.innerText.includes('Owed to others')).map((r) => ({
-    buttons: [...r.querySelectorAll('button')].map((x) => x.textContent.trim()),
-    enabled: [...r.querySelectorAll('button')].filter((x) => !x.disabled).map((x) => x.textContent.trim()),
-    moveTip: (() => { const m = [...r.querySelectorAll('button')].find((x) => x.textContent.trim() === 'Move to another account'); const tip = m && m.closest('.tip'); return tip ? tip.getAttribute('data-tip') : null; })(),
     marks: [...r.querySelectorAll('svg[data-icon]')].map((s) => s.getAttribute('data-icon')).filter((i) => ['no-money-moved', 'money-in', 'money-out'].includes(i)),
     amount: ((r.querySelector('td[data-label="Amount"]') || {}).innerText || '').replace(/\\s+/g, ' ').trim(),
     size: (() => { const s = r.querySelector('svg[data-icon="no-money-moved"]'); if (!s) return null; const q = s.getBoundingClientRect(); return [Math.round(q.width), Math.round(q.height)]; })(),
   })))()`);
-  // BT-006-05: an entry recorded from Shared expenses also offers "Move to another account" now, but
-  // disabled and explained (N2 applies to a move too — change it in Shared expenses), never enabled.
-  // BT-014-04: "Delete permanently" is also offered (mirrors edit authority, like every other action
-  // here) — enabled, because opening it is always reachable; the impact dialog it opens is what
-  // explains the block (Shared-expenses-recorded entries stay refused there), never the row itself.
-  t.check("N2: Bob's owed entry offers Edit and Delete permanently as working actions; Move to another account is present but disabled and explains why (N2), never Reverse or the recoverable Delete", {
-    expected: { buttons: [["Edit", "Move to another account", "Delete permanently"]], enabled: [["Edit", "Delete permanently"]], tipMentionsShared: true },
-    actual: { buttons: rows.map((r) => r.buttons), enabled: rows.map((r) => r.enabled), tipMentionsShared: rows.every((r) => /Shared expenses/.test(r.moveTip || "")) },
+  // BT-015: the row's actions are inside a compact "::" menu now — open the ONE owed row's own menu,
+  // read its items (including the disabled Move item's own hover-tip explanation), close it again.
+  const owedToggle = await b.bob.evaluate(`(() => { const r = [...document.querySelectorAll('tbody tr')].find((x) => x.innerText.includes('Owed to others')); const t = r && r.querySelector('.actionsmenu__toggle'); if (!t) return null; const q = t.getBoundingClientRect(); return { x: q.left + q.width / 2, y: q.top + q.height / 2 }; })()`);
+  await b.bob.mouseClick(owedToggle.x, owedToggle.y);
+  await b.bob.waitFor("!!document.querySelector('.actionsmenu__panel:not([hidden])')", { what: "the owed row's actions menu" });
+  const owedMenu = await b.bob.evaluate(`(() => {
+    const items = [...document.querySelectorAll('.actionsmenu__panel:not([hidden]) .actionsmenu__item')];
+    const isDisabled = (n) => n.disabled || (n.querySelector('button') && n.querySelector('button').disabled);
+    // The VISIBLE text only — Move's own wrapper legitimately also holds an off-screen sr-only
+    // description (its hover-tip reason), which textContent alone would otherwise include.
+    const visibleText = (n) => { const c = n.cloneNode(true); c.querySelectorAll('.sr-only').forEach((s) => s.remove()); return c.textContent.trim(); };
+    const move = items.find((x) => visibleText(x).startsWith('Move'));
+    return {
+      buttons: items.map(visibleText),
+      enabled: items.filter((x) => !isDisabled(x)).map(visibleText),
+      moveTip: move ? move.getAttribute('data-tip') : null,
+    };
+  })()`);
+  await b.bob.press("Escape");
+  await b.bob.waitFor("!document.querySelector('.actionsmenu__panel:not([hidden])')", { what: "the owed row's actions menu to close" });
+  // BT-006-05: an entry recorded from Shared expenses also offers "Move" (renamed from "Move to
+  // another account") now, but disabled and explained (N2 applies to a move too — change it in Shared
+  // expenses), never enabled. BT-014-04: "Delete permanently" is also offered (mirrors edit authority,
+  // like every other action here) — enabled, because opening it is always reachable; the impact
+  // dialog it opens is what explains the block (Shared-expenses-recorded entries stay refused there),
+  // never the row itself.
+  t.check("N2: Bob's owed entry offers Edit and Delete permanently as working actions; Move is present but disabled and explains why (N2), never Reverse or the recoverable Delete", {
+    expected: { buttons: ["Edit", "Move", "Delete permanently"], enabled: ["Edit", "Delete permanently"], tipMentionsShared: true },
+    actual: { buttons: owedMenu.buttons, enabled: owedMenu.enabled, tipMentionsShared: /Shared expenses/.test(owedMenu.moveTip || "") },
   });
   // L4 (Terry's arrow rule): his share of the dinner Alice paid shows the |==| mark and "Paid by someone
   // else"; each repayment he really made keeps one money-out arrow.
@@ -281,13 +299,10 @@ export async function run(h, t) {
     expected: [{ marks: ["no-money-moved"], amount: "EUR 30.00 No money moved", visible: true }],
     actual: rows.map((r) => ({ marks: r.marks, amount: r.amount, visible: !!r.size && r.size[0] > 0 && r.size[1] > 0 })),
   });
-  // The Edit button in the "Owed to others" row (each row's button has the same name), pressed with a
-  // real mouse click at its centre.
-  const editAt = await b.bob.evaluate(`(() => { const r = [...document.querySelectorAll('tbody tr')].find((x) => x.innerText.includes('Owed to others'));
-    const e = r && [...r.querySelectorAll('button')].find((x) => x.textContent.trim() === 'Edit'); if (!e) return null;
-    e.scrollIntoView({ block: 'center' }); const q = e.getBoundingClientRect(); return { x: q.left + q.width / 2, y: q.top + q.height / 2 }; })()`);
-  if (!editAt) throw new Error("bob: the owed row has no Edit button");
-  await b.bob.mouseClick(editAt.x, editAt.y);
+  // BT-015: Edit is inside the row's own compact "::" menu — open it again, then click Edit.
+  await b.bob.mouseClick(owedToggle.x, owedToggle.y);
+  await b.bob.waitFor("!!document.querySelector('.actionsmenu__panel:not([hidden])')", { what: "the owed row's actions menu, reopened" });
+  await b.bob.click({ text: "Edit", scope: ".actionsmenu__panel:not([hidden])" });
   await b.bob.waitFor("!!document.querySelector('.modal')", { what: "the edit form" });
   const lock = await b.bob.evaluate(`(() => { const m = document.querySelector('.modal'); return { says: m.innerText.includes('follow the shared expense. Change it in Shared expenses'), amountLocked: m.querySelector('input[placeholder="0.00 or 12.50+3.20"]').disabled }; })()`);
   await b.bob.click({ role: "button", name: "Cancel", scope: ".modal" });
@@ -536,6 +551,7 @@ export async function run(h, t) {
 
   // FA-2: removing the still-linked wallet says explicitly that recording moves to another account.
   await b.bob.goto("accounts");
+  await b.bob.openRecordMenu("E2E Bob Wallet", { scope: "main" });
   await b.bob.click({ role: "button", name: "Remove E2E Bob Wallet" });
   await b.bob.waitFor("!!document.querySelector('.modal')", { what: "the Remove dialog" });
   const removeText = await b.bob.text(".modal");

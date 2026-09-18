@@ -30,6 +30,8 @@ const BUILT_IN = Object.freeze([
   ['no-money-moved', 'No money moved', 'system'],
   // The external-link cue beside a link that opens in a new tab (BT-011-06), drawn by the app.
   ['external', 'Opens in a new tab', 'system'],
+  // The compact record-actions menu trigger (BT-015), drawn by the app; never user-selectable.
+  ['more', 'More actions', 'system'],
   ['home', 'Home', 'category'], ['bolt', 'Energy', 'category'], ['cart', 'Groceries', 'category'], ['utensils', 'Dining', 'category'],
   ['car', 'Car', 'category'], ['heart', 'Health', 'category'], ['shield', 'Protection', 'category'], ['film', 'Entertainment', 'category'],
   ['bag', 'Shopping', 'category'], ['plane', 'Travel', 'category'], ['book', 'Education', 'category'], ['gift', 'Gift', 'category'],

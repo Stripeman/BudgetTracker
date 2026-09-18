@@ -29,22 +29,14 @@ const TAG = "e2e-move-fictional-groceries";
 const accountBalances = async (s) => s.evaluate(`(() => { const rows = [...document.querySelectorAll('tbody tr')];
   const of = (name) => { const r = rows.find((x) => x.textContent.includes(name)); return r ? (r.querySelector('td[data-label="Balance"]') || {}).innerText || null : null; }; return { checking: of(${JSON.stringify(CHECKING)}), wallet: of(${JSON.stringify(WALLET)}), joint: of(${JSON.stringify(JOINT)}) }; })()`);
 
-// The seeded "Fictional Household" this run's other scenarios also use already has many rows, so
-// "Move to another account" and "History" are ambiguous by role/name alone (BT-004-06's `click`
-// picks the accessible name; many rows share the same visible button text). Click the one in the
-// row that contains `rowText`, by its exact visible text.
+// BT-015: "Move" (renamed from "Move to another account") and "History" are inside the row's own
+// compact "::" actions menu now, never an inline row button. The seeded "Fictional Household" this
+// run's other scenarios also use already has many rows, so a plain text/role match alone would be
+// ambiguous — open the ONE row's own menu first (found by `rowText`), then click the item by its
+// exact visible text, scoped to that now-open panel.
 async function clickInRow(s, rowText, buttonText) {
-  const at = await s.evaluate(`(() => {
-    const row = [...document.querySelectorAll('tbody tr')].find((r) => r.textContent.includes(${JSON.stringify(rowText)}));
-    const btn = row && [...row.querySelectorAll('button')].find((x) => x.textContent.trim() === ${JSON.stringify(buttonText)} && !x.disabled);
-    if (!btn) return null;
-    btn.scrollIntoView({ block: 'center' });
-    const q = btn.getBoundingClientRect();
-    return { x: q.left + q.width / 2, y: q.top + q.height / 2 };
-  })()`);
-  if (!at) throw new Error(`${s.name}: no working ${JSON.stringify(buttonText)} button in the row containing ${JSON.stringify(rowText)}`);
-  await s.mouseClick(at.x, at.y);
-  await s.settle();
+  await s.openRecordMenu(rowText, { scope: "main" });
+  await s.click({ text: buttonText, scope: ".actionsmenu__panel:not([hidden])" });
 }
 
 export async function run(h, t) {
@@ -82,7 +74,7 @@ export async function run(h, t) {
   // ---- 2. Alice moves it to the right account (Wallet) in her browser -------------------------------
   await b.alice.goto("transactions");
   await b.alice.waitForText(TAG);
-  await clickInRow(b.alice, TAG, "Move to another account");
+  await clickInRow(b.alice, TAG, "Move");
   await b.alice.waitFor("!!document.querySelector('.modal')", { what: "the Move to another account dialog" });
   const reasonPrefill = (await b.alice.locate({ label: "Reason", scope: ".modal" })).value;
   t.check("alice: the reason is pre-filled “Wrong account”", { expected: "Wrong account", actual: reasonPrefill });
@@ -134,7 +126,7 @@ export async function run(h, t) {
   // ---- 5. Alice moves the entry onto the shared account; it appears for Bob ---------------------------
   await b.alice.goto("transactions");
   await b.alice.waitForText(TAG);
-  await clickInRow(b.alice, TAG, "Move to another account");
+  await clickInRow(b.alice, TAG, "Move");
   await b.alice.waitFor("!!document.querySelector('.modal')", { what: "the Move to another account dialog" });
   await b.alice.choose("Move to", `${JOINT} (EUR)`, { scope: ".modal" });
   const visibilityNote = await b.alice.text(".modal");

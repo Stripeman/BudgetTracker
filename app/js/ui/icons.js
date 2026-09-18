@@ -83,6 +83,9 @@ const ART = {
   clock: [c(12, 12, 9), p("M12 7v5.2l3.3 2.3")],
   globe: [c(12, 12, 9), p("M3 12h18"), p("M12 3a13.5 13.5 0 0 1 0 18 13.5 13.5 0 0 1 0-18z")],
   suitcase: [rect(6, 6, 12, 13, 2), p("M9.5 6V3.5h5V6"), p("M10 9v7"), p("M14 9v7"), p("M9 19v2"), p("M15 19v2")],
+  // The compact record-actions menu trigger (BT-015, Terry, 2026-09-18: "a four-dot icon arranged in
+  // two rows and two columns, visually like '::'"): four small filled dots, never text/punctuation.
+  more: [["circle", { cx: 8, cy: 8, r: 1.7, fill: "currentColor", stroke: "none" }], ["circle", { cx: 16, cy: 8, r: 1.7, fill: "currentColor", stroke: "none" }], ["circle", { cx: 8, cy: 16, r: 1.7, fill: "currentColor", stroke: "none" }], ["circle", { cx: 16, cy: 16, r: 1.7, fill: "currentColor", stroke: "none" }]],
 };
 
 const LABELS = {
@@ -95,11 +98,12 @@ const LABELS = {
   cash: "Cash", "credit-card": "Card", loan: "Loan", mortgage: "Mortgage", store: "Store", "chart-line": "Investment", diamond: "Valuable",
   scale: "Balance", building: "Office", user: "Person", users: "Group", repeat: "Recurring", calendar: "Calendar", "id-card": "Membership",
   target: "Goal", filter: "Filter", "chart-pie": "Report", bell: "Bell", alert: "Warning", clock: "Clock", globe: "Globe", suitcase: "Trip",
+  more: "More actions",
 };
 
 export const FALLBACK = "fallback";
 export const BUILT_IN_IDS = Object.freeze(Object.keys(ART));
-export const SYSTEM_IDS = Object.freeze(["fallback", "money-in", "money-out", "transfer", "reversal", "no-money-moved", "external"]);
+export const SYSTEM_IDS = Object.freeze(["fallback", "money-in", "money-out", "transfer", "reversal", "no-money-moved", "external", "more"]);
 
 // The same allow-list the server applies to uploads (api/_shared/icon-svg.js).
 const SHAPES = Object.freeze({ path: ["d"], circle: ["cx", "cy", "r"], rect: ["x", "y", "width", "height", "rx", "ry"], line: ["x1", "y1", "x2", "y2"], polyline: ["points"], polygon: ["points"] });

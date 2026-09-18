@@ -14,6 +14,15 @@ afterEach(() => dom.teardown());
 const tick = () => new Promise((resolve) => setTimeout(resolve, 0));
 const buttonNamed = (root, text) => root.querySelectorAll("button").find((b) => b.textContent === text);
 const labelled = (root, label) => root.querySelectorAll("button").find((b) => b.getAttribute("aria-label") === label);
+// BT-015: a row's actions are inside a compact "::" menu, closed by default (a floating overlay on
+// document.body once open, never a child of the row itself) — open the row's own toggle by its
+// record name before looking for one of its items by aria-label.
+const openRowMenu = (root, rowText) => {
+  const row = [...root.querySelectorAll("tr")].find((tr) => tr.textContent.includes(rowText));
+  const toggle = row && row.querySelectorAll("button").find((b) => b.classList.contains("actionsmenu__toggle"));
+  if (toggle && toggle.getAttribute("aria-expanded") !== "true") toggle.click();
+  return row;
+};
 const ready = (data) => ({ workspaceId: "ws_1", status: "ready", error: null, data });
 
 const EMPTY = { id: "acc_new", name: "Wrong wallet", type: "cash", currency: "EUR", visibility: "private", access: "own", ownedBySelf: true, status: "open", capabilities: ["create", "view-transactions"], hasEntries: false, balance: "0.00", revision: 1 };
@@ -56,21 +65,28 @@ function open(options) {
 describe("BT-006-05 Remove on the Accounts page", () => {
   test("Remove is offered on the person's own accounts and, for an owner, on shared ones; never on an account shared with them", () => {
     const { view } = open();
-    assert.ok(labelled(view.element, "Remove Wrong wallet"));
-    assert.ok(labelled(view.element, "Remove Everyday"));
-    assert.ok(labelled(view.element, "Remove Joint"), "owners manage shared lists");
-    assert.equal(labelled(view.element, "Remove Alice Savings"), undefined, "someone else's account shared with me");
+    openRowMenu(view.element, "Wrong wallet");
+    assert.ok(labelled(dom.body, "Remove Wrong wallet"));
+    openRowMenu(view.element, "Everyday");
+    assert.ok(labelled(dom.body, "Remove Everyday"));
+    openRowMenu(view.element, "Joint");
+    assert.ok(labelled(dom.body, "Remove Joint"), "owners manage shared lists");
+    openRowMenu(view.element, "Alice Savings");
+    assert.equal(labelled(dom.body, "Remove Alice Savings"), undefined, "someone else's account shared with me");
   });
 
   test("a plain member who does not manage shared lists gets no Remove on the shared account", () => {
     const { view } = open({ role: "member" });
-    assert.equal(labelled(view.element, "Remove Joint"), undefined);
-    assert.ok(labelled(view.element, "Remove Wrong wallet"), "their own private account");
+    openRowMenu(view.element, "Joint");
+    assert.equal(labelled(dom.body, "Remove Joint"), undefined);
+    openRowMenu(view.element, "Wrong wallet");
+    assert.ok(labelled(dom.body, "Remove Wrong wallet"), "their own private account");
   });
 
   test("an account with no entries: the dialog says so, the reason is pre-filled and Remove account sends it", async () => {
     const { view, calls } = open();
-    labelled(view.element, "Remove Wrong wallet").click();
+    openRowMenu(view.element, "Wrong wallet");
+    labelled(dom.body, "Remove Wrong wallet").click();
     const dialog = dom.body.querySelector(".modal");
     assert.equal(dialog.querySelector("h2").textContent, "Remove Wrong wallet?");
     assert.match(dialog.textContent, /This account has no entries\. It will be removed from your lists\. You can bring it back from Removed accounts\./);
@@ -89,7 +105,8 @@ describe("BT-006-05 Remove on the Accounts page", () => {
 
   test("an empty account whose reason was cleared is still removed with the pre-filled reason (the server keeps one)", async () => {
     const { view, calls } = open();
-    labelled(view.element, "Remove Wrong wallet").click();
+    openRowMenu(view.element, "Wrong wallet");
+    labelled(dom.body, "Remove Wrong wallet").click();
     const dialog = dom.body.querySelector(".modal");
     dialog.querySelector("input").value = "  ";
     buttonNamed(dialog, "Remove account").click();
@@ -99,7 +116,8 @@ describe("BT-006-05 Remove on the Accounts page", () => {
 
   test("an account with entries: the dialog explains that everything is kept, needs a reason and offers Close instead", async () => {
     const { view, calls } = open();
-    labelled(view.element, "Remove Everyday").click();
+    openRowMenu(view.element, "Everyday");
+    labelled(dom.body, "Remove Everyday").click();
     const dialog = dom.body.querySelector(".modal");
     assert.equal(dialog.querySelector("h2").textContent, "Remove Everyday?");
     assert.match(dialog.textContent, /This account has entries\./);
@@ -122,20 +140,23 @@ describe("BT-006-05 Remove on the Accounts page", () => {
 
   test("an account currently linked in Shared expenses: the dialog adds that it will be recorded elsewhere next time; one with entries but no active link does not say that", async () => {
     const { view } = open({ accounts: [EMPTY, USED, JOINT, GRANTED, LINKED] });
-    labelled(view.element, "Remove Bob Wallet").click();
+    openRowMenu(view.element, "Bob Wallet");
+    labelled(dom.body, "Remove Bob Wallet").click();
     const dialog = dom.body.querySelector(".modal");
     assert.match(dialog.textContent, /This account has entries\./, "still the entries wording");
     assert.match(dialog.textContent, /This account is linked in Shared expenses\. If you record your part there again, it will be recorded on a different account\./);
     buttonNamed(dialog, "Cancel").click();
     await tick();
-    labelled(view.element, "Remove Everyday").click();
+    openRowMenu(view.element, "Everyday");
+    labelled(dom.body, "Remove Everyday").click();
     const other = dom.body.querySelector(".modal");
     assert.doesNotMatch(other.textContent, /linked in Shared expenses/);
   });
 
   test("Close instead opens the Close dialog for that account", () => {
     const { view } = open();
-    labelled(view.element, "Remove Everyday").click();
+    openRowMenu(view.element, "Everyday");
+    labelled(dom.body, "Remove Everyday").click();
     buttonNamed(dom.body.querySelector(".modal"), "Close instead").click();
     const dialogs = dom.body.querySelectorAll(".modal");
     assert.equal(dialogs.length, 1, "the Remove dialog is closed first");
@@ -144,7 +165,8 @@ describe("BT-006-05 Remove on the Accounts page", () => {
 
   test("a refusal from the server is shown inside the dialog, which stays open", async () => {
     const { view } = open({ removeFails: "Only the account owner (or a manager for shared accounts) can do that." });
-    labelled(view.element, "Remove Wrong wallet").click();
+    openRowMenu(view.element, "Wrong wallet");
+    labelled(dom.body, "Remove Wrong wallet").click();
     const dialog = dom.body.querySelector(".modal");
     buttonNamed(dialog, "Remove account").click();
     await tick();
@@ -154,7 +176,8 @@ describe("BT-006-05 Remove on the Accounts page", () => {
 
   test("Escape closes the dialog without removing anything", async () => {
     const { view, calls } = open();
-    labelled(view.element, "Remove Wrong wallet").click();
+    openRowMenu(view.element, "Wrong wallet");
+    labelled(dom.body, "Remove Wrong wallet").click();
     document.dispatchEvent(new DomEvent("keydown", { key: "Escape" }));
     await tick();
     assert.equal(dom.body.querySelector(".modal"), null);

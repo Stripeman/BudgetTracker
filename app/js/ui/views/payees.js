@@ -12,6 +12,7 @@ import { formatDate, todayIso, MERCHANT_TYPE_LABELS } from "../../core/format.js
 import { normalize } from "../merchantselect.js";
 import { icon, withIcon, iconLabel, defaultIconFor } from "../icons.js";
 import { createIconPicker, iconChange } from "../iconpicker.js";
+import { createActionsMenu } from "../actionsmenu.js";
 
 const FIELD_LABELS = {
   name: "Name", aliases: "Other names", type: "Type", contact: "Contact details", customerNumber: "Customer number",
@@ -148,13 +149,19 @@ export function createView(ctx) {
           el("td", { "data-label": "Net", class: "num" }, [st ? amountText(st.net, st.currency, plain) : "—"]),
           el("td", { "data-label": "Entries", class: "num", text: st ? String(st.count) : "0" }),
           el("td", { "data-label": "Last entry", text: st ? formatDate(st.lastDate, dateFormat) : "" }),
-          el("td", { "data-label": "" }, i === 0 ? [el("div", { class: "row-actions" }, [
-            button("View history", () => ctx.navigate("transactions", { payeeId: p.id }), { small: true, attrs: { "aria-label": `View history for ${p.name}` } }),
-            p.canEdit ? button("Edit", () => openMerchantEditor(ctx, p), { small: true, attrs: { "aria-label": `Edit ${p.name}` } }) : null,
-            p.canEdit && p.status !== "closed" ? button("Close", () => openLifecycle(ctx, p, "archive"), { small: true, attrs: { "aria-label": `Close ${p.name}` } }) : null,
-            p.canEdit && p.status === "closed" ? button("Reopen", () => openLifecycle(ctx, p, "reopen"), { small: true, attrs: { "aria-label": `Reopen ${p.name}` } }) : null,
-            p.canEdit ? button("Delete permanently", () => openPermanentDelete(ctx, p, state.selectedWorkspaceId), { small: true, variant: "danger", attrs: { "aria-label": `Permanently delete ${p.name}` } }) : null,
-          ])] : []),
+          // BT-015 compact record actions menu (Terry, 2026-09-18): exact preserved order Edit,
+          // History (renamed from "View history"), Close (or Reopen), Delete permanently — same
+          // permission checks, same handlers, unchanged.
+          el("td", { "data-label": "" }, i === 0 ? [createActionsMenu({
+            label: `Actions for ${p.name}`,
+            items: [
+              p.canEdit ? { text: "Edit", onClick: () => openMerchantEditor(ctx, p), attrs: { "aria-label": `Edit ${p.name}` } } : null,
+              { text: "History", onClick: () => ctx.navigate("transactions", { payeeId: p.id }), attrs: { "aria-label": `History for ${p.name}` } },
+              p.canEdit && p.status !== "closed" ? { text: "Close", onClick: () => openLifecycle(ctx, p, "archive"), attrs: { "aria-label": `Close ${p.name}` } } : null,
+              p.canEdit && p.status === "closed" ? { text: "Reopen", onClick: () => openLifecycle(ctx, p, "reopen"), attrs: { "aria-label": `Reopen ${p.name}` } } : null,
+              p.canEdit ? { text: "Delete permanently", danger: true, onClick: () => openPermanentDelete(ctx, p, state.selectedWorkspaceId), attrs: { "aria-label": `Permanently delete ${p.name}` } } : null,
+            ],
+          }).element] : []),
         ]));
       })),
     ])]));

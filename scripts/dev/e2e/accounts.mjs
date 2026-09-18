@@ -9,7 +9,17 @@ export const name = "accounts";
 export const title = "Editing an account: Alice updates institution, opening balance and icon in her browser; Bob sees no Edit on a shared account he cannot manage";
 export const needsBrowser = true;
 
-const rowButtons = (s, text) => s.evaluate(`(() => { const r = [...document.querySelectorAll('tbody tr')].find((x) => x.innerText.includes(${JSON.stringify(text)})); return r ? [...r.querySelectorAll('button')].map((x) => x.textContent.trim()) : null; })()`);
+// BT-015: a row's own buttons plus, if its compact actions menu is open, that menu's own items too
+// (the panel is a floating overlay portaled OUT of the row once open, never a descendant of it).
+const rowButtons = (s, text) => s.evaluate(`(() => {
+  const r = [...document.querySelectorAll('tbody tr')].find((x) => x.innerText.includes(${JSON.stringify(text)}));
+  if (!r) return null;
+  const own = [...r.querySelectorAll('button')].map((x) => x.textContent.trim());
+  const toggle = r.querySelector('.actionsmenu__toggle');
+  const open = toggle && toggle.getAttribute('aria-expanded') === 'true';
+  const menuItems = open ? [...document.querySelectorAll('.actionsmenu__panel:not([hidden]) .actionsmenu__item')].map((x) => x.textContent.trim()) : [];
+  return [...own, ...menuItems];
+})()`);
 
 // Opens the icon picker inside the edit dialog and clicks the option with the given icon id (the
 // same custom listbox as the theme picker: `.themepick__toggle` and `[role="option"][data-theme]`,
@@ -41,6 +51,8 @@ export async function run(h, t) {
   // ---- Alice edits her own private account: institution, opening balance and icon ------------------
   await b.alice.goto("accounts");
   await b.alice.waitForText(wallet.name, { scope: "main" });
+  // BT-015: Edit is now inside the row's compact "::" actions menu.
+  await b.alice.openRecordMenu(wallet.name, { scope: "main" });
   await b.alice.click({ role: "button", name: `Edit ${wallet.name}` });
   await b.alice.waitFor("!!document.querySelector('.modal')", { what: "the edit dialog" });
   await b.alice.fill({ label: "Institution", scope: ".modal" }, "E2E New Bank");
@@ -62,6 +74,7 @@ export async function run(h, t) {
   // ---- a reconciled credit card: Type/Currency read-only, opening fields locked, terms shown --------
   await b.alice.goto("accounts");
   await b.alice.waitForText(card.name, { scope: "main" });
+  await b.alice.openRecordMenu(card.name, { scope: "main" });
   await b.alice.click({ role: "button", name: `Edit ${card.name}` });
   await b.alice.waitFor("!!document.querySelector('.modal')", { what: "the card's edit dialog" });
   const layout = await b.alice.evaluate(`(() => {
@@ -87,6 +100,8 @@ export async function run(h, t) {
   // ---- Bob (member, not a manager) sees no Edit on the shared account he cannot manage --------------
   await b.bob.goto("accounts");
   await b.bob.waitForText(joint.name, { scope: "main" });
+  // BT-015: the row's actions are inside a compact "::" menu now — open it, then read its items.
+  await b.bob.openRecordMenu(joint.name, { scope: "main" });
   const bobButtons = await rowButtons(b.bob, joint.name);
   t.check("Bob (a plain member) is offered no Edit on the shared account (only Who can see this)", {
     expected: { edit: false, whoCanSee: true },
