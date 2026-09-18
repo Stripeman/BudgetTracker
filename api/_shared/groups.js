@@ -161,7 +161,11 @@ function normalizePayers(input, totalMinor, currency, checkRef) {
 
 // Who may take part: active members and shared (workspace) contacts. Private contacts never — the
 // other members cannot see them. People already on the record being edited stay allowed even if they
-// have since left or been archived, so a correction never loses who paid or who shared.
+// have since left or been archived, so a correction never loses who paid or who shared. A contact
+// that has since JOINED as a member (BT-009-15) is refused for a NEW submission the same way an
+// archived one is — going forward, the relationship is recorded as the member they are, not the
+// contact they were — but an existing record that already names them (`keep`) stays exactly as it
+// was reviewed, never invalidated by something that happened after it was recorded.
 function participantChecker(doc, keep = new Set()) {
   return (ref) => {
     const { type, id } = people.parseRef(ref);
@@ -173,14 +177,45 @@ function participantChecker(doc, keep = new Set()) {
       if (!m || (m.status !== 'active' && !keep.has(ref))) throw badRequest('That member is not active in this workspace.', 'invalid_person');
     } else {
       const c = (doc.contacts || []).find((x) => x.id === id);
-      if (!c || (c.deletedAt && !keep.has(ref))) throw badRequest('That contact does not exist in this workspace.', 'invalid_person');
+      if (!c || ((c.deletedAt || c.joinedMemberId) && !keep.has(ref))) throw badRequest('That contact does not exist in this workspace.', 'invalid_person');
     }
     return ref;
   };
 }
 
+// BT-009-15 (Terry's split-costs check, 2026-09-14): "inviting a shared contact to join links the
+// invitation to that contact; on acceptance the new member's expenses, shares, payments and
+// balance continue from the contact's... the records themselves never rewritten." A contact that
+// has joined carries `joinedMemberId` (set by api/invitations/handler.js's accept route);
+// `canonicalRef` maps its OLD `contact:<id>` ref onto the new `member:<id>` ref for every
+// calculation below, while the STORED records (`doc.groupExpenses`/`groupSettlements`) keep their
+// original ref forever, completely untouched — this only ever affects a derived, recomputed-on-
+// read view, never what is saved (matching every other balance/suggestion/direct value in this
+// file, none of which is ever stored either).
+function canonicalRef(doc, ref) {
+  if (typeof ref !== 'string' || !ref.startsWith('contact:')) return ref;
+  const c = (doc.contacts || []).find((x) => x.id === ref.slice('contact:'.length));
+  return c && c.joinedMemberId ? `member:${c.joinedMemberId}` : ref;
+}
+// A read-only VIEW of the document with every payer/share/settlement ref canonicalized, used as
+// the one choke point every calculation in this file reads shared-expense records through — so a
+// joined contact's history is combined with their member's without needing to remember to
+// canonicalize at each of the many places a ref is read. Returns the SAME object, no copy at all,
+// when nothing has ever joined (the overwhelmingly common case) — this is not a mutation either
+// way: `doc` itself is never written to.
+function canonicalDoc(doc) {
+  if (!(doc.contacts || []).some((c) => c.joinedMemberId)) return doc;
+  const remap = (ref) => canonicalRef(doc, ref);
+  return {
+    ...doc,
+    groupExpenses: (doc.groupExpenses || []).map((e) => ({ ...e, payers: (e.payers || []).map((p) => ({ ...p, ref: remap(p.ref) })), shares: (e.shares || []).map((s) => ({ ...s, ref: remap(s.ref) })) })),
+    groupSettlements: (doc.groupSettlements || []).map((s) => ({ ...s, from: remap(s.from), to: remap(s.to) })),
+  };
+}
+
 // ---- people ----------------------------------------------------------------------------------
 function recordRefs(doc) {
+  doc = canonicalDoc(doc);
   const out = [];
   for (const e of doc.groupExpenses || []) {
     for (const p of e.payers || []) out.push(p.ref);
@@ -192,13 +227,15 @@ function recordRefs(doc) {
 
 // Everyone who can be chosen now (active members in joining order, then shared contacts), followed
 // by anyone else the records name (former members, archived contacts), marked inactive. This order
-// is also the stable tie order for suggestions.
+// is also the stable tie order for suggestions. A contact who has joined (BT-009-15) is never
+// listed separately — their own member entry above already represents them, and their past
+// records now resolve to that same ref (canonicalRef), so they would otherwise appear twice.
 function participants(doc, principal) {
   const out = [];
   const seen = new Set();
   const push = (p) => { if (!seen.has(p.ref)) { seen.add(p.ref); out.push(p); } };
   for (const m of model.activeMembers(doc)) push({ ref: `member:${m.id}`, name: m.name || 'Member', type: 'member', self: !!principal && m.subject === principal.subject, active: true });
-  for (const c of doc.contacts || []) if (!c.deletedAt) push({ ref: `contact:${c.id}`, name: c.name, type: 'contact', self: false, active: true });
+  for (const c of doc.contacts || []) if (!c.deletedAt && !c.joinedMemberId) push({ ref: `contact:${c.id}`, name: c.name, type: 'contact', self: false, active: true });
   for (const ref of recordRefs(doc)) {
     if (seen.has(ref)) continue;
     const l = people.labelFor(ref, { doc });
@@ -321,6 +358,9 @@ function direct(doc, currency, rank, countReported = true, counted = null) {
 // `countReported` (the group setting, default on): when off, suggestions and the direct view count
 // confirmed payments only, like the balances themselves.
 function balances(doc, order, { ensureCurrency = null, countReported = true } = {}) {
+  // BT-009-15: canonicalized once here, at the top — `direct()` below is only ever called from
+  // within this same function, so it receives the already-canonicalized doc too.
+  doc = canonicalDoc(doc);
   const index = new Map(order.map((r, i) => [r, i]));
   const rank = (ref) => (index.has(ref) ? index.get(ref) : order.length);
   const tables = new Map();
@@ -538,5 +578,5 @@ module.exports = {
   METHODS, SETTLEMENT_STATES, MAX_LINES, MAX_GROUP_MINOR, HUNDRED_PERCENT,
   percentUnits, percentText, positiveAmount, computeShares, normalizeSplit, normalizePayers, participantChecker,
   participants, recordRefs, sumByRef, balances, openCurrencies, desiredEntries, recordedOutside, invariantProblem, memberIds,
-  foreignWorkspaceIds,
+  foreignWorkspaceIds, canonicalRef, canonicalDoc,
 };

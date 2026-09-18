@@ -276,6 +276,13 @@ function contactImpact(doc, contact) {
   if (txns.length) blockers.push(`${txns.length} entr${txns.length === 1 ? 'y names' : 'ies name'} this contact as responsible for it. Change ${txns.length === 1 ? 'it' : 'them'} first.`);
   const inGroups = [...(doc.groupExpenses || []), ...(doc.groupSettlements || [])].some((rec) => JSON.stringify(rec).includes(ref));
   if (inGroups) blockers.push('This contact appears in Shared expenses history, which needs it to stay meaningful. It cannot be permanently deleted while that history refers to it; archive it instead.');
+  // BT-009-15: a contact who has joined as a member carries the link (`joinedMemberId`) that lets
+  // their shared-expense history continue from the contact into the member; deleting the contact
+  // record would sever the one place that link is recorded, even on a contact never itself
+  // referenced by name in `groupExpenses`/`groupSettlements` (e.g. invited and accepted before
+  // ever taking part in an expense as the contact) — so this is its own blocker, not folded into
+  // `inGroups` above.
+  if (contact.joinedMemberId) blockers.push('This contact has joined as a member, and this record keeps the link between their history as a contact and as a member. It cannot be permanently deleted; archive it instead.');
   return {
     target: { type: 'contact', id: contact.id, label: contact.name, confirmPhrase: contact.name },
     blocked: blockers.length > 0, blockers, cascade: [], together: [], autoCleanup: [], severed: [],

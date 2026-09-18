@@ -27,6 +27,9 @@ function view(c, scope, selfSubject, names) {
     id: c.id, scope, ref: `${scope === 'workspace' ? 'contact' : 'pcontact'}:${c.id}`, name: c.name, email: c.email || '',
     kind: c.kind || 'person', notes: c.notes || '', ownedBySelf: scope === 'private' || c.createdBy === selfSubject,
     archived: !!c.deletedAt,
+    // BT-009-15: set once an invitation linked to this (workspace) contact is accepted — never on
+    // a private contact, which invitations cannot reference at all.
+    joinedMemberId: c.joinedMemberId || null,
     history: (c.history || []).map((h) => ({ at: h.at, by: scope === 'private' ? 'You' : (names && names.get(h.by)) || 'Former member', changes: h.changes, reason: h.reason || '' })),
   };
 }
