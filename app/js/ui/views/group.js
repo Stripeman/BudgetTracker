@@ -432,6 +432,45 @@ async function syncMine(ctx, type, rec) {
   announce(out.ok ? "Your account now matches." : messageFor(out.error));
 }
 
+// "Add person" (BT-016, Terry, 2026-09-18: "I figured you would add a button that opened the
+// existing modal to add a person"). A small, focused create-only dialog for a workspace-shared
+// CONTACT — someone who takes part in shared expenses without an application account of their own
+// (api/_shared/people.js's `contact:` reference: never signed in, never granted access; recorded
+// only as who was involved). Viewers cannot add one (server-enforced too); the button that opens
+// this is simply not offered to them. `onCreated(person)` receives the SAME shape
+// `data.participants` entries already have (`{ ref, name, type: "contact", active: true }`), so a
+// caller can splice it straight into an already-open picker/checklist without a full reload.
+export function openAddPersonModal(ctx, { onCreated } = {}) {
+  const key = newIdempotencyKey();
+  const name = input({ maxlength: "80", autocomplete: "off", required: true });
+  const email = input({ type: "email", autocomplete: "off" });
+  const form = el("form", { class: "form-grid", novalidate: true, id: `add-person-${key}` }, [
+    field("Name", name),
+    field("Email (optional)", email, { help: "Not required, and never used to sign anyone in — this person never gets application access." }),
+  ]);
+  const save = el("button", { type: "submit", class: "btn btn--primary", text: "Add person", form: `add-person-${key}` });
+  const cancel = button("Cancel", () => modal.close());
+  const modal = openModal({ title: "Add person", body: [form], actions: [cancel, save] });
+  async function submit() {
+    modal.setError("");
+    if (!name.value.trim()) { name.setAttribute("aria-invalid", "true"); modal.setError("Give this person a name."); name.focus(); return; }
+    modal.setBusy(true);
+    try {
+      const out = await ctx.api.request("contacts", { method: "POST", body: { scope: "workspace", workspaceId: ctx.store.getState().selectedWorkspaceId, name: name.value.trim(), email: email.value.trim() } });
+      modal.setBusy(false);
+      modal.close();
+      announce(`${out.contact.name} added.`);
+      if (onCreated) onCreated({ ref: out.contact.ref, name: out.contact.name, type: "contact", active: true });
+    } catch (err) {
+      modal.setBusy(false);
+      modal.setError(messageFor(err));
+    }
+  }
+  save.addEventListener("click", (e) => { e.preventDefault(); void submit(); });
+  form.addEventListener("submit", (e) => { e.preventDefault(); void submit(); });
+  return modal;
+}
+
 // ---- Add or correct an expense -------------------------------------------------------------------
 // Everyone who can take part is listed once under "Paid by" and once under "Shared by", with a
 // checkbox each. A live preview shows each share and any rounding adjustment, and every problem is
@@ -468,27 +507,55 @@ export function openGroupExpense(ctx, { expense = null } = {}) {
 
   // Paid by.
   const paid = new Map(editing ? expense.payers.map((p) => [p.ref, expense.payers.length > 1 ? p.amount : ""]) : defaultPaidBy === "nobody" ? [] : [[me, ""]]);
-  const payerRows = people.map((p) => {
+  const makePayerRow = (p, checked = paid.has(p.ref)) => {
     const box = el("input", { type: "checkbox", id: uid("payer"), class: "split-row__box" });
-    box.checked = paid.has(p.ref);
+    box.checked = checked;
     const amt = input({ inputmode: "decimal", autocomplete: "off", "aria-label": `Amount paid by ${p.name}`, placeholder: "0.00", value: paid.get(p.ref) || "" });
     return { p, box, amt, row: el("div", { class: "split-row" }, [box, el("label", { for: box.id, text: label(p) }), amt]) };
-  });
+  };
+  const payerRows = people.map((p) => makePayerRow(p));
+  const payerListEl = el("div", { class: "split-list" }, payerRows.map((r) => r.row));
   const payersNote = el("p", { class: "field__help" });
 
   // Shared by.
   const values = new Map(editing ? expense.split.lines.map((l) => [l.ref, l.value === null || l.value === undefined ? "" : String(l.value)]) : []);
   const method = pickerSelect(Object.entries(METHOD_LABELS).map(([value, text]) => ({ value, label: text })), editing ? expense.split.method : defaultMethod, {}, { search: false });
-  const splitRows = people.map((p) => {
+  const makeSplitRow = (p, checked = editing ? values.has(p.ref) : defaultWho === "me" ? p.ref === me : !!p.active) => {
     const box = el("input", { type: "checkbox", id: uid("share"), class: "split-row__box" });
-    box.checked = editing ? values.has(p.ref) : defaultWho === "me" ? p.ref === me : !!p.active;
+    box.checked = checked;
     const val = input({ inputmode: "decimal", autocomplete: "off", value: values.get(p.ref) || "" });
     const out = el("span", { class: "num split-row__share" });
     return { p, box, val, out, row: el("div", { class: "split-row" }, [box, el("label", { for: box.id, text: label(p) }), val, out]) };
-  });
+  };
+  const splitRows = people.map((p) => makeSplitRow(p));
+  const splitListEl = el("div", { class: "split-list" }, splitRows.map((r) => r.row));
   const everyone = button("Everyone", () => { for (const r of splitRows) r.box.checked = r.p.active || r.box.checked; refresh(); }, { small: true, attrs: { "aria-label": "Share with everyone" } });
   const preview = el("div", { class: "split-preview", "aria-live": "polite" });
   const problems = el("ul", { class: "split-problems error-text", "aria-live": "polite" });
+  // "Add person" (BT-016): someone not already a choosable participant (not a workspace member,
+  // never added as a contact before) can be added here, without leaving this dialog, and is
+  // immediately available in BOTH lists above — checked under "Shared by" (the reason to add them
+  // here is almost always that they took part), left unchecked under "Paid by". Never offered to
+  // anyone who could not open this dialog in the first place (data.permissions.canAdd already
+  // gates "Add expense"/"Edit" the same way); the server enforces it too either way.
+  const addPerson = data.permissions.canAdd ? button("Add person…", () => {
+    openAddPersonModal(ctx, {
+      onCreated: (p) => {
+        people.push(p);
+        const payerRow = makePayerRow(p, false);
+        payerRows.push(payerRow);
+        payerListEl.appendChild(payerRow.row);
+        payerRow.box.addEventListener("change", refresh);
+        payerRow.amt.addEventListener("input", refresh);
+        const splitRow = makeSplitRow(p, true);
+        splitRows.push(splitRow);
+        splitListEl.appendChild(splitRow.row);
+        splitRow.box.addEventListener("change", refresh);
+        splitRow.val.addEventListener("input", refresh);
+        refresh();
+      },
+    });
+  }, { small: true }) : null;
 
   // Optionally also on the person's own private account (never when correcting; that has its own
   // action). Anyone who pays or shares has a part to record. Once they record their part of the group
@@ -570,11 +637,11 @@ export function openGroupExpense(ctx, { expense = null } = {}) {
     el("div", { class: "field" }, [el("label", { class: "field__label", for: amount.id || (amount.id = `${key}-amount`), text: `Amount (${currency})` }), amount, amountHelp]),
     field("Date", date),
     field("Category", category),
-    el("fieldset", { class: "plain-fieldset field--wide" }, [el("legend", { class: "field__label", text: "Paid by" }), el("div", { class: "split-list" }, payerRows.map((r) => r.row)), payersNote]),
+    el("fieldset", { class: "plain-fieldset field--wide" }, [el("legend", { class: "field__label", text: "Paid by" }), payerListEl, payersNote, addPerson ? el("div", { class: "stack" }, [addPerson, el("p", { class: "field__help", text: "Not a workspace member yet — records who took part, without giving them application access." })]) : null]),
     el("fieldset", { class: "plain-fieldset field--wide" }, [
       el("legend", { class: "field__label", text: "Shared by" }),
       el("div", { class: "row" }, [field("Split", method), everyone]),
-      el("div", { class: "split-list" }, splitRows.map((r) => r.row)),
+      splitListEl,
       preview, problems,
     ]),
     editing ? null : ledgerField,
