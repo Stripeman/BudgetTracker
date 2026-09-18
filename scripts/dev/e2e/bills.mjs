@@ -160,6 +160,54 @@ export async function run(h, t) {
   await b.alice.press("Escape");
   await b.alice.waitFor("!document.querySelector('.modal')", { what: "the edit dialog to close" });
 
+  // ---- BT-011-09 (review, 2026-09-18): the accessible help popover on a new bill's "Show as due
+  // soon" field, and the curved left-edge accent shared by callouts, tooltips and popovers alike ---
+  await b.alice.goto("bills");
+  await b.alice.waitForText("Add bill", { scope: "main" });
+  await b.alice.click({ role: "button", name: "Add bill" });
+  await b.alice.waitFor("!!document.querySelector('.modal')", { what: "the new-bill dialog" });
+  const beforePopover = await b.alice.evaluate("!!document.querySelector('.popover__panel')");
+  t.check("the popover is closed until the trigger is activated", { expected: false, actual: beforePopover });
+  await b.alice.click({ role: "button", name: "Where this default comes from" });
+  const popover = await b.alice.evaluate(`(() => {
+    const panel = document.querySelector('.popover__panel');
+    const trigger = document.querySelector('.popover__trigger');
+    if (!panel || !trigger) return { found: false };
+    const style = getComputedStyle(panel, '::before');
+    return {
+      found: true, expanded: trigger.getAttribute('aria-expanded'),
+      text: panel.textContent, hasRealButton: !!panel.querySelector('button'),
+      accentWidth: style.width, accentPositioned: style.position,
+    };
+  })()`);
+  const shotPopover = await b.alice.shot("bills-help-popover-open");
+  t.check("opens on click, holds a real button (not just inert text), and the trigger reports expanded", {
+    expected: { found: true, expanded: "true", hasRealButton: true }, actual: { found: popover.found, expanded: popover.expanded, hasRealButton: popover.hasRealButton },
+  });
+  t.check("the popover text explains the workspace default", { expected: true, actual: /due-soon window/.test(popover.text || "") });
+  t.check("the curved left-edge accent (::before) is present and positioned to be clipped by the panel's own rounded corner", {
+    expected: "absolute", actual: popover.accentPositioned,
+  });
+  t.note(`accent bar width: ${popover.accentWidth}; screenshot: ${shotPopover}`);
+  await b.alice.press("Escape");
+  const afterEscape = await b.alice.evaluate(`(() => ({ panel: !!document.querySelector('.popover__panel'), focused: document.activeElement && document.activeElement.className }))()`);
+  t.check("Escape closes the popover and returns focus to its own trigger, not lost to the page", { expected: { panel: false, focused: "popover__trigger" }, actual: afterEscape });
+  await b.alice.press("Escape");
+  await b.alice.waitFor("!document.querySelector('.modal')", { what: "the dialog to close" });
+
+  // The Dashboard's "Needs attention" panel already uses .notice--warning (BT-014-14/planning.js
+  // etc.) — a real screenshot of the shared curved-accent treatment, not just a unit assertion.
+  await b.alice.goto("dashboard");
+  await b.alice.settle();
+  const hasNotice = await b.alice.evaluate("!!document.querySelector('.notice')");
+  if (hasNotice) {
+    const noticeStyle = await b.alice.evaluate(`(() => { const s = getComputedStyle(document.querySelector('.notice'), '::before'); return { position: s.position, background: s.backgroundColor }; })()`);
+    t.check("an existing informational callout (.notice) picks up the same curved left-edge accent automatically, with no per-screen changes", { expected: "absolute", actual: noticeStyle.position });
+    await b.alice.shot("dashboard-notice-accent");
+  } else {
+    t.note("no .notice panel present on this seeded dashboard right now (nothing overdue/due soon) — the popover check above already covers the shared accent treatment");
+  }
+
   await b.alice.settle();
   t.check("alice: no exceptions, console errors or failed requests in the browser", { expected: [], actual: b.alice.problems() });
 }

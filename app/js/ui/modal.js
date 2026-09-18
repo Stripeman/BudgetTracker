@@ -10,15 +10,23 @@ import { closeDetachedPopups } from "./popup.js";
 
 const FOCUSABLE = "button, [href], input, select, textarea, summary, [tabindex]";
 
-// Escape belongs to an open list inside the dialog first — the merchant combobox, a command picker's
-// panel (BT-004-05; it floats on the body, and a list without a search box holds the keyboard itself),
-// or a theme, colour or icon picker (its options or its toggle) — so the dialog, and what was typed,
-// stays open; the next Escape closes the dialog (UXI-1).
+// Escape belongs to an open list or popover inside the dialog first — the merchant combobox, a
+// command picker's panel (BT-004-05; it floats on the body, and a list without a search box holds
+// the keyboard itself), a theme, colour or icon picker (its options or its toggle), or an
+// accessible help popover (BT-011-09; `createHelpPopover()`, app/js/ui/components.js — it too
+// floats on the body and holds real, focusable content) — so the dialog, and what was typed,
+// stays open; the next Escape closes the dialog (UXI-1). Found by real-browser e2e (2026-09-18):
+// without this, Escape while a popover held focus closed the WHOLE dialog underneath it instead of
+// just the popover, and then the popover's own Escape handler tried to refocus a trigger that had
+// just been destroyed along with the dialog — a real dropped-focus bug, not a hypothetical one.
 export function escapeBelongsToControl(target) {
   if (!target || !target.getAttribute) return false;
   if (target.getAttribute("role") === "combobox" && target.getAttribute("aria-expanded") === "true") return true;
   // A command picker's panel is in the document only while it is open.
   if (target.closest && target.closest(".cmdpick__panel")) return true;
+  // An open help popover: the focus is inside its floating panel, or on its own trigger.
+  if (target.closest && target.closest(".popover__panel")) return true;
+  if (target.classList && target.classList.contains("popover__trigger") && target.getAttribute("aria-expanded") === "true") return true;
   // The picker's toggle states whether its list is open (aria-expanded), in every DOM.
   const pick = target.closest ? target.closest(".themepick") : null;
   const toggle = pick ? pick.querySelector(".themepick__toggle") : null;
