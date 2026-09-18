@@ -1937,3 +1937,138 @@ close this until his answer arrives; do not silently mark Bills → Merchant ful
 and this Bills → Merchant display fix, combined, as of commit `fe57d15`. The next session should
 check whether Terry has reviewed/merged any of PR #13–#19, rebase/re-verify the others if `main`
 has moved, and pick up his feedback on the live Preview build.
+
+## Checkpoint AE — Bills → Merchant: the Merchant field is now the SAME dropdown component as
+## Category, not a lookalike (2026-09-18, same session, Terry's follow-up: "what i did ask for was
+## the drop down to look like that of the category field ... I KEEP CALLING FOR CONSISTENCY")
+
+**What Checkpoint AD actually got wrong.** Terry confirmed the FUNCTIONAL flow (Checkpoint AD)
+matched what he wanted, then named the real remaining gap precisely: the Merchant field's dropdown
+was a bespoke ARIA combobox (`merchantpicker.js`, its own `.combo__*` markup and styling) — it
+behaved correctly but looked like nothing else in the app, when every other dropdown (Category,
+Account, Status, Workspace, member roles, …) is the SAME shared "TaskTracker command picker"
+(`commandpicker.js`, `.cmdpick__*`). This is the third time in this app's history Terry has stated
+this exact principle (2026-09-14, twice, per commandpicker.js's own header comment) — a durable
+preference, not a one-off ask.
+
+**Root fix, in the shared component, not a Merchant-only patch.** The tension: a fixed picklist
+(Category, Account) never needs typed text that matches nothing to become a real value, but the
+Merchant field's whole point (BT-014-11) is exactly that — type a name, leave it, resolve later.
+Added ONE opt-in extension to `commandpicker.js` itself, `allowCustom` (documented as "A16" beside
+the component's existing A1–A15 adaptations), used by nothing else — every existing picker is
+provably unaffected (all 67 pre-existing `commandpicker.test.js` tests still pass unmodified,
+proving Category/Account/Status/Workspace/etc. behave exactly as before). When `allowCustom` is on:
+typed text matching no real option is kept as a single reusable synthetic `<option>` (prefixed with
+an exported `TYPED_OPTION_PREFIX` so a consumer can tell "a real option was chosen" from "this was
+typed and nothing matched" without a second channel), committed on Enter (nothing highlighted), Tab
+out of the panel in either direction, or an outside click/dismissal — deliberately NEVER on Escape,
+which stays "never mind" exactly like every other picker. Choosing a REAL option afterward removes
+the abandoned synthetic draft so it can never linger as a phantom "existing merchant" in the list.
+A caller may also SEED an initial typed value (a bill reopened with a saved, still-unlinked name) by
+placing an option with that same prefix in the select before construction; the picker adopts it.
+
+**New `app/js/ui/merchantselect.js`** replaces the retired `merchantpicker.js` entirely (deleted,
+along with its own test file). `createMerchantSelect()` builds the Merchant field the exact same
+way `pickerSelect()` builds Category/Account — a plain `<select>` handed to `field()`, nothing
+bespoke — with `allowCustom: true` for a bill's own term (`openBillEditor`, `openRecord`'s "review
+and record" dialog reads `readMerchantSelect().payeeId` and ignores a draft there, since recording
+an actual payment always needs a real merchant, unlike the bill's own term) and `allowCustom: false`
+plus a `create: { label: "Add merchant", onPick }` pinned action (the exact same "+ New account"
+pattern already used elsewhere) for `transactions.js`'s quick-entry, which always needs a real
+merchant (BT-007-01) — its own existing inline "New merchant" fieldset is unchanged, only the
+DROPDOWN above it is now the shared component. The Transactions Merchant FILTER was already this
+same picker, unaffected. `setMerchantOptions()` replaces the merchant list on an account change
+(surgically, keeping any live typed-draft option's own DOM node intact) exactly like the old
+`.setItems()` did; `selectMerchant()` replaces `.select()`.
+
+**Real, environment-specific bugs found and fixed while verifying in an actual browser (not
+guessed, not something a unit test could have caught, since they depend on real focus/DOM-event
+sequencing):**
+1. A raw JS `dispatchEvent(new MouseEvent("click"))` used by an EARLIER check (testing "opens on
+   click") opened the picker's panel and then called `.focus()` on the TRIGGER directly — never
+   moving real browser focus into the search box the way a genuine click does (`show()`'s own
+   `holder.focus()`). A later step's `Input.insertText` then landed in whatever WAS actually
+   focused (the bill's own Name field), not the Merchant search box at all. Fixed by having the
+   e2e helper always click the SEARCH BOX directly once the panel is confirmed open, never assuming
+   focus followed a panel-open state.
+2. A short merchant list (under the twelve-option `SEARCH_THRESHOLD`) got no search box at all —
+   correct default behaviour for a closed picklist (Category/Account), but WRONG for Merchant,
+   whose whole purpose is typing free text regardless of list size; a short list's type-ahead-only
+   trigger has no surface for that at all. Fixed by having `createMerchantSelect()` always pass
+   `search: true`, never "auto" — Merchant is now always searchable no matter how few merchants
+   exist yet.
+3. Committing a typed draft by clicking a "neutral" point (the dialog's own title) was unreliable:
+   if the panel happened to open UPWARD and visually overlap the title, the click would land on the
+   panel itself (which does not count as "outside", so nothing commits). Fixed by committing via
+   Shift+Tab out of the search box instead (commandpicker.js's own "first element, backward"
+   edge — works identically whether or not a "+ Add merchant" pinned action is also present, unlike
+   a plain forward Tab which would first land ON that pinned button).
+4. The pinned action's rendered label uses curly quotes (“ ”), not straight ones (") — a
+   copy-paste assumption in the first draft of the e2e check, corrected against the actual
+   `commandpicker.js` template string.
+None of these were product defects in the FINAL shipped code — all four were caught and fixed
+during verification, before anything reached a commit.
+
+**Evidence:**
+- `app/test/commandpicker.test.js`: 9 new tests for `allowCustom` (A16) appended after all 67
+  pre-existing ones, which are unmodified and still pass — direct proof no other picker changed
+  behaviour. Covers: default (no `allowCustom`) commits nothing; Enter commits; Tab-out commits
+  without stealing focus back to the trigger; a click outside commits; Escape does NOT commit;
+  typing the exact name of a real option selects that option instead of duplicating it; editing an
+  already-typed value reuses the same synthetic option; choosing a real option afterward removes
+  the abandoned draft; a caller-seeded initial typed value is adopted, not duplicated.
+- `app/test/pickerbills.test.js` and `app/test/pickertransactions.test.js`: updated to reflect
+  Merchant now appearing as a real picker in `pickerLabels()`, with its own spoken value/instructions
+  matching Category's own pattern exactly; `pickertransactions.test.js`'s merchant-suggestion test
+  rewritten to use the same `chooseOption()` helper every other picker test already uses, instead of
+  driving a now-nonexistent bespoke `input[role="combobox"]` directly.
+- `npm test` 39/651/502 (exit 0); `npm run validate` ok, 24 routes (exit 0).
+- Real headless Edge, `npm run e2e -- --only bills`: 37/37 passed (exit 0) on the fully combined
+  six-PR tree, including a NEW dedicated check with a screenshot confirming Merchant's trigger is
+  literally the same `.cmdpick__trigger` component as Category (same tag, same class, no `.combo`/
+  `.combo__*` markup anywhere on the page) — real DOM proof, not just matching behaviour. The
+  screenshot shows the open Merchant panel with the identical search-row/list/pinned-action/
+  key-hints chrome every other picker in the app already has.
+- A broad real-browser regression pass beyond bills itself, confirming the shared-component change
+  touched nothing else: `npm run e2e -- --only move,remove,shared,accounts,dashboard` (57/57),
+  `npm run e2e -- --only recheck` (38/38, exercises the Transactions quick-entry form's own "Add
+  expense" flow repeatedly without a dedicated merchant-specific scenario file — see "Known gaps"),
+  `npm run e2e -- --only dropdown,settings,accountrequests,gallery,permanentdelete,recheck` (249/249)
+  — all exit 0.
+
+**Git hygiene.** Committed to `fix/bills-merchant-2026-09-18` (PR #14's own branch, the natural
+continuation of the same unit of work), commit `66a5fae`, pushed. Re-merged into
+`integration/preview-2026-09-18` (`f42e95d`) — a CLEAN merge, no conflicts. Redeployed to Preview:
+```
+target  : budget-tracker / budget-tracker (preview)
+url     : https://polite-plant-03bb7570f-preview.eastus2.3.azurestaticapps.net
+sha     : f42e95d681be2142521d50a592480a52ba007fc0
+version : 0.1.0-alpha.1
+checks  : ok target, ok gitState, ok confirmation, ok azureResource, ok settings, ok test,
+          ok validate, ok build, ok secretScan, ok upload, ok commitSetting, ok healthCheck
+result  : SUCCESS
+```
+Independently verified live: `GET .../api/site-settings` reports `commit:
+"f42e95d681be2142521d50a592480a52ba007fc0"` (exact match); `GET /` returns 200; anonymous `GET
+/api/me` returns 401.
+
+**Known gaps, stated plainly:**
+- No DEDICATED new e2e scenario file was added for the Transactions quick-entry Merchant field
+  specifically (Terry's own words only ever named the BILL's merchant field; converting
+  transactions.js too was this session's own extension for full consistency, not something he
+  explicitly asked for). Confidence there rests on `pickertransactions.test.js`'s existing 22 unit
+  tests (all passing, rewritten to use the shared `chooseOption()` helper) plus `recheck.mjs`'s
+  existing, unrelated 38-check real-browser coverage of the same "Add expense" dialog continuing to
+  pass unmodified — real but indirect evidence, not a purpose-built proof the way bills.mjs now has.
+- Everything already listed under Checkpoint AA/AB/AC/AD's own "Known gaps" is still true.
+
+**Waiting on Terry:** everything already listed under Checkpoint AA–AD's "Waiting on Terry", plus:
+confirmation that THIS is what he meant by "look like Category" — the live Preview build now shows
+an actually identical dropdown, not just a similar one, and whether he wants the same purpose-built
+real-browser depth extended to the Transactions quick-entry Merchant field specifically.
+
+**Exact next step:** none queued. Preview reflects all six PRs, the Gallery Shared/Trips follow-up,
+and both Bills → Merchant fixes (display fallback, then component consistency), combined, as of
+commit `f42e95d`. The next session should check whether Terry has reviewed/merged any of PR
+#13–#19, rebase/re-verify the others if `main` has moved, and pick up his feedback on the live
+Preview build — starting with whether the Merchant field now genuinely matches what he pictured.
