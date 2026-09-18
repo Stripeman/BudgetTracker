@@ -5,7 +5,8 @@
 // front of Terry.
 const { test, describe } = require('node:test');
 const assert = require('node:assert/strict');
-const { CONCEPTS, CONCEPT_IDS, REQUIRED_PAGES, REAL_LAYOUT_OPTIONS, REAL_DEFAULT_LAYOUT_ID, NAV_STYLES, DENSITIES, DASHBOARD_PATTERNS, CARD_STYLES, CHART_EMPHASES } = require('../_shared/layouts');
+const { CONCEPTS, CONCEPT_IDS, REQUIRED_PAGES, REAL_LAYOUT_OPTIONS, REAL_DEFAULT_LAYOUT_ID, NAV_STYLES, DENSITIES, DASHBOARD_PATTERNS, CARD_STYLES, CHART_EMPHASES,
+  TRANSACTIONS_PATTERNS, BILLS_PATTERNS, BUDGET_PATTERNS, ACCOUNTS_PATTERNS, SETTINGS_PATTERNS } = require('../_shared/layouts');
 
 describe('BT-013 layout manifests', () => {
   test('exactly 15 concepts, unique ids', () => {
@@ -31,11 +32,27 @@ describe('BT-013 layout manifests', () => {
       assert.ok(CHART_EMPHASES.includes(c.chartEmphasis), `${c.id} chartEmphasis ${c.chartEmphasis}`);
       assert.ok(['flagship', 'standard'].includes(c.fidelity), `${c.id} fidelity`);
       assert.equal(typeof c.recommended, 'boolean', `${c.id} recommended`);
+      // Secondary-page composition axes (review, 2026-09-18): every concept must declare which
+      // genuinely distinct Transactions/Bills/Budget/Accounts/Settings renderer it uses — a missing
+      // one would silently fall back to the same default for every concept, defeating the fix.
+      assert.ok(TRANSACTIONS_PATTERNS.includes(c.transactionsPattern), `${c.id} transactionsPattern`);
+      assert.ok(BILLS_PATTERNS.includes(c.billsPattern), `${c.id} billsPattern`);
+      assert.ok(BUDGET_PATTERNS.includes(c.budgetPattern), `${c.id} budgetPattern`);
+      assert.ok(ACCOUNTS_PATTERNS.includes(c.accountsPattern), `${c.id} accountsPattern`);
+      assert.ok(SETTINGS_PATTERNS.includes(c.settingsPattern), `${c.id} settingsPattern`);
     }
   });
 
   test('at least 8 distinct dashboard patterns are actually used (genuine structural variety, not one hero recoloured 20 times)', () => {
     assert.ok(new Set(CONCEPTS.map((c) => c.dashboardPattern)).size >= 8);
+  });
+
+  test('every secondary-page pattern axis is genuinely used across the 15 concepts, not just declared', () => {
+    assert.equal(new Set(CONCEPTS.map((c) => c.transactionsPattern)).size, TRANSACTIONS_PATTERNS.length);
+    assert.equal(new Set(CONCEPTS.map((c) => c.billsPattern)).size, BILLS_PATTERNS.length);
+    assert.equal(new Set(CONCEPTS.map((c) => c.budgetPattern)).size, BUDGET_PATTERNS.length);
+    assert.equal(new Set(CONCEPTS.map((c) => c.accountsPattern)).size, ACCOUNTS_PATTERNS.length);
+    assert.equal(new Set(CONCEPTS.map((c) => c.settingsPattern)).size, SETTINGS_PATTERNS.length);
   });
 
   test('at least 4 distinct nav styles and all 4 densities appear', () => {
@@ -47,8 +64,8 @@ describe('BT-013 layout manifests', () => {
     assert.equal(CONCEPTS.filter((c) => c.recommended).length, 8);
   });
 
-  test('the 7 pages Terry\'s brief names as the minimum review deliverable', () => {
-    assert.deepEqual(REQUIRED_PAGES, ['dashboard', 'transactions', 'bills', 'budget', 'shared', 'trips', 'settings']);
+  test('the required review pages, including Accounts/Merchants (review, 2026-09-18: previously missing from the Gallery entirely)', () => {
+    assert.deepEqual(REQUIRED_PAGES, ['dashboard', 'transactions', 'bills', 'budget', 'accounts', 'shared', 'trips', 'settings']);
   });
 
   test('today\'s one real, selectable layout is "classic" and nothing else — none of the 15 concepts are live-selectable yet', () => {
