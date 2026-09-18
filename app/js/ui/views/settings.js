@@ -216,6 +216,11 @@ export function createView(ctx) {
 
   const element = el("section", {}, [
     pageHead("My settings"),
+    // A personal-vs-workspace distinction (BT-017), stated as plainly and symmetrically as
+    // Workspace Settings' own "These decide how everyone in this workspace works": everything on
+    // this page is personal to the signed-in person, never shared with or changed by anyone else in
+    // a workspace, no matter how many workspaces they belong to.
+    el("p", { class: "muted small", text: "These apply only to you, everywhere you sign in — not to anyone else in any of your workspaces. To change something for everyone in a workspace, go to that workspace's own Workspace page." }),
     el("p", { class: "muted small", text: "“Inherited” values follow the site default until you change them. “Customized” values are your own choice; use “Use inherited” to return to the default. “Locked by site” values are set by the site administrator." }),
     groupProfile.element,
     groupDisplay.element,

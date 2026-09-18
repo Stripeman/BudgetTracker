@@ -29,6 +29,10 @@ export async function run(h, t) {
   await s.goto("settings");
   await s.waitForText("Colour palette", { scope: "main" });
 
+  // ---- a plain, explicit personal-vs-workspace distinction (BT-017) -----------------------------------
+  const personalNote = await s.evaluate("document.body.innerText.includes('These apply only to you, everywhere you sign in')");
+  t.check("My Settings states plainly, up front, that everything here is personal — never shared with or changed by anyone else in a workspace", { expected: true, actual: personalNote });
+
   // ---- task-oriented, named, collapsible sections replace the old flat card list ---------------------
   // "Deleted workspaces" is not asserted here at all: whether it appears depends on the fictional
   // seed's own prior workspace history for alice (already covered end-to-end by the dedicated
