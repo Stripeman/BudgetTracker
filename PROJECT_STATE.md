@@ -2667,8 +2667,89 @@ Terry's own "continue other unblocked work" instruction, followed by another
 merge-to-`main`-then-Preview-then-Production cycle once it reaches a verified checkpoint, per his
 explicit "do the same" instruction — without pausing to ask again.
 
-**Exact next step:** continue BT-017 (My Settings regrouping, reusing `settingsform.js`'s existing
-collapsible/two-column pattern) on a feature branch; when it reaches a verified checkpoint (full
-gate + targeted e2e), merge to `main` and repeat the established Preview-then-Production
-`deploy.ps1` release process again; begin BT-016 implementation only once Terry confirms which of
-the two options above he wants.
+**Exact next step (superseded by Checkpoint AJ below):** continue BT-017 (My Settings regrouping,
+reusing `settingsform.js`'s existing collapsible/two-column pattern) on a feature branch; when it
+reaches a verified checkpoint (full gate + targeted e2e), merge to `main` and repeat the
+established Preview-then-Production `deploy.ps1` release process again; begin BT-016
+implementation only once Terry confirms which of the two options above he wants.
+
+## Checkpoint AJ — BT-017 first increment: My Settings regrouped into task-oriented, collapsible
+sections on `feature/settings-redesign-BT-017` (2026-09-18, same session, continuing unblocked
+backlog work per Terry's own "continue other unblocked work" instruction while BT-016 waits on his
+decision)
+
+**What changed.** `app/js/ui/views/settings.js`'s ~8 previously flat, ungrouped `<section
+class="card">` blocks (Your name, Appearance, Display and privacy, Private contacts, Staging link,
+Deleted workspaces, Category colours and icons, Icon catalogue) are now grouped into five named,
+collapsible, task-oriented sections: **Profile & appearance**, **Display, privacy & contacts**,
+**Staging link**, **Category colours & icons**, **Deleted workspaces**. New shared module
+`app/js/ui/settingsgroup.js` (`createSettingsGroup`) provides the disclosure shell — same CSS
+classes (`settings-group`, `settings-group__toggle`, `settings-group__body`) and the same
+per-browser localStorage-remembered open/closed behaviour as Workspace Settings' own groups in
+`settingsform.js` — so both pages look and behave the same, per Terry's own coherence requirement.
+`settingsform.js` itself was deliberately left untouched (no risk to the already-verified Workspace
+Settings page); the new module is a separate, additive shell only My Settings uses so far.
+
+No individual card's own internal logic, markup or event handling changed at all — each keeps
+rendering and updating itself exactly as before; only how the cards are grouped, labelled and
+shown/collapsed changed. `colourCard`, `catalogCard` and `deletedCard` gained `card--full` (the
+existing full-width-in-grid class already used by `colourCard`) so a section containing only one
+card, or two naturally-stacking ones, doesn't leave an awkward empty half-column.
+
+**Default open/closed decision, and why (a real regression caught and fixed, not assumed away).**
+First pass collapsed every section except the first ("first group open," matching
+`settingsform.js`'s own convention for its much longer settings lists). Running the existing real
+e2e suite immediately caught THREE real regressions from that choice, not hypothetical ones:
+  - `deleteworkspace.mjs` navigates straight to My Settings and expects the just-deleted
+    workspace's name and its "Bring back" button immediately visible and clickable, with no extra
+    click to expand anything.
+  - `staging.mjs` clicks "Clear my saved address" by role/name right after navigating to My
+    Settings, with no scoping into an assumed-open ancestor — a hidden (collapsed) ancestor removes
+    a button from the accessibility tree entirely, so an unscoped role/name click would not find it
+    at all, not merely time out.
+  - `overlay.mjs` measures the Colour palette control and the Display-and-privacy card's exact
+    position on the page (BT-004-08's no-reflow proof) — both need to already be open, not behind a
+    click.
+  Root-caused instead of patched around: rather than leaving everything open (which would not meet
+  Terry's own "collapsible advanced sections" criterion at all), only **Category colours & icons**
+  — genuinely optional, mostly-administrative customization — starts collapsed by default. Every
+  other section, including ones that only sometimes appear at all (Deleted workspaces), starts open
+  exactly as visible as before; nothing that used to be immediately visible now needs an extra
+  click to find. This is a closer, more literal reading of "collapsible ADVANCED sections" than the
+  first pass, not just a workaround for the failing tests.
+
+**Verification.**
+  - New dedicated e2e scenario `scripts/dev/e2e/mysettings.mjs` (`--only mysettings`): confirms the
+    task-oriented section names and order; confirms only "Category colours & icons" starts
+    collapsed while the everyday sections start open; confirms a collapsed section's content is
+    genuinely hidden (not merely styled shut); confirms expanding it reveals the real, pre-existing
+    Category colours and icons card; confirms every existing card (name, staging, display and
+    privacy) still renders inside its new section; confirms collapsing a section persists across a
+    real page reload, exactly like Workspace Settings' own groups; confirms no console
+    errors/exceptions/failed requests. **7/7 passed, exit 0.**
+  - Full unfiltered `npm run e2e`: **652 passed / 0 failed / 0 skipped, exit 0** (up from 645 before
+    this change, the +7 being the new scenario; zero regressions elsewhere, including the three
+    real ones caught and fixed above).
+  - `npm test`: **39/652/511, exit 0.** `npm run validate`: **exit 0** (24 routes).
+  - `docs/REQUIREMENTS.md`'s BT-017 row updated to "Partially built" with this evidence; explicitly
+    notes what remains open (a fuller personal-vs-workspace visual distinction beyond the existing
+    source badges, and a broader visual/spacing pass) — not overclaimed as finished.
+
+**Not done in this increment (disclosed, not silently skipped).** Workspace Settings itself was not
+touched (it already met most of BT-017's criteria per the Checkpoint AI inventory, and touching an
+already-verified, already-released page carries its own regression risk for no clear benefit yet).
+The "personal-vs-workspace" visual distinction and "a clearly separated destructive area" criteria
+from Terry's original brief are only partly addressed (existing source badges already say
+inherited/customized/locked; "Deleted workspaces" is arguably the closest thing My Settings has to
+a destructive/recovery area, and it is not yet visually distinguished as such beyond being its own
+named section). A further visual/spacing pass and a similar look at whether Workspace Settings
+needs any changes remain open work, tracked here rather than declared complete.
+
+**Waiting on Terry:** unchanged from Checkpoint AI — the BT-016 recommendation is delivered and
+awaiting his decision; nothing new is blocking.
+
+**Exact next step:** merge this branch (`feature/settings-redesign-BT-017`) to `main` and repeat
+the established Preview-then-Production `deploy.ps1` release cycle, per Terry's explicit "do the
+same" instruction; continue BT-017 with the remaining open items above, or move to another
+unblocked backlog item, afterward; begin BT-016 implementation only once Terry confirms which of
+the two recommended options he wants.

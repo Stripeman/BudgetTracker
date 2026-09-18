@@ -15,6 +15,7 @@ import { createIconPicker } from "../iconpicker.js";
 import { withIcon } from "../icons.js";
 import { stagingState, stagingAnchor, setAnchorHref, openStagingEditor, openPersonalStagingEditor, isLocal, STAGING_ADD_TEXT } from "../staginglink.js";
 import { stagingHref, stagingHost } from "../../core/links.js";
+import { createSettingsGroup } from "../settingsgroup.js";
 
 const MAX_ICON_BYTES = 8 * 1024;
 
@@ -49,7 +50,7 @@ export function createView(ctx) {
   // person has ever had one to show, so the card does not flash empty and then appear.
   const deletedBox = el("div", { class: "stack" });
   const deletedStatus = el("p", { class: "field__help", role: "status", tabindex: "-1" });
-  const deletedCard = el("section", { class: "card", "aria-labelledby": "set-deleted", hidden: true }, [
+  const deletedCard = el("section", { class: "card card--full", "aria-labelledby": "set-deleted", hidden: true }, [
     el("h2", { class: "card__title", id: "set-deleted", text: "Deleted workspaces" }),
     el("p", { class: "field__help", text: "Workspaces you deleted. Nothing in them was erased; bring one back to give everyone who was in it their access again." }),
     deletedStatus, deletedBox,
@@ -63,7 +64,7 @@ export function createView(ctx) {
     colourBox,
   ]);
   const catalogBox = el("div", { class: "stack" });
-  const catalogCard = el("section", { class: "card", "aria-labelledby": "set-icons", hidden: true }, [
+  const catalogCard = el("section", { class: "card card--full", "aria-labelledby": "set-icons", hidden: true }, [
     el("h2", { class: "card__title", id: "set-icons", text: "Icon catalogue (site)" }),
     el("p", { class: "field__help", text: "Icons offered to everyone on this site. Nothing is deleted: an icon you switch off or retire leaves the pickers but keeps showing wherever it is already used." }),
     catalogBox,
@@ -138,7 +139,7 @@ export function createView(ctx) {
     siteLockWarning,
   ]);
   siteStagingRow.hidden = true;
-  const stagingCard = el("section", { class: "card", "aria-labelledby": "set-staging" }, [
+  const stagingCard = el("section", { class: "card card--full", "aria-labelledby": "set-staging" }, [
     el("h2", { class: "card__title", id: "set-staging", text: "Staging link" }),
     el("p", { class: "field__help", text: "Your staging (preview) site. It opens in a new tab from the account menu. Only https addresses are accepted, and http to 127.0.0.1 or localhost while running locally." }),
     el("div", { class: "staging__current" }, [stagingLink, stagingHostText, stagingNone]),
@@ -192,19 +193,35 @@ export function createView(ctx) {
     if (siteAdmin && !siteStaging.loaded && !siteStaging.loading) void loadSiteStaging();
   }
 
+  // Task-oriented, collapsible sections (BT-017; Terry, 2026-09-18: "cluttered and chaotic... not
+  // simply another column added to the current arrangement") using the SAME disclosure shell as
+  // Workspace Settings (settingsgroup.js / settingsform.js), so both pages look and behave the
+  // same. No existing card's own behaviour changes — each keeps updating itself exactly as before;
+  // this only changes how the cards are grouped and shown/collapsed. Only the genuinely advanced,
+  // rarely-needed group (category colours and icons, mostly for site administrators and people
+  // customizing beyond the workspace default) starts collapsed; every other group — including ones
+  // that only appear sometimes, such as Deleted workspaces — starts open exactly like today, so
+  // nothing that used to be immediately visible now needs an extra click to find. Whichever way a
+  // person leaves a group is remembered in this browser afterwards.
+  const appearanceCard = el("section", { class: "card", "aria-labelledby": "set-appearance" }, [el("h2", { class: "card__title", id: "set-appearance", text: "Appearance" }), appearanceSource, dayNight.element, paletteField]);
+  const displayCard = el("section", { class: "card", "aria-labelledby": "set-display" }, [el("h2", { class: "card__title", id: "set-display", text: "Display and privacy" }), prefBox, status]);
+  const contactsCard = el("section", { class: "card", "aria-labelledby": "set-contacts" }, [el("h2", { class: "card__title", id: "set-contacts", text: "Private contacts" }), el("p", { class: "field__help", text: "Only you can see these. Use them on your private records; use workspace contacts for shared ones." }), contactsBox]);
+
+  const GROUP_KEY = "settings.mysettings.groups";
+  const groupProfile = createSettingsGroup({ id: "set-g-profile", storageKey: GROUP_KEY, name: "Profile & appearance", defaultOpen: true, nodes: [nameCard, appearanceCard] });
+  const groupDisplay = createSettingsGroup({ id: "set-g-display", storageKey: GROUP_KEY, name: "Display, privacy & contacts", defaultOpen: true, nodes: [displayCard, contactsCard] });
+  const groupLinks = createSettingsGroup({ id: "set-g-links", storageKey: GROUP_KEY, name: "Staging link", defaultOpen: true, nodes: [stagingCard] });
+  const groupColours = createSettingsGroup({ id: "set-g-colours", storageKey: GROUP_KEY, name: "Category colours & icons", defaultOpen: false, hidden: true, nodes: [colourCard, catalogCard] });
+  const groupDeleted = createSettingsGroup({ id: "set-g-deleted", storageKey: GROUP_KEY, name: "Deleted workspaces", defaultOpen: true, hidden: true, nodes: [deletedCard] });
+
   const element = el("section", {}, [
     pageHead("My settings"),
     el("p", { class: "muted small", text: "“Inherited” values follow the site default until you change them. “Customized” values are your own choice; use “Use inherited” to return to the default. “Locked by site” values are set by the site administrator." }),
-    el("div", { class: "grid grid--two" }, [
-      nameCard,
-      el("section", { class: "card", "aria-labelledby": "set-appearance" }, [el("h2", { class: "card__title", id: "set-appearance", text: "Appearance" }), appearanceSource, dayNight.element, paletteField]),
-      el("section", { class: "card", "aria-labelledby": "set-display" }, [el("h2", { class: "card__title", id: "set-display", text: "Display and privacy" }), prefBox, status]),
-      stagingCard,
-      el("section", { class: "card", "aria-labelledby": "set-contacts" }, [el("h2", { class: "card__title", id: "set-contacts", text: "Private contacts" }), el("p", { class: "field__help", text: "Only you can see these. Use them on your private records; use workspace contacts for shared ones." }), contactsBox]),
-      colourCard,
-      catalogCard,
-      deletedCard,
-    ]),
+    groupProfile.element,
+    groupDisplay.element,
+    groupLinks.element,
+    groupColours.element,
+    groupDeleted.element,
   ]);
 
   async function save(patch) {
@@ -430,6 +447,7 @@ export function createView(ctx) {
       }
     }
     renderDeleted(state);
+    groupDeleted.setHidden(deletedCard.hidden);
     const prefs = state.preferences;
     if (!prefs) return;
     renderStaging(state);
@@ -437,6 +455,7 @@ export function createView(ctx) {
     renderColours(state);
     const siteAdmin = !!(state.auth && state.auth.user && state.auth.user.siteAdmin);
     catalogCard.hidden = !siteAdmin;
+    groupColours.setHidden(colourCard.hidden && catalogCard.hidden);
     if (siteAdmin && !catalogLoaded) { catalogLoaded = true; void loadCatalog(); }
     dayNight.setLocked(prefs.sources.themeMode === "locked");
     mount(appearanceSource, sourceBadge(prefs.sources.themeMode));
