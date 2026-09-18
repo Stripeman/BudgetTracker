@@ -17,7 +17,9 @@ async function get(ctx) {
   // whether account requests are on right now — ensureUser only uses this on first creation, never
   // recomputing an existing account's status.
   const { site: siteDoc } = await site.readSite(ctx.storage);
-  const user = await store.ensureUser(ctx, { approvalStatus: site.initialApprovalStatus(siteDoc) });
+  // ensureUser resolves the same site policy internally now (security review S1) — reading it here
+  // too is for `visible`/`publicView` below, not to pick the approval status.
+  const user = await store.ensureUser(ctx);
   // A pending account is never a member of anything (it cannot create or join a workspace — see
   // api/workspaces/handler.js and api/invitations/handler.js), so there is nothing further to load;
   // the frontend shows the "waiting for approval" screen and nothing else. A site administrator is
