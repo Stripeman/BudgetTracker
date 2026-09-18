@@ -11,7 +11,7 @@
 // Nothing is deleted (BT-001-05): every change keeps its before and after values, author, time
 // and reason in the contact's own history (for private contacts, visible only to their owner).
 // Archived contacts are left out of people selectors but keep every historical reference.
-const { readBody, query, forbidden, notFound, conflict } = require('../_shared/http');
+const { readBody, query, forbidden, notFound, conflict, badRequest } = require('../_shared/http');
 const { newId, requireId } = require('../_shared/ids');
 const { readDocument } = require('../_shared/schema');
 const store = require('../_shared/store');
@@ -142,24 +142,100 @@ function change(action) {
   };
 }
 
-// Permanent deletion (BT-014): WORKSPACE contacts only, addressed by workspaceId + contactId like
-// every other action on this route (never `scope`, which the shared/private actions above use).
-// `doc.contacts` never holds a private contact (those live only in the person's own document, and
-// this build cannot safely scan every workspace for cross-workspace references to one), so a
-// private contact id simply is not found here and archive-only stays its only option — flagged in
-// PROJECT_STATE.md, not silently guessed at.
+// Permanent deletion (BT-014): WORKSPACE contacts, addressed by workspaceId + contactId like every
+// other action on this route.
 const permanentRoutes = deletion.makeRoutes({
   type: 'contact', idField: 'contactId',
   find: (doc, id) => (doc.contacts || []).find((c) => c.id === id) || null,
   authorize: (doc, member, c) => { if (c.createdBy !== member.subject && !workspaceSettings.managesSharedLists(doc, member)) throw forbidden('Only the creator or a manager can change this contact.'); },
 });
 
+// PRIVATE contact permanent deletion (BT-014 follow-up — closes a gap this file used to disclose
+// as not built: "this build has no safe way to scan every workspace" for cross-workspace
+// references). A private contact lives in the person's own document, but can be referenced (as
+// `pcontact:<id>`, api/_shared/people.js: "usable only on their private records") only by ITS OWN
+// OWNER, only on THEIR OWN records — which can be spread across every workspace they belong to.
+// `deletion.js`'s `makeRoutes()` is built around one workspace document's own ETag-guarded
+// read-modify-write, so it cannot express "scan every one of my own workspaces first, then write
+// to my own document"; this is a parallel, smaller implementation of the SAME two-step contract
+// (fresh recompute at execute time, a fingerprint that detects drift between review and
+// confirmation, a typed confirmation), returned in the exact shape `deletion.toClientImpact`
+// already returns, so the existing frontend dialog (app/js/ui/permanentdelete.js) drives both
+// without needing to know the difference. Unlike a workspace contact, there is no per-user audit
+// log construct in this codebase to record the deletion in (only workspace `doc.audit` and the
+// whole-workspace `site/deletions.json`, neither of which fits a private, single-owner action) —
+// a private contact's own history already disappears with it exactly like a workspace contact's
+// does (`contactApply` above keeps no separate trail for the record either), so this adds no new
+// audit mechanism rather than inventing one for a single-actor, self-only action.
+// Shared expenses are never scanned here: `groups.participantChecker` (api/_shared/groups.js)
+// already refuses a `pcontact:` ref outright at the point a shared expense is created or edited
+// ("Private contacts cannot take part in shared expenses, because the other members cannot see
+// them"), so a private contact's ref can never actually reach `doc.groupExpenses`/
+// `doc.groupSettlements` in the first place — confirmed by reading that guard, not assumed.
+async function privateContactBlockers(ctx, user, ref) {
+  let entries = 0;
+  for (const wsId of user.workspaceIds || []) {
+    const { value } = await ctx.storage.getJson(store.paths.workspace(wsId));
+    const doc = readDocument('workspace', value);
+    if (!doc) continue;
+    entries += (doc.transactions || []).filter((t) => t.responsibleRef === ref).length;
+    entries += (doc.recurring || []).filter((r) => r.responsibleRef === ref).length;
+  }
+  const blockers = [];
+  if (entries) blockers.push(`${entries} entr${entries === 1 ? 'y names' : 'ies name'} this contact as responsible for it. Change ${entries === 1 ? 'it' : 'them'} first.`);
+  return blockers;
+}
+function privateImpact(contact, blockers) {
+  const token = deletion.fingerprint({ type: 'pcontact', id: contact.id, blocked: blockers.length > 0, blockers });
+  return {
+    type: 'contact', id: contact.id, label: contact.name, confirmPhrase: contact.name,
+    blocked: blockers.length > 0, blockers, cascade: [], together: [], severed: [], autoCleanup: [], groupInvolved: false, token,
+  };
+}
+async function privateImpactRoute(ctx, req) {
+  const body = fields.onlyKeys(readBody(req), ['scope', 'contactId']);
+  const id = requireId(body.contactId, 'contactId');
+  const user = await store.ensureUser(ctx);
+  const contact = (user.contacts || []).find((c) => c.id === id);
+  if (!contact) throw notFound('Unknown contact.');
+  const blockers = await privateContactBlockers(ctx, user, `pcontact:${id}`);
+  return { body: { impact: privateImpact(contact, blockers) } };
+}
+async function privatePermanentRoute(ctx, req) {
+  const body = fields.onlyKeys(readBody(req), ['scope', 'contactId', 'impactToken', 'typedConfirmation', 'reason']);
+  const id = requireId(body.contactId, 'contactId');
+  const user = await store.ensureUser(ctx);
+  const contact = (user.contacts || []).find((c) => c.id === id);
+  if (!contact) throw notFound('Unknown contact.');
+  // Recomputed fresh here, never trusting the client's earlier copy — the same "revalidate at
+  // final confirmation" rule deletion.js's own execute() follows.
+  const blockers = await privateContactBlockers(ctx, user, `pcontact:${id}`);
+  const impact = privateImpact(contact, blockers);
+  if (impact.blocked) throw conflict(`This cannot be permanently deleted yet: ${impact.blockers.join(' ')}`, 'delete_blocked');
+  if (!body.impactToken || body.impactToken !== impact.token) {
+    throw conflict('What this would affect has changed since you reviewed it. Review the impact again before confirming.', 'delete_impact_stale');
+  }
+  const expected = String(impact.confirmPhrase || '').trim().toLowerCase();
+  const typed = String(body.typedConfirmation || '').trim().toLowerCase();
+  if (!expected || typed !== expected) throw badRequest('Type the confirmation text exactly as shown to permanently delete this.', 'confirmation_mismatch');
+  await store.mutateUser(ctx, (u) => {
+    const c = (u.contacts || []).find((x) => x.id === id);
+    if (!c) throw notFound('Unknown contact.');
+    u.contacts = (u.contacts || []).filter((x) => x.id !== id);
+    return { deleted: true };
+  });
+  return { body: { deleted: true, type: 'contact', id, impact } };
+}
+
 async function post(ctx, req) {
   const action = query(req, 'action');
   if (action === undefined) return create(ctx, req);
   if (action === 'restore') return change('restore')(ctx, req);
-  if (action === 'delete-impact') return permanentRoutes.impactRoute(ctx, req);
-  if (action === 'delete-permanent') return permanentRoutes.permanentRoute(ctx, req);
+  if (action === 'delete-impact' || action === 'delete-permanent') {
+    const scope = fields.oneOf(readBody(req).scope, ['workspace', 'private'], 'Scope', 'workspace');
+    if (scope === 'private') return action === 'delete-impact' ? privateImpactRoute(ctx, req) : privatePermanentRoute(ctx, req);
+    return action === 'delete-impact' ? permanentRoutes.impactRoute(ctx, req) : permanentRoutes.permanentRoute(ctx, req);
+  }
   throw notFound();
 }
 
