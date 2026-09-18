@@ -432,18 +432,52 @@ function renderAccounts(concept) {
   return el("div", { class: "gpage gpage--list" }, [pageTitle("accounts"), ...fn()]);
 }
 
-function renderShared() {
-  return el("div", { class: "gpage gpage--list" }, [
-    pageTitle("shared"),
+// ---- Shared expenses: three genuinely different compositions (closing the gap the review's own
+// "not done" note named — this and Trips were the last two required pages still sharing one
+// template across all 15 concepts). ------------------------------------------------------------
+function sharedBalanceList() {
+  return [
     gcard("Balances", "users", fx.shared.balances.map((b) => el("div", { class: "row" }, [el("span", { text: b.name }), el("span", { class: "app__spacer" }), amountText(b.net, fx.shared.currency, fx.prefs)]))),
     gcard("Recent shared expenses", "receipt", el("ul", { class: "stack" }, fx.shared.expenses.map((g) => el("li", { class: "grow" }, [el("span", { class: "muted small", text: g.date }), el("span", { text: g.description }), el("span", { class: "muted small", text: `paid by ${g.payer}` }), el("span", { class: "app__spacer" }), amountText(`-${g.amount}`, fx.shared.currency, fx.prefs)]))), { full: true }),
+  ];
+}
+function sharedLedgerTable() {
+  const rows = fx.shared.expenses.map((g) => el("tr", {}, [
+    el("td", { text: g.date }), el("td", { text: g.description }), el("td", { text: g.payer }),
+    el("td", { class: "num" }, [amountText(`-${g.amount}`, fx.shared.currency, fx.prefs)]),
+  ]));
+  const table = el("table", { class: "table gtable-dense" }, [
+    el("thead", {}, [el("tr", {}, ["Date", "Description", "Paid by", "Amount"].map((h) => el("th", { scope: "col", class: h === "Amount" ? "num" : "", text: h })))]),
+    el("tbody", {}, rows),
   ]);
+  const balanceRow = fx.shared.balances.map((b) => el("span", { class: "badge" }, [`${b.name}: `, amountText(b.net, fx.shared.currency, fx.prefs)]));
+  return [
+    gcard("Balances", "users", el("div", { class: "row" }, balanceRow)),
+    gcard("Shared expenses", "receipt", el("div", { class: "table-wrap" }, [table]), { full: true }),
+  ];
+}
+function sharedSettlementFocus() {
+  const owes = fx.shared.balances.filter((b) => Number(b.net) < 0);
+  const owed = fx.shared.balances.filter((b) => Number(b.net) > 0);
+  const suggestions = owes.flatMap((from) => owed.map((to) => el("li", { class: "grow" }, [
+    el("span", { text: `${from.name} → ${to.name}` }), el("span", { class: "app__spacer" }),
+    amountText(String(Math.min(Math.abs(Number(from.net)), Number(to.net)).toFixed(2)), fx.shared.currency, fx.prefs),
+  ])));
+  return [
+    gcard("Settle up", "scale", suggestions.length ? el("ul", { class: "stack" }, suggestions) : el("p", { class: "muted", text: "Everyone is settled up." }), { full: true }),
+    gcard("Recent shared expenses", "receipt", el("ul", { class: "stack" }, fx.shared.expenses.slice(0, 3).map((g) => el("li", { class: "grow" }, [el("span", { text: g.description }), el("span", { class: "app__spacer" }), amountText(`-${g.amount}`, fx.shared.currency, fx.prefs)])))),
+  ];
+}
+const SHARED_RENDERERS = { "balance-list": sharedBalanceList, "ledger-table": sharedLedgerTable, "settlement-focus": sharedSettlementFocus };
+function renderShared(concept) {
+  const fn = SHARED_RENDERERS[concept.sharedPattern] || sharedBalanceList;
+  return el("div", { class: "gpage gpage--list" }, [pageTitle("shared"), ...fn()]);
 }
 
 // `withName` is left on for heroSplitFocus, where the surrounding gcard's own title is generic
-// ("Active trip") and the trip's own name is not shown anywhere else; renderTrips() below gives
-// each trip its own gcard titled with the trip's name already, so it turns this off there — never
-// showing the same name twice in one card.
+// ("Active trip") and the trip's own name is not shown anywhere else; the card-grid/list Trips
+// patterns below give each trip its own heading already, so they turn this off — never showing
+// the same name twice in one card.
 function tripCard(t, { withName = true } = {}) {
   const pct = Math.min(100, Math.round((Number(t.spent) / Number(t.budget)) * 100));
   return [
@@ -454,13 +488,26 @@ function tripCard(t, { withName = true } = {}) {
     el("p", { class: "muted small", text: `With ${t.participants.join(", ")}` }),
   ];
 }
-
-function renderTrips() {
-  return el("div", { class: "gpage gpage--list" }, [
-    pageTitle("trips"),
-    el("p", { class: "field__help", text: "Illustrative only: Trip planning (BT-010) is not yet a real BudgetTracker feature. This page previews how the layout concept would present it." }),
-    el("div", { class: "ggrid ggrid--metrics" }, fx.trips.map((t) => gcard(t.name, t.icon, tripCard(t, { withName: false })))),
-  ]);
+const TRIPS_NOTE = "Illustrative only: Trip planning (BT-010) is not yet a real BudgetTracker feature. This page previews how the layout concept would present it.";
+function tripsCardGrid() {
+  return [el("div", { class: "ggrid ggrid--metrics" }, fx.trips.map((t) => gcard(t.name, t.icon, tripCard(t, { withName: false }))))];
+}
+function tripsList() {
+  return [gcard("Trips", "suitcase", el("ul", { class: "stack" }, fx.trips.map((t) => el("li", { class: "grow" }, [
+    withIcon(t.icon, t.name), el("span", { class: "muted small", text: t.dateRange }), el("span", { class: "app__spacer" }),
+    el("span", { class: "small", text: `${t.spent} of ${t.budget} ${t.currency}` }),
+  ]))), { full: true })];
+}
+function tripsTimeline() {
+  const sorted = [...fx.trips].sort((a, b) => (a.dateRange < b.dateRange ? -1 : 1));
+  return [gcard("Trips, in order", "clock", el("ol", { class: "gtimeline" }, sorted.map((t) => el("li", { class: "gtimeline__item gtimeline__item--future" }, [
+    el("span", { class: "gtimeline__date muted small", text: t.dateRange }), withIcon(t.icon, t.name), el("span", { class: "muted small" }, [` — ${t.spent} of ${t.budget} ${t.currency}`]),
+  ]))), { full: true })];
+}
+const TRIPS_RENDERERS = { "card-grid": tripsCardGrid, list: tripsList, timeline: tripsTimeline };
+function renderTrips(concept) {
+  const fn = TRIPS_RENDERERS[concept.tripsPattern] || tripsCardGrid;
+  return el("div", { class: "gpage gpage--list" }, [pageTitle("trips"), el("p", { class: "field__help", text: TRIPS_NOTE }), ...fn()]);
 }
 
 function settingValueBadge(s) {

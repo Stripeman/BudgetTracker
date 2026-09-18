@@ -6,7 +6,7 @@
 const { test, describe } = require('node:test');
 const assert = require('node:assert/strict');
 const { CONCEPTS, CONCEPT_IDS, REQUIRED_PAGES, REAL_LAYOUT_OPTIONS, REAL_DEFAULT_LAYOUT_ID, NAV_STYLES, DENSITIES, DASHBOARD_PATTERNS, CARD_STYLES, CHART_EMPHASES,
-  TRANSACTIONS_PATTERNS, BILLS_PATTERNS, BUDGET_PATTERNS, ACCOUNTS_PATTERNS, SETTINGS_PATTERNS } = require('../_shared/layouts');
+  TRANSACTIONS_PATTERNS, BILLS_PATTERNS, BUDGET_PATTERNS, ACCOUNTS_PATTERNS, SETTINGS_PATTERNS, SHARED_PATTERNS, TRIPS_PATTERNS } = require('../_shared/layouts');
 
 describe('BT-013 layout manifests', () => {
   test('exactly 15 concepts, unique ids', () => {
@@ -40,6 +40,11 @@ describe('BT-013 layout manifests', () => {
       assert.ok(BUDGET_PATTERNS.includes(c.budgetPattern), `${c.id} budgetPattern`);
       assert.ok(ACCOUNTS_PATTERNS.includes(c.accountsPattern), `${c.id} accountsPattern`);
       assert.ok(SETTINGS_PATTERNS.includes(c.settingsPattern), `${c.id} settingsPattern`);
+      // Shared expenses / Trips (review, 2026-09-18 follow-up): closes the gap this session's own
+      // "not done" note named — these two required pages were still one shared template across all
+      // 15 concepts after the first secondary-page fix.
+      assert.ok(SHARED_PATTERNS.includes(c.sharedPattern), `${c.id} sharedPattern`);
+      assert.ok(TRIPS_PATTERNS.includes(c.tripsPattern), `${c.id} tripsPattern`);
     }
   });
 
@@ -53,6 +58,8 @@ describe('BT-013 layout manifests', () => {
     assert.equal(new Set(CONCEPTS.map((c) => c.budgetPattern)).size, BUDGET_PATTERNS.length);
     assert.equal(new Set(CONCEPTS.map((c) => c.accountsPattern)).size, ACCOUNTS_PATTERNS.length);
     assert.equal(new Set(CONCEPTS.map((c) => c.settingsPattern)).size, SETTINGS_PATTERNS.length);
+    assert.equal(new Set(CONCEPTS.map((c) => c.sharedPattern)).size, SHARED_PATTERNS.length);
+    assert.equal(new Set(CONCEPTS.map((c) => c.tripsPattern)).size, TRIPS_PATTERNS.length);
   });
 
   test('at least 4 distinct nav styles and all 4 densities appear', () => {
