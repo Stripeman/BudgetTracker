@@ -198,7 +198,10 @@ fieldset.budget-line { margin: 0; padding: var(--space-3); border: 1px solid var
 .actionsmenu { display: inline-flex; }
 .actionsmenu__toggle {
   display: inline-flex; align-items: center; justify-content: center;
-  width: var(--control-height, 2.25rem); height: var(--control-height, 2.25rem);
+  /* A comfortable touch target (Terry: "a comfortable mobile touch target") — deliberately larger
+     than the shared --control-height text-input row height, since this is an icon-only button with
+     no adjacent label text it needs to align with. */
+  width: 2.75rem; height: 2.75rem; min-width: 44px; min-height: 44px;
   padding: 0; background: none; border: 1px solid transparent; border-radius: var(--radius-sm);
   color: var(--text-muted); cursor: pointer;
 }
