@@ -2152,3 +2152,119 @@ and all three Bills/Transactions → Merchant fixes (display fallback, component
 account-change-clear bug), combined, as of commit `75577c9`. The next session should check whether
 Terry has reviewed/merged any of PR #13–#19, rebase/re-verify the others if `main` has moved, and
 pick up his feedback on the live Preview build.
+
+## Checkpoint AG — NO DROPDOWN MAY SHIFT SURROUNDING CONTENT (BT-004-08), a new requirement from
+## Terry's screenshots, fixed at the root in the shared picker component (2026-09-18, same session)
+
+**What Terry reported.** Screenshots of Add Bill, Add Budget, Add Account and Add Merchant: opening
+the Icon dropdown "creates a large gap and pushes subsequent fields down" — unacceptable throughout
+the app. His instruction was explicit: fix the shared components, then audit every usage; do not
+apply four isolated CSS patches and leave the same defect elsewhere. He also authorized continuing
+every other open thread (Design Gallery, Bills/Merchant, review findings) without pausing to ask,
+and separately said not to touch the storage-key rotation.
+
+**Root cause, confirmed by reading the code, not guessed.** `createThemePicker`
+(`app/js/ui/themepicker.js`) — the ONE shared control behind the Icon picker (`iconpicker.js`, used
+by Accounts, Bills, Planning, Payees — exactly Terry's four named forms), the Colour-palette picker
+(My settings, Workspace, the account-menu header, the Design Gallery preview) and the category
+Colour picker — rendered its option list as a plain normal-flow sibling of its own toggle, with no
+`position` rule at all. `core/popover.js`'s own header comment already named this precisely as
+pre-existing, unfixed debt: "the theme and icon pickers open in normal flow." The command picker
+(Category/Account/Status/Merchant/Workspace/Type) had ALREADY solved this correctly with a
+`position: fixed`, viewport-aware, dialog-portaled overlay (BT-004-04/05/07) — the theme/icon/colour
+family had simply never been brought up to the same standard.
+
+**The fix, at the root, once.** `app/js/ui/overlay.js` (new) extracts the command picker's own
+private placement engine — `overlayHost`, `coarsePointer`, `viewportOf`, `triggerVisible`,
+`placePanel`, `usefulHeight`, `followTrigger` — into a shared module with no behaviour change
+(`commandpicker.js` now imports it instead of keeping a private copy; its own 76/76 unit tests and
+real-browser `dropdown.mjs` 29/29 passed unmodified, proving the extraction was faithful).
+`themepicker.js`'s list now opens through the exact same engine: portaled to the nearest
+`aria-modal` dialog or `document.body`, positioned and kept anchored on scroll/resize by
+`placePanel`/`followTrigger`, dismissed through the shared `registerPopup` registry (so outside-click
+and rival-popup closing work identically to the command picker), `position: fixed` in
+`components.css` reusing the same `--pop-top`/`--pop-left`/`--pop-max-height`/`--pop-min-width`
+custom properties. `modal.js`'s `escapeBelongsToControl` (so Escape closes the list before the
+dialog) and its Tab-trap `inPanel` helper both updated to recognise `.themepick__list` as a floating
+panel, matching the existing `.cmdpick__panel`/`.popover__panel` pattern. Every
+`createIconPicker`/`createThemePicker` call site was audited (`accounts.js`, `bills.js`,
+`planning.js`, `payees.js`, `settings.js`, `workspace.js`, `shell.js`, `gallery.js`) — one fix in the
+shared component reaches all of them; `daynight.js` has no dropdown of its own and needed nothing.
+
+**Downstream test fixes, all mechanical, none behavioural.** Because the list only exists in the
+document while open, and lives on `document.body`/the dialog rather than under the picker's own
+element, four test files needed updating to open the picker before querying its list, and to query
+from `document` rather than the picker's own subtree: `accounteditor.test.js`, `colours.test.js`,
+`icons.test.js` (4 tests). `themepicker.test.js` was rewritten with dedicated no-reflow regression
+tests (the list is never a child of the picker's own element even while open; closing removes it
+from the document entirely, not just hides it; a later field never moves when the list opens or
+closes).
+
+**New dedicated real-browser proof, exactly what Terry asked to see verified.**
+`scripts/dev/e2e/overlay.mjs` (`npm run e2e -- --only overlay`), 25/25 passed, exit 0:
+- Add Account, Add Bill, Add Budget, Add Merchant: the dialog's own primary Save/Create button and
+  its footer (`.modal__foot`) are at the pixel-identical position before and after opening the Icon
+  list, and the dialog's own height is unchanged; the open panel's computed `position` is `fixed`.
+- The 50+-entry Icon list scrolls inside its own height-capped panel, fully inside the viewport
+  (`overflow-y: auto`, a real `max-height`).
+- At a 1024×420 short viewport the list opens upward and stays fully visible — never clipped off
+  the bottom of the screen.
+- At a 390×844 phone layout the same no-reflow proof holds, and the panel stays fully inside the
+  viewport.
+- ArrowDown still moves focus among real, focusable options inside the floated panel; Escape closes
+  only the list (the dialog stays open); a click on the dialog's own title dismisses the panel
+  without closing the dialog (outside-click dismissal).
+- The non-modal My-Settings "Colour palette" picker (same shared component, no dialog involved at
+  all) does not move the next card ("Display and privacy") either before or after, and is also
+  `position: fixed`.
+- No console exceptions, errors or failed requests.
+
+**Evidence.**
+- `npm test` 39/651/505 (repo/api/app), exit 0. `npm run validate` ok, 24 routes, exit 0.
+- `npm run e2e -- --only overlay` 25/25, exit 0 (standalone, isolated fresh seed).
+- `npm run e2e -- --only dropdown,accounts,bills,settings,gallery,overlay` 247/247, exit 0 — a
+  combined regression check of every scenario that touches a modal, a command picker or the
+  theme/icon picker family together, proving the shared-engine refactor coexists cleanly.
+- A full, unfiltered `npm run e2e` (all 21 scenarios, no `--only`) reported 523 passed, 5 failed,
+  exit 1 — but every one of the 5 failures is the SAME pre-existing cause, reproduced starting at the
+  9th scenario (`accounts`), long before `overlay` (the 21st/last) even runs: the fictional `alice`
+  identity's `workspace_rate` limit (10 workspace creations/day, `api/_shared/store.js`) is exhausted
+  by the cumulative `createWorkspace` calls across the growing scenario suite (11 scenarios default
+  to owner `alice`) when they all run back-to-back in one calendar day against one seed. This is a
+  pre-existing e2e-harness scaling gap, not a regression this change introduces — confirmed because
+  the SAME failure mode appears at `accounts`/`bills`/`dashboard`/`transactions` (none of which this
+  session touched) before `overlay` is even reached. Left open as a known gap (see below); the
+  properly scoped combined run above is the real regression evidence for this specific change.
+- `docs/REQUIREMENTS.md` gains **BT-004-08**.
+
+**Git hygiene.** Committed directly to `integration/preview-2026-09-18` (the branch already
+contained checkpoints AE/AF from earlier this same session; continuing on it rather than opening a
+new branch for the same continuing session of work), commit `2f2bea5`, pushed to origin.
+
+**Known gaps, stated plainly.** Everything already listed under Checkpoints AA–AF's own "Known
+gaps" is still true. New from this checkpoint: (1) the e2e harness's `workspace_rate` scaling limit
+described above — running the FULL suite unfiltered now needs either a higher
+`BT_MAX_WORKSPACE_CREATIONS_PER_DAY` for local/e2e runs, spreading scenarios' `createWorkspace`
+calls across more fictional owners, or running the suite in a few `--only` batches — not fixed here,
+out of scope for BT-004-08; (2) a real screen reader over the floated theme/icon list specifically
+was not checked (the command picker's own screen-reader gap is already tracked under BT-004-07 and
+applies here too); (3) Windows High Contrast and a physical touch device remain unverified (touch
+was emulated); (4) not yet deployed to Preview as of this checkpoint's own commit — see next step.
+
+**Waiting on Terry:** everything already listed under Checkpoints AA–AF's "Waiting on Terry."
+Additionally, this session received a direct contradiction on deployment scope that has NOT been
+acted on either way and needs his explicit word before anything touches `main` or Production: his
+main instruction for this unit of work ended with "No main merge or Production deployment is
+authorized," but a mid-session follow-up said "when all that is complete push to main, preview and
+then production." Per `AGENTS.md`/`CLAUDE.md` (never push to `main`/master, merge PRs or deploy
+Production without Terry's explicit, unambiguous authorization — "Terry controls promotion after
+review") and given the two instructions directly conflict, this session is treating Preview-only as
+the safe, authorized action and is NOT merging to `main` or deploying Production. This needs Terry's
+explicit clarification, not a judgment call, before either happens.
+
+**Exact next step:** deploy this commit (`2f2bea5`, `integration/preview-2026-09-18`) to Preview via
+`scripts/deploy/deploy.ps1 -Environment preview` and independently verify the live commit sha and
+anonymous 401, per the established pattern; then continue straight into the Bills/Merchant
+completeness review and the Design Gallery bespoke-design continuation Terry re-authorized in the
+same instruction, without pausing to ask permission at each step; then get Terry's explicit word on
+the main/Production contradiction above before doing anything in that direction.
