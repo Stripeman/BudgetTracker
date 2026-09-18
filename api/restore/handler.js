@@ -105,7 +105,10 @@ async function execute(ctx, req) {
     const key = header(req, 'idempotency-key');
     if (key !== null && !isIdempotencyKey(key)) throw badRequest('The Idempotency-Key header is not valid.', 'invalid_idempotency_key');
     // A new workspace counts toward the person's limit (SEC-R5); a retried request replays.
+    // BT-014-17/security review S1: create-new restore is a third way to gain a workspace, so it
+    // needs the same approval gate as workspace creation and invitation acceptance.
     const existing = await store.ensureUser(ctx);
+    store.assertApproved(ctx, existing, 'restore into a new workspace');
     if (!(key && existing.idempotency && existing.idempotency[`restore|${key}`])) await store.assertCanCreateWorkspace(ctx);
     const newWsId = await store.mutateUser(ctx, (user) => {
       if (!user.idempotency || typeof user.idempotency !== 'object') user.idempotency = {};

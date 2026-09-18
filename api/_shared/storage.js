@@ -6,6 +6,10 @@
 //   getBytes(name)               -> { bytes, etag } | null
 //   putBytes(name, bytes, cond)  -> etag
 //   list(prefix)                 -> [names]
+//   delete(name)                 -> true if something was removed, false if it was already gone
+//                                    (security review S3: whole-workspace permanent deletion needs
+//                                    a real way to remove attachment blobs, not just the JSON
+//                                    document; idempotent so a retried purge is always safe)
 //
 // DEPARTURE FROM TASKTRACKER: unparseable JSON is REFUSED (503 storage_corrupt), never treated
 // as an empty document. Treating corruption as "empty" would let the next write replace a
@@ -73,6 +77,10 @@ function createMemoryStorage(options = {}) {
     async list(prefix) {
       return [...files.keys()].filter((k) => k.startsWith(prefix)).sort();
     },
+    async delete(name) {
+      checkName(name);
+      return files.delete(name);
+    },
   };
   return api;
 }
@@ -133,6 +141,11 @@ function createFileStorage(root) {
       walk(base, '');
       return out.sort();
     },
+    async delete(name) {
+      return withLock(name, async () => {
+        try { fs.unlinkSync(full(name)); return true; } catch (e) { if (e.code === 'ENOENT') return false; throw e; }
+      });
+    },
   };
   return api;
 }
@@ -186,6 +199,10 @@ function createBlobStorage({ connectionString, container }) {
       const out = [];
       for await (const item of c.listBlobsFlat({ prefix })) out.push(item.name);
       return out.sort();
+    },
+    async delete(name) {
+      const c = await ensure();
+      try { const res = await c.getBlockBlobClient(checkName(name)).deleteIfExists(); return !!res.succeeded; } catch (e) { if (isMissing(e)) return false; throw e; }
     },
   };
   return api;

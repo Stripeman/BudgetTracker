@@ -20,6 +20,7 @@
 const { createHash } = require('node:crypto');
 const { conflict, badRequest } = require('./http');
 const groups = require('./groups');
+const { paths } = require('./store');
 
 function fingerprint(value) {
   return createHash('sha256').update(JSON.stringify(value)).digest('hex').slice(0, 32);
@@ -126,4 +127,28 @@ function applyPermanentDelete(doc, { token, typedConfirmation, actor, nowIso, ad
   return before;
 }
 
-module.exports = { impact, toClientImpact, applyPermanentDelete, datasetCounts };
+// Security review S3 (2026-09-18): permanent deletion wiped the workspace JSON document but left
+// its separate, content-addressed attachment blobs (receipts) in storage — retained data, not
+// merely "no longer reachable through the API". Called AFTER the wipe write has committed (the
+// document is the source of truth for "this workspace is deleted"; attachments are a best-effort,
+// retried cleanup of storage that the deleted document can no longer reference). Idempotent: a
+// retried purge (or one run twice) simply finds nothing left to delete the second time. Returns
+// counts only — operational metadata, never a name, sha or any attachment content — safe to record
+// in the outside deletion log next to the dataset counts.
+async function purgeAttachments(storage, wsId, { attempts = 3 } = {}) {
+  const prefix = paths.attachmentsPrefix(wsId);
+  let names;
+  try { names = await storage.list(prefix); } catch { return { purged: 0, failed: 0, total: 0, listFailed: true }; }
+  let purged = 0;
+  let failed = 0;
+  for (const name of names) {
+    let done = false;
+    for (let i = 0; i < attempts && !done; i += 1) {
+      try { await storage.delete(name); done = true; } catch { /* retry */ }
+    }
+    if (done) purged += 1; else failed += 1;
+  }
+  return { purged, failed, total: names.length };
+}
+
+module.exports = { impact, toClientImpact, applyPermanentDelete, datasetCounts, purgeAttachments };
