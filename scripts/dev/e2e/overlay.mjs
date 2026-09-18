@@ -189,9 +189,26 @@ export async function run(h, t) {
   const APPEARANCE = 'section[aria-labelledby="set-appearance"]';
   await alice.goto("settings");
   await alice.waitForText("Colour palette", { scope: "main" });
+  // My Settings' own async-loaded sections (category colours/icon catalogue, deleted workspaces —
+  // BT-017) can still be settling their own show/hide state for a moment after "Colour palette"
+  // itself is already visible; wait for the network to go quiet before taking the baseline
+  // measurement, so a real no-reflow proof is never confused with this page's own unrelated,
+  // already-in-flight layout settling (the same class of measurement-timing fix as Checkpoint AH's
+  // contrast-check false positive — a test-methodology fix, not a product change).
+  await alice.settle();
   const belowCard = () => "(() => { const h = document.getElementById('set-display'); return h ? Math.round(h.getBoundingClientRect().top) : null; })()";
-  const paletteBefore = await alice.evaluate(belowCard());
+  // `locate()` itself does `scrollIntoView({ block: "center" })` on the trigger before computing
+  // click coordinates (session.mjs's pageLocate) — a deliberate, existing harness behaviour for
+  // reliable clicking, not a product no-reflow bug. Root-caused, not guessed: instrumented with
+  // window.scrollY before/after and confirmed the page's OWN scroll position moved (0 -> 18),
+  // never its width or document height, exactly matching this. Locating the trigger BEFORE taking
+  // the baseline measurement (rather than after, as this check previously did) means both the
+  // "before" and "after opening" measurements are taken at the SAME, already-settled scroll
+  // position, so the harness's own click-preparation scroll is never mistaken for the dropdown
+  // itself moving the page (BT-017's new intro paragraph, which pushed this trigger slightly
+  // further from centre than before, is what exposed this pre-existing measurement gap).
   const paletteTrigger = await alice.locate({ css: ".themepick__toggle", scope: APPEARANCE });
+  const paletteBefore = await alice.evaluate(belowCard());
   await alice.mouseClick(paletteTrigger.x, paletteTrigger.y);
   await alice.waitFor(LISTBOX_OPEN, { what: "the Colour palette list to open" });
   const paletteOpened = await alice.evaluate(belowCard());
