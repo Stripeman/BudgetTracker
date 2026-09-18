@@ -8,6 +8,79 @@
 - **Checkpoint commit.** The commit containing this file; resolve it with `git log -1 --format=%H`.
 - **PR #1.** Merged as `ebc45f8` (2026-09-14, one-time authorization). PR #2 (the deploy-script fix) merged as `31b17b1`, deployed to Production and verified — see "PRODUCTION DEPLOYED" below and Checkpoint R. Preview tracks `feature/project-foundation`, currently well ahead of `31b17b1`; the next Production release needs a new PR from the feature branch, merged after all checks and reviews pass (Terry: standing permission for the agent to merge, he runs the deploy — see "Answered").
 
+## BACKLOG — authorized for after this release (Terry, 2026-09-18; survives a session restart)
+
+**The work sequence, verbatim (do not skip or reorder):**
+1. Finish and verify all currently authorized work (BT-004-08 dropdown overlay, BT-013-08 Gallery
+   typography/graphics, BT-014-18 Bills→Merchant Preview verification, the e2e harness isolation fix
+   below).
+2. Report release readiness and ASK for Terry's explicit authorization to merge into `main` and
+   deploy to Preview and Production. **This message does NOT itself authorize a main merge or a
+   Production deployment** — only Preview, and only after the ask.
+3. Once (and only once) Terry explicitly authorizes it: use the existing workflow to merge/push
+   `main`, deploy and verify Preview, then deploy and verify Production.
+4. After that release is complete: begin the backlog below, on a feature branch, targeting Preview
+   only until Terry separately authorizes a further Production release for it.
+
+**BT-015 — Compact record action menus (Accounts, Bills, Merchants, Transactions).** Move each
+record's row actions into a menu right-aligned on the same row as its title/name — a four-dot "::"
+icon (two rows, two columns; a real icon, never literal punctuation), one shared component reused on
+all four screens. **Exact preserved action order per type** (never reordered):
+- Accounts: Edit, Close, Who can see this, Remove, Delete permanently.
+- Bills: Edit, Record next, Pause, End, History, Delete permanently.
+- Merchants: Edit, History (renamed from "View history"), Close, Delete permanently.
+- Transactions: Edit, Reverse, Move (renamed from "Move to another account"), History, Delete, Delete
+  permanently.
+Preserve every existing permission, availability rule, confirmation, audit record and behavior
+exactly, including lifecycle alternatives (Reopen/Resume) where they already exist; Remove/Delete and
+Delete permanently keep their distinct meanings, never merged. Menu requirements: opening it must
+NEVER shift surrounding content or resize the form (reuse the BT-004-08 overlay engine,
+`app/js/ui/overlay.js` — this is exactly the defect class that fix already solves); overlay the page
+without clipping, repositioning to stay in the viewport; keyboard navigation, Escape, outside-click
+dismissal and touch all work; a comfortable mobile touch target and an accessible label such as
+"Actions for Household Checking"; the trigger stays visible beside long/wrapping titles; destructive
+actions are visually separated and clearly identified; desktop and mobile use the same pattern.
+
+**BT-016 — Shared expenses: contacts and external participation without an application account.**
+Let Terry add a participant's name and email to a shared expense without requiring that person to
+have an account. Distinguish three separate concepts, never conflated: (1) a contact included only in
+expense calculations; (2) someone invited to VIEW shared information; (3) an authenticated person
+AUTHORIZED to add or edit expenses. Adding a name/email must never itself send an invitation or grant
+access. **Before writing code:** inspect the existing contacts, shared-expense, membership and
+permission models, then give Terry a concise recommendation and proposed workflow/access boundaries —
+implementation waits for his decision on this point specifically (continue other unblocked backlog
+items meanwhile, per his standing instruction). Evaluate: tracking expenses with contacts who never
+sign in; when participants DO need to sign in and contribute, offering creation of a dedicated
+group/trip workspace OR selection of an existing appropriate shared workspace (never forcing a new
+workspace per expense); including only the intended shared information; keeping personal banking,
+private accounts, unrelated contacts and other workspaces inaccessible; using the real verified-
+identity invitation/acceptance flow already in place (knowing an email must never itself grant
+access); making roles/visibility/revocation clear before anything is shared. If sharing a single
+expense within an EXISTING workspace turns out preferable to a dedicated one, explain exactly how
+access stays restricted across every API, list, search, export and attachment path — never a broad
+workspace grant or a public link as a shortcut.
+
+**BT-017 — Redesign My Settings and Workspace Settings.** Not another column added to the current
+arrangement — a coherent, professional, task-oriented reorganization. Inventory every existing
+setting first; preserve every capability and permission exactly. Requirements: clearly distinguish
+personal preferences from workspace-wide settings; consistent headings/labels/control widths/spacing/
+concise help text; consistent presentation of inherited default vs personal/workspace override vs
+locked, everywhere it already applies; two columns where sensible on desktop (reuse/extend the real
+`.settings-group__body` CSS Grid mechanism from BT-011, item 5), one column on mobile; complex
+controls/tables/long content stay full-width; advanced/infrequently-used options collapse into
+clearly labelled expandable sections; destructive operations live in their own clearly identified
+area; consistent save behavior with visible unsaved/saved/error states; sections are findable via
+navigation or search; logical keyboard order, accessibility and theme behavior preserved throughout;
+verified on mobile, with long labels, validation messages, and both light and dark modes.
+
+**Tracking discipline for all three:** each is its own tracked backlog item (BT-015/016/017 in
+`docs/REQUIREMENTS.md`) with its own acceptance criteria; once started, complete and verify each
+without repeatedly pausing to ask whether to continue — ask specifically where BT-016 needs Terry's
+design decision, and keep moving on the other unblocked items meanwhile. Real-browser checks
+including mobile for all three; preserve privacy, financial correctness, deletion safeguards and the
+one established deployment workflow (`deploy.ps1`, Preview only until Production is separately
+authorized for this work).
+
 ## Waiting on Terry (keep current; repeat open items in every status update)
 
 Terry asked (2026-09-14) for one list of what he still has to answer or do, so he never has to search the chat. Move an item to "Answered" with the date and his decision; never delete it.

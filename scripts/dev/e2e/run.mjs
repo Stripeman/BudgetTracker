@@ -3,13 +3,28 @@
 //   npm run e2e                          every scenario
 //   npm run e2e -- --only privacy,shared  some of them (names below; "group" means shared)
 //   npm run e2e -- --list                 list them
-//   npm run e2e -- --keep-data            keep the run's fictional data directory afterwards
+//   npm run e2e -- --keep-data            keep every scenario's fictional data directory afterwards
 //
-// Not part of `npm test`: it needs Microsoft Edge (BT_EDGE_PATH overrides its location). Each run
-// seeds fresh fictional data under .local/e2e/<run>/, starts its own dev server on a free port,
-// opens one headless Edge per fictional user, prints PASS / FAIL / SKIP with expected and actual
-// values, saves screenshots under .local/e2e/<run>/shots, stops every process it started, proves
-// none is left, and exits non-zero on any failure.
+// Not part of `npm test`: it needs Microsoft Edge (BT_EDGE_PATH overrides its location). ISOLATION
+// (Terry, 2026-09-18: "Fix the E2E harness isolation problem. A full suite that exhausts one shared
+// fictional identity's daily quota is unfinished test infrastructure. Give scenarios isolated
+// synthetic identities or fresh isolated test state... Do not weaken the application's actual limits
+// or silently skip failing scenarios."): every scenario gets its OWN isolated dev server, its OWN
+// fresh port and its OWN freshly seeded fictional data under .local/e2e/<run>/<scenario>/ — never one
+// shared server/seed for the whole run. Before this, every scenario's fictional "alice" (the default
+// workspace owner almost all of them use) was the SAME underlying user document for the whole
+// invocation, so running many scenarios together exhausted alice's real, intentional 10-workspaces-
+// per-day limit (api/_shared/store.js) partway through — a test-infrastructure artifact, not a
+// product defect, but a real gap: it silently turned unrelated later scenarios into false failures
+// instead of proving anything. Giving each scenario its own fresh server (BT_MAX_WORKSPACE_CREATIONS
+// _PER_DAY is never touched, and no scenario's own failure is ever swallowed — every one still runs
+// and reports) removes the collision at its root, in the harness, not the application: the real limit
+// itself still runs, deliberately, in the `guards` scenario (quota.mjs' dedicated coverage, run in its
+// own isolated server exactly like every other scenario). Each scenario opens one headless Edge per
+// fictional user (alice owner, bob member, carol viewer, dave site administrator, eve outsider), a
+// direct API client per user, prints PASS / FAIL / SKIP with expected and actual values, saves
+// screenshots under its own scenario subdirectory, stops every process it started, proves none is
+// left, and the whole run exits non-zero on any failure anywhere.
 import fs from "node:fs";
 import path from "node:path";
 import { ROOT, parseArgs, assertUnderLocal } from "../harness/guards.mjs";
@@ -36,9 +51,10 @@ import * as dashboard from "./dashboard.mjs";
 import * as accountrequests from "./accountrequests.mjs";
 import * as transactions from "./transactions.mjs";
 import * as overlay from "./overlay.mjs";
+import * as quota from "./quota.mjs";
 
-const SCENARIOS = [privacy, shared, concurrency, guards, dropdown, staging, recheck, settings, accounts, bills, remove, deleteworkspace, move, analytics, login, gallery, permanentdelete, dashboard, accountrequests, transactions, overlay];
-const ALIASES = { group: "shared", "shared-expenses": "shared", picker: "dropdown", dropdowns: "dropdown", "route-guards": "guards", "staging-link": "staging", "workspace-settings": "settings", "edit-account": "accounts", "remove-account": "remove", "delete-workspace": "deleteworkspace", archive: "deleteworkspace", "move-entry": "move", "move-account": "move", usage: "analytics", "site-usage": "analytics", "sign-in": "login", landing: "login", "design-gallery": "gallery", layouts: "gallery", "permanent-delete": "permanentdelete", "bt-014": "permanentdelete", "record-deletion": "permanentdelete", tooltip: "bills", "record-next": "bills", "spending-by-category": "dashboard", "top-merchants": "dashboard", "this-week": "dashboard", "account-requests": "accountrequests", "bt-014-17": "accountrequests", "quick-entry": "transactions", "add-expense": "transactions", "new-merchant": "transactions", "no-reflow": "overlay", "icon-picker": "overlay", "theme-picker": "overlay", "colour-palette": "overlay" };
+const SCENARIOS = [privacy, shared, concurrency, guards, dropdown, staging, recheck, settings, accounts, bills, remove, deleteworkspace, move, analytics, login, gallery, permanentdelete, dashboard, accountrequests, transactions, overlay, quota];
+const ALIASES = { group: "shared", "shared-expenses": "shared", picker: "dropdown", dropdowns: "dropdown", "route-guards": "guards", "staging-link": "staging", "workspace-settings": "settings", "edit-account": "accounts", "remove-account": "remove", "delete-workspace": "deleteworkspace", archive: "deleteworkspace", "move-entry": "move", "move-account": "move", usage: "analytics", "site-usage": "analytics", "sign-in": "login", landing: "login", "design-gallery": "gallery", layouts: "gallery", "permanent-delete": "permanentdelete", "bt-014": "permanentdelete", "record-deletion": "permanentdelete", tooltip: "bills", "record-next": "bills", "spending-by-category": "dashboard", "top-merchants": "dashboard", "this-week": "dashboard", "account-requests": "accountrequests", "bt-014-17": "accountrequests", "quick-entry": "transactions", "add-expense": "transactions", "new-merchant": "transactions", "no-reflow": "overlay", "icon-picker": "overlay", "theme-picker": "overlay", "colour-palette": "overlay", "workspace-rate": "quota", "workspace-quota": "quota", "rate-limit": "quota" };
 const rel = (p) => path.relative(ROOT, p).replace(/\\/g, "/");
 
 let args;
@@ -57,31 +73,51 @@ const runId = new Date().toISOString().replace(/[-:]/g, "").replace("T", "-").sl
 const runDir = assertUnderLocal(path.join(ROOT, ".local", "e2e", runId));
 fs.mkdirSync(runDir, { recursive: true });
 const t = createReport();
-let harness = null;
+let harness = null; // the ONE currently-open scenario's harness, if any (for SIGINT cleanup)
+let currentScenarioName = null;
+const closed = []; // { scenario, base, dataRoot, report } for every harness this run has already closed
 let finishing = null;
+
+function printCleanup(scenarioName, base, dataRoot, c) {
+  console.log(`\nCleanup for "${scenarioName}" (its own isolated dev server, never shared with another scenario)`);
+  console.log(`  dev server pid ${c.serverReport.pid} on port ${c.serverReport.port}: ${c.serverReport.stillRunning ? "STILL RUNNING" : "stopped"}`);
+  for (const e of c.edgeReports) {
+    console.log(`  ${e.label} pid ${e.pid}: ${e.closedByCdp ? "closed by Browser.close" : "not closed by CDP"}; msedge PIDs with its profile ${JSON.stringify(e.seen)}; killed ${JSON.stringify(e.killed)}; survivors ${JSON.stringify(e.survivors)}; profile ${e.profileRemoved ? "removed" : "NOT removed"}`);
+  }
+  console.log(`  msedge processes still holding a profile of this run: ${c.leftoverEdge.length ? JSON.stringify(c.leftoverEdge) : "none"}`);
+  console.log(`  tracked processes still alive: ${c.leftover.length ? JSON.stringify(c.leftover) : "none"}`);
+  console.log(`  fictional data ${c.keepData ? `kept at ${rel(dataRoot)}` : c.dataRemoved ? "removed" : "NOT removed"}`);
+  const ok = !c.serverReport.stillRunning && !c.leftoverEdge.length && !c.leftover.length && !c.profilesLeft.length && c.edgeReports.every((e) => e.profileRemoved && !e.survivors.length);
+  if (!ok) console.log(`  CLEANUP INCOMPLETE for "${scenarioName}" (see above)`);
+  return ok;
+}
+
+// Closes whichever harness is currently open (normal end-of-scenario, or an interrupted scenario)
+// and records its cleanup report. Never throws past this point: a cleanup problem is reported, not
+// left to crash the run before every other scenario's own results are written.
+async function closeCurrent() {
+  if (!harness) return true;
+  const name = currentScenarioName;
+  const base = harness.base;
+  const dataRoot = harness.server.dataRoot;
+  const c = await harness.close();
+  harness = null;
+  currentScenarioName = null;
+  const ok = printCleanup(name, base, dataRoot, c);
+  closed.push({ scenario: name, base, ok });
+  return ok;
+}
 
 async function finish(extraFailure = false) {
   if (finishing) return finishing;
   finishing = (async () => {
-    let cleanupOk = true;
-    if (harness) {
-      const c = await harness.close();
-      console.log("\nCleanup (only processes this run started)");
-      console.log(`  dev server pid ${c.serverReport.pid} on port ${c.serverReport.port}: ${c.serverReport.stillRunning ? "STILL RUNNING" : "stopped"}`);
-      for (const e of c.edgeReports) {
-        console.log(`  ${e.label} pid ${e.pid}: ${e.closedByCdp ? "closed by Browser.close" : "not closed by CDP"}; msedge PIDs with its profile ${JSON.stringify(e.seen)}; killed ${JSON.stringify(e.killed)}; survivors ${JSON.stringify(e.survivors)}; profile ${e.profileRemoved ? "removed" : "NOT removed"}`);
-      }
-      console.log(`  msedge processes still holding a profile of this run: ${c.leftoverEdge.length ? JSON.stringify(c.leftoverEdge) : "none"}`);
-      console.log(`  tracked processes still alive: ${c.leftover.length ? JSON.stringify(c.leftover) : "none"}`);
-      console.log(`  every PID this run started or found: ${JSON.stringify(c.tracked.map((p) => `${p.pid} ${p.label}`))}`);
-      console.log(`  fictional data ${c.keepData ? `kept at ${rel(harness.server.dataRoot)}` : c.dataRemoved ? "removed" : "NOT removed"}; screenshots and logs in ${rel(runDir)}`);
-      cleanupOk = !c.serverReport.stillRunning && !c.leftoverEdge.length && !c.leftover.length && !c.profilesLeft.length && c.edgeReports.every((e) => e.profileRemoved && !e.survivors.length);
-      if (!cleanupOk) console.log("  CLEANUP INCOMPLETE (see above)");
-    }
+    const lastOk = await closeCurrent();
+    const cleanupOk = lastOk && closed.every((c) => c.ok);
     const { pass, fail, skip } = t.counts();
-    fs.writeFileSync(path.join(runDir, "results.json"), JSON.stringify({ runId, base: harness ? harness.base : null, results: t.results }, null, 2));
+    fs.writeFileSync(path.join(runDir, "results.json"), JSON.stringify({ runId, scenarios: closed.map((c) => ({ scenario: c.scenario, base: c.base, cleanupOk: c.ok })), results: t.results }, null, 2));
     const code = fail || extraFailure || !cleanupOk ? 1 : 0;
     console.log(`\nResult: ${pass} passed, ${fail} failed, ${skip} skipped${cleanupOk ? "" : ", cleanup incomplete"} (exit ${code})`);
+    console.log(`Evidence in ${rel(runDir)} (one subdirectory per scenario, each its own isolated server and fictional seed).`);
     return code;
   })();
   return finishing;
@@ -90,25 +126,29 @@ async function finish(extraFailure = false) {
 process.on("SIGINT", async () => { console.log("\nInterrupted: cleaning up"); process.exit(await finish(true)); });
 
 let setupFailed = false;
-try {
-  harness = await createHarness({ runDir, keepData: args.keepData });
-  console.log(`BudgetTracker e2e run ${runId}`);
-  console.log(`  isolated dev server ${harness.base} (pid ${harness.server.pid}), fresh fictional seed in ${rel(harness.server.dataRoot)}`);
-  console.log(`  evidence in ${rel(runDir)}; Edge ${edgeAvailable() ? EDGE : "NOT FOUND"}`);
-  for (const s of selected) {
-    console.log(`\n== ${s.name}: ${s.title}`);
-    t.scenario(s.name);
-    if (s.needsBrowser && !edgeAvailable()) { t.skip(s.name, `Microsoft Edge was not found at ${EDGE}; set BT_EDGE_PATH`); continue; }
-    try {
-      await s.run(harness, t);
-    } catch (err) {
-      t.check("the scenario ran to its end", { expected: "no error", actual: String((err && err.stack) || err).split("\n").slice(0, 3).join(" | "), pass: false });
-    } finally {
-      await harness.closeBrowsers();
-    }
+console.log(`BudgetTracker e2e run ${runId}`);
+console.log(`  evidence in ${rel(runDir)}; Edge ${edgeAvailable() ? EDGE : "NOT FOUND"}`);
+console.log(`  each scenario gets its OWN isolated dev server and fresh fictional seed (never shared)`);
+for (const s of selected) {
+  console.log(`\n== ${s.name}: ${s.title}`);
+  t.scenario(s.name);
+  if (s.needsBrowser && !edgeAvailable()) { t.skip(s.name, `Microsoft Edge was not found at ${EDGE}; set BT_EDGE_PATH`); continue; }
+  try {
+    harness = await createHarness({ runDir: assertUnderLocal(path.join(runDir, s.name)), keepData: args.keepData });
+    currentScenarioName = s.name;
+    console.log(`   isolated dev server ${harness.base} (pid ${harness.server.pid}), fresh fictional seed in ${rel(harness.server.dataRoot)}`);
+  } catch (err) {
+    setupFailed = true;
+    t.check(`${s.name}: its own isolated dev server started`, { expected: "no error", actual: String((err && err.stack) || err).split("\n").slice(0, 3).join(" | "), pass: false });
+    continue;
   }
-} catch (err) {
-  setupFailed = true;
-  console.error(`Harness setup failed: ${(err && err.stack) || err}`);
+  try {
+    await s.run(harness, t);
+  } catch (err) {
+    t.check("the scenario ran to its end", { expected: "no error", actual: String((err && err.stack) || err).split("\n").slice(0, 3).join(" | "), pass: false });
+  } finally {
+    await harness.closeBrowsers();
+    await closeCurrent();
+  }
 }
 process.exit(await finish(setupFailed));

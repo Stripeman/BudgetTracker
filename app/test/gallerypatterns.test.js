@@ -12,7 +12,7 @@ import { installDom } from "./domdouble.js";
 import { renderConceptFrame } from "../js/ui/gallery/compose.js";
 
 const require = createRequire(import.meta.url);
-const { CONCEPTS, REQUIRED_PAGES, TRANSACTIONS_PATTERNS, BILLS_PATTERNS, BUDGET_PATTERNS, ACCOUNTS_PATTERNS, SETTINGS_PATTERNS, SHARED_PATTERNS, TRIPS_PATTERNS } = require("../../api/_shared/layouts.js");
+const { CONCEPTS, REQUIRED_PAGES, TRANSACTIONS_PATTERNS, BILLS_PATTERNS, BUDGET_PATTERNS, ACCOUNTS_PATTERNS, SETTINGS_PATTERNS, SHARED_PATTERNS, TRIPS_PATTERNS, TYPE_VOICES, CHART_EMPHASES } = require("../../api/_shared/layouts.js");
 
 let dom;
 beforeEach(() => { dom = installDom(); });
@@ -143,5 +143,59 @@ describe("BT-013 secondary-page composition patterns: every real concept, every 
       const frame = renderConceptFrame(concept, "trips", () => {}, { requiredPages: REQUIRED_PAGES });
       assert.match(frame.querySelector(".gframe__main").textContent, /not yet a real BudgetTracker feature/, `${pattern} keeps the disclosure`);
     }
+  });
+
+  // Typography and new chart primitives (Terry, 2026-09-18: "deliberate typography, color, graphics,
+  // metrics") ------------------------------------------------------------------------------------
+  test("every concept's frame carries its own real typographic voice as a data attribute, for every one of the 15 real concepts", () => {
+    for (const c of CONCEPTS) {
+      const frame = renderConceptFrame(c, "dashboard", () => {}, { requiredPages: REQUIRED_PAGES });
+      assert.equal(frame.dataset.voice, c.typeVoice, `${c.id} carries its own typeVoice`);
+      assert.ok(TYPE_VOICES.includes(frame.dataset.voice), `${c.id} voice ${frame.dataset.voice} is a real value`);
+    }
+  });
+
+  test("all 4 typographic voices are genuinely used, each by more than one concept (a real shared axis, not a per-concept one-off)", () => {
+    const byVoice = new Map();
+    for (const c of CONCEPTS) byVoice.set(c.typeVoice, (byVoice.get(c.typeVoice) || 0) + 1);
+    assert.equal(byVoice.size, TYPE_VOICES.length);
+    for (const voice of TYPE_VOICES) assert.ok(byVoice.get(voice) >= 2, `${voice} used by at least 2 concepts, got ${byVoice.get(voice)}`);
+  });
+
+  test("Wealth Overview's chart-first dashboard renders the new filled area chart (reference 5), not the plain multi-line chart; every other concept's dashboard never renders one", () => {
+    const area = CONCEPTS.find((c) => c.chartEmphasis === "area");
+    assert.ok(area, "fixture sanity");
+    const areaFrame = renderConceptFrame(area, "dashboard", () => {}, { requiredPages: REQUIRED_PAGES });
+    assert.ok(areaFrame.querySelector(".chart--area"), "area-emphasis concept renders the filled area chart");
+    assert.ok(areaFrame.querySelector(".chart__area-fill"), "the area chart has a real filled polygon");
+    for (const c of CONCEPTS.filter((c) => c.chartEmphasis !== "area")) {
+      const frame = renderConceptFrame(c, "dashboard", () => {}, { requiredPages: REQUIRED_PAGES });
+      assert.equal(frame.querySelector(".chart--area"), null, `${c.id} does not render the area chart`);
+    }
+  });
+
+  test("Goal Navigator's goal-progress dashboard renders the new circular gauge (reference 1/6), with the real percentage in its accessible label", () => {
+    const donut = CONCEPTS.find((c) => c.chartEmphasis === "donut");
+    assert.ok(donut, "fixture sanity");
+    const frame = renderConceptFrame(donut, "dashboard", () => {}, { requiredPages: REQUIRED_PAGES });
+    const gauges = [...frame.querySelectorAll(".chart--gauge")];
+    assert.equal(gauges.length, 2, "one gauge per goal card (loan payoff, savings goal)");
+    for (const g of gauges) {
+      assert.equal(g.getAttribute("role"), "img");
+      assert.match(g.getAttribute("aria-label"), /%/, "the gauge's accessible label states the real percentage");
+    }
+  });
+
+  test("Financial Command Center's command-console dashboard adds a 'Budget used' ring alongside its forecast bar chart, since its chartEmphasis is 'mixed'", () => {
+    const mixed = CONCEPTS.find((c) => c.chartEmphasis === "mixed");
+    assert.ok(mixed, "fixture sanity");
+    const frame = renderConceptFrame(mixed, "dashboard", () => {}, { requiredPages: REQUIRED_PAGES });
+    assert.match(frame.querySelector(".gframe__main").textContent, /Budget used/);
+    assert.ok(frame.querySelector(".chart--gauge"), "renders the ring");
+    assert.ok(frame.querySelector(".chart--bars"), "keeps its existing forecast bar chart too");
+  });
+
+  test("every chart emphasis, including the two new ones, is genuinely used across the 15 concepts", () => {
+    assert.equal(new Set(CONCEPTS.map((c) => c.chartEmphasis)).size, CHART_EMPHASES.length);
   });
 });

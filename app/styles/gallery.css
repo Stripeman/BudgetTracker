@@ -111,6 +111,54 @@
 .chart--line .chart__line--dashed { stroke-dasharray: 6 4; }
 .chart--line .chart__line--dotted { stroke-dasharray: 1 4; }
 
+/* New chart primitives (Terry, 2026-09-18: "excellent charts, meaningful metrics" — reference 5's
+   filled forecast area, reference 1/6's circular progress ring). Same rule as every other chart here:
+   the SVG is aria-hidden or role="img" with a text label, and the real figure is always stated in
+   text beside it (never colour or the arc alone). */
+.chart--area .chart__area-fill { fill: color-mix(in srgb, var(--accent) 22%, transparent); stroke: none; }
+.chart--area .chart__line--solid { stroke: var(--accent); }
+
+.ggauge { display: inline-flex; align-items: center; justify-content: center; position: relative; width: max-content; }
+.ggauge__pct { position: absolute; font-size: var(--text-lg); font-weight: var(--weight-bold); }
+.gauge__track { stroke: var(--surface-sunken); }
+.gauge__fill { stroke: var(--accent); stroke-linecap: round; transition: none; }
+
+/* ---------------------------------------------------------------------------------------------- */
+/* Typographic voice (Terry, 2026-09-18: "at least 15... deliberate typography, color, graphics,
+   metrics" — each concept gets a real, visible heading/figure typeface, weight and letter-spacing
+   treatment, system fonts only (same CSP rule as the rest of the app, --font-sans/--font-mono plus
+   two further system generic families never loaded remotely: ui-serif/ui-rounded). This is combined
+   with each concept's own structural axes above, never a substitute for them — "changing a palette,
+   font… alone does not count" (Terry's own words), which is why every voice below is reused by
+   several structurally different concepts, exactly like navStyle/density/cardStyle already are. */
+.gframe[data-voice="technical-mono"] .gpage__head h2,
+.gframe[data-voice="technical-mono"] .gcard__title,
+.gframe[data-voice="technical-mono"] .gmetric__value,
+.gframe[data-voice="technical-mono"] .gcard__value { font-family: var(--font-mono); letter-spacing: -0.01em; }
+.gframe[data-voice="technical-mono"] .gpage__head h2 { text-transform: uppercase; font-size: var(--text-base); letter-spacing: 0.06em; }
+.gframe[data-voice="technical-mono"] .gmetric__value,
+.gframe[data-voice="technical-mono"] .gcard__value,
+.gframe[data-voice="technical-mono"] .num { font-variant-numeric: tabular-nums; }
+
+.gframe[data-voice="editorial-serif"] .gpage__head h2,
+.gframe[data-voice="editorial-serif"] .gcard__title { font-family: ui-serif, Georgia, "Times New Roman", serif; font-weight: var(--weight-medium); }
+.gframe[data-voice="editorial-serif"] .gpage__head h2 { font-size: var(--text-2xl); letter-spacing: 0; }
+.gframe[data-voice="editorial-serif"] .gcard__title { border-bottom: 1px solid var(--border); padding-bottom: var(--space-2); font-size: var(--text-lg); }
+.gframe[data-voice="editorial-serif"] .gmetric__value,
+.gframe[data-voice="editorial-serif"] .gcard__value { font-family: ui-serif, Georgia, serif; font-weight: var(--weight-medium); }
+
+.gframe[data-voice="friendly-rounded"] .gpage__head h2,
+.gframe[data-voice="friendly-rounded"] .gcard__title,
+.gframe[data-voice="friendly-rounded"] .gnav__brand { font-family: ui-rounded, var(--font-sans); font-weight: var(--weight-bold); letter-spacing: 0.01em; }
+.gframe[data-voice="friendly-rounded"] .gcard { border-radius: var(--radius-xl, 1.25rem); }
+.gframe[data-voice="friendly-rounded"] .gmetric__value,
+.gframe[data-voice="friendly-rounded"] .gcard__value { font-family: ui-rounded, var(--font-sans); }
+
+.gframe[data-voice="bold-display"] .gpage__head h2 { font-weight: var(--weight-bold); font-size: var(--text-2xl); letter-spacing: -0.02em; border-left: 4px solid var(--accent); padding-left: var(--space-3); }
+.gframe[data-voice="bold-display"] .gmetric__value,
+.gframe[data-voice="bold-display"] .gcard__value { font-weight: var(--weight-bold); font-size: var(--text-2xl); letter-spacing: -0.01em; }
+.gframe[data-voice="bold-display"] .gcard__title { font-weight: var(--weight-bold); }
+
 /* No horizontal page scrolling at any width: the frame and every child stay within their container. */
 .gframe, .gframe * { box-sizing: border-box; }
 .gframe__main { min-width: 0; }

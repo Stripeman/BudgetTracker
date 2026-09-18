@@ -200,6 +200,45 @@ export async function run(h, t) {
   await dave.shot("compare");
   t.check("dave: no console errors/exceptions after Compare mode", { expected: [], actual: dave.problems() });
 
+  // ---- typography voice and the new chart primitives (Terry, 2026-09-18: "deliberate typography…
+  // graphics, metrics" — reference 5's filled forecast area, reference 1/6's circular progress ring) -
+  await dave.click({ role: "button", text: "Preview this concept", scope: '[data-concept="executive-ledger"]' }); // typeVoice: technical-mono
+  await dave.choose("Preview page", "Dashboard");
+  const monoHeading = await dave.evaluate("(() => { const h = document.querySelector('.gpreview-pane .gpage__head h2'); return h ? getComputedStyle(h).fontFamily : null; })()");
+  await dave.click({ role: "button", text: "Preview this concept", scope: '[data-concept="wealth-overview"]' }); // typeVoice: editorial-serif
+  await dave.choose("Preview page", "Dashboard");
+  const serifHeading = await dave.evaluate("(() => { const h = document.querySelector('.gpreview-pane .gpage__head h2'); return h ? getComputedStyle(h).fontFamily : null; })()");
+  t.check("Executive Ledger (technical-mono) and Wealth Overview (editorial-serif) render their page heading in genuinely different computed font families", {
+    expected: true, actual: !!monoHeading && !!serifHeading && monoHeading !== serifHeading,
+  });
+  t.note(`technical-mono heading font: ${monoHeading}; editorial-serif heading font: ${serifHeading}`);
+
+  // Wealth Overview: the new filled forecast area chart (reference 5), real content, not a bare line.
+  const areaChart = await dave.evaluate("(() => { const m = document.querySelector('.gpreview-pane .gframe__main'); return { hasArea: !!m.querySelector('.chart--area'), hasFill: !!m.querySelector('.chart__area-fill') }; })()");
+  t.check("Wealth Overview's chart-first Dashboard renders the new filled area chart", { expected: { hasArea: true, hasFill: true }, actual: areaChart });
+  await dave.shot("wealth-overview-area-chart");
+
+  // Goal Navigator: the new circular progress gauge (reference 1/6), a real accessible label with the
+  // actual percentage, never colour or the arc alone.
+  await dave.click({ role: "button", text: "Preview this concept", scope: '[data-concept="goal-navigator"]' });
+  await dave.choose("Preview page", "Dashboard");
+  const gauge = await dave.evaluate("(() => { const gs = [...document.querySelectorAll('.gpreview-pane .chart--gauge')]; return { count: gs.length, labels: gs.map((g) => g.getAttribute('aria-label')) }; })()");
+  t.check("Goal Navigator's goal-progress Dashboard renders two circular gauges, each with a real percentage in its accessible label", {
+    expected: true, actual: gauge.count === 2 && gauge.labels.every((l) => /%/.test(l || "")),
+  });
+  t.note(`gauge labels: ${JSON.stringify(gauge.labels)}`);
+  await dave.shot("goal-navigator-gauge");
+
+  // Financial Command Center: chartEmphasis 'mixed' adds a "Budget used" ring beside its bar forecast.
+  await dave.click({ role: "button", text: "Preview this concept", scope: '[data-concept="financial-command-center"]' });
+  await dave.choose("Preview page", "Dashboard");
+  const mixedConsole = await dave.evaluate("(() => { const m = document.querySelector('.gpreview-pane .gframe__main'); return { hasBudgetUsed: /Budget used/.test(m.textContent), hasGauge: !!m.querySelector('.chart--gauge'), hasBars: !!m.querySelector('.chart--bars') }; })()");
+  t.check("Financial Command Center's command-console Dashboard adds a 'Budget used' ring alongside its existing forecast bar chart", {
+    expected: { hasBudgetUsed: true, hasGauge: true, hasBars: true }, actual: mixedConsole,
+  });
+  await dave.shot("financial-command-center-mixed-charts");
+  t.check("dave: no console errors/exceptions after the typography/chart walk", { expected: [], actual: dave.problems() });
+
   // ---- desktop / tablet / mobile widths, no horizontal overflow at 320px -------------------------
   const { dave: narrow } = await h.browsers(["dave"], { prefix: "gallery-320-", width: 320, height: 720 });
   await narrow.open("gallery");
