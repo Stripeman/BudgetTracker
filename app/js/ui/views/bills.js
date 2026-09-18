@@ -199,7 +199,12 @@ export function createView(ctx) {
         withIcon(b.icon, el("strong", { text: b.name })), " ", badge(BILL_TYPE_LABELS[b.billType] || b.billType),
         b.pausedNow ? [" ", badge("Paused")] : null, b.ended ? [" ", badge("Ended", "closed")] : null,
         b.inactiveReason && !b.ended ? [" ", badge("Not active", "closed")] : null,
-        b.payeeName ? el("div", { class: "muted small", text: b.payeeName }) : null,
+        // A typed-but-unlinked merchant name still shows here (Bills → Merchant fix, 2026-09-18
+        // follow-up): before this, the row went blank the moment a merchant record didn't exist yet
+        // — even though the name was saved and shown correctly inside the Edit dialog. Never both:
+        // payeeName and payeeDraftName are mutually exclusive (server clears the draft once a real
+        // merchant is linked), so this is a fallback, not a merge.
+        (b.payeeName || b.payeeDraftName) ? el("div", { class: "muted small", text: b.payeeName || b.payeeDraftName }) : null,
       ].flat()),
       accountCell(b, b.kind === "transfer" ? `${b.accountName} → ${b.toAccountName || ""}` : b.accountName),
       el("td", { "data-label": "Amount", class: "num" }, [amountCell(b, plain)]),
@@ -390,7 +395,9 @@ function openHistory(ctx, bill) {
       table(["From", "Amount", "Merchant", "Category"], bill.versions.map((v) => el("tr", {}, [
         el("th", { scope: "row", "data-label": "From", text: formatDate(v.effectiveFrom, eff.dateFormat) }),
         el("td", { "data-label": "Amount", class: "num" }, [money(bill.kind === "income" ? v.amount : `-${v.amount}`, bill.currency, plain), v.amountType === "variable" ? el("div", { class: "muted small", text: "varies" }) : null]),
-        el("td", { "data-label": "Merchant", text: v.payeeName || "—" }),
+        // Same fallback as the list row above: a typed-but-unlinked name is still real term data,
+        // never blank merely because no merchant record exists for it yet (Bills → Merchant fix).
+        el("td", { "data-label": "Merchant", text: v.payeeName || v.payeeDraftName || "—" }),
         el("td", { "data-label": "Category", text: categories.get(v.categoryId) || "—" }),
       ])), "Terms over time"),
       el("h3", { text: "Skipped payments" }),

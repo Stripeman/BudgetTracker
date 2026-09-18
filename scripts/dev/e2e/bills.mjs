@@ -10,7 +10,7 @@
 // picker opens on click/tap (not only typing/ArrowDown); the Merchants page's "Pending merchants"
 // section shows the TYPED merchant name, never the bill's own title, grouped so several bills
 // sharing one typed name show once; a bill with no typed name at all gets no guessed name and no
-// "Add as merchant" button; and a typed-but-unmatched name saved from the bill editor persists as
+// "Add merchant" button; and a typed-but-unmatched name saved from the bill editor persists as
 // the bill's own `payeeDraftName`, verified directly against the API, not just the visible label.
 import { createWorkspace, firstRecord } from "../harness/fixtures.mjs";
 
@@ -29,7 +29,7 @@ export async function run(h, t) {
   // check that showed the title instead of the typed name would fail loudly.
   const bill = firstRecord(await h.api("alice").ok("recurring", { method: "POST", query: q, body: { name: "E2E September Rent Bill", billType: "housing", accountId: account.id, amount: "950.00", schedule: { freq: "monthly", startDate: today }, payeeDraftName: "E2E Rent Landlord Co" } }));
   // Terry's exact repro (2026-09-17): a bill scheduled to start next month. Linking a merchant via
-  // "Add as merchant" must still show up on the bill and clear the pending list, even though it
+  // "Add merchant" must still show up on the bill and clear the pending list, even though it
   // can't take effect any earlier than the bill's own future start date.
   const futureStart = new Date(Date.now() + 45 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
   const futureBill = firstRecord(await h.api("alice").ok("recurring", { method: "POST", query: q, body: { name: "E2E Future Utility Bill", billType: "utilities", accountId: account.id, amount: "174.00", schedule: { freq: "monthly", startDate: futureStart }, payeeDraftName: "E2E Electric Co" } }));
@@ -99,12 +99,12 @@ export async function run(h, t) {
 
   const clickedRent = await b.alice.evaluate(`(() => {
     const li = [...document.querySelectorAll("li")].find((x) => x.textContent.includes("E2E Rent Landlord Co"));
-    const btn = li && [...li.querySelectorAll("button")].find((b) => b.textContent === "Add as merchant");
+    const btn = li && [...li.querySelectorAll("button")].find((b) => b.textContent === "Add merchant");
     if (!btn) return false;
     btn.click();
     return true;
   })()`);
-  t.check("'Add as merchant' is offered for a pending name on an already-started bill", { expected: true, actual: clickedRent });
+  t.check("'Add merchant' is offered for a pending name on an already-started bill", { expected: true, actual: clickedRent });
   await b.alice.waitFor("!!document.querySelector('.modal')", { what: "the add-merchant dialog" });
   const rentPrefill = await b.alice.evaluate("document.querySelector('.modal input').value");
   t.check("prefilled from the TYPED name, not the bill's own title", { expected: "E2E Rent Landlord Co", actual: rentPrefill });
@@ -113,6 +113,19 @@ export async function run(h, t) {
   await b.alice.settle();
   await b.alice.goto("bills");
   await b.alice.waitForText(bill.name, { scope: "main" });
+  // Terry's exact regression report (2026-09-18): the All-bills LIST ROW itself — not just the Edit
+  // dialog — must show the linked merchant's name once resolved. Real bug found and fixed this
+  // session: the row only ever read `payeeName`, so a bill whose merchant was resolved from a
+  // pending typed name displayed correctly, but a bill that STILL only has a typed, unlinked name
+  // (checked further below) went blank in the list even though the name was saved.
+  // Scoped to a row with a Schedule cell: this bill is also due soon/overdue, so it legitimately
+  // appears a second time in the separate "Needs attention" table above, which has no merchant
+  // column at all and would otherwise be matched first by a plain text search.
+  const rentRowText = await b.alice.evaluate(`(() => {
+    const row = [...document.querySelectorAll("tbody tr")].find((tr) => tr.textContent.includes(${JSON.stringify(bill.name)}) && tr.querySelector('td[data-label="Schedule"]'));
+    return row ? row.textContent : null;
+  })()`);
+  t.check("the All-bills list row shows the now-linked merchant's name", { expected: true, actual: !!(rentRowText && rentRowText.includes("E2E Rent Landlord Co")) });
   await b.alice.click({ role: "button", name: `Edit ${bill.name}` });
   await b.alice.waitFor("!!document.querySelector('.modal')", { what: "the bill's edit dialog" });
   const rentMerchant = await byLabelValue(b.alice, "Merchant");
@@ -134,12 +147,12 @@ export async function run(h, t) {
   await b.alice.waitForText("E2E Electric Co", { scope: "main" });
   const clicked = await b.alice.evaluate(`(() => {
     const li = [...document.querySelectorAll("li")].find((x) => x.textContent.includes("E2E Electric Co"));
-    const btn = li && [...li.querySelectorAll("button")].find((b) => b.textContent === "Add as merchant");
+    const btn = li && [...li.querySelectorAll("button")].find((b) => b.textContent === "Add merchant");
     if (!btn) return false;
     btn.click();
     return true;
   })()`);
-  t.check("'Add as merchant' is offered for the pending name on the bill that hasn't started yet", { expected: true, actual: clicked });
+  t.check("'Add merchant' is offered for the pending name on the bill that hasn't started yet", { expected: true, actual: clicked });
   await b.alice.waitFor("!!document.querySelector('.modal')", { what: "the add-merchant dialog" });
   await b.alice.waitFor("document.querySelector('.modal h2').textContent === 'Add merchant'", { what: "creating, not editing" });
   const prefill = await b.alice.evaluate("document.querySelector('.modal input').value");
@@ -180,7 +193,7 @@ export async function run(h, t) {
   await b.alice.press("Escape");
   await b.alice.waitFor("!document.querySelector('.modal')", { what: "the edit dialog to close" });
 
-  // ---- a bill with no typed name at all: no guess, no "Add as merchant" ---------------------------
+  // ---- a bill with no typed name at all: no guess, no "Add merchant" ---------------------------
   await b.alice.goto("payees");
   await b.alice.waitForText("Bills with no merchant name recorded", { scope: "main" });
   const noNameCheck = await b.alice.evaluate(`(() => {
@@ -189,12 +202,12 @@ export async function run(h, t) {
     const li = card && [...card.querySelectorAll("li")].find((x) => x.textContent.includes(${JSON.stringify(noNameBill.name)}));
     return {
       shown: !!li,
-      hasAddAsMerchant: !!(li && [...li.querySelectorAll("button")].some((b) => b.textContent === "Add as merchant")),
+      hasAddMerchant: !!(li && [...li.querySelectorAll("button")].some((b) => b.textContent === "Add merchant")),
       hasGoToBills: !!(li && [...li.querySelectorAll("button")].some((b) => b.textContent === "Go to Bills")),
     };
   })()`);
   t.check("shown under its own section, by its own title (as the BILL, never presented as a merchant name)", { expected: true, actual: noNameCheck.shown });
-  t.check("never offers 'Add as merchant' without a typed name to prefill", { expected: false, actual: noNameCheck.hasAddAsMerchant });
+  t.check("never offers 'Add merchant' without a typed name to prefill", { expected: false, actual: noNameCheck.hasAddMerchant });
   t.check("offers 'Go to Bills' instead", { expected: true, actual: noNameCheck.hasGoToBills });
 
   // ---- the Merchant picker opens on click/tap, without typing first (review finding) --------------
@@ -227,6 +240,40 @@ export async function run(h, t) {
   });
   t.check("still no real merchant linked", { expected: null, actual: savedDraft && savedDraft.payeeId });
 
+  // The real regression Terry reported (2026-09-18): a bill with ONLY a typed, unlinked merchant
+  // name — no merchant record exists for it — must still show that name, both on the All-bills
+  // list row and in the bill's own "Terms over time" history, never blank merely because nothing
+  // is linked yet. (The bill editor's own Merchant field already showed it correctly before this
+  // fix — `current` there already read `payeeDraftName` — the bug was specifically the read-only
+  // displays that only ever checked `payeeName`.)
+  await b.alice.goto("bills");
+  await b.alice.waitForText(noNameBill.name, { scope: "main" });
+  const draftRowText = await b.alice.evaluate(`(() => {
+    const row = [...document.querySelectorAll("tbody tr")].find((tr) => tr.textContent.includes(${JSON.stringify(noNameBill.name)}) && tr.querySelector('td[data-label="Schedule"]'));
+    return row ? row.textContent : null;
+  })()`);
+  const shotDraftRow = await b.alice.shot("bills-list-shows-pending-draft-name");
+  t.check("the All-bills list row shows the typed-but-unlinked merchant name (never blank just because no merchant record exists yet)", {
+    expected: true, actual: !!(draftRowText && draftRowText.includes("E2E Freshly Typed Merchant")),
+  });
+  t.note(`list row text: "${draftRowText}"; screenshot: ${shotDraftRow}`);
+  await b.alice.click({ role: "button", name: `History of ${noNameBill.name}` });
+  await b.alice.waitFor("!!document.querySelector('.modal')", { what: "the bill's history dialog" });
+  // The LAST row, not the first: versions are appended chronologically (server-side `.push`), so
+  // the most recent term change — the one that added the typed name — is the last "Terms over
+  // time" row; the first row is the bill's ORIGINAL version from creation (correctly "—", no
+  // merchant was ever typed on it).
+  const historyMerchant = await b.alice.evaluate(`(() => {
+    const cells = [...document.querySelectorAll('.modal td[data-label="Merchant"]')];
+    const cell = cells[cells.length - 1];
+    return cell ? cell.textContent : null;
+  })()`);
+  const shotHistory = await b.alice.shot("bills-history-shows-pending-draft-name");
+  t.check("'Terms over time' also shows the typed-but-unlinked merchant name, not an em dash", { expected: "E2E Freshly Typed Merchant", actual: historyMerchant });
+  t.note(`history Merchant cell: "${historyMerchant}"; screenshot: ${shotHistory}`);
+  await b.alice.press("Escape");
+  await b.alice.waitFor("!document.querySelector('.modal')", { what: "the history dialog to close" });
+
   // ---- inline "Add … as a new merchant" from the bill editor resolves it right away ---------------
   await b.alice.goto("bills");
   await b.alice.waitForText(noNameBill.name, { scope: "main" });
@@ -250,6 +297,29 @@ export async function run(h, t) {
     expected: { payeeName: "E2E Inline Created Merchant", payeeDraftName: "" },
     actual: { payeeName: savedLinked && savedLinked.payeeName, payeeDraftName: savedLinked && savedLinked.payeeDraftName },
   });
+
+  // ---- Terry's exact acceptance scenario's final step: on a BRAND NEW bill, a merchant resolved
+  // earlier this run ("E2E Rent Landlord Co") is now selectable by typing part of its name and
+  // choosing it from the filtered list — click opens, typing searches, an existing choice is
+  // selected — the same interaction pattern Category already uses (`pickerSelect`, BT-004-05).
+  await b.alice.goto("bills");
+  await b.alice.waitForText("Add bill", { scope: "main" });
+  await b.alice.click({ role: "button", name: "Add bill" });
+  await b.alice.waitFor("!!document.querySelector('.modal')", { what: "the new-bill dialog" });
+  await b.alice.fill("Name", "E2E Search For Resolved Merchant");
+  await b.alice.fill("Amount", "10.00");
+  await b.alice.fill("Merchant", "Rent Landlord");
+  await b.alice.waitForText("E2E Rent Landlord Co", { scope: ".modal" });
+  const optionShown = await b.alice.evaluate(`(() => {
+    const opt = [...document.querySelectorAll(".modal .combo__option")].find((li) => li.textContent.includes("E2E Rent Landlord Co"));
+    return !!opt;
+  })()`);
+  t.check("typing part of an already-resolved merchant's name filters it into the list, like Category's own search", { expected: true, actual: optionShown });
+  await b.alice.click({ text: "E2E Rent Landlord Co", scope: ".modal" });
+  const searchSelected = await byLabelValue(b.alice, "Merchant");
+  t.check("selecting it from the filtered list sets the field to the existing merchant, no need to create it again", { expected: "E2E Rent Landlord Co", actual: searchSelected });
+  await b.alice.press("Escape");
+  await b.alice.waitFor("!document.querySelector('.modal')", { what: "the new-bill dialog to close (never saved — only proving search/select)" });
 
   // ---- BT-011-09 (review, 2026-09-18): the accessible help popover on a new bill's "Show as due
   // soon" field, and the curved left-edge accent shared by callouts, tooltips and popovers alike ---
