@@ -28,18 +28,28 @@
 //                      'split-focus' | 'story-flow' | 'adaptive'
 //   cardStyle         'flat-bordered' | 'soft-shadow' | 'outline-minimal' | 'filled-tint' | 'bordered-mono'
 //   chartEmphasis     which shared accessible chart primitive leads: 'bars' | 'line' | 'mixed'
+//   transactionsPattern / billsPattern / budgetPattern / accountsPattern / settingsPattern
+//                      genuinely distinct secondary-page compositions (review, 2026-09-18) — see the
+//                      dedicated comment above their axis constants near the bottom of this file.
 //
-// `fidelity: 'flagship'` marks the concepts hand-tuned beyond the shared responsive template on more
-// than the Dashboard (see docs/REQUIREMENTS.md BT-013 for exactly which pages, per concept, and
+// `fidelity: 'flagship'` marks the concepts hand-tuned beyond the shared responsive template with
+// bespoke content (see docs/REQUIREMENTS.md BT-013 for exactly which pages, per concept, and
 // PROJECT_STATE.md Checkpoint S for the honest fully-realized-vs-inherited accounting). Every
-// concept — flagship or not — gets a genuinely composed Dashboard (one of the twelve patterns above,
-// never a recolored copy) and the shared responsive template, driven by ITS OWN navStyle/density/
-// cardStyle, on every other required page (Transactions, Bills, Budget, Shared expenses, Trips,
-// Settings). `recommended: true` marks this session's top-10 recommendation for Terry (see the
-// handoff report); it changes nothing server-side and is shown in the Gallery only as a label.
+// concept gets a genuinely composed Dashboard (one of the twelve patterns above, never a recolored
+// copy) AND its own combination of secondary-page patterns above — real structural variety on
+// Transactions, Bills, Budget, Accounts/Merchants, Shared expenses and Trips, not one shared
+// template for all fifteen. Only the read-only Settings summary still uses one of two flat/grouped
+// templates per settingsPattern value, since Terry's brief asked for a label-value read-only list
+// there, not the same page-pattern variety it asked of the others. `recommended: true` marks this
+// session's top-10 recommendation for Terry (see the handoff report); it changes nothing
+// server-side and is shown in the Gallery only as a label.
 //
 // REQUIRED_PAGES is the minimum set Terry's brief names for every concept's review deliverable.
-const REQUIRED_PAGES = Object.freeze(['dashboard', 'transactions', 'bills', 'budget', 'shared', 'trips', 'settings']);
+// 'accounts' added (review, 2026-09-18): the design brief explicitly names "Accounts/Merchants" as
+// one of the required coordinated views per concept; it was missing from the Gallery entirely
+// before this fix. 'trips' stays too — already built, and removing a working page would be an
+// unrelated regression, even though the brief itself does not separately name it.
+const REQUIRED_PAGES = Object.freeze(['dashboard', 'transactions', 'bills', 'budget', 'accounts', 'shared', 'trips', 'settings']);
 
 // The one real, selectable layout today (workspace setting `layoutId`, BT-011-07/BT-013): today's
 // existing implicit application layout, kept exactly as it behaves now. Nothing in CONCEPTS below is
@@ -61,6 +71,7 @@ const CONCEPTS = Object.freeze([
     tradeoffs: ['Busier first impression; not reassuring for someone anxious about money.', 'Sidebar costs horizontal room on tablet.'],
     accessibilityNotes: ['Dense tables need generous row height at 200% zoom; verified no overflow at 320px by reflowing to cards.', 'Sidebar order matches reading order for screen readers (nav before main).'],
     density: 'comfortable', navStyle: 'sidebar', dashboardPattern: 'table-first', cardStyle: 'flat-bordered', chartEmphasis: 'bars',
+    transactionsPattern: 'dense-table', billsPattern: 'compact-table', budgetPattern: 'list-progress', accountsPattern: 'table', settingsPattern: 'two-column-grouped', sharedPattern: 'ledger-table', tripsPattern: 'list',
     fidelity: 'flagship', recommended: true,
   }),
   c({
@@ -73,6 +84,7 @@ const CONCEPTS = Object.freeze([
     tradeoffs: ['Less information density than Executive Ledger for power users.', 'Soft shadows need care to stay within contrast and reduced-motion rules.'],
     accessibilityNotes: ['Card borders and shadows never the only signal of separation (also spacing and headings).', 'Reduced motion collapses the card entrance transition to none.'],
     density: 'comfortable', navStyle: 'top', dashboardPattern: 'card-stack', cardStyle: 'soft-shadow', chartEmphasis: 'line',
+    transactionsPattern: 'card-list', billsPattern: 'grouped-status', budgetPattern: 'envelope-grid', accountsPattern: 'card-grid', settingsPattern: 'flat-list', sharedPattern: 'balance-list', tripsPattern: 'card-grid',
     fidelity: 'flagship', recommended: true,
   }),
   c({
@@ -85,6 +97,7 @@ const CONCEPTS = Object.freeze([
     tradeoffs: ['Icon-only rail needs strong tooltips/labels for new users and screen-reader users.', 'Ultra-compact density is the wrong choice for anyone who prefers spacious layouts — never the default.'],
     accessibilityNotes: ['Icon rail items keep full text labels for assistive technology even though they are visually hidden.', 'Ultra-compact spacing still keeps 44px hit targets via padding, not just the visible glyph.'],
     density: 'ultra-compact', navStyle: 'rail', dashboardPattern: 'command-console', cardStyle: 'outline-minimal', chartEmphasis: 'bars',
+    transactionsPattern: 'dense-table', billsPattern: 'kanban-columns', budgetPattern: 'bar-comparison', accountsPattern: 'table', settingsPattern: 'two-column-grouped', sharedPattern: 'settlement-focus', tripsPattern: 'list',
     fidelity: 'flagship', recommended: true,
   }),
   c({
@@ -97,6 +110,7 @@ const CONCEPTS = Object.freeze([
     tradeoffs: ['Low information density; a power user will find it slow to scan.', 'Long page for someone with many accounts.'],
     accessibilityNotes: ['Single column removes any reading-order ambiguity.', 'Generous line-height and text size by default (this concept\'s own density is already the most spacious).'],
     density: 'spacious', navStyle: 'top', dashboardPattern: 'story-flow', cardStyle: 'soft-shadow', chartEmphasis: 'line',
+    transactionsPattern: 'flat-list', billsPattern: 'timeline', budgetPattern: 'envelope-grid', accountsPattern: 'card-grid', settingsPattern: 'flat-list', sharedPattern: 'balance-list', tripsPattern: 'card-grid',
     fidelity: 'flagship', recommended: true,
   }),
   c({
@@ -109,6 +123,7 @@ const CONCEPTS = Object.freeze([
     tradeoffs: ['Can feel cold or "spreadsheet-like" to a casual user.', 'Sharp corners and hairlines need care to stay above 3:1 non-text contrast.'],
     accessibilityNotes: ['Hairline borders verified at >=3:1 against surface in every palette/mode (same check as the login page\'s preview cards).', 'Table headers keep scope="col"/"row" regardless of density.'],
     density: 'compact', navStyle: 'rail', dashboardPattern: 'table-first', cardStyle: 'bordered-mono', chartEmphasis: 'bars',
+    transactionsPattern: 'dense-table', billsPattern: 'compact-table', budgetPattern: 'list-progress', accountsPattern: 'table', settingsPattern: 'two-column-grouped', sharedPattern: 'ledger-table', tripsPattern: 'list',
     fidelity: 'standard', recommended: false,
   }),
   c({
@@ -121,6 +136,7 @@ const CONCEPTS = Object.freeze([
     tradeoffs: ['A new workspace with little history has a flat, unhelpful trend line at first.', 'Chart-first layouts need the surrounding numeric table for anyone the chart does not reach.'],
     accessibilityNotes: ['Every chart pairs with the existing sr-only figure table pattern (from the Usage page); the line itself is never the only source of the numbers.', 'Line colour kept distinguishable from category colours already in use, never relying on hue alone (also different dash pattern per series).'],
     density: 'comfortable', navStyle: 'sidebar', dashboardPattern: 'chart-first', cardStyle: 'soft-shadow', chartEmphasis: 'line',
+    transactionsPattern: 'grouped-by-date', billsPattern: 'timeline', budgetPattern: 'bar-comparison', accountsPattern: 'grouped-by-type', settingsPattern: 'flat-list', sharedPattern: 'settlement-focus', tripsPattern: 'timeline',
     fidelity: 'flagship', recommended: true,
   }),
   c({
@@ -133,6 +149,7 @@ const CONCEPTS = Object.freeze([
     tradeoffs: ['Less useful for a single-person personal workspace (not its audience).', 'Needs Shared expenses turned on to show its strongest card.'],
     accessibilityNotes: ['Household member list never shows another member\'s private account information (structural composition only — the underlying authorization is unchanged by layout).', 'Cards reflow to one column at 320px with no truncation of names.'],
     density: 'spacious', navStyle: 'top', dashboardPattern: 'card-stack', cardStyle: 'soft-shadow', chartEmphasis: 'bars',
+    transactionsPattern: 'card-list', billsPattern: 'grouped-status', budgetPattern: 'envelope-grid', accountsPattern: 'grouped-by-type', settingsPattern: 'flat-list', sharedPattern: 'balance-list', tripsPattern: 'card-grid',
     fidelity: 'standard', recommended: false,
   }),
   c({
@@ -145,6 +162,7 @@ const CONCEPTS = Object.freeze([
     tradeoffs: ['Less useful outside a group/trip workspace.', 'Two-panel split needs to stack cleanly on mobile (verified single-column at 390px).'],
     accessibilityNotes: ['Currency figures always paired with their code, never a bare symbol.', 'Split-panel layout uses a single DOM reading order (balances, then trip) so it matches visually at every width.'],
     density: 'comfortable', navStyle: 'top', dashboardPattern: 'split-focus', cardStyle: 'soft-shadow', chartEmphasis: 'bars',
+    transactionsPattern: 'grouped-by-date', billsPattern: 'timeline', budgetPattern: 'envelope-grid', accountsPattern: 'card-grid', settingsPattern: 'flat-list', sharedPattern: 'settlement-focus', tripsPattern: 'timeline',
     fidelity: 'standard', recommended: true,
   }),
   c({
@@ -157,6 +175,7 @@ const CONCEPTS = Object.freeze([
     tradeoffs: ['Provides the fewest visual landmarks for orientation; relies more on text hierarchy.', 'Some users read minimalism as "unfinished".'],
     accessibilityNotes: ['Outline-only cards keep a visible focus ring that does not rely on the card\'s own border.', 'Heading hierarchy is the primary orientation cue and is kept strictly logical.'],
     density: 'spacious', navStyle: 'top', dashboardPattern: 'story-flow', cardStyle: 'outline-minimal', chartEmphasis: 'line',
+    transactionsPattern: 'flat-list', billsPattern: 'timeline', budgetPattern: 'list-progress', accountsPattern: 'card-grid', settingsPattern: 'flat-list', sharedPattern: 'balance-list', tripsPattern: 'list',
     fidelity: 'standard', recommended: false,
   }),
   c({
@@ -169,6 +188,7 @@ const CONCEPTS = Object.freeze([
     tradeoffs: ['Right-hand rail costs width on narrower desktop screens; collapses to a drawer under 1024px.', 'Not the friendliest first impression for a casual user.'],
     accessibilityNotes: ['The filter rail is reachable by keyboard before the results in tab order when open, and is a labelled region either way.', 'Collapsing the rail to a drawer keeps focus management (opens with focus inside, closes returning focus to its toggle) — the same pattern as the command picker\'s panel.'],
     density: 'compact', navStyle: 'sidebar-right', dashboardPattern: 'table-first', cardStyle: 'outline-minimal', chartEmphasis: 'bars',
+    transactionsPattern: 'filter-first', billsPattern: 'compact-table', budgetPattern: 'bar-comparison', accountsPattern: 'table', settingsPattern: 'two-column-grouped', sharedPattern: 'ledger-table', tripsPattern: 'list',
     fidelity: 'flagship', recommended: true,
   }),
   c({
@@ -181,6 +201,7 @@ const CONCEPTS = Object.freeze([
     tradeoffs: ['Less useful for someone with no active goal or debt — degrades gracefully to a plain balance view when neither exists.', 'Milestone framing can feel gamified in a way some users dislike; kept plain-text and figure-first, never a badge/points system.'],
     accessibilityNotes: ['Every progress meter keeps the existing figure-as-text rule; "on track" / "behind" stated in words, never colour alone.', 'No animated counters — reduced motion is respected identically to every other concept.'],
     density: 'spacious', navStyle: 'top', dashboardPattern: 'goal-progress', cardStyle: 'soft-shadow', chartEmphasis: 'bars',
+    transactionsPattern: 'flat-list', billsPattern: 'grouped-status', budgetPattern: 'bar-comparison', accountsPattern: 'card-grid', settingsPattern: 'flat-list', sharedPattern: 'settlement-focus', tripsPattern: 'card-grid',
     fidelity: 'standard', recommended: false,
   }),
   c({
@@ -193,6 +214,7 @@ const CONCEPTS = Object.freeze([
     tradeoffs: ['Less useful for a workspace with few distinct merchants.', 'Needs merchants to be well-maintained (closed/reopened correctly) to stay accurate — inherits the existing merchant lifecycle rules unchanged.'],
     accessibilityNotes: ['Every merchant row keeps its managed icon plus visible name (icon never the only identifier).', 'Feed is a real list (ul/li), ordered and readable by assistive technology in the same order as sighted users see it.'],
     density: 'comfortable', navStyle: 'sidebar', dashboardPattern: 'merchant-feed', cardStyle: 'flat-bordered', chartEmphasis: 'bars',
+    transactionsPattern: 'card-list', billsPattern: 'grouped-status', budgetPattern: 'envelope-grid', accountsPattern: 'grouped-by-type', settingsPattern: 'flat-list', sharedPattern: 'ledger-table', tripsPattern: 'card-grid',
     fidelity: 'standard', recommended: false,
   }),
   c({
@@ -205,6 +227,7 @@ const CONCEPTS = Object.freeze([
     tradeoffs: ['No single strong point of view — less memorable than a concept built around one clear idea.', 'Equal-weight cards can bury the single most important alert if there are many cards.'],
     accessibilityNotes: ['Cards are headed sections (aria-labelledby) in a stable, logical order — not a drag-and-drop layout (which would need far more accessibility work than this review scope covers).', 'Grid reflows to one column at 320px, in the same DOM order.'],
     density: 'comfortable', navStyle: 'top', dashboardPattern: 'metric-grid', cardStyle: 'soft-shadow', chartEmphasis: 'bars',
+    transactionsPattern: 'card-list', billsPattern: 'kanban-columns', budgetPattern: 'envelope-grid', accountsPattern: 'card-grid', settingsPattern: 'flat-list', sharedPattern: 'settlement-focus', tripsPattern: 'card-grid',
     fidelity: 'standard', recommended: false,
   }),
   c({
@@ -217,6 +240,7 @@ const CONCEPTS = Object.freeze([
     tradeoffs: ['Compact density is not for everyone — never the site default.', 'Sidebar plus grid needs disciplined implementation to avoid feeling cramped on 13"-class laptop screens (verified at 1280px).'],
     accessibilityNotes: ['Sidebar landmark (nav) precedes main in the DOM regardless of visual position.', 'Compact density keeps the same 44px interactive target sizes as every other density (padding compensates for smaller visible chrome).'],
     density: 'compact', navStyle: 'sidebar', dashboardPattern: 'metric-grid', cardStyle: 'outline-minimal', chartEmphasis: 'bars',
+    transactionsPattern: 'dense-table', billsPattern: 'compact-table', budgetPattern: 'list-progress', accountsPattern: 'table', settingsPattern: 'two-column-grouped', sharedPattern: 'ledger-table', tripsPattern: 'list',
     fidelity: 'flagship', recommended: true,
   }),
   c({
@@ -229,6 +253,7 @@ const CONCEPTS = Object.freeze([
     tradeoffs: ['Weakest overview of any concept — a poor fit for anyone who wants a dashboard.', 'Needs a clear, discoverable way to the rest of the app (a visible "More" / full nav toggle, always present, never hidden behind a gesture).'],
     accessibilityNotes: ['The "more" control is a real, labelled, always-present link/button, never a swipe-only affordance.', 'Reduced navigation never reduces the number of landmarks below one nav + one main.'],
     density: 'spacious', navStyle: 'command', dashboardPattern: 'story-flow', cardStyle: 'soft-shadow', chartEmphasis: 'line',
+    transactionsPattern: 'flat-list', billsPattern: 'timeline', budgetPattern: 'envelope-grid', accountsPattern: 'card-grid', settingsPattern: 'flat-list', sharedPattern: 'balance-list', tripsPattern: 'timeline',
     fidelity: 'standard', recommended: false,
   }),
 ]);
@@ -241,10 +266,38 @@ const CARD_STYLES = Object.freeze(['flat-bordered', 'soft-shadow', 'outline-mini
 const CHART_EMPHASES = Object.freeze(['bars', 'line', 'mixed']);
 const CATALOG_STATUSES = Object.freeze(['review', 'approved', 'retired']);
 
+// Secondary-page composition axes (review, 2026-09-18: "Every concept is coherent beyond its
+// dashboard; reject repeated generic secondary screens" — before this, every concept beyond the
+// Dashboard rendered through ONE shared template, differing only in nav/density/card chrome, never
+// in actual information hierarchy or structure). Read by app/js/ui/gallery/compose.js exactly like
+// dashboardPattern is: each names one of several genuinely different renderer functions, never a
+// palette swap of the same one.
+//   transactionsPattern  'flat-list' | 'grouped-by-date' | 'dense-table' | 'card-list' | 'filter-first'
+//   billsPattern         'grouped-status' | 'timeline' | 'kanban-columns' | 'compact-table'
+//   budgetPattern        'envelope-grid' | 'bar-comparison' | 'list-progress'
+//   accountsPattern      'card-grid' | 'table' | 'grouped-by-type' (BT-013 gap fix: Accounts/Merchants
+//                        was not a Gallery page at all before this — the design brief names it as one
+//                        of the required coordinated views for every concept)
+//   settingsPattern      'flat-list' | 'two-column-grouped' (the latter mirrors the REAL responsive
+//                        two-column settings layout shipped in the application itself, item 5)
+//   sharedPattern        'balance-list' | 'ledger-table' | 'settlement-focus' (closes the gap named
+//                        in this session's own "not done" note: Shared expenses and Trips were the
+//                        last two required pages still sharing one template across all 15 concepts)
+//   tripsPattern         'card-grid' | 'list' | 'timeline'
+const TRANSACTIONS_PATTERNS = Object.freeze(['flat-list', 'grouped-by-date', 'dense-table', 'card-list', 'filter-first']);
+const BILLS_PATTERNS = Object.freeze(['grouped-status', 'timeline', 'kanban-columns', 'compact-table']);
+const BUDGET_PATTERNS = Object.freeze(['envelope-grid', 'bar-comparison', 'list-progress']);
+const ACCOUNTS_PATTERNS = Object.freeze(['card-grid', 'table', 'grouped-by-type']);
+const SETTINGS_PATTERNS = Object.freeze(['flat-list', 'two-column-grouped']);
+const SHARED_PATTERNS = Object.freeze(['balance-list', 'ledger-table', 'settlement-focus']);
+const TRIPS_PATTERNS = Object.freeze(['card-grid', 'list', 'timeline']);
+
 const findConcept = (id) => CONCEPTS.find((x) => x.id === id) || null;
 
 module.exports = {
   CONCEPTS, CONCEPT_IDS, REQUIRED_PAGES, REAL_LAYOUT_OPTIONS, REAL_DEFAULT_LAYOUT_ID,
   NAV_STYLES, DENSITIES, DASHBOARD_PATTERNS, CARD_STYLES, CHART_EMPHASES, CATALOG_STATUSES,
+  TRANSACTIONS_PATTERNS, BILLS_PATTERNS, BUDGET_PATTERNS, ACCOUNTS_PATTERNS, SETTINGS_PATTERNS,
+  SHARED_PATTERNS, TRIPS_PATTERNS,
   findConcept,
 };

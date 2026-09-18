@@ -59,7 +59,7 @@ export async function run(h, t) {
   const asAnon = await fetch(`${h.base}/api/design-gallery`);
   t.check("anonymous: GET /api/design-gallery is refused", { expected: 401, actual: asAnon.status });
   const daveGet = await h.api("dave").ok("design-gallery");
-  t.check("dave (site admin): sees all 15 concepts and the 7 required pages", { expected: { concepts: 15, pages: 7 }, actual: { concepts: daveGet.concepts.length, pages: daveGet.requiredPages.length } });
+  t.check("dave (site admin): sees all 15 concepts and the 8 required pages (Accounts/Merchants added, review 2026-09-18)", { expected: { concepts: 15, pages: 8 }, actual: { concepts: daveGet.concepts.length, pages: daveGet.requiredPages.length } });
   const alicePatch = await h.api("alice").request("design-gallery", { method: "PATCH", body: { picks: { selectedIds: ["executive-ledger"] } } });
   t.check("alice: PATCH /api/design-gallery (picks) is refused", { expected: 403, actual: alicePatch.status });
 
@@ -111,11 +111,12 @@ export async function run(h, t) {
     { id: "focus-mode", nav: "command" },
     { id: "modern-banking", nav: "top" },
   ];
-  const pages = ["dashboard", "transactions", "bills", "budget", "shared", "trips", "settings"];
+  const pages = ["dashboard", "transactions", "bills", "budget", "accounts", "shared", "trips", "settings"];
+  const PAGE_LABELS = { dashboard: "Dashboard", transactions: "Transactions", bills: "Bills", budget: "Budget", accounts: "Accounts / Merchants", shared: "Shared expenses", trips: "Trips", settings: "Settings" };
   for (const { id, nav } of sample) {
     await dave.click({ role: "button", text: "Preview this concept", scope: `[data-concept="${id}"]` });
     for (const page of pages) {
-      await dave.choose("Preview page", { dashboard: "Dashboard", transactions: "Transactions", bills: "Bills", budget: "Budget", shared: "Shared expenses", trips: "Trips", settings: "Settings" }[page]);
+      await dave.choose("Preview page", PAGE_LABELS[page]);
       const frameNav = await dave.evaluate("(() => { const f = document.querySelector('.gpreview-pane .gframe'); return f ? f.dataset.nav : null; })()");
       t.check(`${id}/${page}: the preview frame's own navStyle matches the concept (${nav})`, { expected: nav, actual: frameNav });
       const hasContent = await dave.evaluate("(() => { const m = document.querySelector('.gpreview-pane .gframe__main'); return !!m && m.textContent.trim().length > 20; })()");
@@ -127,6 +128,67 @@ export async function run(h, t) {
     t.check(`${id}: no console errors/exceptions after walking all 7 required pages`, { expected: [], actual: dave.problems() });
   }
   await dave.shot("preview-sample");
+
+  // ---- secondary-page composition patterns (review, 2026-09-18): real proof, not just unit tests,
+  // that Transactions/Bills/Accounts genuinely differ in STRUCTURE between concepts, not only chrome.
+  await dave.click({ role: "button", text: "Preview this concept", scope: '[data-concept="executive-ledger"]' }); // transactionsPattern: dense-table
+  await dave.choose("Preview page", "Transactions");
+  const denseHtml = await dave.evaluate("(() => { const m = document.querySelector('.gpreview-pane .gframe__main'); return { hasTable: !!m.querySelector('table.gtable-dense'), hasCards: !!m.querySelector('.gminicard') }; })()");
+  t.check("Executive Ledger's Transactions page is a real dense table (dense-table pattern)", { expected: { hasTable: true, hasCards: false }, actual: denseHtml });
+  await dave.shot("transactions-dense-table");
+  await dave.click({ role: "button", text: "Preview this concept", scope: '[data-concept="modern-banking"]' }); // transactionsPattern: card-list
+  await dave.choose("Preview page", "Transactions");
+  const cardHtml = await dave.evaluate("(() => { const m = document.querySelector('.gpreview-pane .gframe__main'); return { hasTable: !!m.querySelector('table.gtable-dense'), hasCards: !!m.querySelector('.gminicard') }; })()");
+  t.check("Modern Banking's Transactions page is a card grid instead (card-list pattern) — same data, genuinely different structure", { expected: { hasTable: false, hasCards: true }, actual: cardHtml });
+  await dave.shot("transactions-card-list");
+
+  await dave.click({ role: "button", text: "Preview this concept", scope: '[data-concept="financial-command-center"]' }); // billsPattern: kanban-columns
+  await dave.choose("Preview page", "Bills");
+  const kanban = await dave.evaluate("!!document.querySelector('.gpreview-pane .gkanban')");
+  t.check("Financial Command Center's Bills page is three side-by-side kanban columns", { expected: true, actual: kanban });
+  await dave.shot("bills-kanban");
+  await dave.click({ role: "button", text: "Preview this concept", scope: '[data-concept="wealth-overview"]' }); // billsPattern: timeline
+  await dave.choose("Preview page", "Bills");
+  const timeline = await dave.evaluate("(() => { const m = document.querySelector('.gpreview-pane .gframe__main'); return { kanban: !!m.querySelector('.gkanban'), timeline: !!m.querySelector('ol.gtimeline') }; })()");
+  t.check("Wealth Overview's Bills page is one chronological timeline instead — same data, genuinely different structure", { expected: { kanban: false, timeline: true }, actual: timeline });
+  await dave.shot("bills-timeline");
+
+  // Accounts/Merchants — the page the Gallery was entirely missing before this fix.
+  await dave.click({ role: "button", text: "Preview this concept", scope: '[data-concept="sidebar-pro"]' }); // accountsPattern: table
+  await dave.choose("Preview page", "Accounts / Merchants");
+  const accountsPage = await dave.evaluate("(() => { const m = document.querySelector('.gpreview-pane .gframe__main'); return { text: m.textContent, hasTable: !!m.querySelector('table.gtable-dense') }; })()");
+  t.check("the new Accounts/Merchants page shows real account and merchant names, as a table for this concept", {
+    expected: { hasTable: true, hasAccounts: true, hasMerchants: true },
+    actual: { hasTable: accountsPage.hasTable, hasAccounts: /Joint Checking|Household Card/.test(accountsPage.text), hasMerchants: /Fictional Grocer|Corner Cafe/.test(accountsPage.text) },
+  });
+  await dave.shot("accounts-merchants-table");
+
+  // Shared expenses / Trips (review, 2026-09-18 follow-up): these two were the last required pages
+  // still sharing one template across all 15 concepts — real-browser proof they now genuinely
+  // differ in structure too, not just chrome.
+  await dave.click({ role: "button", text: "Preview this concept", scope: '[data-concept="executive-ledger"]' }); // sharedPattern: ledger-table
+  await dave.choose("Preview page", "Shared expenses");
+  const sharedLedger = await dave.evaluate("(() => { const m = document.querySelector('.gpreview-pane .gframe__main'); return { hasTable: !!m.querySelector('table.gtable-dense'), hasSettleUp: /Settle up/.test(m.textContent) }; })()");
+  t.check("Executive Ledger's Shared expenses page is a real ledger table (ledger-table pattern)", { expected: { hasTable: true, hasSettleUp: false }, actual: sharedLedger });
+  await dave.shot("shared-ledger-table");
+  await dave.click({ role: "button", text: "Preview this concept", scope: '[data-concept="financial-command-center"]' }); // sharedPattern: settlement-focus
+  await dave.choose("Preview page", "Shared expenses");
+  const sharedSettlement = await dave.evaluate("(() => { const m = document.querySelector('.gpreview-pane .gframe__main'); return { hasTable: !!m.querySelector('table.gtable-dense'), hasSettleUp: /Settle up/.test(m.textContent) }; })()");
+  t.check("Financial Command Center's Shared expenses page leads with 'Settle up' instead — same data, genuinely different structure", { expected: { hasTable: false, hasSettleUp: true }, actual: sharedSettlement });
+  await dave.shot("shared-settlement-focus");
+  t.check("dave: no console errors/exceptions after the Shared expenses pattern walk", { expected: [], actual: dave.problems() });
+
+  await dave.click({ role: "button", text: "Preview this concept", scope: '[data-concept="wealth-overview"]' }); // tripsPattern: timeline
+  await dave.choose("Preview page", "Trips");
+  const tripsTimeline = await dave.evaluate("(() => { const m = document.querySelector('.gpreview-pane .gframe__main'); return { hasTimeline: !!m.querySelector('ol.gtimeline'), hasCardGrid: !!m.querySelector('.ggrid--metrics'), hasDisclosure: /not yet a real BudgetTracker feature/.test(m.textContent) }; })()");
+  t.check("Wealth Overview's Trips page is one chronological ordered list, and still keeps the illustrative-only disclosure", { expected: { hasTimeline: true, hasCardGrid: false, hasDisclosure: true }, actual: tripsTimeline });
+  await dave.shot("trips-timeline");
+  await dave.click({ role: "button", text: "Preview this concept", scope: '[data-concept="modern-banking"]' }); // tripsPattern: card-grid
+  await dave.choose("Preview page", "Trips");
+  const tripsCardGrid = await dave.evaluate("(() => { const m = document.querySelector('.gpreview-pane .gframe__main'); return { hasTimeline: !!m.querySelector('ol.gtimeline'), hasCardGrid: !!m.querySelector('.ggrid--metrics') }; })()");
+  t.check("Modern Banking's Trips page is a card grid instead — same data, genuinely different structure", { expected: { hasTimeline: false, hasCardGrid: true }, actual: tripsCardGrid });
+  await dave.shot("trips-card-grid");
+  t.check("dave: no console errors/exceptions after the Trips pattern walk", { expected: [], actual: dave.problems() });
 
   // ---- Compare mode: two concepts side by side --------------------------------------------------
   await dave.click({ role: "button", text: "Preview this concept", scope: '[data-concept="executive-ledger"]' });

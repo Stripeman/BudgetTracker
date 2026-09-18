@@ -113,13 +113,20 @@ export function createView(ctx) {
 
   function renderMatrix() {
     mount(matrixBox, el("table", { class: "table", "aria-label": "Comparison matrix of all 15 concepts" }, [
-      el("thead", {}, [el("tr", {}, ["Concept", "Audience", "Density", "Navigation", "Dashboard pattern", "Fidelity", "Recommended", "Status"].map((h) => el("th", { text: h })))]),
+      el("thead", {}, [el("tr", {}, ["Concept", "Audience", "Density", "Navigation", "Dashboard", "Transactions", "Bills", "Budget", "Accounts", "Settings", "Fidelity", "Recommended", "Status"].map((h) => el("th", { text: h })))]),
       el("tbody", {}, (data.concepts || []).map((c) => el("tr", {}, [
         el("td", { "data-label": "Concept" }, [el("strong", { text: c.name })]),
         el("td", { "data-label": "Audience", text: c.audience }),
         el("td", { "data-label": "Density", text: c.density }),
         el("td", { "data-label": "Navigation", text: c.navStyle }),
-        el("td", { "data-label": "Dashboard pattern", text: c.dashboardPattern }),
+        el("td", { "data-label": "Dashboard", text: c.dashboardPattern }),
+        // Secondary-page composition (review, 2026-09-18): each of these differs meaningfully per
+        // concept now, never one shared template for all 15 — see api/_shared/layouts.js.
+        el("td", { "data-label": "Transactions", text: c.transactionsPattern }),
+        el("td", { "data-label": "Bills", text: c.billsPattern }),
+        el("td", { "data-label": "Budget", text: c.budgetPattern }),
+        el("td", { "data-label": "Accounts", text: c.accountsPattern }),
+        el("td", { "data-label": "Settings", text: c.settingsPattern }),
         el("td", { "data-label": "Fidelity" }, [fidelityBadge(c)]),
         el("td", { "data-label": "Recommended", text: c.recommended ? "Yes" : "" }),
         el("td", { "data-label": "Status" }, [badge(CATALOG_STATUS_OPTIONS.find((o) => o.value === c.catalog.status).label)]),
