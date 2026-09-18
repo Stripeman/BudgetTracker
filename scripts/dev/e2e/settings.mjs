@@ -275,7 +275,11 @@ export async function run(h, t) {
   await b.alice.goto("bills");
   await b.alice.click({ role: "button", name: "Add bill" });
   await b.alice.waitFor("!!document.querySelector('.modal')", { what: "Add bill" });
-  const billHint = (await b.alice.text(".modal")).includes("New bills start with this workspace's 3 days (Workspace settings).");
+  // The workspace-settings explanation is now a real accessible popover (BT-011-09, review
+  // 2026-09-18), opened deliberately rather than shown as inert text by default.
+  await b.alice.click({ role: "button", name: "Where this default comes from", scope: ".modal" });
+  const billHint = (await b.alice.text(".popover__panel")).includes("New bills start with this workspace's due-soon window (currently 3 days)");
+  await b.alice.press("Escape");
   await b.alice.press("Escape");
   await b.alice.waitFor("!document.querySelector('.modal')", { what: "Add bill to close" });
   t.check("finding 10: Add budget and Add bill say which default came from Workspace settings", { expected: { budget: true, bill: true }, actual: { budget: budgetHint, bill: billHint } });
