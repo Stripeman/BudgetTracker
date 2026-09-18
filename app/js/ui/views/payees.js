@@ -67,7 +67,7 @@ export function createView(ctx) {
   // internet". Two genuinely different situations are shown separately:
   //   - a typed name WAS entered on the bill (`payeeDraftName`, api/recurring/handler.js) but
   //     matches no real merchant yet: shown here AS TYPED, grouped so the same name typed on
-  //     several bills shows once with every bill it applies to; "Add as merchant" links all of them.
+  //     several bills shows once with every bill it applies to; "Add merchant" links all of them.
   //   - no name was ever typed (older bills, or a bill saved before this feature existed): nothing
   //     is guessed or recovered — the person is asked to edit the bill themselves.
   // Never for a transfer (no payee) or an ended bill.
@@ -86,13 +86,15 @@ export function createView(ctx) {
     const sections = [];
     if (groups.size) {
       sections.push(el("h2", { class: "card__title", id: "payees-missing", text: "Pending merchants" }));
-      sections.push(el("p", { class: "field__help", text: "These names were typed on a bill but don't match a merchant yet. “Add as merchant” links every bill listed below it; you can also open a bill and choose an existing merchant instead." }));
+      sections.push(el("p", { class: "field__help", text: "These names were typed on a bill but don't match a merchant yet. “Add merchant” links every bill listed below it; you can also open a bill and choose an existing merchant instead." }));
       sections.push(el("ul", { class: "stack" }, [...groups.values()].map((g) => el("li", { class: "row" }, [
         el("div", {}, [
           el("strong", { text: g.name }),
           el("div", { class: "muted small", text: `On: ${g.bills.map((b) => b.name).join(", ")}` }),
         ]),
-        button("Add as merchant", () => openMerchantEditor(ctx, null, {
+        // Exact label "Add merchant" (Terry, 2026-09-18 regression report) — previously "Add as
+        // merchant"; same action, wording made to match his spec exactly.
+        button("Add merchant", () => openMerchantEditor(ctx, null, {
           prefillName: g.name,
           onCreated: (payee) => {
             for (const b of g.bills) {

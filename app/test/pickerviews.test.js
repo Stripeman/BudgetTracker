@@ -258,7 +258,7 @@ describe("BT-004-05 merchants: the Show filter and the merchant editor", () => {
 });
 
 describe("BT-014-11/Bills → Merchant fix (2026-09-18) 'Pending merchants' (Terry, 2026-09-17: \"add merchants for ones that are used in bills but not added there yet\")", () => {
-  test("shows the TYPED merchant name, never the bill's own title; excludes transfers, ended and already-linked bills; 'Add as merchant' pre-fills the typed name and links every bill under it", async () => {
+  test("shows the TYPED merchant name, never the bill's own title; excludes transfers, ended and already-linked bills; 'Add merchant' pre-fills the typed name and links every bill under it", async () => {
     const { ctx, state, calls, billUpdates } = merchantsCtx();
     const view = createMerchants(ctx);
     dom.body.appendChild(view.element);
@@ -270,7 +270,7 @@ describe("BT-014-11/Bills → Merchant fix (2026-09-18) 'Pending merchants' (Ter
     assert.doesNotMatch(text, /Fictional rent/, "already has a merchant");
     assert.doesNotMatch(text, /Fictional savings transfer/, "a transfer has no payee");
     assert.doesNotMatch(text, /Fictional old gym/, "ended bills don't need one");
-    buttonNamed(section, "Add as merchant").click();
+    buttonNamed(section, "Add merchant").click();
     const root = dom.body.querySelector(".modal");
     assert.equal(root.querySelector("h2").textContent, "Add merchant", "creating, never editing");
     const nameInput = root.querySelector("input");
@@ -298,7 +298,7 @@ describe("BT-014-11/Bills → Merchant fix (2026-09-18) 'Pending merchants' (Ter
     const section = view.element.querySelector("#payees-missing").closest(".card");
     assert.match(section.textContent, /Fictional Electric Co/);
     const row = [...section.querySelectorAll("li")].find((li) => li.textContent.includes("Fictional Electric Co"));
-    buttonNamed(row, "Add as merchant").click();
+    buttonNamed(row, "Add merchant").click();
     const root = dom.body.querySelector(".modal");
     root.querySelector("input").value = "Fictional Electric Co";
     buttonNamed(root, "Add merchant").click();
@@ -324,7 +324,7 @@ describe("BT-014-11/Bills → Merchant fix (2026-09-18) 'Pending merchants' (Ter
     const card = view.element.querySelector("#payees-missing").closest(".card");
     assert.match(card.textContent, /Bills with no merchant name recorded/);
     assert.match(card.textContent, /Fictional Mystery Charge/, "the bill's own title IS shown here, but only as the bill, never presented as a merchant name");
-    assert.equal([...card.querySelectorAll("button")].some((b) => b.textContent === "Add as merchant" && b.closest("li").textContent.includes("Fictional Mystery Charge")), false, "no 'Add as merchant' offered without a typed name to prefill");
+    assert.equal([...card.querySelectorAll("button")].some((b) => b.textContent === "Add merchant" && b.closest("li").textContent.includes("Fictional Mystery Charge")), false, "no 'Add merchant' offered without a typed name to prefill");
   });
 
   test("two bills with the identical typed name are grouped into one pending entry", () => {
