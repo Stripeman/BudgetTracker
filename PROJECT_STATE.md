@@ -1922,6 +1922,17 @@ report named.
 plus: confirmation that the exact acceptance scenario now holds on the redeployed Preview build
 (`fe57d15`) from his own browser, not just this session's automated evidence.
 
+**Terry's own follow-up (2026-09-18, verbatim):** "ok its not exaclty what i asked for but it
+works." Accepted as working but flagged as not an exact match to what he pictured — he did not yet
+say which part. Asked him directly which of the following (or something else) it is, rather than
+guessing and polishing the wrong thing: the "Add merchant" button's exact wording/placement, the
+merchant picker's interaction feel versus Category's own dropdown (built as a separate but
+similarly-behaving `combo__*` component, never literally swapped to reuse `pickerSelect` itself —
+that could be the actual gap if he meant "the same component", not just "the same pattern"), how
+the list row or history now shows the pending name, or something else in the overall flow. Do not
+close this until his answer arrives; do not silently mark Bills → Merchant fully resolved based on
+"it works" alone.
+
 **Exact next step:** none queued. Preview reflects all six PRs, the Gallery Shared/Trips follow-up,
 and this Bills → Merchant display fix, combined, as of commit `fe57d15`. The next session should
 check whether Terry has reviewed/merged any of PR #13–#19, rebase/re-verify the others if `main`
