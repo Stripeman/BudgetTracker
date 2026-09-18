@@ -36,12 +36,18 @@ const merchants = require('../_shared/merchants');
 const icons = require('../_shared/icons');
 const workspaceSettings = require('../_shared/workspace-settings');
 
-const CREATE_KEYS = ['name', 'billType', 'kind', 'accountId', 'toAccountId', 'amount', 'amountType', 'schedule', 'categoryId', 'payeeId', 'responsibleRef', 'reminderDays', 'notes', 'tripId', 'trackFrom', 'icon'];
-const PATCH_KEYS = ['recurringId', 'revision', 'effectiveFrom', 'amount', 'amountType', 'categoryId', 'payeeId', 'responsibleRef', 'name', 'billType', 'notes', 'reminderDays', 'endDate', 'icon'];
+const CREATE_KEYS = ['name', 'billType', 'kind', 'accountId', 'toAccountId', 'amount', 'amountType', 'schedule', 'categoryId', 'payeeId', 'payeeDraftName', 'responsibleRef', 'reminderDays', 'notes', 'tripId', 'trackFrom', 'icon'];
+const PATCH_KEYS = ['recurringId', 'revision', 'effectiveFrom', 'amount', 'amountType', 'categoryId', 'payeeId', 'payeeDraftName', 'responsibleRef', 'name', 'billType', 'notes', 'reminderDays', 'endDate', 'icon'];
 // The icon catalogue is read only when an icon is being chosen (BT-011-05).
 const catalogFor = async (ctx, body) => (body.icon !== undefined ? (await icons.readCatalog(ctx.storage)).catalog : null);
-const TERM_KEYS = ['amount', 'amountType', 'categoryId', 'payeeId', 'responsibleRef'];
-const NOT_FOR_TRANSFERS = ['categoryId', 'payeeId', 'responsibleRef'];
+const TERM_KEYS = ['amount', 'amountType', 'categoryId', 'payeeId', 'payeeDraftName', 'responsibleRef'];
+const NOT_FOR_TRANSFERS = ['categoryId', 'payeeId', 'payeeDraftName', 'responsibleRef'];
+// Bills → Merchant (security/UX review, 2026-09-18): a bill saved with a typed merchant name that
+// does not (yet) match a real managed merchant keeps that name here, validated, and entirely
+// separate from the bill's own title (`r.name`) and from the canonical `payeeId`. Selecting or
+// creating a real merchant always resolves this — see the `v.payeeId ? '' : ...` clearing below —
+// so the two fields are never both meaningfully set at once. Never a guess from the bill's title.
+const draftMerchantName = (value) => fields.text(value, { field: 'Merchant name', max: 120 });
 
 async function readUser(ctx) {
   const { value } = await ctx.storage.getJson(store.paths.user(ctx.principal.subject));
@@ -134,6 +140,9 @@ function view(doc, r, principal, user, today, now, recorded) {
   const termsView = (v) => ({
     effectiveFrom: v.effectiveFrom, amount: money.toDecimal(v.amountMinor, c), amountType: v.amountType, categoryId: v.categoryId,
     payeeId: v.payeeId || null, payeeName: v.payeeId && payees.get(v.payeeId) ? payees.get(v.payeeId).name : '',
+    // The typed name as entered, only while nothing real is linked yet (Bills → Merchant fix,
+    // 2026-09-18): never the bill's own title, never shown once a real merchant resolves it.
+    payeeDraftName: v.payeeId ? '' : (v.payeeDraftName || ''),
     responsible: people.labelFor(v.responsibleRef, { doc, user }),
   });
   // A bill whose account is closed or removed takes no payments, so it has nothing due; it is shown
@@ -232,7 +241,9 @@ async function draft(ctx, req) {
         recurringId: r.id, name: r.name, occurrence, date: recordDate(doc, r, occurrence, today), status, overdue: status === 'due' && isOverdue(r, occurrence, today),
         kind: r.kind, accountId: r.accountId, toAccountId: r.toAccountId || null, currency: r.currency,
         amount: money.toDecimal(t.amountMinor, r.currency), amountType: t.amountType, amountIsEstimate: t.amountType === 'variable',
-        categoryId: t.categoryId, payeeId: t.payeeId || null, payeeName: payee ? payee.name : '', responsible: people.labelFor(t.responsibleRef, { doc, user }),
+        categoryId: t.categoryId, payeeId: t.payeeId || null, payeeName: payee ? payee.name : '',
+        payeeDraftName: t.payeeId ? '' : (t.payeeDraftName || ''),
+        responsible: people.labelFor(t.responsibleRef, { doc, user }),
       },
     },
   };
@@ -264,7 +275,7 @@ async function create(ctx, req) {
     const version = {
       id: newId('ver'), effectiveFrom: sched.startDate, amountMinor: positive(body.amount, a.currency),
       amountType: fields.oneOf(body.amountType, bills.AMOUNT_TYPES, 'Amount type', 'fixed'),
-      categoryId: null, payeeId: null, responsibleRef: null, createdAt: nowIso, createdBy: member.subject,
+      categoryId: null, payeeId: null, payeeDraftName: '', responsibleRef: null, createdAt: nowIso, createdBy: member.subject,
     };
     if (kind === 'transfer') {
       if (NOT_FOR_TRANSFERS.some((k) => body[k] !== undefined)) throw badRequest('Transfers between accounts have no category, payee or responsible person.', 'invalid_transfer');
@@ -276,6 +287,9 @@ async function create(ctx, req) {
       if (body.toAccountId !== undefined) throw badRequest('Only transfers have a destination account.', 'invalid_field');
       version.categoryId = checkCategory(doc, body.categoryId);
       version.payeeId = merchants.requireMerchant(doc, ctx.principal, a, body.payeeId, now);
+      // A typed-but-unmatched merchant name is kept only while nothing real is linked (see the
+      // draftMerchantName comment above); a resolved payeeId always wins and clears it.
+      version.payeeDraftName = version.payeeId ? '' : draftMerchantName(body.payeeDraftName);
       version.responsibleRef = people.requireRef(body.responsibleRef, { doc, user, visibility: a.visibility });
     }
     r.versions.push(version);
@@ -447,6 +461,10 @@ async function patch(ctx, req) {
       if (body.amountType !== undefined) v.amountType = fields.oneOf(body.amountType, bills.AMOUNT_TYPES, 'Amount type');
       if (body.categoryId !== undefined) v.categoryId = checkCategory(doc, body.categoryId);
       if (body.payeeId !== undefined) v.payeeId = merchants.requireMerchant(doc, ctx.principal, a, body.payeeId, now, { current: v.payeeId });
+      if (body.payeeDraftName !== undefined) v.payeeDraftName = draftMerchantName(body.payeeDraftName);
+      // Linking (or keeping) a real merchant always resolves any pending typed name — the two are
+      // never both meaningfully set (Bills → Merchant fix, 2026-09-18).
+      if (v.payeeId) v.payeeDraftName = '';
       if (body.responsibleRef !== undefined) v.responsibleRef = people.requireRef(body.responsibleRef, { doc, user, visibility: a.visibility });
       r.versions = [...r.versions, v];
       changed.push('terms');

@@ -96,6 +96,11 @@ export function createMerchantPicker({ merchants, current = null, onChange = () 
     active = -1;
     setOpen(true);
   });
+  // Bills → Merchant fix (review, 2026-09-18): "clicking/tapping opens existing eligible merchants"
+  // — before this, the list opened only while typing or on ArrowDown, so a pointer/touch user who
+  // just wanted to browse the list (never having typed anything) saw nothing happen.
+  input.addEventListener("focus", () => { if (!open) setOpen(true); });
+  input.addEventListener("click", () => { if (!open) setOpen(true); });
   input.addEventListener("keydown", (e) => {
     if (e.key === "ArrowDown") {
       e.preventDefault();
