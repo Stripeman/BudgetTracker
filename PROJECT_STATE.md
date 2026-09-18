@@ -2748,8 +2748,65 @@ needs any changes remain open work, tracked here rather than declared complete.
 **Waiting on Terry:** unchanged from Checkpoint AI — the BT-016 recommendation is delivered and
 awaiting his decision; nothing new is blocking.
 
-**Exact next step:** merge this branch (`feature/settings-redesign-BT-017`) to `main` and repeat
-the established Preview-then-Production `deploy.ps1` release cycle, per Terry's explicit "do the
-same" instruction; continue BT-017 with the remaining open items above, or move to another
-unblocked backlog item, afterward; begin BT-016 implementation only once Terry confirms which of
-the two recommended options he wants.
+**Exact next step (superseded by Checkpoint AK below):** merge this branch
+(`feature/settings-redesign-BT-017`) to `main` and repeat the established Preview-then-Production
+`deploy.ps1` release cycle, per Terry's explicit "do the same" instruction; continue BT-017 with
+the remaining open items above, or move to another unblocked backlog item, afterward; begin BT-016
+implementation only once Terry confirms which of the two recommended options he wants.
+
+## Checkpoint AK — a hard agent-role boundary now blocks this session from merging PRs or deploying
+Production itself; PR #21 merged by Terry directly, Preview redeployed and verified, Production
+deploy explicitly declined and handed to Terry (2026-09-18, same session)
+
+**What changed operationally, and why it matters going forward.** This session's actual runtime
+agent role ("primary-implementation-agent") carries its own written boundary — "Never push to
+main/master, merge PRs, deploy Production" — enforced by the tool layer itself, not merely stated
+in prose: an attempted `gh pr merge 21 --merge` was refused outright by the environment's own
+classifier, independent of anything authorized earlier in this same conversation or in chat. This
+is a different, stricter thing than the ordinary "ask before Production" rule in `CLAUDE.md`: it is
+a role-level boundary that this agent cannot lift by being told to, in this or any future session,
+no matter how explicit the chat authorization is. Practical effect: **from here on, merging a PR
+into `main` and deploying to Production both require Terry (or a differently-privileged role) to
+act directly** — this agent can prepare, verify, and push branches/PRs, and can deploy to *Preview*
+(not named in that boundary), but not those two specific steps. This was disclosed to Terry as soon
+as it was hit, rather than worked around.
+
+**What happened next.** Terry merged PR #21 himself (`b3c8f17`, merged 2026-09-18T18:53:37Z,
+confirmed via `gh pr view 21`). He then asked to push to Preview and Production. Preview: done and
+verified (see below). Production: declined for the reason above, with the exact command handed
+back to Terry to run himself: `./scripts/deploy/deploy.ps1 -Environment production
+-AuthorizedProduction -Confirm 'budget-tracker'` (the exact Static Web App name, from
+`.local/deploy-target.json`, never invented).
+
+**Preview deployment of `main` at `b3c8f17` (includes BT-017's first increment).** Built from a
+fresh scratch worktree (`.local/worktrees/main-deploy3`, gitignored). Two setup problems hit and
+fixed, not hidden: (1) a brand-new worktree has no installed dependencies at all — `node_modules`
+is per-worktree, not shared via `.git` — which made the deploy script's own pre-deploy test gate
+fail with 131 unrelated-looking subtest failures on the first attempt; running `npm install` fixed
+the failures but *also* mutated `api/package.json`/`api/package-lock.json` with a spurious
+`"budget-tracker": "file:.."` self-link (an npm workspace/link quirk from running `npm --prefix
+api install` inside a checkout whose root `package.json` shares a name), which would have made the
+tree dirty and the deploy engine correctly refuse to proceed ("deployments must come from a clean
+tree"); fixed by reverting those two files and reinstalling with `npm ci` (lockfile-respecting,
+never rewrites `package.json`/lock) instead, which left the worktree clean. Deployed with the one
+supported entry point only: `./scripts/deploy/deploy.ps1 -Environment preview`. Receipt: `result:
+SUCCESS`, `sha: b3c8f1764b7cb964d3fe18f144c64a15d922fed6` (exact match to `main`'s merge commit for
+PR #21), all engine checks `ok` (target, gitState, confirmation, azureResource, settings, test,
+validate, build, secretScan, upload, commitSetting, healthCheck). Independently re-checked, not
+just trusted from the script's own exit: anonymous `GET /api/me` on
+`https://polite-plant-03bb7570f-preview.eastus2.3.azurestaticapps.net` → `401` (deny-by-default
+still enforced after the redeploy).
+
+**Not done, and why:** Production deployment of `b3c8f17` — declined per the role boundary above;
+Terry has the exact command to run it himself whenever he chooses.
+
+**Waiting on Terry:** (1) run the Production deploy command above himself, if/when he wants
+`b3c8f17` in Production; (2) the BT-016 recommendation from Checkpoint AI is still awaiting his
+decision; (3) going forward, any further "merge to main" / "deploy Production" step in the standing
+work sequence will need to come from him directly, not from a repeated instruction to this agent —
+flagged now so it does not need re-discovering on a future context reset.
+
+**Exact next step:** continue BT-017's remaining open items (personal-vs-workspace visual
+distinction, a broader visual/spacing pass) or move to other unblocked backlog work; prepare any
+further work as reviewed, pushed feature branches with open PRs ready for Terry to merge, rather
+than assuming this agent can merge or deploy Production itself.
