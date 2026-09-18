@@ -126,7 +126,9 @@ describe("BT-004-05 accounts: Add account and Who can see this", () => {
     const view = createAccounts(ctx);
     dom.body.appendChild(view.element);
     view.update(state);
-    buttonNamed(view.element, "Who can see this").click();
+    // BT-015: Who can see this is inside the row's compact actions menu — open it first.
+    view.element.querySelector(".actionsmenu__toggle").click();
+    buttonNamed(dom.body, "Who can see this").click();
     await tick();
     await tick();
     const dialog = dom.body.querySelector(".modal");

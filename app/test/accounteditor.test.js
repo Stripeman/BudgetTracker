@@ -71,7 +71,10 @@ function openEdit(accounts) {
   const view = createAccounts(ctx);
   dom.body.appendChild(view.element);
   view.update(ctx.store.getState());
-  buttonNamed(view.element, "Edit").click();
+  // BT-015: Edit is now inside the row's compact actions menu (a floating overlay on document.body
+  // once open, never a child of view.element) — open it first, then find Edit on the body.
+  view.element.querySelector(".actionsmenu__toggle").click();
+  buttonNamed(dom.body, "Edit").click();
   const dialog = dom.body.querySelector(".modal");
   syncValues(dialog);
   return { dialog, calls };

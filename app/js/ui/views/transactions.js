@@ -27,6 +27,7 @@ import { parseAmount, formatMinor } from "../../core/split.js";
 import { icon, withIcon, defaultIconFor } from "../icons.js";
 import { amountWithDirection, transferLabel, amountText } from "../components.js";
 import { directionOf } from "../icons.js";
+import { createActionsMenu } from "../actionsmenu.js";
 
 export { amountWithDirection };
 
@@ -251,21 +252,28 @@ export function createView(ctx) {
         t.links && t.links.reverses ? [" ", badge("Reversal")] : null,
         t.kind !== "expense" ? el("div", { class: "muted small", text: KIND_LABELS[t.kind] || t.kind }) : null,
       ].flat()),
-      el("td", { "data-label": "" }, [el("div", { class: "row-actions" }, [
-        t.canEdit ? button("Edit", () => openQuickEntry(ctx, { transaction: t }), { small: true, attrs: { "aria-label": `Edit ${t.payeeName || "entry"} on ${t.date}` } }) : null,
-        // Moving picks the wrong-account entry up and re-points it (BT-006-05); an entry the server
-        // would refuse still shows why, as text, not only by leaving the action off (Terry's rule).
-        moveAction(ctx, t, allAccounts),
-        // Corrections never overwrite history (BT-001-05): a reversal cancels an entry, even a
-        // reconciled one, and every change is listed under History.
-        // Entries recorded from Shared expenses are reversed or removed only from there (N2).
-        t.canEdit && !t.transferId && !t.reversedBy && !(t.links && t.links.reverses) && !sharedLinked(t) ? button("Reverse", () => openReverse(ctx, t), { small: true, attrs: { "aria-label": `Reverse ${t.payeeName || "entry"} on ${t.date}` } }) : null,
-        t.amendmentCount ? button("History", () => void openHistory(ctx, t), { small: true, attrs: { "aria-label": `History of ${t.payeeName || "entry"} on ${t.date}` } }) : null,
-        t.canDelete && t.status !== "reconciled" && !sharedLinked(t) ? button("Delete", () => openDelete(ctx, t), { small: true, variant: "danger", attrs: { "aria-label": `Delete ${t.payeeName || "entry"} on ${t.date}` } }) : null,
-        // BT-014-04: permanent deletion, distinct from the recoverable Delete above. No rename here —
-        // a transaction has no name field; the server's fixed confirmation phrase is "DELETE".
-        t.canDelete ? button("Delete permanently", () => openPermanentDelete(ctx, t), { small: true, variant: "danger", attrs: { "aria-label": `Permanently delete ${t.payeeName || "entry"} on ${t.date}` } }) : null,
-      ])]),
+      // BT-015 compact record actions menu (Terry, 2026-09-18): exact preserved order Edit, Reverse,
+      // Move (renamed from "Move to another account"), History, Delete, Delete permanently — same
+      // permission checks, same handlers, same confirmations, unchanged. Remove/Delete and Delete
+      // permanently keep their distinct meanings (recoverable vs irreversible).
+      el("td", { "data-label": "" }, [createActionsMenu({
+        label: `Actions for ${t.payeeName || "entry"} on ${t.date}`,
+        items: [
+          t.canEdit ? { text: "Edit", onClick: () => openQuickEntry(ctx, { transaction: t }), attrs: { "aria-label": `Edit ${t.payeeName || "entry"} on ${t.date}` } } : null,
+          // Corrections never overwrite history (BT-001-05): a reversal cancels an entry, even a
+          // reconciled one, and every change is listed under History.
+          // Entries recorded from Shared expenses are reversed or removed only from there (N2).
+          t.canEdit && !t.transferId && !t.reversedBy && !(t.links && t.links.reverses) && !sharedLinked(t) ? { text: "Reverse", onClick: () => openReverse(ctx, t), attrs: { "aria-label": `Reverse ${t.payeeName || "entry"} on ${t.date}` } } : null,
+          // Moving picks the wrong-account entry up and re-points it (BT-006-05); an entry the server
+          // would refuse still shows why, as text, not only by leaving the action off (Terry's rule).
+          moveMenuItem(ctx, t, allAccounts),
+          t.amendmentCount ? { text: "History", onClick: () => void openHistory(ctx, t), attrs: { "aria-label": `History of ${t.payeeName || "entry"} on ${t.date}` } } : null,
+          t.canDelete && t.status !== "reconciled" && !sharedLinked(t) ? { text: "Delete", danger: true, onClick: () => openDelete(ctx, t), attrs: { "aria-label": `Delete ${t.payeeName || "entry"} on ${t.date}` } } : null,
+          // BT-014-04: permanent deletion, distinct from the recoverable Delete above. No rename here —
+          // a transaction has no name field; the server's fixed confirmation phrase is "DELETE".
+          t.canDelete ? { text: "Delete permanently", danger: true, onClick: () => openPermanentDelete(ctx, t), attrs: { "aria-label": `Permanently delete ${t.payeeName || "entry"} on ${t.date}` } } : null,
+        ],
+      }).element]),
     ]));
     mount(tableBox, el("div", { class: "table-wrap" }, [el("table", { class: "table table--cards" }, [
       el("caption", { class: "sr-only", text: `${txns.data.total} entries` }),
@@ -371,19 +379,21 @@ function openReverse(ctx, t) {
   });
 }
 
-// The row action for "Move to another account" (BT-006-05): enabled when the server says so, a
-// disabled item WITH TEXT (a hover tooltip and a screen-reader description, not colour alone) when the
-// person could otherwise change the entry but this one move rule refuses it, and nothing at all when
-// they have no edit right here (matching Edit/Delete, which already say nothing in that case).
-function moveAction(ctx, t, allAccounts) {
+// The "Move" menu item (BT-006-05; renamed from "Move to another account", BT-015): enabled when the
+// server says so, a disabled item WITH TEXT (a hover tooltip and a screen-reader description, not
+// colour alone) when the person could otherwise change the entry but this one move rule refuses it,
+// and nothing at all when they have no edit right here (matching Edit/Delete, which already say
+// nothing in that case).
+function moveMenuItem(ctx, t, allAccounts) {
   const label = `Move ${t.payeeName || "entry"} on ${t.date} to another account`;
-  if (t.canMove) return button("Move to another account", () => openMove(ctx, t, allAccounts), { small: true, attrs: { "aria-label": label } });
+  if (t.canMove) return { text: "Move", onClick: () => openMove(ctx, t, allAccounts), attrs: { "aria-label": label } };
   if (!t.canEdit || !t.moveBlockedReason) return null;
   const hintId = `${t.id}-move-hint`;
-  return el("span", { class: "tip", "data-tip": t.moveBlockedReason }, [
-    button("Move to another account", () => {}, { small: true, attrs: { disabled: true, "aria-label": label, "aria-describedby": hintId } }),
+  const node = el("span", { class: "tip", "data-tip": t.moveBlockedReason }, [
+    el("button", { type: "button", text: "Move", disabled: true, "aria-label": label, "aria-describedby": hintId }),
     el("span", { class: "sr-only", id: hintId, text: t.moveBlockedReason }),
   ]);
+  return { node, plain: true };
 }
 
 // "Move to another account": the standard dialog pattern — a command-picker of eligible destinations

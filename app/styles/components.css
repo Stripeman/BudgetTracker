@@ -190,6 +190,52 @@ fieldset.budget-line { margin: 0; padding: var(--space-3); border: 1px solid var
 .filters__actions { grid-column: 1 / -1; display: flex; justify-content: flex-end; }
 .row-actions { display: flex; flex-wrap: wrap; gap: var(--space-3); justify-content: flex-end; }
 
+/* ---------- compact record actions menu (BT-015) ----------
+   The trigger is a small square button holding the four-dot ("::") icon, right-aligned on the
+   record's own title row. The panel is the SAME floating-overlay pattern as the theme picker's list
+   above (position: fixed, the shared --pop-* custom properties from app/js/ui/overlay.js): opening
+   it never shifts the row, the table or the page. */
+.actionsmenu { display: inline-flex; }
+.actionsmenu__toggle {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: var(--control-height, 2.25rem); height: var(--control-height, 2.25rem);
+  padding: 0; background: none; border: 1px solid transparent; border-radius: var(--radius-sm);
+  color: var(--text-muted); cursor: pointer;
+}
+.actionsmenu__toggle .icon { width: 1.3em; height: 1.3em; }
+.actionsmenu__toggle:hover,
+.actionsmenu__toggle:focus-visible,
+.actionsmenu__toggle[aria-expanded="true"] { background: var(--surface-raised, var(--surface)); border-color: var(--border); color: var(--text); }
+.actionsmenu__toggle:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.actionsmenu__panel {
+  position: fixed; z-index: 80;
+  top: var(--pop-top, 50%); left: var(--pop-left, 50%);
+  width: min(16rem, calc(100vw - 1rem));
+  min-width: min(var(--pop-min-width, 10rem), calc(100vw - 1rem));
+  max-height: var(--pop-max-height, 18rem);
+  transition-property: none;
+  display: flex; flex-direction: column; overflow-y: auto; padding: var(--space-1) 0;
+  border: 1px solid var(--border-strong); border-radius: var(--radius-sm);
+  background: var(--surface-raised); box-shadow: var(--shadow);
+}
+.actionsmenu__panel[hidden] { display: none; }
+.actionsmenu__item {
+  display: flex; align-items: center; width: 100%; min-height: 2.5rem;
+  padding: var(--space-2) var(--space-3); background: none; border: 0;
+  color: var(--text); font: inherit; text-align: left; cursor: pointer;
+}
+.actionsmenu__item:hover,
+.actionsmenu__item:focus-visible { background: var(--surface); }
+.actionsmenu__item:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.actionsmenu__item:disabled { opacity: var(--control-disabled-opacity); cursor: not-allowed; }
+/* Destructive actions are visually separated (a rule above the first one) and identified by colour,
+   never colour alone — their text already says what they do ("Remove", "Delete", "Delete
+   permanently"). */
+.actionsmenu__item--separated { border-top: 1px solid var(--border); margin-top: var(--space-1); padding-top: calc(var(--space-2) + var(--space-1)); }
+.actionsmenu__item--danger { color: var(--color-danger); }
+.actionsmenu__item--danger:hover,
+.actionsmenu__item--danger:focus-visible { background: var(--color-danger-soft, var(--surface)); }
+
 /* ---------- theme picker (BT-011-03), ported from TaskTracker components.css (T: main a1ec150,
    RF-20260904-14). A COLOUR CIRCLE BESIDE A PALETTE'S NAME: a ring rather than a bare disc so a
    pale swatch still has an edge against the menu. ONE ROW THAT OPENS ON DEMAND, and the list

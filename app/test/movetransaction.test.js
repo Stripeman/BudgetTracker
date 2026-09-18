@@ -17,6 +17,15 @@ const buttonNamed = (root, text) => root.querySelectorAll("button").find((b) => 
 // Rows are found by their (fictional, unique) merchant name rather than the displayed amount: the
 // amount column applies a money arrow and locale grouping, so it never contains a plain "-40.00".
 const rowFor = (root, merchant) => root.querySelectorAll("tr").find((r) => r.textContent.includes(merchant));
+// BT-015: the row's actions (including "Move", renamed from "Move to another account") are inside a
+// compact "::" menu, closed by default (a floating overlay on document.body once open) — open the
+// row's own toggle before looking for one of its items.
+const openRowMenu = (root, merchant) => {
+  const row = rowFor(root, merchant);
+  const toggle = row && row.querySelectorAll("button").find((b) => b.classList.contains("actionsmenu__toggle"));
+  if (toggle) toggle.click();
+  return row;
+};
 
 const ACCOUNTS = [
   { id: "acc_checking", name: "Alice Checking", currency: "EUR", access: "own", visibility: "private", ownedBySelf: true, status: "open", capabilities: ["view-balances", "view-transactions", "create", "edit", "delete"], icon: "bank", balance: "500.00" },
@@ -73,17 +82,22 @@ describe("BT-006-05 the row action", () => {
     const view = createView(ctx);
     dom.body.appendChild(view.element);
     view.update(state);
-    const enabled = buttonNamed(rowFor(view.element, "Wrong Account Expense"), "Move to another account");
+    openRowMenu(view.element, "Wrong Account Expense");
+    const enabled = buttonNamed(dom.body, "Move");
     assert.ok(enabled && !enabled.disabled, "the eligible row offers a working Move action");
-    const disabled = buttonNamed(rowFor(view.element, "Reconciled Fictional Expense"), "Move to another account");
+    openRowMenu(view.element, "Reconciled Fictional Expense");
+    const disabled = buttonNamed(dom.body, "Move");
     assert.ok(disabled && disabled.disabled, "the reconciled row's Move action is present but disabled");
     const tip = disabled.parentNode;
-    assert.equal(tip.className, "tip");
+    // BT-015: the wrapper also carries the shared menu-item class for consistent layout inside the
+    // actions menu, alongside its own "tip" hover-tooltip class.
+    assert.equal(tip.className, "tip actionsmenu__item");
     assert.match(tip.getAttribute("data-tip"), /reconciled/i, "a hover tooltip carries the reason");
     const hintId = disabled.getAttribute("aria-describedby");
-    const hint = view.element.querySelector(`#${hintId}`);
+    const hint = dom.body.querySelector(`#${hintId}`);
     assert.ok(hint && /reconciled/i.test(hint.textContent), "a visible (screen-reader) text also carries the reason, not colour alone");
-    assert.equal(buttonNamed(rowFor(view.element, "Viewer Fictional Expense"), "Move to another account"), undefined, "no edit right: nothing is offered, like Edit and Delete");
+    openRowMenu(view.element, "Viewer Fictional Expense");
+    assert.equal(buttonNamed(dom.body, "Move"), undefined, "no edit right: nothing is offered, like Edit and Delete");
   });
 });
 
@@ -93,7 +107,8 @@ describe("BT-006-05 the move dialog", () => {
     const view = createView(ctx);
     dom.body.appendChild(view.element);
     view.update(state);
-    buttonNamed(rowFor(view.element, "Wrong Account Expense"), "Move to another account").click();
+    openRowMenu(view.element, "Wrong Account Expense");
+    buttonNamed(dom.body, "Move").click();
     const root = dom.body.querySelector(".modal");
     assert.ok(root, "the dialog opened");
     assert.deepEqual(offeredOptions(pickerNamed(root, "Move to")), ["Alice Wallet (EUR)", "Fictional Joint (EUR)"]);
@@ -105,7 +120,8 @@ describe("BT-006-05 the move dialog", () => {
     const view = createView(ctx);
     dom.body.appendChild(view.element);
     view.update(state);
-    buttonNamed(rowFor(view.element, "Wrong Account Expense"), "Move to another account").click();
+    openRowMenu(view.element, "Wrong Account Expense");
+    buttonNamed(dom.body, "Move").click();
     const root = dom.body.querySelector(".modal");
     chooseOption(pickerNamed(root, "Move to"), "Fictional Joint (EUR)");
     await tick();
@@ -120,7 +136,8 @@ describe("BT-006-05 the move dialog", () => {
     const view = createView(ctx);
     dom.body.appendChild(view.element);
     view.update(state);
-    buttonNamed(rowFor(view.element, "Wrong Account Expense"), "Move to another account").click();
+    openRowMenu(view.element, "Wrong Account Expense");
+    buttonNamed(dom.body, "Move").click();
     let root = dom.body.querySelector(".modal");
     assert.deepEqual(offeredOptions(pickerNamed(root, "Move to")), ["Alice Checking (EUR)", "Alice Wallet (EUR)"]);
     chooseOption(pickerNamed(root, "Move to"), "Alice Checking (EUR)");
@@ -132,7 +149,8 @@ describe("BT-006-05 the move dialog", () => {
     const view2 = createView(ctx2);
     dom.body.appendChild(view2.element);
     view2.update(state2);
-    buttonNamed(rowFor(view2.element, "Wrong Account Expense"), "Move to another account").click();
+    openRowMenu(view2.element, "Wrong Account Expense");
+    buttonNamed(dom.body, "Move").click();
     root = dom.body.querySelector(".modal");
     chooseOption(pickerNamed(root, "Move to"), "Alice Wallet (EUR)");
     await tick();
@@ -144,7 +162,8 @@ describe("BT-006-05 the move dialog", () => {
     const view = createView(ctx);
     dom.body.appendChild(view.element);
     view.update(state);
-    buttonNamed(rowFor(view.element, "Wrong Account Expense"), "Move to another account").click();
+    openRowMenu(view.element, "Wrong Account Expense");
+    buttonNamed(dom.body, "Move").click();
     const root = dom.body.querySelector(".modal");
     chooseOption(pickerNamed(root, "Move to"), "Alice Wallet (EUR)");
     await tick();
@@ -161,7 +180,8 @@ describe("BT-006-05 the move dialog", () => {
     const view = createView(ctx);
     dom.body.appendChild(view.element);
     view.update(state);
-    buttonNamed(rowFor(view.element, "Wrong Account Expense"), "Move to another account").click();
+    openRowMenu(view.element, "Wrong Account Expense");
+    buttonNamed(dom.body, "Move").click();
     let root = dom.body.querySelector(".modal");
     buttonNamed(root, "Move entry").click();
     await tick();
@@ -182,7 +202,8 @@ describe("BT-006-05 the move dialog", () => {
     const view = createView(ctx);
     dom.body.appendChild(view.element);
     view.update(state);
-    buttonNamed(rowFor(view.element, "USD Fictional Expense"), "Move to another account").click();
+    openRowMenu(view.element, "USD Fictional Expense");
+    buttonNamed(dom.body, "Move").click();
     const root = dom.body.querySelector(".modal");
     assert.match(root.textContent, /no other open account in USD/);
     assert.equal(buttonNamed(root, "Move entry").disabled, true);

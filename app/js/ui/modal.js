@@ -34,6 +34,9 @@ export function escapeBelongsToControl(target) {
   // An open help popover: the focus is inside its floating panel, or on its own trigger.
   if (target.closest && target.closest(".popover__panel")) return true;
   if (target.classList && target.classList.contains("popover__trigger") && target.getAttribute("aria-expanded") === "true") return true;
+  // A compact record-actions menu (BT-015): the same floating-overlay pattern as the theme picker.
+  if (target.closest && target.closest(".actionsmenu__panel")) return true;
+  if (target.classList && target.classList.contains("actionsmenu__toggle") && target.getAttribute("aria-expanded") === "true") return true;
   return false;
 }
 
@@ -93,7 +96,7 @@ export function openModal({ title, body, actions = [], onClose = () => {} }) {
   // of an open command-picker panel OR a theme/icon/colour picker's floating list (2026-09-18, same
   // overlay engine, app/js/ui/overlay.js): either lives in the dialog (so aria-modal never hides it)
   // but is part of its own trigger, and handles Tab itself.
-  const inPanel = (n) => !!(n && n.closest && (n.closest(".cmdpick__panel") || n.closest(".themepick__list")));
+  const inPanel = (n) => !!(n && n.closest && (n.closest(".cmdpick__panel") || n.closest(".themepick__list") || n.closest(".actionsmenu__panel")));
   function focusables() {
     return Array.from(dialog.querySelectorAll(FOCUSABLE)).filter((n) => !n.disabled && n.getAttribute("tabindex") !== "-1" && !(n.closest && n.closest("[hidden]")) && !inPanel(n));
   }
