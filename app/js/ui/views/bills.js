@@ -5,7 +5,7 @@
 // real entry. Changes to a bill's terms take effect from a chosen date and never rewrite payments
 // already recorded; bills are ended, never deleted (BT-001-05). The server enforces every rule.
 import { el, mount, announce } from "../dom.js";
-import { stateView, money, button, field, input, pickerSelect, categoryBadges, iconBadges, badge, infoTip } from "../components.js";
+import { stateView, money, button, field, input, pickerSelect, categoryBadges, iconBadges, badge, infoTip, createHelpPopover, uid } from "../components.js";
 import { openModal } from "../modal.js";
 import { openDeleteDialog } from "../permanentdelete.js";
 import { createMerchantPicker } from "../merchantpicker.js";
@@ -103,6 +103,19 @@ function amountCell(b, prefs) {
     b.amountType === "variable" ? el("span", { class: "muted", text: "≈ " }) : null,
     money(signedAmount(b), b.currency, prefs),
     b.amountType === "variable" ? el("div", { class: "muted small", text: "varies" }) : null,
+  ]);
+}
+
+// A field whose label is followed by an accessible help popover carrying a real action (BT-011-09,
+// review 2026-09-18: interactive explanations belong in a popover, never a tooltip). Only used
+// where there is something to actually DO about the explanation (here: go change the workspace
+// default) — everywhere else, `field()`'s plain-text `help` stays exactly as it was.
+function fieldWithPopover(label, control, popover, helpText) {
+  if (!control.id) control.id = uid();
+  return el("div", { class: "field" }, [
+    el("span", { class: "field__label-row" }, [el("label", { class: "field__label", for: control.id, text: label }), popover]),
+    control,
+    helpText ? el("p", { class: "field__help", text: helpText }) : null,
   ]);
 }
 
@@ -526,9 +539,19 @@ export function openBillEditor(ctx, bill = null) {
     ...scheduleFields,
     notTransfer,
     // It decides when a bill shows as due soon; there are no notifications yet (UX2-005).
-    // A new bill says where its number came from (UX/accessibility review of eefd115, finding 10).
-    field("Show as due soon (days before)", reminder, { help: editing ? "How many days ahead it appears under Due soon."
-      : `How many days ahead it appears under Due soon. New bills start with this workspace's ${reminder.value} ${reminder.value === "1" ? "day" : "days"} (Workspace settings).` }),
+    // A new bill says where its number came from (UX/accessibility review of eefd115, finding 10);
+    // editing an existing bill does not — it already has its own explicit value, not the workspace
+    // default. The workspace-settings mention is now a real accessible popover with a link for a
+    // new bill, not inert parenthetical text (review, 2026-09-18).
+    editing
+      ? field("Show as due soon (days before)", reminder, { help: "How many days ahead it appears under Due soon." })
+      : fieldWithPopover("Show as due soon (days before)", reminder, createHelpPopover({
+        label: "Where this default comes from",
+        content: [
+          el("p", { text: `New bills start with this workspace's due-soon window (currently ${reminder.value} ${reminder.value === "1" ? "day" : "days"}) unless changed here.` }),
+          button("Go to Workspace settings", () => ctx.navigate("workspace"), { small: true }),
+        ],
+      }), "How many days ahead it appears under Due soon."),
     field("Notes", notes, { wide: true }),
     editing ? field("Changes to amount, merchant, category or responsible person take effect from", effectiveFrom, { help: "Payments already recorded are never changed.", wide: true }) : null,
   ]);

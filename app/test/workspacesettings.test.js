@@ -554,11 +554,19 @@ describe("Settings card (shared by the workspace and group settings; UX review o
     };
     const ctx = { store: { getState: () => state, actions: { write: async () => ({ ok: true }) } }, api: { people: async () => ({ options: [] }) } };
     openBillEditor(ctx);
-    assert.match(dom.body.querySelector(".modal").textContent, /New bills start with this workspace's 10 days \(Workspace settings\)\./);
+    // The workspace-settings explanation is now a real accessible popover (review, 2026-09-18),
+    // not inert text — it must be opened to read it, and it carries a real action too.
+    const popoverTrigger = dom.body.querySelector(".popover__trigger");
+    assert.ok(popoverTrigger, "a new bill's due-soon field has a help popover");
+    popoverTrigger.click();
+    const popoverPanel = dom.body.querySelector(".popover__panel");
+    assert.match(popoverPanel.textContent, /New bills start with this workspace's due-soon window \(currently 10 days\)/);
+    assert.ok([...popoverPanel.querySelectorAll("button")].some((b) => b.textContent === "Go to Workspace settings"), "the popover holds a real action, not just text");
     dom.teardown(); dom = installDom();
     openBillEditor(ctx, { id: "bill_x", name: "Fictional rent", billType: "housing", kind: "expense", accountId: "acc_joint", amount: "950.00", currency: "EUR", amountType: "fixed",
       schedule: { freq: "monthly", interval: 1, startDate: "2026-01-01" }, reminderDays: 3, revision: 1, versions: [], skips: [], pauses: [], history: [] });
     assert.doesNotMatch(dom.body.querySelector(".modal").textContent, /Workspace settings/);
+    assert.equal(dom.body.querySelector(".popover__trigger"), null, "editing an existing bill has no workspace-default popover — it already has its own value");
   });
 
   test("finding 10: recording a late bill says where its date comes from (Workspace settings); an on-time one says nothing", async () => {
