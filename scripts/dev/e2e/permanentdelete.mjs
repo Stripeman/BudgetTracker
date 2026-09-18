@@ -55,6 +55,7 @@ export async function run(h, t) {
   // ---- 1. an account with one entry: impact, wrong phrase refused, right phrase deletes it -------
   await b.carol.goto("accounts");
   await b.carol.waitForText("E2E Perm Wallet", { scope: "main" });
+  await b.carol.openRecordMenu("E2E Perm Wallet", { scope: "main" });
   await b.carol.click({ role: "button", name: "Permanently delete E2E Perm Wallet" });
   await b.carol.waitFor("!!document.querySelector('.modal')", { what: "the impact dialog" });
   await b.carol.waitForText("1 entry will be permanently deleted with it.", { scope: MODAL });
@@ -75,6 +76,7 @@ export async function run(h, t) {
   // ---- 2. a branching account (its own transactions AND its own bill): blocked, no way forward ---
   await b.carol.goto("accounts");
   await b.carol.waitForText("E2E Perm Branching", { scope: "main" });
+  await b.carol.openRecordMenu("E2E Perm Branching", { scope: "main" });
   await b.carol.click({ role: "button", name: "Permanently delete E2E Perm Branching" });
   await b.carol.waitFor("!!document.querySelector('.modal')", { what: "the blocked impact dialog" });
   await b.carol.waitForText("This cannot be permanently deleted yet.", { scope: MODAL });
@@ -93,6 +95,7 @@ export async function run(h, t) {
   // ---- 3. an account linked to a solely-owned Shared expense: the download offer, then confirm ---
   await b.carol.goto("accounts");
   await b.carol.waitForText("E2E Perm Shared Link", { scope: "main" });
+  await b.carol.openRecordMenu("E2E Perm Shared Link", { scope: "main" });
   await b.carol.click({ role: "button", name: "Permanently delete E2E Perm Shared Link" });
   await b.carol.waitFor("!!document.querySelector('.modal')", { what: "the impact dialog for the shared-linked account" });
   await b.carol.waitForText("Its Shared-expenses link will be disconnected.", { scope: MODAL });

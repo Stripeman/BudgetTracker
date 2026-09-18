@@ -21,6 +21,11 @@ const rowFor = (root, merchant) => root.querySelectorAll("tr").find((r) => r.tex
 // compact "::" menu, closed by default (a floating overlay on document.body once open) — open the
 // row's own toggle before looking for one of its items.
 const openRowMenu = (root, merchant) => {
+  // Close any OTHER row's menu still open first — a row with zero available actions has no toggle
+  // of its own to close a sibling's open menu the way a real click elsewhere would. Clicking the
+  // still-expanded toggle again is the same mechanism that opens one, so it is used to close it too.
+  const openToggle = dom.body.querySelectorAll("button.actionsmenu__toggle").find((b) => b.getAttribute("aria-expanded") === "true");
+  if (openToggle) openToggle.click();
   const row = rowFor(root, merchant);
   const toggle = row && row.querySelectorAll("button").find((b) => b.classList.contains("actionsmenu__toggle"));
   if (toggle) toggle.click();

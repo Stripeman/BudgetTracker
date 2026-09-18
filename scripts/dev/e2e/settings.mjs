@@ -28,9 +28,32 @@ const SAVED = "Settings saved. Everyone in the workspace now works this way.";
 const navLinks = (s) => s.evaluate("[...document.querySelectorAll('.app__nav a')].map((a) => a.textContent)");
 // A full reload only once the page is quiet (a request still running when the page reloads is cancelled).
 const fresh = async (s, route) => { await s.settle(); await s.reload(); await s.goto(route); };
-const rowButtons = (s, amountText) => s.evaluate(`(() => { const r = [...document.querySelectorAll('tbody tr')].find((x) => x.innerText.includes(${JSON.stringify(amountText)})); return r ? [...r.querySelectorAll('button')].map((x) => x.textContent.trim()) : null; })()`);
+// BT-015: a record's actions are inside its own compact "::" menu now, a floating overlay portaled
+// OUT of the row/item once open — never a plain inline button any more except a few that stayed
+// (e.g. "Review and record"/"Skip" on Bills' own "Needs attention" table). Reads a container's own
+// inline buttons PLUS, if it carries an actions-menu toggle, opens it (a real .click() dispatches a
+// full bubbling click event, exactly like a person's own click would), reads THAT panel's items by
+// their visible text (stripping any off-screen sr-only description, e.g. Record next's own tooltip
+// text or a disabled Move's hover explanation), and closes it again — merged into one list, so every
+// existing caller keeps working unchanged.
+// `preferAriaLabel`: `itemButtons` always read aria-label over plain text (pre-existing convention,
+// since several BILLS actions share the same visible text across rows); `rowButtons` always read
+// plain visible text (its own pre-existing convention) — preserved exactly, per axis, for both the
+// container's own remaining inline buttons and the menu's items alike.
+const containerButtonsJs = (preferAriaLabel) => `(container) => {
+  const textOf = (n) => { const c = n.cloneNode(true); c.querySelectorAll('.sr-only').forEach((s) => s.remove()); return (${preferAriaLabel} && n.getAttribute('aria-label') || c.textContent).trim(); };
+  const own = [...container.querySelectorAll('button')].filter((b) => !b.classList.contains('actionsmenu__toggle')).map(textOf);
+  const toggle = container.querySelector('.actionsmenu__toggle');
+  if (!toggle) return own;
+  toggle.click();
+  const panel = document.querySelector('.actionsmenu__panel:not([hidden])');
+  const menuItems = panel ? [...panel.querySelectorAll('.actionsmenu__item')].map(textOf) : [];
+  toggle.click();
+  return [...own, ...menuItems];
+}`;
+const rowButtons = (s, amountText) => s.evaluate(`(() => { const r = [...document.querySelectorAll('tbody tr')].find((x) => x.innerText.includes(${JSON.stringify(amountText)})); return r ? (${containerButtonsJs(false)})(r) : null; })()`);
 // The smallest element of the page that shows `text` and holds buttons: a bill's row on the Bills page.
-const itemButtons = (s, text) => s.evaluate(`(() => { const els = [...document.querySelectorAll("main li, main tr, main article, main div")].filter((e) => e.innerText && e.innerText.includes(${JSON.stringify(text)}) && e.querySelector("button")); els.sort((a, b) => a.innerText.length - b.innerText.length); const e = els[0]; return e ? [...e.querySelectorAll("button")].map((b) => (b.getAttribute("aria-label") || b.textContent).trim()) : null; })()`);
+const itemButtons = (s, text) => s.evaluate(`(() => { const els = [...document.querySelectorAll("main li, main tr, main article, main div")].filter((e) => e.innerText && e.innerText.includes(${JSON.stringify(text)}) && (e.querySelector("button") || e.querySelector(".actionsmenu__toggle"))); els.sort((a, b) => a.innerText.length - b.innerText.length); const e = els[0]; return e ? (${containerButtonsJs(true)})(e) : null; })()`);
 const iso = (d) => d.toISOString().slice(0, 10);
 
 // Opens a collapsed settings group (its heading is a toggle button named by the group).
@@ -165,11 +188,10 @@ export async function run(h, t) {
   await fresh(b.bob, "transactions");
   const offered = await rowButtons(b.bob, "23.45");
   const transferLeg = await rowButtons(b.bob, "61.00");
-  const editAt = await b.bob.evaluate(`(() => { const r = [...document.querySelectorAll('tbody tr')].find((x) => x.innerText.includes('23.45'));
-    const e = r && [...r.querySelectorAll('button')].find((x) => x.textContent.trim() === 'Edit'); if (!e) return null;
-    e.scrollIntoView({ block: 'center' }); const q = e.getBoundingClientRect(); return { x: q.left + q.width / 2, y: q.top + q.height / 2 }; })()`);
-  if (!editAt) throw new Error(`bob: Carol's entry offers no Edit after the setting; offered ${JSON.stringify(offered)}`);
-  await b.bob.mouseClick(editAt.x, editAt.y);
+  if (!(offered || []).includes("Edit")) throw new Error(`bob: Carol's entry offers no Edit after the setting; offered ${JSON.stringify(offered)}`);
+  // BT-015: Edit is inside the row's own compact "::" menu — open it, then click Edit.
+  await b.bob.openRecordMenu("23.45", { scope: "main" });
+  await b.bob.click({ text: "Edit", scope: ".actionsmenu__panel:not([hidden])" });
   await b.bob.waitFor("!!document.querySelector('.modal')", { what: "Bob's edit form" });
   await b.bob.fill({ css: 'input[placeholder="0.00 or 12.50+3.20"]', scope: ".modal" }, "25.00");
   await b.bob.fill({ label: "Reason for this change", scope: ".modal" }, "E2E the receipt said 25.00");

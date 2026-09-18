@@ -34,6 +34,10 @@ let counter = 0;
 
 export function createActionsMenu({ label, items }) {
   const filtered = (items || []).filter(Boolean);
+  // No available action at all (a viewer with no rights on this particular record) — never a dead
+  // "::" affordance that opens to nothing; the same "offer nothing" behaviour every individual
+  // permission-gated button already had before this menu replaced them.
+  if (!filtered.length) return { element: el("div", { class: "actionsmenu" }), isOpen: () => false, close: () => {} };
   const menuId = `actionsmenu-${++counter}`;
   const toggle = el("button", {
     class: "actionsmenu__toggle", type: "button",
