@@ -2354,3 +2354,169 @@ straight into the Bills/Merchant completeness review and the Design Gallery besp
 continuation Terry re-authorized in the same instruction, without pausing to ask permission at each
 step; separately, get Terry's explicit word on the main/Production contradiction above before doing
 anything in that direction.
+
+## Checkpoint AH — Design Gallery typography/graphics (BT-013-08), Bills→Merchant verified against
+## deployed Preview (BT-014-18), e2e harness isolation fixed (BT-004-09), backlog recorded
+## (2026-09-18, same session — Terry: "You do not need another invitation to begin the gallery... The
+## Design Gallery is not unbounded... make reasonable design decisions... finish the work... verify
+## the exact acceptance scenario already supplied against the deployed Preview build... fix the E2E
+## harness isolation problem")
+
+**The main/Production contradiction from Checkpoint AG is now resolved**, by Terry's own follow-up
+mid-turn message: the explicit work sequence is finish/verify → report readiness and ASK → only once
+authorized, merge/deploy → then start the new backlog. This checkpoint follows that: everything below
+is finished and verified, deployed to Preview; `main`/Production are NOT touched, and the next message
+to Terry asks for his explicit authorization before either happens.
+
+**1. Design Gallery (BT-013-08).** Terry's screenshots and `docs/Claude-handoff.md` §4 are explicit
+that the Gallery is not unbounded scope and that shared components satisfy "at least 15 distinct,
+polished" designs — he asked for reasonable design decisions using the 7 reference screenshots, not
+another round of "which ones do you want" before delivering. Extracted and viewed all 7 reference
+images directly (from the private local HTML pack, never committed): Acru's sidebar dashboard with a
+circular "Financial health" ring and quick-metrics; Finexa's pill-nav budget bars; Monsy's calm
+transaction table (already matched by existing patterns); a mobile shared-expense split flow (already
+matched); a forecast dashboard's large FILLED trend area; a debt-payoff app's circular progress ring;
+reference 7 (the curved accent) already shipped in Checkpoint AA. Added, real and tested: a
+**`typeVoice` typographic axis** (`technical-mono`/`editorial-serif`/`friendly-rounded`/
+`bold-display` — real font-family/weight/letter-spacing via `[data-voice]` in `app/styles/gallery.css`,
+system fonts only, reused by 2+ concepts each, always combined with each concept's own existing
+structural variety, never a substitute for it) and **two new accessible chart primitives**
+(`areaChart()` — a filled forecast area matching reference 5, wired to Wealth Overview's chart-first
+hero via a new `chartEmphasis: 'area'`; `radialGauge()` — a circular progress ring matching references
+1/6, wired to Goal Navigator's goal-progress hero via `chartEmphasis: 'donut'`, and to Financial
+Command Center's command-console via `chartEmphasis: 'mixed'` — previously declared but never actually
+used by any concept, a real small pre-existing gap now closed too). Comparison matrix gained
+Typography/Charts columns. Found and fixed one real visual-polish bug during the session's own
+screenshot check, not assumed correct from code alone: the first area-chart fill (`--accent-soft`)
+was nearly invisible against a dark background; switched to `color-mix(in srgb, var(--accent) 22%,
+transparent)`, confirmed clearly visible by screenshot afterward.
+- Evidence: `api/test/layouts.test.js` +2 (every concept declares a real `typeVoice`; all voices and
+  chart emphases genuinely used; the two new chart families assigned to exactly the one concept each
+  they were built for). `app/test/gallerypatterns.test.js` +6 (against the REAL manifest through the
+  REAL engine: per-concept `data-voice` attribute; voice reuse; the area chart renders only for
+  Wealth Overview; the two gauges render with real percentages in their accessible labels; the
+  "Budget used" ring appears beside the existing bar chart for the mixed-emphasis concept).
+  `npm test` 39/652/511 (exit 0); `npm run validate` ok, 24 routes (exit 0).
+- Real headless Edge (`npm run e2e -- --only gallery`, extended, **133/133 passed, exit 0**):
+  Executive Ledger (technical-mono) and Wealth Overview (editorial-serif) render two different real
+  computed `font-family` values on their page heading; Wealth Overview's Dashboard shows a visibly
+  filled forecast area; Goal Navigator's Dashboard shows two real rings reading "23%"/"70%" in their
+  accessible labels; Financial Command Center shows the new "Budget used" ring beside its bar
+  forecast; every existing 320px/834px/palette-contrast (midnight/forest/rose × light/dark, all
+  >=4.5:1)/reduced-motion check re-verified against the changed CSS, unchanged.
+- **What this is not, stated plainly (same honest scope note as BT-013-06/07):** not fifteen
+  independently hand-crafted bespoke visual systems — Terry's own brief explicitly does not require
+  that ("shared components are welcome... fifteen separately coded applications are not required").
+  Not independently design/accessibility reviewed by a separate reviewer (none available this
+  session, same limitation as every prior Gallery checkpoint) — the accessibility checks above are
+  self-verified against the app's own established rules.
+
+**2. Bills → Merchant verified against the DEPLOYED Preview build (BT-014-18), not just local tests.**
+Terry: "verify the exact acceptance scenario already supplied against the deployed Preview build. Do
+not ask me to repeat the defect because the register says it is closed." Two complementary, honest
+checks, no forged identity, no live-data mutation:
+- **Byte-identical proof the fix is actually what's running live:** fetched
+  `app/js/ui/views/bills.js`, `payees.js`, `merchantselect.js` and `commandpicker.js` directly from
+  the live Preview HTTPS endpoint and diffed them (after CRLF normalization only) against
+  `git show 471b6d5:<path>` — the exact commit `GET /api/site-settings` reported live at the time.
+  **Zero differing lines in all four files.** This proves the tested code is literally what Preview
+  is serving, not merely "the same source once, somewhere."
+- **Fresh real-browser re-run of the exact acceptance scenario**, right now, against that same code:
+  `npm run e2e -- --only bills` **37/37 passed, exit 0** (Merchant's trigger is the identical
+  `.cmdpick__trigger` Category uses; the list opens on click/focus; a typed-but-unmatched name is
+  saved as `payeeDraftName`, survives reopening, shows on the bill row and its history instead of an
+  em dash; "Add … as a new merchant" links and clears the pending name; typing part of an existing
+  merchant's name filters and selects it like Category's own search); `npm run e2e -- --only
+  transactions` **13/13 passed, exit 0** (the same "+ Add merchant" pinned action from the
+  Transactions quick-entry form, including the duplicate-name "Use X" recovery path).
+- **Disclosed limitation, not silently skipped:** no authenticated interactive session was run
+  against Preview's own live Google sign-in UI — doing so would require either forging an identity
+  (explicitly prohibited: "Identity comes only from trusted server-side claims," and TaskTracker's own
+  rejected-approaches list names forged-identity seed scripts) or repeating the SAME operator-level
+  direct-storage technique already used once for DEMO seeding (which needs the Preview storage
+  account connection string, previously flagged as printed into a session transcript) — this session
+  chose not to re-expose that secret without asking first, rather than doing it silently. The
+  byte-identical-artifact plus fresh-real-browser-scenario evidence above is offered as the honest,
+  strong alternative; flagged to Terry rather than presented as equivalent to a live interactive
+  Preview session.
+
+**3. E2E harness isolation problem fixed (BT-004-09).** Terry: "A full suite that exhausts one shared
+fictional identity's daily quota is unfinished test infrastructure... Do not weaken the application's
+actual limits or silently skip failing scenarios." Root cause reproduced and confirmed (not guessed):
+`run.mjs` shared ONE isolated server/seed across the WHOLE invocation; 11 of the (then) 21 scenarios
+default their `createWorkspace()` owner to the same fictional "alice," so a full unfiltered run
+exhausted her real 10-a-day limit partway through, turning later, unrelated scenarios into false
+failures. Considered and rejected: namespacing identities per scenario (would either transplant real
+ownership away from the named cast, breaking role-based assertions, or break scenarios that depend on
+the ONE globally pre-seeded "Fictional Household" owned by the real alice/bob/carol/dave). **Fixed
+instead exactly as Terry's own alternative wording allowed — "fresh isolated test state":** `run.mjs`'s
+loop now creates a brand-new `createHarness()` (its own port, its own fresh fictional seed) for EVERY
+scenario, closes it and verifies its cleanup before the next scenario starts. Zero changes needed to
+any of the 21 existing scenario files or `fixtures.mjs`. New dedicated scenario `quota.mjs` (API-only,
+its own isolated server) is the "retaining dedicated quota coverage" half: tops alice up from the
+seed's own known 2 pre-existing workspace creations to the real, untouched 10/day limit, confirms the
+11th is refused with `409 workspace_rate` and nothing is written, confirms a different owner (bob) on
+the same server/day is unaffected (the limit is per person, not global), and confirms the refusal
+persists on a further attempt — the real limit, never lowered, never mocked.
+- Evidence: a full, **completely unfiltered** `npm run e2e` (all 22 scenarios) — **626 passed, 0
+  failed, 0 skipped, exit 0**; zero "CLEANUP INCOMPLETE" lines anywhere in the run's own log. `npm
+  test` 39/652/511 (exit 0); `npm run validate` ok, 24 routes (exit 0) — this fix touches only test
+  infrastructure, never application code.
+- Traded off, stated plainly: the full suite now pays the dev-server-boot-and-seed cost once PER
+  scenario instead of once for the whole run, so its total wall-clock time is longer than before.
+  Acceptable: not part of `npm test`'s gate, and correctness/isolation matters more than that time.
+
+**4. Backlog recorded for after this release (BT-015/016/017), per Terry's mid-turn message.** Added
+a new "BACKLOG — authorized for after this release" section near the top of this file (survives a
+session restart) with the exact work sequence (finish/verify → report readiness and ASK for explicit
+main/Production authorization → only once authorized, merge/deploy → then start the backlog on a
+feature branch, Preview-only until separately authorized) and Terry's full acceptance criteria for:
+BT-015 (compact "::" record-action menus on Accounts/Bills/Merchants/Transactions, exact preserved
+action order per type, built on the BT-004-08 overlay engine so opening one never shifts content);
+BT-016 (shared-expense contacts and external participation without an account — a design
+recommendation is required FIRST, before any implementation); BT-017 (My Settings/Workspace Settings
+redesign, task-oriented sections, not another column). Stub rows added to `docs/REQUIREMENTS.md`
+(BT-015/016/017, status Planned) linking back to this file for the full criteria. None of the three is
+started — explicitly authorized only to begin AFTER this release, on a feature branch.
+
+**Git hygiene.** Committed directly to `integration/preview-2026-09-18` (continuing the same session's
+branch, per the established pattern this session), commit `bc322a2`, pushed to origin.
+
+**Deployed to Preview** via `scripts/deploy/deploy.ps1 -Environment preview`:
+```
+target  : budget-tracker / budget-tracker (preview)
+url     : https://polite-plant-03bb7570f-preview.eastus2.3.azurestaticapps.net
+sha     : bc322a2cafa38ad624106937ca7eba047f74b10f
+version : 0.1.0-alpha.1
+checks  : ok target, ok gitState, ok confirmation, ok azureResource, ok settings, ok test,
+          ok validate, ok build, ok secretScan, ok upload, ok commitSetting, ok healthCheck
+result  : SUCCESS
+```
+Independently verified live: `GET .../api/site-settings` reports `app.commit:
+"bc322a2cafa38ad624106937ca7eba047f74b10f"` (exact match), `environment: "preview"`; anonymous
+`GET /api/me` returns 401.
+
+**Known gaps, stated plainly:** everything already listed under Checkpoints AA–AG's own "Known gaps"
+is still true (independent security/financial/UX/accessibility review by a separate reviewer remains
+un-run this whole session — no reviewer subagent was available). New from this checkpoint: (1) the
+Gallery's typography/graphics work is a real, tested, shared-component system, not fifteen bespoke
+hand-crafted designs — disclosed as in-scope per Terry's own brief, not a shortfall; (2) Bills→Merchant
+was verified against the live Preview ARTIFACT and a fresh real-browser run of the exact scenario, but
+NOT through an actual interactive Preview sign-in session (disclosed limitation, needs either Terry's
+own click-through or explicit authorization to re-expose the Preview storage key via the DEMO-seeding
+operator technique); (3) the e2e full suite is now slower in total wall-clock time (traded off
+deliberately for correctness).
+
+**Waiting on Terry:** everything already listed under Checkpoints AA–AG's "Waiting on Terry," plus —
+per his own explicit work sequence — **this session is now asking for his explicit authorization to
+merge `integration/preview-2026-09-18` into `main` and deploy to Preview and Production**, since every
+currently-authorized item above is finished, verified and already independently confirmed live on
+Preview at `bc322a2`.
+
+**Exact next step:** waiting on Terry's explicit authorization (main merge + Preview + Production, per
+his own work-sequence step 2) before doing anything on that front. Once given: merge to `main`
+(fast-forward or PR per his preference), redeploy Preview from `main`, verify, then deploy Production
+and verify, per the established `deploy.ps1` workflow only. After that release is complete: begin
+BT-015 on a feature branch (the most self-contained and least design-decision-blocked of the three
+backlog items), continuing straight into BT-017, and start BT-016 with the required design
+recommendation before any of its implementation.
