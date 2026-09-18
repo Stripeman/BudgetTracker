@@ -86,6 +86,20 @@ const ANNOUNCE_DELAY = 400;
 const PAGE = 10;
 const TYPE_AHEAD_RESET = 500;
 
+// A16 (Bills → Merchant consistency fix, 2026-09-18: Terry — "what i did ask for was the drop down
+// to look like that of the category field... I KEEP CALLING FOR CONSISTENCY"). `allowCustom` is an
+// OPT-IN extension, used nowhere by default: every existing picker (Category, Account, Status,
+// Workspace, member roles, …) is unaffected unless it explicitly asks for this. When on, typed text
+// that matches no real option is kept as the picker's OWN value — never forcing the caller to create
+// a real record first — by adding a single reusable synthetic `<option>`, prefixed with
+// `TYPED_OPTION_PREFIX` so a consumer can tell "a real option was chosen" from "this was typed and
+// nothing matched yet" without another channel. It commits: on Enter when nothing is highlighted,
+// on Tab out of the panel (either direction), and when the panel is dismissed by an outside
+// click — always with focus left where the person was already heading, never stolen back to the
+// trigger. Escape deliberately does NOT commit — closing the panel by Escape stays "never mind",
+// exactly like every other picker.
+export const TYPED_OPTION_PREFIX = "cmdpick-typed:";
+
 /**
  * @param {object} options
  * @param {HTMLSelectElement} options.select  the control that holds the value
@@ -95,13 +109,15 @@ const TYPE_AHEAD_RESET = 500;
  * @param {boolean} [options.search]          whether to offer a search box. Default true.
  * @param {{label: string, onPick: (term: string) => void}} [options.create]
  *        an action pinned under the results — "+ New workspace".
+ * @param {boolean} [options.allowCustom]     A16 — typed text nothing matches becomes the value
+ *        itself, prefixed with `TYPED_OPTION_PREFIX`, instead of requiring a real option.
  * @param {(value: string) => (Node|null)} [options.badgeOf]
  *        a small leading mark for an option, rendered before the label in the list and on the
  *        trigger. A NODE FACTORY: it must return a NEW element each call.
  * @param {(value: string) => (string|null)} [options.describeOf]
  *        the row's spoken name, when the visible label is not the whole fact ("Family — Manager").
  */
-export function createCommandPicker({ select, label = "Choose", placeholder = "", colorOf = null, badgeOf = null, describeOf = null, create = null, search: wantSearch = true, labelVisible = false } = {}) {
+export function createCommandPicker({ select, label = "Choose", placeholder = "", colorOf = null, badgeOf = null, describeOf = null, create = null, allowCustom = false, search: wantSearch = true, labelVisible = false } = {}) {
   if (!select) throw new Error("createCommandPicker needs the select that holds the value.");
 
   const id = `cmdpick-${++counter}`;
@@ -256,6 +272,9 @@ export function createCommandPicker({ select, label = "Choose", placeholder = ""
   function dismiss(why) {
     const doc = element.ownerDocument;
     const heldFocus = !!(doc && panel.contains(doc.activeElement));
+    // A16 — a click outside commits whatever was typed (never stealing focus back to this trigger:
+    // the person is heading somewhere else on purpose) before the normal outside-press handling below.
+    if (allowCustom) commitTyped({ restoreFocus: false });
     close({ restoreFocus: false });
     const target = why && why.target;
     if (!heldFocus || !target || landsOnControl(target)) return;
@@ -269,12 +288,54 @@ export function createCommandPicker({ select, label = "Choose", placeholder = ""
 
   // ---- what is on offer ---------------------------------------------------
 
+  // The attribute, not the live DOM property, is the one source read everywhere below — an
+  // `<option>`'s `value` PROPERTY is not necessarily kept in sync with its `value` ATTRIBUTE outside
+  // a real browser's own native `<option>` behaviour, so every write here goes through
+  // `setAttribute` and every read through this same helper, never a mix of the two.
+  const optionValue = (o) => o.getAttribute("value") ?? o.value ?? "";
+
   const options = () =>
     Array.from(select.querySelectorAll("option")).map((o) => ({
-      value: o.getAttribute("value") ?? o.value ?? "",
+      value: optionValue(o),
       label: o.textContent,
       disabled: !!o.disabled,
     }));
+
+  // A16 — the ONE reusable synthetic option a typed, unmatched value lives on. Adopted from an
+  // already-present option with this prefix (a caller may seed the select's initial typed value
+  // this way — bills.js does, for a bill whose merchant is still a typed, unlinked name), so editing
+  // an existing typed value updates it in place rather than creating a second one.
+  let customOption = allowCustom
+    ? Array.from(select.querySelectorAll("option")).find((o) => optionValue(o).startsWith(TYPED_OPTION_PREFIX)) || null
+    : null;
+  const typedValueFor = (term) => `${TYPED_OPTION_PREFIX}${term}`;
+  const findExactOption = (term) => {
+    const n = term.trim().toLowerCase();
+    return options().find((o) => !o.disabled && String(o.label || "").trim().toLowerCase() === n) || null;
+  };
+  // A16 — commits whatever is typed as the value: an exact (case-insensitive) match to a real option
+  // selects that option instead of creating a duplicate; otherwise the single reusable synthetic
+  // option is created or updated and picked. Never called unless `allowCustom`.
+  function commitTyped({ restoreFocus = true } = {}) {
+    if (!allowCustom) return false;
+    const term = search.value.trim();
+    if (!term) return false;
+    const exact = findExactOption(term);
+    if (exact) {
+      if (exact.value !== select.value) pick(exact.value, { restoreFocus });
+      return true;
+    }
+    const value = typedValueFor(term);
+    if (!customOption) {
+      customOption = el("option", { value, text: term });
+      select.appendChild(customOption);
+    } else {
+      customOption.setAttribute("value", value);
+      customOption.textContent = term;
+    }
+    pick(value, { restoreFocus });
+    return true;
+  }
 
   const chosen = () => options().find((o) => o.value === select.value) || null;
 
@@ -422,13 +483,13 @@ export function createCommandPicker({ select, label = "Choose", placeholder = ""
     else holder.removeAttribute("aria-activedescendant");
   }
 
-  function pick(value) {
+  function pick(value, { restoreFocus = true } = {}) {
     // THE LAST WORD ON WHETHER THIS IS ALLOWED.
     const option = options().find((o) => o.value === value);
     if (!option || option.disabled) return;
     // A5 — CHOOSING WHAT IS ALREADY CHOSEN CHANGES NOTHING, and a native select reports nothing.
     if (value === select.value) {
-      close();
+      close({ restoreFocus });
       return;
     }
     select.value = value;
@@ -436,8 +497,14 @@ export function createCommandPicker({ select, label = "Choose", placeholder = ""
     // `input` then `change`, the order a native select fires them in (A5).
     select.dispatchEvent(new Event("input", { bubbles: true }));
     select.dispatchEvent(new Event("change", { bubbles: true }));
+    // A16 — a typed draft that was never actually chosen is removed the moment something else is
+    // picked; it must never linger in the list as a phantom "existing" option.
+    if (customOption && value !== optionValue(customOption) && customOption.parentNode) {
+      customOption.parentNode.removeChild(customOption);
+      customOption = null;
+    }
     paintTrigger();
-    close();
+    close({ restoreFocus });
     notify();
   }
 
@@ -661,7 +728,12 @@ export function createCommandPicker({ select, label = "Choose", placeholder = ""
       // whatever holds focus (the list is never a Tab stop of its own, A15).
       const first = searchable ? search : list;
       const last = createButton || holder;
-      if ((event.shiftKey && event.target === first) || (!event.shiftKey && event.target === last)) close();
+      if ((event.shiftKey && event.target === first) || (!event.shiftKey && event.target === last)) {
+        // A16 — moving on to the next (or previous) field on purpose commits whatever was typed,
+        // same as a click outside; the browser's own Tab (not prevented) still lands where it would.
+        if (allowCustom) commitTyped({ restoreFocus: false });
+        close();
+      }
       return;
     }
     // A3 — the create button's own keys are its own: Enter and Space activate it natively.
@@ -694,6 +766,9 @@ export function createCommandPicker({ select, label = "Choose", placeholder = ""
     } else if (event.key === "Enter") {
       event.preventDefault();
       if (found[active] && !found[active].disabled) pick(found[active].value);
+      // A16 — nothing is highlighted (the typed text matches no real option): Enter commits it
+      // directly, so typing a brand new merchant name and pressing Enter needs no extra click.
+      else if (allowCustom && inSearch) commitTyped();
     } else if (event.key === " " && !inSearch) {
       // A14 — Space chooses, as in a native list; while typing ahead it is part of a name.
       event.preventDefault();
@@ -826,6 +901,9 @@ export function createCommandPicker({ select, label = "Choose", placeholder = ""
     const to = event.relatedTarget;
     if (!to) return;
     if (panel.contains(to) || element.contains(to)) return;
+    // A16 — any way focus leaves the panel commits whatever was typed, not just Tab; a no-op once
+    // Tab's own keydown handler above already committed and closed (guarded by `open`).
+    if (allowCustom) commitTyped({ restoreFocus: false });
     close({ restoreFocus: false });
   });
 

@@ -17,7 +17,7 @@ import { stateView, money, button, field, input, pickerSelect, categoryBadges, i
 import { categoryIndex } from "../../core/categories.js";
 import { openModal } from "../modal.js";
 import { openDeleteDialog } from "../permanentdelete.js";
-import { createMerchantPicker } from "../merchantpicker.js";
+import { createMerchantSelect, setMerchantOptions, readMerchantSelect, selectMerchant } from "../merchantselect.js";
 import { sliceFor } from "../../core/store.js";
 import { newIdempotencyKey } from "../../core/api.js";
 import { messageFor } from "../../core/errors.js";
@@ -555,18 +555,21 @@ export function openQuickEntry(ctx, { transaction } = {}) {
   const merchantLink = el("p", { class: "field__help", hidden: !current }, [
     el("a", { href: "#/payees", text: "Edit merchant details on the Merchants tab", onClick: () => modal.close() }), " (closes this form)",
   ]);
-  const picker = createMerchantPicker({
+  // A real entry always needs a real merchant (BT-007-01) — never a left-as-typed draft (unlike a
+  // bill's own term, BT-014-11) — so `allowCustom` stays off; "+ Add merchant" opens the SAME
+  // inline "New merchant" fieldset this form has always used, unchanged.
+  const merchantSelect = createMerchantSelect({
     merchants: choosableMerchants(merchants, accountOf(currentAccountId())),
     current,
-    onChange: (m) => { merchantLink.hidden = !m; void onMerchant(m); },
-    onRequestCreate: (name) => showCreate(name),
+    create: { label: "Add merchant", onPick: (name) => showCreate(name) },
   });
-  if (isTransfer) picker.input.disabled = true;
+  merchantSelect.addEventListener("change", () => { const m = merchants.find((p) => p.id === merchantSelect.value) || null; merchantLink.hidden = !m; void onMerchant(m); });
+  if (isTransfer) merchantSelect.disabled = true;
   // Reversal pairs: financial fields are shown but cannot be changed (FIN-R1).
   const lock = editing ? reversalLock(transaction) : null;
   if (lock) {
     for (const control of [amount, category, date, kind]) control.setAttribute("disabled", "");
-    picker.input.disabled = true;
+    merchantSelect.disabled = true;
   }
 
   const createName = input({ maxlength: "80", autocomplete: "off" });
@@ -593,16 +596,16 @@ export function openQuickEntry(ctx, { transaction } = {}) {
     createBox.hidden = false;
     createName.focus();
   }
-  function hideCreate() { createBox.hidden = true; picker.input.focus(); }
+  function hideCreate() { createBox.hidden = true; merchantSelect.focus(); }
   function refreshMerchantChoices() {
     merchants = ((sliceFor(ctx.store.getState(), "payees").data || {}).payees || []);
-    picker.setItems(choosableMerchants(merchants, accountOf(currentAccountId())));
+    setMerchantOptions(merchantSelect, choosableMerchants(merchants, accountOf(currentAccountId())));
   }
   function useExisting(existing) {
     if (existing.status === "closed") { createError.textContent = `${existing.name} is closed. Reopen it on the Merchants tab to use it again.`; createError.hidden = false; return; }
-    picker.select(merchants.find((p) => p.id === existing.id) || existing);
+    selectMerchant(merchantSelect, merchants.find((p) => p.id === existing.id) || existing);
     createBox.hidden = true;
-    picker.input.focus();
+    merchantSelect.focus();
   }
   async function submitCreate(allowDuplicate) {
     createError.hidden = true;
@@ -617,9 +620,9 @@ export function openQuickEntry(ctx, { transaction } = {}) {
       const out = await ctx.api.createMerchant(state.selectedWorkspaceId, body);
       await ctx.store.actions.refreshPayees();
       refreshMerchantChoices();
-      picker.select({ id: out.payee.id, name: out.payee.name, visibility: out.payee.visibility });
+      selectMerchant(merchantSelect, { id: out.payee.id, name: out.payee.name, visibility: out.payee.visibility });
       createBox.hidden = true;
-      picker.input.focus();
+      merchantSelect.focus();
       announce(`${out.payee.name} added and selected.`);
     } catch (err) {
       createError.textContent = messageFor(err);
@@ -659,11 +662,15 @@ export function openQuickEntry(ctx, { transaction } = {}) {
 
   function onAccountChange() {
     setAmountLabel();
+    const chosenBefore = merchantSelect.value;
     refreshMerchantChoices();
     createNote.textContent = scopeText();
-    const chosen = picker.getSelected();
-    if (chosen && !choosableMerchants(merchants, accountOf(currentAccountId())).some((p) => p.id === chosen.id)) {
-      picker.select(null);
+    // `refreshMerchantChoices` (via `setMerchantOptions`) already clears a real merchant that is no
+    // longer choosable on the new account, but that direct property write fires no "change" event
+    // (only an explicit `pick()` does) — the merchant-changed side effects run here instead.
+    if (chosenBefore && !merchantSelect.value) {
+      merchantLink.hidden = true;
+      void onMerchant(null);
       announce("The merchant was cleared: it cannot be used with this account.");
     }
   }
@@ -696,7 +703,7 @@ export function openQuickEntry(ctx, { transaction } = {}) {
   const cancel = button("Cancel", () => modal.close());
   const form = el("form", { class: "form-grid", novalidate: true, id: `${key}-form` }, [
     lock ? el("p", { class: "field__help field--wide reversal-lock", text: lock }) : null,
-    el("div", { class: "field" }, [el("label", { class: "field__label", for: picker.input.id, text: "Merchant" }), picker.element, merchantLink]),
+    (() => { const f = field("Merchant", merchantSelect); f.appendChild(merchantLink); return f; })(),
     createBox,
     amountField,
     withHint("Account", "account", account),
@@ -726,7 +733,8 @@ export function openQuickEntry(ctx, { transaction } = {}) {
     if (!isTransfer) {
       if (kind.value !== t.kind) body.kind = kind.value;
       if ((category.value || null) !== (t.categoryId || null)) body.categoryId = category.value || null;
-      if (picker.getValue() !== (t.payeeId || null)) body.payeeId = picker.getValue();
+      const chosenPayeeId = readMerchantSelect(merchantSelect).payeeId;
+      if (chosenPayeeId !== (t.payeeId || null)) body.payeeId = chosenPayeeId;
     }
     return body;
   }
@@ -774,7 +782,8 @@ export function openQuickEntry(ctx, { transaction } = {}) {
         if (toAmount.value.trim()) body.transfer.toAmount = toAmount.value.trim();
         else if (rate.value.trim()) body.transfer.rate = rate.value.trim();
       } else {
-        if (picker.getValue()) body.payeeId = picker.getValue();
+        const chosenPayeeId = readMerchantSelect(merchantSelect).payeeId;
+        if (chosenPayeeId) body.payeeId = chosenPayeeId;
         if (category.value) body.categoryId = category.value;
       }
       return ctx.api.createTransaction(ws, body, key);

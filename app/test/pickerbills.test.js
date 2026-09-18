@@ -80,13 +80,16 @@ describe("BT-004-05 bills: the bill editor", () => {
     openBillEditor(ctx);
     const root = dom.body.querySelector(".modal");
     assert.deepEqual(nativeDropdowns(root), []);
-    assert.deepEqual(pickerLabels(root), ["Type", "Direction", "Account", "To account", "Amount is", "Repeats", "Unit", "Category", "Responsible person"]);
+    assert.deepEqual(pickerLabels(root), ["Type", "Direction", "Account", "To account", "Amount is", "Repeats", "Unit", "Merchant", "Category", "Responsible person"]);
     assert.equal(spoken(pickerNamed(root, "Type")), "Type: Rent or mortgage. Choose.");
     assert.equal(spoken(pickerNamed(root, "Direction")), "Direction: Money out. Choose.");
     assert.equal(spoken(pickerNamed(root, "Account")), "Account: Fictional joint (EUR). Choose.");
     assert.equal(spoken(pickerNamed(root, "Amount is")), "Amount is: Always the same. Choose.");
     assert.equal(spoken(pickerNamed(root, "Repeats")), "Repeats: Monthly. Choose.");
     assert.equal(spoken(pickerNamed(root, "Unit")), "Unit: months. Choose.");
+    // Merchant is now the SAME command picker as Category — the exact consistency Terry asked for
+    // (2026-09-18: "what i did ask for was the drop down to look like that of the category field").
+    assert.equal(spoken(pickerNamed(root, "Merchant")), "Merchant: Choose a merchant…. Search and choose.");
     assert.equal(spoken(pickerNamed(root, "Category")), "Category: Uncategorized. Choose.");
     assert.equal(spoken(pickerNamed(root, "Responsible person")), "Responsible person: Nobody in particular. Choose.");
     await tick();
@@ -241,7 +244,7 @@ describe("Bills → Merchant regression (Terry, 2026-09-18): a typed-but-unlinke
 });
 
 describe("BT-004-05 bills: review and record", () => {
-  test("Category and Status are pickers, and the payment is recorded with what was chosen", async () => {
+  test("Merchant, Category and Status are pickers, and the payment is recorded with what was chosen", async () => {
     const { ctx, state, calls } = billsCtx();
     const view = createView(ctx);
     dom.body.appendChild(view.element);
@@ -251,7 +254,7 @@ describe("BT-004-05 bills: review and record", () => {
     await tick();
     const root = dom.body.querySelector(".modal");
     assert.deepEqual(nativeDropdowns(root), []);
-    assert.deepEqual(pickerLabels(root), ["Category", "Status"]);
+    assert.deepEqual(pickerLabels(root), ["Merchant", "Category", "Status"]);
     assert.equal(spoken(pickerNamed(root, "Status")), "Status: Pending. Choose.");
     chooseOption(pickerNamed(root, "Category"), "Housing");
     chooseOption(pickerNamed(root, "Status"), "Cleared");

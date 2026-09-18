@@ -10,7 +10,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import { fileURLToPath } from "node:url";
 import { installDom, DomEvent } from "./domdouble.js";
-import { createCommandPicker } from "../js/ui/commandpicker.js";
+import { createCommandPicker, TYPED_OPTION_PREFIX } from "../js/ui/commandpicker.js";
 
 let dom;
 beforeEach(() => { dom = installDom(); });
@@ -925,5 +925,121 @@ describe("BT-004-04 LEAVING THE PALETTE", () => {
     none(panel());
     assert.equal(picker.isOpen(), false);
     same(document.activeElement, box, "focus is not dragged back to the trigger");
+  });
+});
+
+// A16 (Bills → Merchant consistency fix, 2026-09-18: Terry — "what i did ask for was the drop down
+// to look like that of the category field ... I KEEP CALLING FOR CONSISTENCY"). `allowCustom` is
+// opt-in and used by nothing above this point in the file — every test above still passes
+// unmodified, proving every OTHER picker (Category, Account, Status, Workspace, …) is unaffected.
+describe("A16 allowCustom: typed text nothing matches becomes the value itself, never requiring a real option first", () => {
+  test("without allowCustom (the default), typing something new and pressing Enter commits nothing (existing behaviour, unchanged)", () => {
+    const { picker, select } = mount({ value: "food" });
+    open(picker);
+    type(panel().querySelector(".cmdpick__search"), "Northstar Fiber");
+    press(panel(), "Enter");
+    assert.equal(select.value, "food", "still whatever was chosen before; nothing was created");
+    assert.equal(picker.element.querySelector(".cmdpick__value").textContent, "Food");
+  });
+
+  test("Enter, with nothing highlighted, commits the typed text as the value", () => {
+    const { picker, select } = mount({ value: "food", allowCustom: true });
+    open(picker);
+    const box = panel().querySelector(".cmdpick__search");
+    type(box, "Northstar Fiber");
+    press(box, "Enter");
+    assert.equal(select.value, `${TYPED_OPTION_PREFIX}Northstar Fiber`);
+    assert.equal(picker.element.querySelector(".cmdpick__value").textContent, "Northstar Fiber", "the trigger shows the typed name exactly like any other chosen option");
+    none(panel(), "closed, same as choosing a real option");
+  });
+
+  test("Tab out of the search box commits the typed text, without stealing focus back to the trigger", () => {
+    const { picker, select } = mount({ value: "", allowCustom: true });
+    open(picker);
+    const box = panel().querySelector(".cmdpick__search");
+    type(box, "Northstar Fiber");
+    press(box, "Tab");
+    assert.equal(select.value, `${TYPED_OPTION_PREFIX}Northstar Fiber`);
+    assert.notEqual(document.activeElement, trigger(picker), "focus was never pulled back — the person is moving on to the next field");
+  });
+
+  test("a click outside (dismissal) commits the typed text too", () => {
+    const { picker, select } = mount({ value: "", allowCustom: true });
+    open(picker);
+    type(panel().querySelector(".cmdpick__search"), "Northstar Fiber");
+    const elsewhere = document.createElement("button");
+    dom.body.appendChild(elsewhere);
+    document.dispatchEvent(new DomEvent("mousedown", { bubbles: true, target: elsewhere }));
+    assert.equal(select.value, `${TYPED_OPTION_PREFIX}Northstar Fiber`);
+  });
+
+  test("Escape does NOT commit — closing by Escape stays \"never mind\", exactly like every other picker", () => {
+    const { picker, select } = mount({ value: "", allowCustom: true });
+    open(picker);
+    type(panel().querySelector(".cmdpick__search"), "Northstar Fiber");
+    press(panel(), "Escape");
+    assert.equal(select.value, "", "nothing was committed");
+    none(panel());
+  });
+
+  test("typing the EXACT name of a real, existing option selects that option instead of creating a duplicate", () => {
+    const { picker, select } = mount({ value: "", allowCustom: true });
+    open(picker);
+    type(panel().querySelector(".cmdpick__search"), "food"); // case-insensitive exact match of "Food"
+    press(panel(), "Enter");
+    assert.equal(select.value, "food", "the real option, not a typed:food synthetic one");
+    assert.equal(select.querySelectorAll("option").length, OPTIONS.length, "no extra option was created");
+  });
+
+  test("editing an already-typed value reuses the SAME synthetic option — never a second one left behind", () => {
+    const { picker, select } = mount({ value: "", allowCustom: true });
+    open(picker);
+    let box = panel().querySelector(".cmdpick__search");
+    type(box, "Northstar Fiber");
+    press(box, "Enter");
+    assert.equal(select.querySelectorAll("option").length, OPTIONS.length + 1, "one synthetic option added");
+    open(picker);
+    box = panel().querySelector(".cmdpick__search");
+    type(box, "Southstar Fiber");
+    press(box, "Enter");
+    assert.equal(select.value, `${TYPED_OPTION_PREFIX}Southstar Fiber`);
+    assert.equal(select.querySelectorAll("option").length, OPTIONS.length + 1, "still exactly one synthetic option, updated in place");
+  });
+
+  test("choosing a REAL option after a typed draft removes the stale synthetic option — it never lingers as a phantom choice", () => {
+    const { picker, select } = mount({ value: "", allowCustom: true });
+    open(picker);
+    const box = panel().querySelector(".cmdpick__search");
+    type(box, "Northstar Fiber");
+    press(box, "Enter");
+    assert.equal(select.querySelectorAll("option").length, OPTIONS.length + 1);
+    open(picker);
+    // Not "End": the synthetic draft option was appended AFTER the real ones, so it is now the
+    // LAST item — searching narrows to just the real "Travel" option instead.
+    const box2 = panel().querySelector(".cmdpick__search");
+    type(box2, "Travel");
+    press(box2, "Enter");
+    assert.equal(select.value, "travel");
+    assert.equal(select.querySelectorAll("option").length, OPTIONS.length, "the abandoned typed draft is gone");
+  });
+
+  test("a caller may seed an initial typed value (a bill reopened with a saved, still-unlinked merchant name): it is adopted, not duplicated", () => {
+    const select = selectOf(OPTIONS, "");
+    const draftValue = `${TYPED_OPTION_PREFIX}Northstar Fiber`;
+    const seeded = document.createElement("option");
+    seeded.setAttribute("value", draftValue);
+    seeded.textContent = "Northstar Fiber";
+    select.appendChild(seeded);
+    select.value = draftValue;
+    const picker = createCommandPicker({ select, label: "Merchant", allowCustom: true });
+    dom.body.appendChild(picker.element);
+    assert.equal(picker.element.querySelector(".cmdpick__value").textContent, "Northstar Fiber", "shown exactly like any other chosen value");
+    // Editing it reuses the SEEDED option rather than creating a second one.
+    open(picker);
+    const box = panel().querySelector(".cmdpick__search");
+    type(box, "Northstar Fiber Corp");
+    press(box, "Enter");
+    assert.equal(select.querySelectorAll("option").length, OPTIONS.length + 1, "the seeded option was updated in place, not duplicated");
+    assert.equal(select.value, `${TYPED_OPTION_PREFIX}Northstar Fiber Corp`);
   });
 });
