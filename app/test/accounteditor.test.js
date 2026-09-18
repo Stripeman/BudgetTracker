@@ -220,6 +220,9 @@ describe("BT-006-06 editing an account", () => {
 
   test("changing the icon sends it", async () => {
     const { dialog, calls } = openEdit([account()]);
+    // The icon list is a floating overlay (2026-09-18, app/js/ui/overlay.js): it exists in the
+    // document only once its toggle is opened.
+    dialog.querySelector(".themepick__toggle").click();
     const options = dialog.querySelectorAll('[role="option"]');
     const wallet = options.find((o) => o.dataset.theme === "wallet");
     assert.ok(wallet, "the wallet icon is offered");

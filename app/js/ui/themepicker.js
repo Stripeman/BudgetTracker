@@ -19,10 +19,21 @@
 //   * after a pick, focus returns to the toggle (it would otherwise fall to <body>);
 //   * with an external label the accessible name still includes the current palette;
 //   * `setDisabled` also closes the list and is used for a site-locked setting.
+//   * (2026-09-18, Terry — screenshots of the Icon picker in Add Bill/Add Budget/Add Account/Add
+//     Merchant pushing every field below it down the page) THE LIST IS A FLOATING OVERLAY, never a
+//     normal-flow sibling of the toggle — core/popover.js's own header comment already named this
+//     as pre-existing debt ("the theme and icon pickers open in normal flow"). Built on the exact
+//     same shared overlay engine (app/js/ui/overlay.js) commandpicker.js's Category/Account/Status/
+//     Merchant/Workspace fields already use: `position: fixed`, portaled to the nearest dialog or
+//     the body, placed below the toggle or above when there is no room, capped and scrolled inside
+//     itself rather than clipped, and following the toggle on scroll/resize. Opening or closing it
+//     now changes nothing else on the page.
 // Swatch colours go through the CSSOM (`vars`), never a style attribute, so the CSP holds.
 import { el } from "./dom.js";
 import { THEMES } from "./theme.js";
 import { icon } from "./icons.js";
+import { overlayHost, placePanel, usefulHeight, followTrigger } from "./overlay.js";
+import { registerPopup } from "./popup.js";
 
 let counter = 0;
 
@@ -93,16 +104,41 @@ export function createThemePicker({ value, onPick, id = null, labelledBy = null,
     }
   }
 
-  const element = el("div", { class: "themepick" }, [toggle, list]);
+  // The toggle stays where it is; the list is a FLOATING OVERLAY (app/js/ui/overlay.js), appended
+  // to the nearest dialog or the body only while open, never a normal-flow sibling of the toggle —
+  // opening or closing it changes nothing else on the page (Terry, 2026-09-18).
+  const element = el("div", { class: "themepick" }, [toggle]);
   let open = false;
-  const onOutside = (e) => { if (open && !element.contains(e.target)) setOpen(false); };
+  let stopFollowing = null;
+  function place() {
+    placePanel({ trigger: toggle, panel: list, minUseful: usefulHeight({ panel: list, list, rowSelector: ".themepick__option" }) });
+  }
+  const dismissal = registerPopup({
+    contains: (node) => element.contains(node) || list.contains(node),
+    close: () => setOpen(false),
+    isOpen: () => open,
+    ownerDocument: () => element.ownerDocument,
+    anchor: () => element,
+  });
   function setOpen(next) {
+    const wasOpen = open;
     open = !!next;
-    list.hidden = !open;
     toggle.setAttribute("aria-expanded", open ? "true" : "false");
-    if (typeof document.addEventListener === "function") {
-      if (open) document.addEventListener("pointerdown", onOutside, true);
-      else document.removeEventListener("pointerdown", onOutside, true);
+    if (open === wasOpen) return;
+    if (open) {
+      list.hidden = false;
+      overlayHost(toggle).appendChild(list);
+      place();
+      stopFollowing = followTrigger({
+        trigger: toggle, boundary: element, panel: list, isOpen: () => open,
+        onReposition: place,
+        onOutOfView: () => setOpen(false),
+      });
+      dismissal.opened();
+    } else {
+      if (stopFollowing) { stopFollowing(); stopFollowing = null; }
+      list.hidden = true;
+      if (list.parentNode) list.parentNode.removeChild(list);
     }
   }
   function focusOption(index) {

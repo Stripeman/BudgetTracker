@@ -29,8 +29,12 @@ describe("BT-011-04 category colours in the UI", () => {
     assert.deepEqual(entries.map((e) => e.id), ["#16a34a", "#dc2626", "#123abc"]);
     const picker = createThemePicker({ value: "#123abc", entries, namePrefix: "Groceries colour" });
     assert.equal(picker.getValue(), "#123abc");
-    assert.equal(picker.element.querySelector(".themepick__toggle").getAttribute("aria-label"), "Groceries colour: Custom");
-    assert.equal(picker.element.querySelectorAll('[role="option"]').length, 3);
+    const toggle = picker.element.querySelector(".themepick__toggle");
+    assert.equal(toggle.getAttribute("aria-label"), "Groceries colour: Custom");
+    // The list is a floating overlay (2026-09-18, app/js/ui/overlay.js): in the document, on the
+    // body, only once opened — never under the picker's own `element`.
+    toggle.click();
+    assert.equal(document.querySelectorAll('[role="option"]').length, 3);
   });
 
   test("a personal colour wins over the workspace colour for the viewer only", () => {

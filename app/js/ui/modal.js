@@ -10,27 +10,31 @@ import { closeDetachedPopups } from "./popup.js";
 
 const FOCUSABLE = "button, [href], input, select, textarea, summary, [tabindex]";
 
-// Escape belongs to an open list or popover inside the dialog first — the merchant combobox, a
-// command picker's panel (BT-004-05; it floats on the body, and a list without a search box holds
-// the keyboard itself), a theme, colour or icon picker (its options or its toggle), or an
-// accessible help popover (BT-011-09; `createHelpPopover()`, app/js/ui/components.js — it too
-// floats on the body and holds real, focusable content) — so the dialog, and what was typed,
-// stays open; the next Escape closes the dialog (UXI-1). Found by real-browser e2e (2026-09-18):
-// without this, Escape while a popover held focus closed the WHOLE dialog underneath it instead of
-// just the popover, and then the popover's own Escape handler tried to refocus a trigger that had
-// just been destroyed along with the dialog — a real dropped-focus bug, not a hypothetical one.
+// Escape belongs to an open list or popover inside the dialog first — a command picker's panel
+// (BT-004-05; Category, Account, Status, Merchant, Workspace, …), a theme, colour or icon picker's
+// own floating list (BT-011-03/05; 2026-09-18: it floats on the nearest dialog or the body exactly
+// like a command picker's panel, never a normal-flow child of its own toggle any more —
+// app/js/ui/overlay.js, shared by both), or an accessible help popover (BT-011-09;
+// `createHelpPopover()`, app/js/ui/components.js — it too floats on the body and holds real,
+// focusable content) — so the dialog, and what was typed, stays open; the next Escape closes the
+// dialog (UXI-1). Found by real-browser e2e (2026-09-18): without this, Escape while a popover held
+// focus closed the WHOLE dialog underneath it instead of just the popover, and then the popover's
+// own Escape handler tried to refocus a trigger that had just been destroyed along with the dialog
+// — a real dropped-focus bug, not a hypothetical one.
 export function escapeBelongsToControl(target) {
   if (!target || !target.getAttribute) return false;
   if (target.getAttribute("role") === "combobox" && target.getAttribute("aria-expanded") === "true") return true;
   // A command picker's panel is in the document only while it is open.
   if (target.closest && target.closest(".cmdpick__panel")) return true;
+  // A theme/icon/colour picker's list, likewise only in the document while open.
+  if (target.closest && target.closest(".themepick__list")) return true;
+  // Escape pressed on the picker's own toggle, before focus ever moved into its (separately
+  // floated) list.
+  if (target.classList && target.classList.contains("themepick__toggle") && target.getAttribute("aria-expanded") === "true") return true;
   // An open help popover: the focus is inside its floating panel, or on its own trigger.
   if (target.closest && target.closest(".popover__panel")) return true;
   if (target.classList && target.classList.contains("popover__trigger") && target.getAttribute("aria-expanded") === "true") return true;
-  // The picker's toggle states whether its list is open (aria-expanded), in every DOM.
-  const pick = target.closest ? target.closest(".themepick") : null;
-  const toggle = pick ? pick.querySelector(".themepick__toggle") : null;
-  return !!toggle && toggle.getAttribute("aria-expanded") === "true";
+  return false;
 }
 
 export function openModal({ title, body, actions = [], onClose = () => {} }) {
@@ -85,10 +89,11 @@ export function openModal({ title, body, actions = [], onClose = () => {} }) {
     if (target && typeof target.focus === "function") target.focus();
   }
 
-  // Excludes controls inside a hidden ancestor, not only hidden controls themselves, and the inside of
-  // an open command-picker panel: it lives in the dialog (so aria-modal never hides it) but is part of
-  // its trigger, and it handles Tab itself.
-  const inPanel = (n) => !!(n && n.closest && n.closest(".cmdpick__panel"));
+  // Excludes controls inside a hidden ancestor, not only hidden controls themselves, and the inside
+  // of an open command-picker panel OR a theme/icon/colour picker's floating list (2026-09-18, same
+  // overlay engine, app/js/ui/overlay.js): either lives in the dialog (so aria-modal never hides it)
+  // but is part of its own trigger, and handles Tab itself.
+  const inPanel = (n) => !!(n && n.closest && (n.closest(".cmdpick__panel") || n.closest(".themepick__list")));
   function focusables() {
     return Array.from(dialog.querySelectorAll(FOCUSABLE)).filter((n) => !n.disabled && n.getAttribute("tabindex") !== "-1" && !(n.closest && n.closest("[hidden]")) && !inPanel(n));
   }
