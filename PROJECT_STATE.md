@@ -2239,7 +2239,21 @@ closes).
 
 **Git hygiene.** Committed directly to `integration/preview-2026-09-18` (the branch already
 contained checkpoints AE/AF from earlier this same session; continuing on it rather than opening a
-new branch for the same continuing session of work), commit `2f2bea5`, pushed to origin.
+new branch for the same continuing session of work), commits `2f2bea5` (the fix) and `471b6d5`
+(this checkpoint), pushed to origin.
+
+**Deployed to Preview** via `scripts/deploy/deploy.ps1 -Environment preview`:
+```
+target  : budget-tracker / budget-tracker (preview)
+url     : https://polite-plant-03bb7570f-preview.eastus2.3.azurestaticapps.net
+sha     : 471b6d5611df46388d4c453cde038d9bed998d15
+version : 0.1.0-alpha.1
+checks  : ok target, ok gitState, ok confirmation, ok azureResource, ok settings, ok test,
+          ok validate, ok build, ok secretScan, ok upload, ok commitSetting, ok healthCheck
+result  : SUCCESS
+```
+Independently verified live: `GET .../api/site-settings` reports `app.commit:
+"471b6d5611df46388d4c453cde038d9bed998d15"` (exact match); anonymous `GET /api/me` returns 401.
 
 **Known gaps, stated plainly.** Everything already listed under Checkpoints AA–AF's own "Known
 gaps" is still true. New from this checkpoint: (1) the e2e harness's `workspace_rate` scaling limit
@@ -2249,7 +2263,7 @@ calls across more fictional owners, or running the suite in a few `--only` batch
 out of scope for BT-004-08; (2) a real screen reader over the floated theme/icon list specifically
 was not checked (the command picker's own screen-reader gap is already tracked under BT-004-07 and
 applies here too); (3) Windows High Contrast and a physical touch device remain unverified (touch
-was emulated); (4) not yet deployed to Preview as of this checkpoint's own commit — see next step.
+was emulated).
 
 **Waiting on Terry:** everything already listed under Checkpoints AA–AF's "Waiting on Terry."
 Additionally, this session received a direct contradiction on deployment scope that has NOT been
@@ -2262,9 +2276,8 @@ review") and given the two instructions directly conflict, this session is treat
 the safe, authorized action and is NOT merging to `main` or deploying Production. This needs Terry's
 explicit clarification, not a judgment call, before either happens.
 
-**Exact next step:** deploy this commit (`2f2bea5`, `integration/preview-2026-09-18`) to Preview via
-`scripts/deploy/deploy.ps1 -Environment preview` and independently verify the live commit sha and
-anonymous 401, per the established pattern; then continue straight into the Bills/Merchant
-completeness review and the Design Gallery bespoke-design continuation Terry re-authorized in the
-same instruction, without pausing to ask permission at each step; then get Terry's explicit word on
-the main/Production contradiction above before doing anything in that direction.
+**Exact next step:** deployed and independently verified live (see above, `471b6d5`). Continue
+straight into the Bills/Merchant completeness review and the Design Gallery bespoke-design
+continuation Terry re-authorized in the same instruction, without pausing to ask permission at each
+step; separately, get Terry's explicit word on the main/Production contradiction above before doing
+anything in that direction.
