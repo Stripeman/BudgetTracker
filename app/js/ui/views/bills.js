@@ -8,8 +8,9 @@ import { el, mount, announce } from "../dom.js";
 import { stateView, money, button, field, input, pickerSelect, categoryBadges, iconBadges, badge, infoTip, createHelpPopover, uid } from "../components.js";
 import { openModal } from "../modal.js";
 import { openDeleteDialog } from "../permanentdelete.js";
-import { createMerchantPicker } from "../merchantpicker.js";
+import { createMerchantSelect, setMerchantOptions, readMerchantSelect, selectMerchant } from "../merchantselect.js";
 import { quickAddAccountForm } from "./accounts.js";
+import { openMerchantEditor } from "./payees.js";
 import { choosableMerchants, canAddEntries, addEntriesBlocked } from "./transactions.js";
 import { sliceFor } from "../../core/store.js";
 import { newIdempotencyKey } from "../../core/api.js";
@@ -198,7 +199,12 @@ export function createView(ctx) {
         withIcon(b.icon, el("strong", { text: b.name })), " ", badge(BILL_TYPE_LABELS[b.billType] || b.billType),
         b.pausedNow ? [" ", badge("Paused")] : null, b.ended ? [" ", badge("Ended", "closed")] : null,
         b.inactiveReason && !b.ended ? [" ", badge("Not active", "closed")] : null,
-        b.payeeName ? el("div", { class: "muted small", text: b.payeeName }) : null,
+        // A typed-but-unlinked merchant name still shows here (Bills → Merchant fix, 2026-09-18
+        // follow-up): before this, the row went blank the moment a merchant record didn't exist yet
+        // — even though the name was saved and shown correctly inside the Edit dialog. Never both:
+        // payeeName and payeeDraftName are mutually exclusive (server clears the draft once a real
+        // merchant is linked), so this is a fallback, not a merge.
+        (b.payeeName || b.payeeDraftName) ? el("div", { class: "muted small", text: b.payeeName || b.payeeDraftName }) : null,
       ].flat()),
       accountCell(b, b.kind === "transfer" ? `${b.accountName} → ${b.toAccountName || ""}` : b.accountName),
       el("td", { "data-label": "Amount", class: "num" }, [amountCell(b, plain)]),
@@ -266,7 +272,15 @@ async function openRecord(ctx, bill, occurrence) {
   date.value = draft.date;
   // The dropdowns are TaskTracker's command picker (BT-004-05).
   const category = pickerSelect([{ value: "", label: "Uncategorized" }].concat(categories.map((c) => ({ value: c.id, label: c.archived ? `${c.name} (archived)` : c.name }))), draft.categoryId || "", {}, { badgeOf: categoryBadges(state) });
-  const picker = createMerchantPicker({ merchants: choosableMerchants(merchants, account), current: draft.payeeId ? { id: draft.payeeId, name: draft.payeeName } : null });
+  // Recording an actual payment always needs a real merchant (BT-007-01, unlike a bill's own term):
+  // `allowCustom` stays off; typing a name that matches nothing offers the same "+ Add merchant"
+  // pinned action the Account picker's "+ New account" already uses, never a left-as-typed draft.
+  const merchantSelect = createMerchantSelect({
+    merchants: choosableMerchants(merchants, account),
+    current: draft.payeeId ? { id: draft.payeeId, name: draft.payeeName } : null,
+    draftName: !draft.payeeId ? draft.payeeDraftName : "",
+    create: { label: "Add merchant", onPick: (term) => openMerchantEditor(ctx, null, { prefillName: term, onCreated: (payee) => selectMerchant(merchantSelect, payee) }) },
+  });
   const notes = el("textarea", { class: "field__input", maxlength: "5000" });
   const status = pickerSelect([{ value: "pending", label: "Pending" }, { value: "cleared", label: "Cleared" }], "pending", {}, { search: false });
   // Income and transfers are described as what they are, not as payments (UX2-001).
@@ -287,7 +301,7 @@ async function openRecord(ctx, bill, occurrence) {
         // A late payment's date comes from the workspace setting; say so (finding 10). An entered date wins.
         field(words.date, date, draft.overdue ? { help: ((((state.workspaces || []).find((w) => w.id === state.selectedWorkspaceId) || {}).settingValues || {}).overdueRecordDate === "due"
           ? "Filled in with the due date (Workspace settings)." : "Filled in with today's date (Workspace settings).") } : {}),
-        isTransfer ? null : el("div", { class: "field" }, [el("label", { class: "field__label", for: picker.input.id, text: words.who }), picker.element]),
+        isTransfer ? null : field(words.who, merchantSelect),
         isTransfer ? null : field("Category", category),
         field("Status", status),
         field("Notes", notes, { wide: true }),
@@ -311,7 +325,8 @@ async function openRecord(ctx, bill, occurrence) {
     if (notes.value.trim()) body.notes = notes.value;
     if (!isTransfer) {
       if ((category.value || null) !== (draft.categoryId || null)) body.categoryId = category.value || null;
-      if (picker.getValue() !== (draft.payeeId || null)) body.payeeId = picker.getValue();
+      const chosenPayeeId = readMerchantSelect(merchantSelect).payeeId;
+      if (chosenPayeeId !== (draft.payeeId || null)) body.payeeId = chosenPayeeId;
     }
     modal.setBusy(true);
     const out = await ctx.store.actions.write((ws) => ctx.api.billAction(ws, "record", body, key), ["bills", "transactions", "accounts"]);
@@ -385,7 +400,9 @@ function openHistory(ctx, bill) {
       table(["From", "Amount", "Merchant", "Category"], bill.versions.map((v) => el("tr", {}, [
         el("th", { scope: "row", "data-label": "From", text: formatDate(v.effectiveFrom, eff.dateFormat) }),
         el("td", { "data-label": "Amount", class: "num" }, [money(bill.kind === "income" ? v.amount : `-${v.amount}`, bill.currency, plain), v.amountType === "variable" ? el("div", { class: "muted small", text: "varies" }) : null]),
-        el("td", { "data-label": "Merchant", text: v.payeeName || "—" }),
+        // Same fallback as the list row above: a typed-but-unlinked name is still real term data,
+        // never blank merely because no merchant record exists for it yet (Bills → Merchant fix).
+        el("td", { "data-label": "Merchant", text: v.payeeName || v.payeeDraftName || "—" }),
         el("td", { "data-label": "Category", text: categories.get(v.categoryId) || "—" }),
       ])), "Terms over time"),
       el("h3", { text: "Skipped payments" }),
@@ -480,7 +497,16 @@ export function openBillEditor(ctx, bill = null) {
   endDate.value = (b.schedule && b.schedule.endDate) || "";
   const category = pickerSelect([{ value: "", label: "Uncategorized" }].concat(categories.map((c) => ({ value: c.id, label: c.archived ? `${c.name} (archived)` : c.name }))), b.categoryId || "", {}, { badgeOf: categoryBadges(state) });
   const accountOf = (id) => allAccounts.find((a) => a.id === id) || null;
-  const picker = createMerchantPicker({ merchants: choosableMerchants(merchants, accountOf(account.value)), current: b.payeeId ? { id: b.payeeId, name: b.payeeName } : null });
+  // A bill's own term may be left as a typed, unlinked name (allowCustom, BT-014-11) — never forcing
+  // a real merchant to be created before the bill itself can be saved; "+ Add merchant" is still
+  // offered for anyone who would rather resolve it immediately, exactly like "+ New account".
+  const merchantSelect = createMerchantSelect({
+    merchants: choosableMerchants(merchants, accountOf(account.value)),
+    current: b.payeeId ? { id: b.payeeId, name: b.payeeName } : null,
+    draftName: !b.payeeId ? (b.payeeDraftName || "") : "",
+    allowCustom: true,
+    create: { label: "Add merchant", onPick: (term) => openMerchantEditor(ctx, null, { prefillName: term, onCreated: (payee) => selectMerchant(merchantSelect, payee) }) },
+  });
   // People are searched; the list is filled below, and the picker follows the new options.
   const responsible = pickerSelect([{ value: "", label: "Nobody in particular" }], "");
   const reminder = input({ type: "number", min: "0", max: "60" });
@@ -502,10 +528,7 @@ export function openBillEditor(ctx, bill = null) {
 
   const transferOnly = el("div", { class: "form-grid", hidden: direction.value !== "transfer" }, [field("To account", toAccount)]);
   const notTransfer = el("div", { class: "form-grid", hidden: direction.value === "transfer" }, [
-    el("div", { class: "field" }, [
-      el("label", { class: "field__label", for: picker.input.id, text: "Merchant" }), picker.element,
-      el("p", { class: "field__help", text: "New merchant? Add it on the Merchants tab first." }),
-    ]),
+    field("Merchant", merchantSelect, { help: "Search your merchants, or type a name and leave it — it's saved with the bill and shown on the Merchants tab as a pending merchant until you (or anyone) add it for real. “Add merchant” resolves it immediately instead, if you'd rather." }),
     field("Category", category), field("Responsible person", responsible),
   ]);
   const syncDirection = () => { transferOnly.hidden = direction.value !== "transfer"; notTransfer.hidden = direction.value === "transfer"; };
@@ -514,9 +537,7 @@ export function openBillEditor(ctx, bill = null) {
   preset.addEventListener("change", () => { customBox.hidden = preset.value !== "custom"; });
   account.addEventListener("change", () => {
     merchants = ((sliceFor(ctx.store.getState(), "payees").data || {}).payees || []);
-    picker.setItems(choosableMerchants(merchants, accountOf(account.value)));
-    const chosen = picker.getSelected();
-    if (chosen && !choosableMerchants(merchants, accountOf(account.value)).some((p) => p.id === chosen.id)) picker.select(null);
+    setMerchantOptions(merchantSelect, choosableMerchants(merchants, accountOf(account.value)));
   });
 
   const scheduleFields = editing
@@ -605,7 +626,11 @@ export function openBillEditor(ctx, bill = null) {
     if (iconPick.getValue()) out.icon = iconPick.getValue();
     if (direction.value === "transfer") out.toAccountId = toAccount.value;
     else {
-      if (picker.getValue()) out.payeeId = picker.getValue();
+      const { payeeId, payeeDraftName } = readMerchantSelect(merchantSelect);
+      if (payeeId) out.payeeId = payeeId;
+      // Nothing selected, but something was typed: keep it as a pending merchant name (never the
+      // bill's own title — Bills → Merchant fix, 2026-09-18).
+      else if (payeeDraftName) out.payeeDraftName = payeeDraftName;
       if (category.value) out.categoryId = category.value;
       if (responsible.value) out.responsibleRef = responsible.value;
     }
@@ -627,7 +652,11 @@ export function openBillEditor(ctx, bill = null) {
     if (amountType.value !== b.amountType) terms.amountType = amountType.value;
     if (b.kind !== "transfer") {
       if ((category.value || null) !== (b.categoryId || null)) terms.categoryId = category.value || null;
-      if (picker.getValue() !== (b.payeeId || null)) terms.payeeId = picker.getValue();
+      const { payeeId: pid, payeeDraftName: nextDraft } = readMerchantSelect(merchantSelect);
+      if (pid !== (b.payeeId || null)) terms.payeeId = pid;
+      // The pending draft name only matters while nothing real is linked; a resolved merchant (just
+      // picked, or already picked before opening this editor) always clears it.
+      if (nextDraft !== (b.payeeDraftName || "")) terms.payeeDraftName = nextDraft;
       if ((responsible.value || null) !== ((b.responsible && b.responsible.ref) || null)) terms.responsibleRef = responsible.value || null;
     }
     if (Object.keys(terms).length) Object.assign(out, terms, { effectiveFrom: effectiveFrom.value });

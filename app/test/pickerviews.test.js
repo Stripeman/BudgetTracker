@@ -164,14 +164,19 @@ function merchantsCtx() {
     bills: ready({ recurring: [
       // Already started (schedule.startDate in the past) — the common case: linking a merchant
       // should take effect TODAY, not on nextDue (financial/UX review fix, 2026-09-17).
-      { id: "bill_netflix", name: "Fictional Netflix", kind: "expense", payeeId: null, ended: false, canEdit: true, revision: 2, nextDue: "2026-10-01", schedule: { startDate: "2026-01-01" } },
+      // A typed-but-unmatched merchant name (Bills → Merchant fix, 2026-09-18) — deliberately
+      // DIFFERENT from the bill's own title, so a test that showed the title instead would fail.
+      { id: "bill_netflix", name: "Fictional September streaming bill", payeeDraftName: "Fictional Netflix", kind: "expense", payeeId: null, ended: false, canEdit: true, revision: 2, nextDue: "2026-10-01", schedule: { startDate: "2026-01-01" } },
       { id: "bill_rent", name: "Fictional rent", kind: "expense", payeeId: "p_bakery", ended: false, canEdit: true, revision: 1, nextDue: "2026-10-01", schedule: { startDate: "2026-01-01" } },
       { id: "bill_xfer", name: "Fictional savings transfer", kind: "transfer", payeeId: null, ended: false, canEdit: true, revision: 1, nextDue: "2026-10-01", schedule: { startDate: "2026-01-01" } },
       { id: "bill_ended", name: "Fictional old gym", kind: "expense", payeeId: null, ended: true, canEdit: true, revision: 1, nextDue: null, schedule: { startDate: "2026-01-01" } },
       // Terry's exact repro: a bill scheduled to start NEXT MONTH, nextDue equal to that same
       // future start date. Linking a merchant here can't take effect any earlier than the bill's
       // own start (the server refuses it) — but must use that start date, not something later.
-      { id: "bill_future", name: "Fictional Electric Repayment", kind: "expense", payeeId: null, ended: false, canEdit: true, revision: 1, nextDue: "2099-01-15", schedule: { startDate: "2099-01-15" } },
+      { id: "bill_future", name: "Fictional Electric Repayment", payeeDraftName: "Fictional Electric Co", kind: "expense", payeeId: null, ended: false, canEdit: true, revision: 1, nextDue: "2099-01-15", schedule: { startDate: "2099-01-15" } },
+      // Never typed anything (an older bill, or one saved before this feature existed): must never
+      // guess the bill's own title as a merchant name.
+      { id: "bill_unnamed", name: "Fictional Mystery Charge", kind: "expense", payeeId: null, ended: false, canEdit: true, revision: 1, nextDue: "2026-10-01", schedule: { startDate: "2026-01-01" } },
     ] }),
   };
   const billUpdates = [];
@@ -252,23 +257,24 @@ describe("BT-004-05 merchants: the Show filter and the merchant editor", () => {
   });
 });
 
-describe("BT-014-11 'Bills without a merchant' (Terry, 2026-09-17: \"add merchants for ones that are used in bills but not added there yet\")", () => {
-  test("lists only bills with no merchant, excluding transfers and ended bills; 'Add as merchant' pre-fills the bill's name and links the new merchant back to it", async () => {
+describe("BT-014-11/Bills → Merchant fix (2026-09-18) 'Pending merchants' (Terry, 2026-09-17: \"add merchants for ones that are used in bills but not added there yet\")", () => {
+  test("shows the TYPED merchant name, never the bill's own title; excludes transfers, ended and already-linked bills; 'Add merchant' pre-fills the typed name and links every bill under it", async () => {
     const { ctx, state, calls, billUpdates } = merchantsCtx();
     const view = createMerchants(ctx);
     dom.body.appendChild(view.element);
     view.update(state);
     const section = view.element.querySelector("#payees-missing").closest(".card");
     const text = section.textContent;
-    assert.match(text, /Fictional Netflix/);
+    assert.match(text, /Fictional Netflix/, "the typed name is shown");
+    assert.match(section.textContent, /On: Fictional September streaming bill/, "the associated bill is listed by its own title, separately");
     assert.doesNotMatch(text, /Fictional rent/, "already has a merchant");
     assert.doesNotMatch(text, /Fictional savings transfer/, "a transfer has no payee");
     assert.doesNotMatch(text, /Fictional old gym/, "ended bills don't need one");
-    buttonNamed(section, "Add as merchant").click();
+    buttonNamed(section, "Add merchant").click();
     const root = dom.body.querySelector(".modal");
     assert.equal(root.querySelector("h2").textContent, "Add merchant", "creating, never editing");
     const nameInput = root.querySelector("input");
-    assert.equal(nameInput.getAttribute("value"), "Fictional Netflix", "pre-filled from the bill's name");
+    assert.equal(nameInput.getAttribute("value"), "Fictional Netflix", "pre-filled from the TYPED name, not the bill title");
     // The DOM double doesn't reflect a value ATTRIBUTE into the live .value property the way a
     // real browser does (see app/test/accounteditor.test.js's own syncValues note) — set directly,
     // matching this exact dialog's other test above (line ~231).
@@ -290,11 +296,11 @@ describe("BT-014-11 'Bills without a merchant' (Terry, 2026-09-17: \"add merchan
     dom.body.appendChild(view.element);
     view.update(state);
     const section = view.element.querySelector("#payees-missing").closest(".card");
-    assert.match(section.textContent, /Fictional Electric Repayment/);
-    const row = [...section.querySelectorAll("li")].find((li) => li.textContent.includes("Fictional Electric Repayment"));
-    buttonNamed(row, "Add as merchant").click();
+    assert.match(section.textContent, /Fictional Electric Co/);
+    const row = [...section.querySelectorAll("li")].find((li) => li.textContent.includes("Fictional Electric Co"));
+    buttonNamed(row, "Add merchant").click();
     const root = dom.body.querySelector(".modal");
-    root.querySelector("input").value = "Fictional Electric Repayment";
+    root.querySelector("input").value = "Fictional Electric Co";
     buttonNamed(root, "Add merchant").click();
     await tick();
     await tick();
@@ -306,13 +312,36 @@ describe("BT-014-11 'Bills without a merchant' (Terry, 2026-09-17: \"add merchan
     // kept re-offering an already-linked, not-yet-started bill forever without this.
     const cardAfter = view.element.querySelector("#payees-missing");
     const textAfter = cardAfter ? cardAfter.closest(".card").textContent : "";
-    assert.doesNotMatch(textAfter, /Fictional Electric Repayment/, "does not keep re-offering a bill that was just linked");
+    assert.doesNotMatch(textAfter, /Fictional Electric Co/, "does not keep re-offering a bill that was just linked");
     assert.match(textAfter, /Fictional Netflix/, "an untouched bill is still offered");
   });
 
-  test("nothing shown when every bill already has a merchant, is a transfer, or has ended", () => {
+  test("a bill with no typed name at all is shown separately, asking for correction rather than guessing its own title as a merchant", () => {
     const { ctx, state } = merchantsCtx();
-    state.bills.data.recurring = state.bills.data.recurring.filter((b) => b.id !== "bill_netflix" && b.id !== "bill_future");
+    const view = createMerchants(ctx);
+    dom.body.appendChild(view.element);
+    view.update(state);
+    const card = view.element.querySelector("#payees-missing").closest(".card");
+    assert.match(card.textContent, /Bills with no merchant name recorded/);
+    assert.match(card.textContent, /Fictional Mystery Charge/, "the bill's own title IS shown here, but only as the bill, never presented as a merchant name");
+    assert.equal([...card.querySelectorAll("button")].some((b) => b.textContent === "Add merchant" && b.closest("li").textContent.includes("Fictional Mystery Charge")), false, "no 'Add merchant' offered without a typed name to prefill");
+  });
+
+  test("two bills with the identical typed name are grouped into one pending entry", () => {
+    const { ctx, state } = merchantsCtx();
+    state.bills.data.recurring.push({ id: "bill_netflix2", name: "Fictional second streaming bill", payeeDraftName: "Fictional Netflix", kind: "expense", payeeId: null, ended: false, canEdit: true, revision: 1, nextDue: "2026-10-01", schedule: { startDate: "2026-01-01" } });
+    const view = createMerchants(ctx);
+    dom.body.appendChild(view.element);
+    view.update(state);
+    const section = view.element.querySelector("#payees-missing").closest(".card");
+    const matches = section.textContent.match(/Fictional Netflix/g) || [];
+    assert.equal(matches.length, 1, "one pending entry, not two, for the same typed name");
+    assert.match(section.textContent, /On: Fictional September streaming bill, Fictional second streaming bill/);
+  });
+
+  test("nothing shown when every bill already has a merchant, is a transfer, has ended, or was never offered", () => {
+    const { ctx, state } = merchantsCtx();
+    state.bills.data.recurring = state.bills.data.recurring.filter((b) => !["bill_netflix", "bill_future", "bill_unnamed"].includes(b.id));
     const view = createMerchants(ctx);
     dom.body.appendChild(view.element);
     view.update(state);

@@ -129,7 +129,10 @@ describe("BT-004-05 transactions: quick entry", () => {
     const root = dom.body.querySelector(".modal");
     assert.deepEqual(nativeDropdowns(root), []);
     // The first Type is the new-merchant type (in the hidden "New merchant" box), the second the entry's.
-    assert.deepEqual(pickerLabels(root), ["Type", "Account", "Category", "Type", "To account", "Status"]);
+    assert.deepEqual(pickerLabels(root), ["Merchant", "Type", "Account", "Category", "Type", "To account", "Status"]);
+    // Merchant is now the SAME command picker as Category — the exact consistency Terry asked for
+    // (2026-09-18: "what i did ask for was the drop down to look like that of the category field").
+    assert.equal(spoken(pickerNamed(root, "Merchant")), "Merchant: Choose a merchant…. Search and choose.");
     assert.equal(spoken(pickerNamed(root, "Account")), "Account: Fictional joint (EUR). Choose.");
     assert.equal(spoken(pickerNamed(root, "Category")), "Category: Uncategorized. Choose.");
     assert.equal(spoken(pickerSpokenAs(root, "Type: Expense")), "Type: Expense. Choose.");
@@ -164,11 +167,7 @@ describe("BT-004-05 transactions: quick entry", () => {
     const { ctx, calls } = txCtx();
     openQuickEntry(ctx);
     const root = dom.body.querySelector(".modal");
-    const merchant = root.querySelector('input[role="combobox"]');
-    merchant.value = "bakery";
-    merchant.dispatchEvent(new DomEvent("input", { bubbles: true }));
-    key(merchant, "ArrowDown");
-    key(merchant, "Enter");
+    chooseOption(pickerNamed(root, "Merchant"), "Fictional Bakery");
     await tick();
     await tick();
     assert.deepEqual(calls.suggest, ["p_bakery"]);

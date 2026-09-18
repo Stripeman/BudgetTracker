@@ -17,8 +17,11 @@ const siteDeletions = require('../_shared/site-deletions');
 
 const DAYS = 30;
 const USER_LIST_CAP = 200;
-const DIRECTORY_CAP = 500;
+const DIRECTORY_CAP_DEFAULT = 500;
 const DAY_MS = 24 * 60 * 60 * 1000;
+// `BT_DIRECTORY_CAP`/`BT_PENDING_CAP` may only LOWER these (tests only — see the same pattern in
+// api/_shared/store.js). Response-size caps only; the enumeration itself is never capped (S4 fix).
+const directoryCap = (env) => { const c = Number(env && env.BT_DIRECTORY_CAP); return Number.isSafeInteger(c) && c > 0 && c < DIRECTORY_CAP_DEFAULT ? c : DIRECTORY_CAP_DEFAULT; };
 
 function lastNDays(n, nowMs) {
   const out = [];
@@ -92,7 +95,12 @@ async function usageDashboard(ctx) {
 async function directory(ctx) {
   const names = (await ctx.storage.list('workspaces/')).filter((n) => n.endsWith('/workspace.json'));
   const out = [];
-  for (const name of names.slice(0, DIRECTORY_CAP)) {
+  // Security review S4 (2026-09-18): the enumeration itself is never capped before filtering — a
+  // capped SCAN can silently hide real, non-tombstoned workspaces sitting behind many tombstones
+  // (which this listing excludes), reporting a false "nothing beyond this point" (`truncated:
+  // false`) even though genuine rows exist further along. Only the RESPONSE is capped, after every
+  // name has been read and filtered.
+  for (const name of names) {
     try {
       const { value } = await ctx.storage.getJson(name);
       const doc = readDocument('workspace', value);
@@ -105,10 +113,12 @@ async function directory(ctx) {
       });
     } catch { /* one unreadable workspace does not take down the whole directory */ }
   }
-  return { body: { workspaces: out, truncated: names.length > DIRECTORY_CAP } };
+  const cap = directoryCap(ctx.env);
+  return { body: { workspaces: out.slice(0, cap), truncated: out.length > cap } };
 }
 
-const PENDING_CAP = 500;
+const PENDING_CAP_DEFAULT = 500;
+const pendingCap = (env) => { const c = Number(env && env.BT_PENDING_CAP); return Number.isSafeInteger(c) && c > 0 && c < PENDING_CAP_DEFAULT ? c : PENDING_CAP_DEFAULT; };
 
 // BT-014-17 (Terry, 2026-09-17: "a feature that the site admin can turn off or on that enables a
 // request account feature that the site admin approves"). Unlike the workspace directory above,
@@ -117,7 +127,12 @@ const PENDING_CAP = 500;
 async function pendingUsers(ctx) {
   const names = (await ctx.storage.list('users/')).filter((n) => n.endsWith('.json'));
   const out = [];
-  for (const name of names.slice(0, PENDING_CAP)) {
+  // Security review S4 (2026-09-18): the enumeration itself is never capped before filtering — a
+  // capped SCAN could silently hide a real pending request sitting behind many already-approved
+  // profiles, reporting a false "nothing beyond this point" (`truncated: false`) while a request
+  // stays invisible and unreviewable. Only the RESPONSE is capped, after every profile has been
+  // read and filtered.
+  for (const name of names) {
     try {
       const { value } = await ctx.storage.getJson(name);
       const doc = readDocument('user', value);
@@ -126,7 +141,8 @@ async function pendingUsers(ctx) {
     } catch { /* one unreadable profile does not take down the whole queue */ }
   }
   out.sort((a, b) => (a.createdAt < b.createdAt ? -1 : 1));
-  return { body: { pending: out.slice(0, PENDING_CAP), truncated: out.length > PENDING_CAP } };
+  const cap = pendingCap(ctx.env);
+  return { body: { pending: out.slice(0, cap), truncated: out.length > cap } };
 }
 
 // Scope deliberately narrow: this approves or rejects a REQUEST, it never revokes an already-
@@ -138,6 +154,12 @@ async function setApproval(ctx, req, approvalStatus) {
   const { result } = await store.mutateUserAdmin(ctx, subject, (doc) => {
     if (doc.approvalStatus === 'approved') throw conflict('This account is already approved.', 'already_approved');
     if (doc.approvalStatus === approvalStatus) throw conflict('This account already has that status.', 'no_change');
+    // Security review S5 (2026-09-18): who decided, when, and the before/after status, recorded
+    // atomically with the decision itself (the same document write `mutateUserAdmin` already makes
+    // — never a separate best-effort write). Kept on the person's own operational document, outside
+    // every workspace, same as their `approvalStatus` itself.
+    const entry = { id: `appr_${doc.subject}_${ctx.now()}`, at: ctx.nowIso(), by: ctx.principal.subject, from: doc.approvalStatus, to: approvalStatus };
+    doc.approvalHistory = [...(doc.approvalHistory || []), entry];
     doc.approvalStatus = approvalStatus;
     return { subject: doc.subject, approvalStatus };
   });
@@ -193,8 +215,9 @@ async function adminDeleteExecute(ctx, req) {
     actor: ctx.principal.subject, actorRole: 'site-admin', datasets: preImpact.datasets, reason: reason || null, outcome: 'pending',
   });
   let completedEntry = null;
+  let result;
   try {
-    const { result } = await store.mutateWorkspaceAdmin(ctx, id, (doc) => {
+    ({ result } = await store.mutateWorkspaceAdmin(ctx, id, (doc) => {
       const before = workspaceDeletion.applyPermanentDelete(doc, {
         token: body.impactToken, typedConfirmation: body.typedConfirmation, actor: ctx.principal.subject, nowIso: ctx.nowIso(), adminSafe: true,
       });
@@ -203,10 +226,9 @@ async function adminDeleteExecute(ctx, req) {
         actor: ctx.principal.subject, actorRole: 'site-admin', datasets: before.datasets, reason: reason || null, outcome: 'completed',
       };
       return { deleted: true, id, datasets: before.datasets };
-    });
-    await siteDeletions.recordWorkspaceDeletion(ctx.storage, completedEntry);
-    return { body: result };
+    }));
   } catch (err) {
+    // The wipe itself did not commit — this is a genuine failure; nothing was deleted.
     await siteDeletions.recordWorkspaceDeletion(ctx.storage, {
       id: `${correlationId}#failed`, workspaceId: id, workspaceKind: preDoc.kind, at: ctx.nowIso(),
       actor: ctx.principal.subject, actorRole: 'site-admin', datasets: preImpact.datasets, reason: reason || null,
@@ -214,6 +236,19 @@ async function adminDeleteExecute(ctx, req) {
     });
     throw err;
   }
+  // Security review S3 (2026-09-18): best-effort, retried attachment-blob cleanup after the wipe has
+  // already committed — never turns an already-successful deletion into a reported failure.
+  const purge = await workspaceDeletion.purgeAttachments(ctx.storage, id);
+  completedEntry.attachmentsPurged = purge.purged;
+  completedEntry.attachmentsFailed = purge.failed;
+  try {
+    // Security review S2 (2026-09-18): retried, and its failure is never reported as a failed
+    // deletion — the deletion already committed above. See site-deletions.js's reconciled().
+    await siteDeletions.recordWorkspaceDeletionWithRetry(ctx.storage, completedEntry);
+  } catch (auditErr) {
+    if (ctx.log) (ctx.log.error || ctx.log)(`deletion_audit_completion_write_failed ${id} ${(auditErr && auditErr.code) || 'unknown'}`);
+  }
+  return { body: result };
 }
 
 const DELETIONS_CAP = 500;
@@ -224,7 +259,11 @@ const DELETIONS_CAP = 500;
 // comment); no new exposure is introduced by making it readable.
 async function deletionsLog(ctx) {
   const entries = await siteDeletions.listWorkspaceDeletions(ctx.storage);
-  const sorted = [...entries].sort((a, b) => (a.at < b.at ? 1 : -1));
+  // Security review S2 (2026-09-18): reconcile a stuck 'pending' row against the workspace's actual
+  // state before showing it — the completion-log write can fail even though the deletion itself
+  // already committed (see site-deletions.js's reconciled()).
+  const reconciledEntries = await siteDeletions.reconciled(ctx.storage, entries);
+  const sorted = [...reconciledEntries].sort((a, b) => (a.at < b.at ? 1 : -1));
   return { body: { deletions: sorted.slice(0, DELETIONS_CAP), truncated: sorted.length > DELETIONS_CAP } };
 }
 

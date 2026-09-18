@@ -14,7 +14,7 @@
 //                                              Usage page (BT-012-01); no financial data
 const { update } = require('./storage');
 const { readDocument, stampDocument } = require('./schema');
-const { notFound, conflict } = require('./http');
+const { notFound, conflict, forbidden } = require('./http');
 const { requireId, isIdempotencyKey, sha256Hex } = require('./ids');
 const { activeMember } = require('./authz');
 const { userKey } = require('./identity');
@@ -23,6 +23,7 @@ const ledger = require('./ledger');
 const paths = Object.freeze({
   workspace: (wsId) => `workspaces/${requireId(wsId, 'workspaceId')}/workspace.json`,
   attachment: (wsId, sha) => `workspaces/${requireId(wsId, 'workspaceId')}/attachments/${sha}`,
+  attachmentsPrefix: (wsId) => `workspaces/${requireId(wsId, 'workspaceId')}/attachments/`,
   user: (subject) => `users/${userKey(subject)}.json`,
   site: () => 'site/settings.json',
   usage: () => 'site/usage.json',
@@ -202,11 +203,27 @@ function newUserDoc(principal, nowIso, approvalStatus = 'approved') {
   });
 }
 
+// Security review S1 (2026-09-18): the site's account-request policy MUST be resolved from here,
+// the one place a brand-new profile can ever be created, never left to each caller to remember.
+// Before this fix, `ensureUser`/`mutateUser` defaulted a first-time profile to 'approved' unless the
+// caller explicitly passed the resolved site policy — `/api/me` did, but `/api/preferences`,
+// `/api/contacts` and others did not, so a brand-new account that happened to call one of THOSE
+// routes first was permanently marked approved regardless of `accountRequestsEnabled`, bypassing
+// the approval gate entirely. Lazily required (not at module load) because `./site` itself imports
+// `paths` from this module; requiring it inside a function body avoids a load-time cycle.
+async function resolveInitialApprovalStatus(ctx) {
+  const site = require('./site');
+  const { site: siteDoc } = await site.readSite(ctx.storage);
+  return site.initialApprovalStatus(siteDoc);
+}
+
 // Creates the person's document on first use and keeps email/name current. Returns the doc.
-// `approvalStatus` is used only on first creation (see newUserDoc above); an existing document's
+// The initial `approvalStatus` is resolved from the current site policy (see
+// `resolveInitialApprovalStatus` above) and used only on first creation; an existing document's
 // value is always preserved, never recomputed here.
-async function ensureUser(ctx, { approvalStatus = 'approved' } = {}) {
+async function ensureUser(ctx) {
   const nowIso = new Date(ctx.now()).toISOString();
+  const approvalStatus = await resolveInitialApprovalStatus(ctx);
   const out = await update(ctx.storage, paths.user(ctx.principal.subject), (value) => {
     const doc = readDocument('user', value);
     if (!doc) return newUserDoc(ctx.principal, nowIso, approvalStatus);
@@ -220,14 +237,28 @@ async function ensureUser(ctx, { approvalStatus = 'approved' } = {}) {
   return readDocument('user', out.value);
 }
 
+// Refuses an action that would grant financial-data access (creating or joining a workspace) to an
+// account that is not yet approved (BT-014-17). A site administrator is never blocked by their own
+// approval status. `action` names the specific thing being refused, in plain language.
+function assertApproved(ctx, user, action = 'do this') {
+  if (user.approvalStatus && user.approvalStatus !== 'approved' && !ctx.siteAdmin) {
+    throw forbidden(user.approvalStatus === 'rejected'
+      ? 'Your account request was not approved. Contact a site administrator if you believe this is a mistake.'
+      : `Your account is waiting for a site administrator to approve it before you can ${action}.`);
+  }
+}
+
 // A person's own document (profile, preferences, private contacts) is capped too (SEC-V4). Writes
-// that do not grow it are always allowed.
+// that do not grow it are always allowed. A brand-new document created here (e.g. by a first-time
+// call to a route other than /api/me) resolves the same site approval policy as `ensureUser` — see
+// the S1 note above.
 const MAX_USER_BYTES = 1024 * 1024;
 async function mutateUser(ctx, fn) {
   const nowIso = new Date(ctx.now()).toISOString();
+  const approvalStatus = await resolveInitialApprovalStatus(ctx);
   let result;
   await update(ctx.storage, paths.user(ctx.principal.subject), (value) => {
-    const doc = readDocument('user', value) || newUserDoc(ctx.principal, nowIso);
+    const doc = readDocument('user', value) || newUserDoc(ctx.principal, nowIso, approvalStatus);
     const before = Buffer.byteLength(JSON.stringify(doc));
     result = fn(doc);
     if (result === undefined) return undefined;
@@ -293,4 +324,4 @@ function recordCreation(ctx, user, id) {
   user.workspaceCreations = [...(user.workspaceCreations || []), { id, at: new Date(nowMs).toISOString() }];
 }
 
-module.exports = { paths, loadWorkspace, mutateWorkspace, mutateWorkspaceAdmin, mutateUserAdmin, ensureUser, mutateUser, newUserDoc, requestHash, assertFits, assertRoomForHeadroomWrite, assertCanCreateWorkspace, recordCreation, MAX_WORKSPACE_BYTES, MAX_WORKSPACES_PER_PERSON };
+module.exports = { paths, loadWorkspace, mutateWorkspace, mutateWorkspaceAdmin, mutateUserAdmin, ensureUser, mutateUser, newUserDoc, assertApproved, requestHash, assertFits, assertRoomForHeadroomWrite, assertCanCreateWorkspace, recordCreation, MAX_WORKSPACE_BYTES, MAX_WORKSPACES_PER_PERSON };

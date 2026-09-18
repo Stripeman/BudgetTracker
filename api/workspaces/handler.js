@@ -78,16 +78,12 @@ async function create(ctx, req) {
   if (key !== null && !isIdempotencyKey(key)) throw badRequest('The Idempotency-Key header is not valid.', 'invalid_idempotency_key');
 
   // A retried request replays its first result even at the limit; a new one is bounded (SEC-R5).
-  const { site: siteDoc } = await siteSettings.readSite(ctx.storage);
-  const existing = await store.ensureUser(ctx, { approvalStatus: siteSettings.initialApprovalStatus(siteDoc) });
   // BT-014-17: an account that is not (yet, or ever) approved cannot create a workspace (or join
   // one, see api/invitations/handler.js) — the two ways to gain any financial-data access at all. A
-  // site administrator is never blocked by their own approval status.
-  if (existing.approvalStatus && existing.approvalStatus !== 'approved' && !ctx.siteAdmin) {
-    throw forbidden(existing.approvalStatus === 'rejected'
-      ? 'Your account request was not approved. Contact a site administrator if you believe this is a mistake.'
-      : 'Your account is waiting for a site administrator to approve it before you can create a workspace.');
-  }
+  // site administrator is never blocked by their own approval status. `ensureUser` resolves the
+  // site's current policy itself now for a brand-new profile (security review S1).
+  const existing = await store.ensureUser(ctx);
+  store.assertApproved(ctx, existing, 'create a workspace');
   if (!(key && existing.idempotency && existing.idempotency[`ws|${key}`])) await store.assertCanCreateWorkspace(ctx);
   // Reserve the id in the creator's own document first, so a retried request with the same key
   // converges on one workspace instead of creating two.
@@ -216,9 +212,10 @@ async function permanentDeleteExecute(ctx, req) {
     id: `${correlationId}#pending`, workspaceId: id, workspaceKind, at: ctx.nowIso(),
     actor: actorSubject, actorRole: 'owner', datasets: preImpact.datasets, reason: reason || null, outcome: 'pending',
   });
+  let completedEntry = null;
+  let result;
   try {
-    let completedEntry = null;
-    const { result } = await store.mutateWorkspace(ctx, id, (doc, member) => {
+    ({ result } = await store.mutateWorkspace(ctx, id, (doc, member) => {
       if (member.role !== 'owner') throw forbidden('Only an owner can permanently delete this workspace.');
       const before = workspaceDeletion.applyPermanentDelete(doc, {
         token: body.impactToken, typedConfirmation: body.typedConfirmation, actor: member.subject, nowIso: ctx.nowIso(),
@@ -228,10 +225,9 @@ async function permanentDeleteExecute(ctx, req) {
         actor: member.subject, actorRole: 'owner', datasets: before.datasets, reason: reason || null, outcome: 'completed',
       };
       return { deleted: true, id, datasets: before.datasets };
-    }, { allowHeadroom: true, archived: true });
-    await siteDeletions.recordWorkspaceDeletion(ctx.storage, completedEntry);
-    return { body: result };
+    }, { allowHeadroom: true, archived: true }));
   } catch (err) {
+    // The wipe itself did not commit — this is a genuine failure; nothing was deleted.
     await siteDeletions.recordWorkspaceDeletion(ctx.storage, {
       id: `${correlationId}#failed`, workspaceId: id, workspaceKind, at: ctx.nowIso(),
       actor: actorSubject, actorRole: 'owner', datasets: preImpact.datasets, reason: reason || null,
@@ -239,6 +235,20 @@ async function permanentDeleteExecute(ctx, req) {
     });
     throw err;
   }
+  // Security review S3 (2026-09-18): the wipe committed, so the workspace document is already gone.
+  // Purging its attachment blobs is best-effort storage cleanup, not part of that same decision, and
+  // never turns an already-successful deletion into a reported failure.
+  const purge = await workspaceDeletion.purgeAttachments(ctx.storage, id);
+  completedEntry.attachmentsPurged = purge.purged;
+  completedEntry.attachmentsFailed = purge.failed;
+  try {
+    // Security review S2 (2026-09-18): retried, and its failure is never reported as a failed
+    // deletion — the deletion already committed above. See site-deletions.js's reconciled().
+    await siteDeletions.recordWorkspaceDeletionWithRetry(ctx.storage, completedEntry);
+  } catch (auditErr) {
+    if (ctx.log) (ctx.log.error || ctx.log)(`deletion_audit_completion_write_failed ${id} ${(auditErr && auditErr.code) || 'unknown'}`);
+  }
+  return { body: result };
 }
 
 async function post(ctx, req) {

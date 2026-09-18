@@ -80,13 +80,16 @@ describe("BT-004-05 bills: the bill editor", () => {
     openBillEditor(ctx);
     const root = dom.body.querySelector(".modal");
     assert.deepEqual(nativeDropdowns(root), []);
-    assert.deepEqual(pickerLabels(root), ["Type", "Direction", "Account", "To account", "Amount is", "Repeats", "Unit", "Category", "Responsible person"]);
+    assert.deepEqual(pickerLabels(root), ["Type", "Direction", "Account", "To account", "Amount is", "Repeats", "Unit", "Merchant", "Category", "Responsible person"]);
     assert.equal(spoken(pickerNamed(root, "Type")), "Type: Rent or mortgage. Choose.");
     assert.equal(spoken(pickerNamed(root, "Direction")), "Direction: Money out. Choose.");
     assert.equal(spoken(pickerNamed(root, "Account")), "Account: Fictional joint (EUR). Choose.");
     assert.equal(spoken(pickerNamed(root, "Amount is")), "Amount is: Always the same. Choose.");
     assert.equal(spoken(pickerNamed(root, "Repeats")), "Repeats: Monthly. Choose.");
     assert.equal(spoken(pickerNamed(root, "Unit")), "Unit: months. Choose.");
+    // Merchant is now the SAME command picker as Category — the exact consistency Terry asked for
+    // (2026-09-18: "what i did ask for was the drop down to look like that of the category field").
+    assert.equal(spoken(pickerNamed(root, "Merchant")), "Merchant: Choose a merchant…. Search and choose.");
     assert.equal(spoken(pickerNamed(root, "Category")), "Category: Uncategorized. Choose.");
     assert.equal(spoken(pickerNamed(root, "Responsible person")), "Responsible person: Nobody in particular. Choose.");
     await tick();
@@ -173,8 +176,75 @@ describe("BT-014-10/12 'Record next' has a plain-language tooltip that doesn't g
   });
 });
 
+describe("Bills → Merchant regression (Terry, 2026-09-18): a typed-but-unlinked merchant name must never go blank", () => {
+  // Before this fix, both the All-bills list row and the "Terms over time" history table only ever
+  // read `payeeName` — so a bill with a real linked merchant showed it fine, but a bill that only
+  // ever had a TYPED, unmatched name (no merchant record exists for it yet, `payeeDraftName`) showed
+  // nothing at all in either place, even though the bill editor's own Merchant field already showed
+  // it correctly. The name must still be shown; it must never be recovered/guessed from the bill's
+  // own title.
+  const DRAFT_BILL = {
+    ...RENT, id: "bill_draft", name: "Fictional September internet", payeeId: null, payeeName: "",
+    payeeDraftName: "Fictional Northstar Fiber",
+    versions: [{ effectiveFrom: "2026-01-01", amount: "60.00", amountType: "fixed", categoryId: null, payeeId: null, payeeName: "", payeeDraftName: "Fictional Northstar Fiber", responsible: null }],
+  };
+
+  function draftCtx() {
+    const { ctx, state } = billsCtx();
+    state.bills = { workspaceId: "ws_1", status: "ready", error: null, data: { recurring: [DRAFT_BILL], summary: { overdue: 0, dueSoon: 0, next30Days: [] } } };
+    return { ctx, state };
+  }
+
+  test("the All-bills list row shows the typed merchant name, never the bill's own title, and never blank", () => {
+    const { ctx, state } = draftCtx();
+    const view = createView(ctx);
+    dom.body.appendChild(view.element);
+    view.update(state);
+    // Scoped to the "All bills" table specifically (has a Schedule cell) — this fixture is also
+    // overdue, so it legitimately appears a second time in the separate "Needs attention" table,
+    // which never shows a merchant column at all and would otherwise be found first.
+    const row = [...view.element.querySelectorAll("tr")].find((tr) => tr.textContent.includes("Fictional September internet") && tr.querySelector('td[data-label="Schedule"]'));
+    assert.ok(row, "the bill's own row exists");
+    assert.match(row.textContent, /Fictional Northstar Fiber/, "the typed name is shown");
+  });
+
+  test("'Terms over time' shows the typed merchant name for a version with no linked merchant, not an em dash", () => {
+    const { ctx, state } = draftCtx();
+    const view = createView(ctx);
+    dom.body.appendChild(view.element);
+    view.update(state);
+    buttonNamed(view.element, "History").click();
+    const root = dom.body.querySelector(".modal");
+    const merchantCell = root.querySelector('td[data-label="Merchant"]');
+    assert.ok(merchantCell, "the Terms over time table has a Merchant cell");
+    assert.equal(merchantCell.textContent, "Fictional Northstar Fiber");
+  });
+
+  test("once a real merchant is linked (payeeName set, payeeDraftName cleared), the real name is shown, not the draft", () => {
+    const { ctx, state } = billsCtx();
+    const linked = { ...RENT, id: "bill_linked", name: "Fictional September internet", payeeId: "p_1", payeeName: "Fictional Northstar Fiber", payeeDraftName: "" };
+    state.bills = { workspaceId: "ws_1", status: "ready", error: null, data: { recurring: [linked], summary: { overdue: 0, dueSoon: 0, next30Days: [] } } };
+    const view = createView(ctx);
+    dom.body.appendChild(view.element);
+    view.update(state);
+    const row = [...view.element.querySelectorAll("tr")].find((tr) => tr.textContent.includes("Fictional September internet") && tr.querySelector('td[data-label="Schedule"]'));
+    assert.match(row.textContent, /Fictional Northstar Fiber/);
+  });
+
+  test("a bill with neither a linked merchant nor a typed name shows no merchant line at all (nothing guessed from its own title)", () => {
+    const { ctx, state } = billsCtx();
+    const bare = { ...RENT, id: "bill_bare", name: "Fictional mystery charge", payeeId: null, payeeName: "", payeeDraftName: "" };
+    state.bills = { workspaceId: "ws_1", status: "ready", error: null, data: { recurring: [bare], summary: { overdue: 0, dueSoon: 0, next30Days: [] } } };
+    const view = createView(ctx);
+    dom.body.appendChild(view.element);
+    view.update(state);
+    const row = [...view.element.querySelectorAll("tr")].find((tr) => tr.textContent.includes("Fictional mystery charge") && tr.querySelector('td[data-label="Schedule"]'));
+    assert.doesNotMatch(row.textContent, /Fictional Northstar Fiber/);
+  });
+});
+
 describe("BT-004-05 bills: review and record", () => {
-  test("Category and Status are pickers, and the payment is recorded with what was chosen", async () => {
+  test("Merchant, Category and Status are pickers, and the payment is recorded with what was chosen", async () => {
     const { ctx, state, calls } = billsCtx();
     const view = createView(ctx);
     dom.body.appendChild(view.element);
@@ -184,7 +254,7 @@ describe("BT-004-05 bills: review and record", () => {
     await tick();
     const root = dom.body.querySelector(".modal");
     assert.deepEqual(nativeDropdowns(root), []);
-    assert.deepEqual(pickerLabels(root), ["Category", "Status"]);
+    assert.deepEqual(pickerLabels(root), ["Merchant", "Category", "Status"]);
     assert.equal(spoken(pickerNamed(root, "Status")), "Status: Pending. Choose.");
     chooseOption(pickerNamed(root, "Category"), "Housing");
     chooseOption(pickerNamed(root, "Status"), "Cleared");
