@@ -457,7 +457,14 @@ function openEnd(ctx, bill) {
 }
 
 // ---- create or edit a bill ------------------------------------------------------------------
-export function openBillEditor(ctx, bill = null) {
+// `opts.prefill` seeds a NEW bill's fields (name, accountId, kind, toAccountId, amount, categoryId,
+// payeeId/payeeName, notes, responsible, schedule.startDate) from something already on hand — a
+// transaction, say — without switching the form into "editing" mode: every field stays exactly as
+// editable as a normal "Add bill", and the values submitted always come from the live form
+// controls (createBody(), below), never from `opts.prefill` itself, so nothing here can silently
+// carry a stale value into what is actually saved. `opts.title` overrides the modal's title only
+// for this new-bill case ("Add bill" otherwise).
+export function openBillEditor(ctx, bill = null, opts = {}) {
   const state = ctx.store.getState();
   const editing = !!bill;
   const key = newIdempotencyKey();
@@ -467,7 +474,7 @@ export function openBillEditor(ctx, bill = null) {
   if (!editing && !accounts.length) return;
   const categories = ((sliceFor(state, "categories").data || {}).categories || []).filter((c) => !c.archived || (editing && c.id === bill.categoryId));
   let merchants = ((sliceFor(state, "payees").data || {}).payees || []);
-  const b = bill || {};
+  const b = bill || opts.prefill || {};
   const df = ((state.preferences || {}).effective || {}).dateFormat;
 
   const name = input({ maxlength: "80", autocomplete: "off" });
@@ -586,7 +593,7 @@ export function openBillEditor(ctx, bill = null) {
   // stale-focus restore would otherwise try to refocus the "+ New account" button, which is gone
   // once its picker panel closes).
   const bodyBox = el("div", {}, [form]);
-  const modal = openModal({ title: editing ? `Edit ${b.name}` : "Add bill", body: [bodyBox], actions: [cancel, save] });
+  const modal = openModal({ title: editing ? `Edit ${b.name}` : (opts.title || "Add bill"), body: [bodyBox], actions: [cancel, save] });
   function startQuickAddAccount(term, targetSelect) {
     modal.setError("");
     modal.setBusy(true);
