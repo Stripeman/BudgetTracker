@@ -13,7 +13,7 @@ const { newId } = require('../_shared/ids');
 const { appInfo, localDevelopment } = require('../_shared/version');
 const prefs = require('../preferences/handler');
 
-const EDITABLE = ['branding', 'defaults', 'locked', 'modules', 'publicSharingEnabled', 'invitationPolicy', 'uploadLimitBytes', 'exchangeRateProvider', 'announcement', 'maintenanceMessage', 'backupPolicy'];
+const EDITABLE = ['branding', 'defaults', 'locked', 'modules', 'publicSharingEnabled', 'invitationPolicy', 'uploadLimitBytes', 'exchangeRateProvider', 'announcement', 'maintenanceMessage', 'backupPolicy', 'accountRequestsEnabled'];
 const LOCKABLE = ['themeMode', 'themePalette', 'editorToolbar', 'balanceMasking', 'dateFormat', 'locale', 'stagingUrl'];
 
 // The application version, environment and deployed commit are public (the repository is public),
@@ -63,6 +63,9 @@ function clean(body, current, { localHttp = false } = {}) {
     changed.push('modules');
   }
   if (body.publicSharingEnabled !== undefined) { next.publicSharingEnabled = fields.bool(body.publicSharingEnabled, 'Public sharing'); changed.push('publicSharingEnabled'); }
+  // BT-014-17: never recomputes any existing account's approvalStatus — only changes what status a
+  // BRAND-NEW account starts with from now on (api/_shared/site.js's initialApprovalStatus).
+  if (body.accountRequestsEnabled !== undefined) { next.accountRequestsEnabled = fields.bool(body.accountRequestsEnabled, 'Account requests'); changed.push('accountRequestsEnabled'); }
   if (body.invitationPolicy !== undefined) { next.invitationPolicy = fields.oneOf(body.invitationPolicy, ['owners-and-managers', 'owners-only'], 'Invitation policy'); changed.push('invitationPolicy'); }
   if (body.uploadLimitBytes !== undefined) {
     if (!Number.isInteger(body.uploadLimitBytes) || body.uploadLimitBytes < 100000 || body.uploadLimitBytes > 10 * 1024 * 1024) throw badRequest('Upload limit must be between 100 KB and 10 MB.', 'invalid_field');

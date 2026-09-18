@@ -107,6 +107,16 @@ async function preview(ctx, req) {
 async function accept(ctx, req) {
   const body = fields.onlyKeys(readBody(req), ['workspaceId', 'token']);
   const wsId = requireId(body.workspaceId, 'workspaceId');
+  // BT-014-17: an account that is not (yet, or ever) approved cannot join a workspace (or create
+  // one, see api/workspaces/handler.js) — the two ways to gain any financial-data access at all. A
+  // site administrator is never blocked by their own approval status.
+  const { site: siteDoc } = await site.readSite(ctx.storage);
+  const existingUser = await store.ensureUser(ctx, { approvalStatus: site.initialApprovalStatus(siteDoc) });
+  if (existingUser.approvalStatus && existingUser.approvalStatus !== 'approved' && !ctx.siteAdmin) {
+    throw forbidden(existingUser.approvalStatus === 'rejected'
+      ? 'Your account request was not approved. Contact a site administrator if you believe this is a mistake.'
+      : 'Your account is waiting for a site administrator to approve it before you can join a workspace.');
+  }
   let joined = null;
   // The person's own workspace list is updated FIRST, so a full personal document refuses the join
   // before any membership exists instead of leaving a member whose list lacks the workspace (security

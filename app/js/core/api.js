@@ -141,5 +141,13 @@ export function createApiClient({ fetchImpl = globalThis.fetch.bind(globalThis),
     sharedExport: (id, format) => request("group", { query: { ...ws(id), action: "export", format } }),
     // Site-admin workspace directory (BT-014-03): operational metadata only, never financial content.
     workspaceDirectory: () => request("analytics", { query: { action: "directory" } }),
+    // Site-wide operational settings, site-admin only to change (BT-014-17 adds accountRequestsEnabled).
+    saveSiteSettings: (body) => request("site-settings", { method: "PUT", body }),
+    // The account-request approval queue (BT-014-17): site-admin only. Unlike the workspace
+    // directory, showing a real email/name here is the point — an approval queue is meaningless
+    // without knowing who is asking.
+    pendingAccounts: () => request("analytics", { query: { action: "pending-users" } }),
+    approveAccount: (subject) => request("analytics", { method: "POST", query: { action: "approve-user" }, body: { subject } }),
+    rejectAccount: (subject) => request("analytics", { method: "POST", query: { action: "reject-user" }, body: { subject } }),
   };
 }

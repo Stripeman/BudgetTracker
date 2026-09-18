@@ -78,7 +78,16 @@ async function create(ctx, req) {
   if (key !== null && !isIdempotencyKey(key)) throw badRequest('The Idempotency-Key header is not valid.', 'invalid_idempotency_key');
 
   // A retried request replays its first result even at the limit; a new one is bounded (SEC-R5).
-  const existing = await store.ensureUser(ctx);
+  const { site: siteDoc } = await siteSettings.readSite(ctx.storage);
+  const existing = await store.ensureUser(ctx, { approvalStatus: siteSettings.initialApprovalStatus(siteDoc) });
+  // BT-014-17: an account that is not (yet, or ever) approved cannot create a workspace (or join
+  // one, see api/invitations/handler.js) — the two ways to gain any financial-data access at all. A
+  // site administrator is never blocked by their own approval status.
+  if (existing.approvalStatus && existing.approvalStatus !== 'approved' && !ctx.siteAdmin) {
+    throw forbidden(existing.approvalStatus === 'rejected'
+      ? 'Your account request was not approved. Contact a site administrator if you believe this is a mistake.'
+      : 'Your account is waiting for a site administrator to approve it before you can create a workspace.');
+  }
   if (!(key && existing.idempotency && existing.idempotency[`ws|${key}`])) await store.assertCanCreateWorkspace(ctx);
   // Reserve the id in the creator's own document first, so a retried request with the same key
   // converges on one workspace instead of creating two.

@@ -33,9 +33,10 @@ import * as login from "./login.mjs";
 import * as gallery from "./gallery.mjs";
 import * as permanentdelete from "./permanentdelete.mjs";
 import * as dashboard from "./dashboard.mjs";
+import * as accountrequests from "./accountrequests.mjs";
 
-const SCENARIOS = [privacy, shared, concurrency, guards, dropdown, staging, recheck, settings, accounts, bills, remove, deleteworkspace, move, analytics, login, gallery, permanentdelete, dashboard];
-const ALIASES = { group: "shared", "shared-expenses": "shared", picker: "dropdown", dropdowns: "dropdown", "route-guards": "guards", "staging-link": "staging", "workspace-settings": "settings", "edit-account": "accounts", "remove-account": "remove", "delete-workspace": "deleteworkspace", archive: "deleteworkspace", "move-entry": "move", "move-account": "move", usage: "analytics", "site-usage": "analytics", "sign-in": "login", landing: "login", "design-gallery": "gallery", layouts: "gallery", "permanent-delete": "permanentdelete", "bt-014": "permanentdelete", "record-deletion": "permanentdelete", tooltip: "bills", "record-next": "bills", "spending-by-category": "dashboard", "top-merchants": "dashboard", "this-week": "dashboard" };
+const SCENARIOS = [privacy, shared, concurrency, guards, dropdown, staging, recheck, settings, accounts, bills, remove, deleteworkspace, move, analytics, login, gallery, permanentdelete, dashboard, accountrequests];
+const ALIASES = { group: "shared", "shared-expenses": "shared", picker: "dropdown", dropdowns: "dropdown", "route-guards": "guards", "staging-link": "staging", "workspace-settings": "settings", "edit-account": "accounts", "remove-account": "remove", "delete-workspace": "deleteworkspace", archive: "deleteworkspace", "move-entry": "move", "move-account": "move", usage: "analytics", "site-usage": "analytics", "sign-in": "login", landing: "login", "design-gallery": "gallery", layouts: "gallery", "permanent-delete": "permanentdelete", "bt-014": "permanentdelete", "record-deletion": "permanentdelete", tooltip: "bills", "record-next": "bills", "spending-by-category": "dashboard", "top-merchants": "dashboard", "this-week": "dashboard", "account-requests": "accountrequests", "bt-014-17": "accountrequests" };
 const rel = (p) => path.relative(ROOT, p).replace(/\\/g, "/");
 
 let args;
