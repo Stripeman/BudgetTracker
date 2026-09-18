@@ -67,16 +67,25 @@ describe("BT-007-01 merchant picker", () => {
     assert.equal(key(p.input, "Escape").defaultPrevented, false);
   });
 
-  test("Bills → Merchant fix (review, 2026-09-18): clicking or focusing the empty input opens the full list without typing first", () => {
+  test("Bills → Merchant fix (review, 2026-09-18): clicking the empty input opens the full list without typing first", () => {
     const p = createMerchantPicker({ merchants: MERCHANTS });
     assert.equal(p.input.getAttribute("aria-expanded"), "false");
-    p.input.dispatchEvent(new DomEvent("focus", { bubbles: true }));
-    assert.equal(p.input.getAttribute("aria-expanded"), "true", "focusing alone opens the list");
-    assert.deepEqual(options(p), ["Fictional Grocer", "Corner Cafe", "Café Rouge · private"], "unfiltered — nothing was typed");
-    p.input.dispatchEvent(new DomEvent("blur", { bubbles: true }));
-    assert.equal(p.input.getAttribute("aria-expanded"), "false");
     p.input.dispatchEvent(new DomEvent("click", { bubbles: true }));
-    assert.equal(p.input.getAttribute("aria-expanded"), "true", "clicking alone also opens the list");
+    assert.equal(p.input.getAttribute("aria-expanded"), "true", "clicking alone opens the list");
+    assert.deepEqual(options(p), ["Fictional Grocer", "Corner Cafe", "Café Rouge · private"], "unfiltered — nothing was typed");
+  });
+
+  test("real-browser regression (2026-09-18): a plain `focus` event does NOT open the list — only `click`", () => {
+    // Found by real-browser e2e, not guessed: a dialog's own openModal() auto-focuses its first
+    // focusable control on open, and this field is sometimes that control. A `focus` listener
+    // cannot tell that apart from a genuine user interaction, so it used to force-open the full
+    // list on every dialog that merely happened to open with this field focused — pushing the
+    // dialog's own footer buttons out of view and, in the exact case found, causing a click meant
+    // for "Cancel" to land somewhere else entirely, leaving the dialog stuck open. A real click or
+    // tap always fires `click` regardless (covered by the test above), so nothing is lost by this.
+    const p = createMerchantPicker({ merchants: MERCHANTS });
+    p.input.dispatchEvent(new DomEvent("focus", { bubbles: true }));
+    assert.equal(p.input.getAttribute("aria-expanded"), "false", "focus alone (e.g. a dialog's own auto-focus on open) must never force the list open");
   });
 
   test("editing the text after a choice clears the selection; an existing closed merchant is kept", () => {
