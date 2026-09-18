@@ -70,6 +70,11 @@ export function createMerchantSelect({ merchants, current = null, draftName = ""
  * choosable is cleared, exactly like the Category/Account pickers already do elsewhere.
  */
 export function setMerchantOptions(select, merchants) {
+  // Captured BEFORE any option is touched: removing the currently-selected option (or emptying the
+  // list even briefly) makes a real `<select>` auto-select whatever ends up first once options are
+  // re-added — a genuine bug this exact scenario caught, not a hypothetical one. Every decision
+  // below is against THIS value, never whatever `select.value` drifts to mid-rebuild.
+  const previousValue = select.value;
   const kept = Array.from(select.querySelectorAll("option")).filter((o) => String(o.getAttribute("value") || "").startsWith(TYPED_OPTION_PREFIX));
   for (const o of Array.from(select.querySelectorAll("option"))) {
     if (!kept.includes(o)) select.removeChild(o);
@@ -80,9 +85,11 @@ export function setMerchantOptions(select, merchants) {
     o.textContent = m.name;
     select.appendChild(o);
   }
-  const stillReal = merchants.some((m) => m.id === select.value);
-  const isDraft = kept.some((o) => (o.getAttribute("value") || "") === select.value);
-  if (!stillReal && !isDraft) select.value = "";
+  const stillReal = merchants.some((m) => m.id === previousValue);
+  const isDraft = kept.some((o) => (o.getAttribute("value") || "") === previousValue);
+  // Still valid: restored explicitly, undoing any auto-select the browser did mid-rebuild — never
+  // left to chance which option a native select happens to land on. No longer valid: cleared.
+  select.value = (stillReal || isDraft) ? previousValue : "";
 }
 
 /** Reads the current choice: a real merchant id, or a typed draft name — never both at once. */
