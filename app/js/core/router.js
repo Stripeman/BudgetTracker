@@ -28,6 +28,9 @@ export const ROUTES = Object.freeze([
   // administrators only, extending the same small site-admin surface as Usage and Design Gallery
   // above rather than a new nav paradigm (Terry's own instruction). Never financial content.
   { id: "admin-workspaces", path: "/admin-workspaces", label: "Workspaces", hidden: true, icon: "briefcase" },
+  // Account-request approval (BT-014-17): site administrators only, the fourth Site Settings
+  // sub-tab alongside Workspaces/Design Gallery/Usage above.
+  { id: "account-requests", path: "/account-requests", label: "Account requests", hidden: true, icon: "user" },
 ]);
 
 // The sections shown in the nav for this workspace (a workspace summary, or just its kind) and site.

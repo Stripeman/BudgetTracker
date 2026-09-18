@@ -1356,27 +1356,54 @@ so stacking it as a second commit on the same not-yet-merged branch was simpler 
 139/139 in real Edge. The account menu's three existing direct links were deliberately left flat, not
 also nested under Site Settings — worth confirming with Terry.
 
-**Waiting/queued from Terry, in the order he gave them (this same conversation, not yet started):**
-1. A site-admin on/off toggle for a "request account" feature, where a requested account needs
-   site-admin approval before it can sign in — a new access-control feature, not yet designed.
-2. The site-admin Workspaces directory listing should show each member's real email address (today
-   it shows no name or email at all, by design — see `analytics.js`'s header comment: "no name or
-   email, because nothing else today shows a site administrator another person's name or email
-   either" — Terry is now explicitly asking to change that boundary for this one listing).
-3. **Bug, reported with a screenshot, and independently reproduced in this checkpoint's own e2e
-   screenshot** (`permdel-dave-permdel-admin-directory.png`, `permanentdelete.mjs`'s existing "site
-   administrator can permanently delete a workspace" test data): permanently deleting a workspace
-   correctly wipes its data (status shows `deleted-permanent`, 0 members, `empty` records, size
-   shrunk to ~577 B–600 B) but the workspace ROW ITSELF still appears in the site-admin Workspaces
-   directory, with a "Delete permanently" button still shown as if there's something left to delete.
-   Not yet investigated: whether the directory is supposed to keep a permanent audit-trail row
-   forever (in which case the dead action button is the real bug) or whether the workspace document
-   itself should stop appearing in the default listing after permanent deletion. Check
-   `api/_shared/workspace-deletion.js` and whatever handler backs `admin-workspaces` before assuming
-   either way.
+**BT-014-16 (done): admin-directory tombstone bug + member emails.** Both of Terry's reports fixed
+together on `fix/admin-directory-tombstone-and-email` (PR #10) — see `docs/REQUIREMENTS.md` BT-014-16.
+The permanently-deleted-workspace row that never disappeared, and the dead "Delete permanently" button
+on it, are both fixed (`directory()` excludes `deleted-permanent`; `impact()` blocks a repeat delete on
+one). Each active member's real email now shows in the directory, a deliberate stated exception to that
+listing's "no name or email" rule. PR #10 initially showed a merge conflict against `main` (opened
+before PR #9 merged, both touched `docs/REQUIREMENTS.md`'s same insertion point) — resolved by merging
+`origin/main` into the branch and reconciling the two additions in numeric order; confirmed `MERGEABLE`
+after pushing the fix.
 
-Items 1 and 2 both touch the same admin Workspaces listing as item 3 — worth investigating together.
+**BT-014-17 (done): account-request approval, the last queued item.** Terry: "a feature that the site
+admin can turn off or on that enables a request account feature that the site admin approves." Built on
+`feature/account-requests-BT-014-17` (stacked on top of PR #9 and PR #10 via a local merge, since it
+extends both `shell.js`'s Site Settings grouping and `api/analytics/handler.js`'s admin actions) — see
+`docs/REQUIREMENTS.md` BT-014-17 for full detail: a site-wide `accountRequestsEnabled` toggle (off by
+default, never retroactive either direction), a brand-new account starts `pending` and is refused at
+the two places that grant any financial-data access (create workspace, accept invitation), a new
+"Account requests" admin page (the fourth Site Settings sub-tab) with the toggle and an approve/reject
+queue showing real email/name (deliberately, unlike the Workspaces directory), and a new blocking
+"Waiting for approval"/"Account request not approved" screen for anyone not yet let through. A site
+administrator is explicitly exempted from ever being blocked by their own approval status.
 
-**Exact next step:** start on the queued items above, in Terry's given order, beginning with the
-account-request approval feature and admin-listing email together (#1/#2), then the
-permanent-deletion listing bug (#3) once the admin-listing code is already loaded from that work.
+Real-browser testing surfaced a genuine test-infrastructure gap, not a product bug: none of the five
+standing fictional identities (alice/bob/carol/dave/eve) could stand in for a "brand-new signup" —
+eve is touched by the harness's own dev-server readiness probe (`scripts/dev/harness/devserver.mjs`
+signs in as eve to check the server is up) and bob/carol are invited into alice's household by the
+general fictional seed (`scripts/dev/seed.mjs`) — all before any scenario's own code runs. Found by
+direct diagnosis (a raw `GET /api/me` for eve, before her browser ever opened, already showed
+`pendingApproval: false`), not by guessing. Fixed by adding two new fictional identities, Frank and
+Grace, to `scripts/dev/server.mjs` (additive only — also available from Terry's own regular local dev
+server's sign-in page, harmless either way).
+
+**Evidence:** `npm test` 39/626/469 (exit 0); `npm run validate` ok; `npm run e2e -- --only
+accountrequests` 14/14 in real headless Edge, screenshot-verified; `npm run e2e -- --only
+gallery,analytics,permanentdelete` 121/121 after updating `gallery.mjs`'s sub-tab-count assertion from
+three to four. All three of Terry's queued items from this checkpoint are now done.
+
+**Branch/PR state as of this checkpoint:**
+- PR #8 (`fix/gallery-remove-brown-and-broken-nav`, BT-013-05) — merged.
+- PR #9 (`feature/dashboard-widgets-BT-014-14`, BT-014-14/15) — merged.
+- PR #10 (`fix/admin-directory-tombstone-and-email`, BT-014-16) — open, conflict resolved, confirmed
+  `MERGEABLE`, awaiting Terry's merge.
+- PR not yet opened: `feature/account-requests-BT-014-17` (BT-014-17) — committed and gated green
+  locally, built on top of PR #9 (merged) and PR #10 (not yet merged); opening its PR should target
+  `main` once PR #10 merges, to avoid carrying PR #10's diff into it.
+
+**Exact next step:** push `feature/account-requests-BT-014-17` and open its PR (base `main`, or
+`fix/admin-directory-tombstone-and-email` if PR #10 is still unmerged when this is picked up — retarget
+to `main` once #10 merges). No further items are queued from Terry as of this checkpoint; the Design
+Gallery layout selection (Terry's eventual pick of which of the 15 remaining concepts to keep) remains
+the one long-standing open item from earlier in this session, still awaiting his decision.

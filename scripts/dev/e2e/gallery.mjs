@@ -84,8 +84,8 @@ export async function run(h, t) {
   await dave.goto("gallery");
   await dave.waitForText("All 15 concepts");
   const subTabHrefs = await dave.evaluate("[...document.querySelectorAll('.app__nav--sub a')].map((a) => a.getAttribute('href'))");
-  t.check("dave: all three Site Settings sub-tabs (Workspaces, Design Gallery, Usage) are present once inside the group", {
-    expected: ["#/admin-workspaces", "#/gallery", "#/analytics"], actual: subTabHrefs,
+  t.check("dave: all four Site Settings sub-tabs (Workspaces, Design Gallery, Usage, Account requests) are present once inside the group", {
+    expected: ["#/admin-workspaces", "#/gallery", "#/analytics", "#/account-requests"], actual: subTabHrefs,
   });
   const cardCount = await dave.evaluate("document.querySelectorAll('.gcard-outer').length");
   t.check("dave: all 15 concept cards render", { expected: 15, actual: cardCount });

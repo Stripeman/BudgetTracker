@@ -19,6 +19,10 @@ const DEFAULT_SITE = Object.freeze({
   announcement: { text: '', version: 0, active: false, audience: 'signed-in' },
   maintenanceMessage: '',
   backupPolicy: { onDemand: true, beforeDestructive: true, retentionDays: 35 },
+  // BT-014-17 (Terry, 2026-09-17): off by default, preserving today's behaviour — anyone who
+  // completes sign-in is immediately fully functional. When on, a brand-new account (never an
+  // existing one) starts 'pending' until a site administrator approves it.
+  accountRequestsEnabled: false,
 });
 
 async function readSite(storage) {
@@ -52,4 +56,10 @@ function withoutStagingDefault(site) {
   return { ...site, defaults };
 }
 
-module.exports = { DEFAULT_SITE, THEME_MODES, PALETTES, EDITOR_TOOLBARS, readSite, publicView, withoutStagingDefault, stampSite: (d) => stampDocument('site', d) };
+// The status a BRAND-NEW account starts with right now (BT-014-17) — never recomputed for an
+// existing account, so flipping this setting later never changes anyone already provisioned.
+function initialApprovalStatus(siteDoc) {
+  return siteDoc && siteDoc.accountRequestsEnabled ? 'pending' : 'approved';
+}
+
+module.exports = { DEFAULT_SITE, THEME_MODES, PALETTES, EDITOR_TOOLBARS, readSite, publicView, withoutStagingDefault, initialApprovalStatus, stampSite: (d) => stampDocument('site', d) };

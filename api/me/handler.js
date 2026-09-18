@@ -13,18 +13,31 @@ const fields = require('../_shared/fields');
 const { readBody } = require('../_shared/http');
 
 async function get(ctx) {
-  const user = await store.ensureUser(ctx);
+  // Read the site FIRST (BT-014-17): a brand-new account's initial approvalStatus depends on
+  // whether account requests are on right now — ensureUser only uses this on first creation, never
+  // recomputing an existing account's status.
+  const { site: siteDoc } = await site.readSite(ctx.storage);
+  const user = await store.ensureUser(ctx, { approvalStatus: site.initialApprovalStatus(siteDoc) });
+  // A pending account is never a member of anything (it cannot create or join a workspace — see
+  // api/workspaces/handler.js and api/invitations/handler.js), so there is nothing further to load;
+  // the frontend shows the "waiting for approval" screen and nothing else. A site administrator is
+  // never blocked by their own approval status — otherwise a site administrator whose very first
+  // visit lands while account requests happen to be on could lock themselves out of the one screen
+  // that could approve them.
+  const pendingApproval = user.approvalStatus === 'pending' && !ctx.siteAdmin;
+  const rejected = user.approvalStatus === 'rejected' && !ctx.siteAdmin;
   // Usage/activity touch (BT-012-01), the natural once-per-boot touchpoint. Never lets a usage
   // recording problem break sign-in or the boot payload.
   try { await usage.touch(ctx, ctx.principal); } catch (err) { if (ctx.log) (ctx.log.error || ctx.log)(`usage_touch_failed ${(err && err.code) || 'unknown'}`); }
   const workspaces = [];
-  for (const id of user.workspaceIds || []) {
-    const { value } = await ctx.storage.getJson(store.paths.workspace(id));
-    const doc = readDocument('workspace', value);
-    const member = doc && activeMember(doc, ctx.principal);
-    if (model.listed(doc, member)) workspaces.push(model.summary(doc, member));
+  if (!pendingApproval && !rejected) {
+    for (const id of user.workspaceIds || []) {
+      const { value } = await ctx.storage.getJson(store.paths.workspace(id));
+      const doc = readDocument('workspace', value);
+      const member = doc && activeMember(doc, ctx.principal);
+      if (model.listed(doc, member)) workspaces.push(model.summary(doc, member));
+    }
   }
-  const { site: siteDoc } = await site.readSite(ctx.storage);
   const stored = user.preferences || {};
   // The site's staging-link default reaches only site administrators and active members of at least
   // one workspace (security review of d363eff, finding 1). `workspaces` holds exactly the workspaces
@@ -34,7 +47,7 @@ async function get(ctx) {
     body: {
       // `subject` is the caller's own provider subject, shown so an operator can list it in
       // BT_SITE_ADMINS (the edge siteadmin role matches subjects only).
-      user: { name: user.name || '', email: user.email, subject: ctx.principal.subject, siteAdmin: ctx.siteAdmin },
+      user: { name: user.name || '', email: user.email, subject: ctx.principal.subject, siteAdmin: ctx.siteAdmin, pendingApproval, rejected },
       workspaces,
       preferences: { stored, ...prefs._resolve(stored, visible) },
       site: site.publicView(visible, true),

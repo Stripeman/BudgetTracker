@@ -108,6 +108,42 @@ async function directory(ctx) {
   return { body: { workspaces: out, truncated: names.length > DIRECTORY_CAP } };
 }
 
+const PENDING_CAP = 500;
+
+// BT-014-17 (Terry, 2026-09-17: "a feature that the site admin can turn off or on that enables a
+// request account feature that the site admin approves"). Unlike the workspace directory above,
+// showing real identity here is the whole point — an approval queue is meaningless without knowing
+// WHO is asking. Still never anything financial: only the account's own subject/email/name/dates.
+async function pendingUsers(ctx) {
+  const names = (await ctx.storage.list('users/')).filter((n) => n.endsWith('.json'));
+  const out = [];
+  for (const name of names.slice(0, PENDING_CAP)) {
+    try {
+      const { value } = await ctx.storage.getJson(name);
+      const doc = readDocument('user', value);
+      if (!doc || doc.approvalStatus !== 'pending') continue;
+      out.push({ subject: doc.subject, email: doc.email || '', name: doc.name || '', createdAt: doc.createdAt });
+    } catch { /* one unreadable profile does not take down the whole queue */ }
+  }
+  out.sort((a, b) => (a.createdAt < b.createdAt ? -1 : 1));
+  return { body: { pending: out.slice(0, PENDING_CAP), truncated: out.length > PENDING_CAP } };
+}
+
+// Scope deliberately narrow: this approves or rejects a REQUEST, it never revokes an already-
+// approved account (that would be a separate feature). A rejected request may still be approved
+// later (an administrator reconsidering), but not the other way around once approved.
+async function setApproval(ctx, req, approvalStatus) {
+  const body = fields.onlyKeys(readBody(req), ['subject']);
+  const subject = fields.text(body.subject, { field: 'Subject', max: 200, required: true });
+  const { result } = await store.mutateUserAdmin(ctx, subject, (doc) => {
+    if (doc.approvalStatus === 'approved') throw conflict('This account is already approved.', 'already_approved');
+    if (doc.approvalStatus === approvalStatus) throw conflict('This account already has that status.', 'no_change');
+    doc.approvalStatus = approvalStatus;
+    return { subject: doc.subject, approvalStatus };
+  });
+  return { body: result };
+}
+
 // BT-014 administrative workspace deletion. Reuses the EXACT SAME impact/apply/log logic the
 // owner uses (api/workspaces/handler.js), so a site administrator can never do anything different
 // to a workspace than its own owner could — only WHICH workspaces they may target (any) and how
@@ -198,6 +234,7 @@ async function get(ctx, req) {
   const action = query(req, 'action');
   if (action === 'directory') return directory(ctx);
   if (action === 'deletions') return deletionsLog(ctx);
+  if (action === 'pending-users') return pendingUsers(ctx);
   if (action !== undefined) throw notFound();
   return usageDashboard(ctx);
 }
@@ -208,6 +245,8 @@ async function post(ctx, req) {
   const action = query(req, 'action');
   if (action === 'delete-impact') return adminDeleteImpact(ctx, req);
   if (action === 'delete-permanent') return adminDeleteExecute(ctx, req);
+  if (action === 'approve-user') return setApproval(ctx, req, 'approved');
+  if (action === 'reject-user') return setApproval(ctx, req, 'rejected');
   throw notFound();
 }
 
