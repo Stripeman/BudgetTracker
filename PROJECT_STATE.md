@@ -2072,3 +2072,83 @@ and both Bills → Merchant fixes (display fallback, then component consistency)
 commit `f42e95d`. The next session should check whether Terry has reviewed/merged any of PR
 #13–#19, rebase/re-verify the others if `main` has moved, and pick up his feedback on the live
 Preview build — starting with whether the Merchant field now genuinely matches what he pictured.
+
+## Checkpoint AF — the Transactions quick-entry Merchant field, dedicated real-browser proof, and a
+## real bug it found (2026-09-18, same session, Terry: "yes, build the transactions e2e check too.
+## after you done, merge commits if needed, and push to preview")
+
+**What Checkpoint AE left open.** AE's own "Known gaps" said plainly: no dedicated e2e scenario
+existed for the Transactions quick-entry form's Merchant field specifically — only indirect evidence
+(existing unit tests, and `recheck.mjs`'s incidental use of the same "Add expense" dialog for an
+unrelated purpose). Terry asked directly for the same purpose-built depth bills.mjs already has.
+
+**New `scripts/dev/e2e/transactions.mjs`** (registered in `run.mjs`, plus a few missing scenario
+names added to its `ALIASES` and to README's own scenario list, which was already stale before this
+— `bills`/`dashboard`/`accountrequests` were missing from it too). Mirrors bills.mjs's own rigor for
+the Transactions "Add expense" form: a screenshot-backed structural check that Merchant's trigger is
+the literal same `.cmdpick__trigger` component as Category (no bespoke `.combo`/`.combo__*` markup
+anywhere); searching for and selecting an existing merchant; typing a brand-new name offering the
+same "+ Add merchant" pinned action the Account picker's own "+ New account" already uses, opening
+the form's EXISTING inline "New merchant" fieldset — never a left-as-typed draft, since a real
+transaction always needs a real merchant (BT-007-01), unlike a bill's own term (BT-014-11); saving
+and verifying the link directly against the API; the existing duplicate-merchant "Use X" / "Add as a
+separate merchant" recovery path (exercises the SAME pinned action this fix rewired, so it is real
+regression coverage of code this session touched, not an unrelated feature check); and — the check
+that actually found something — switching to an account that cannot use the currently-chosen
+merchant clearing it, with the same accessible announcement as before.
+
+**A real, previously undetected bug, found by that last check, not guessed.** `setMerchantOptions()`
+(the account-change handler that rebuilds the choosable merchant list) removed the currently-selected
+`<option>` and then appended the new choosable ones — but a real `<select>` element, once its
+selected option is removed and options are re-added with nothing explicitly selected, AUTO-SELECTS
+whichever ends up first. Both the "still valid, keep it" and "no longer valid, clear it" checks were
+reading `select.value` AFTER this auto-select already happened, so a private merchant, cleared as
+intended when switching to an incompatible account, silently came back as whatever the FIRST
+remaining option happened to be instead of staying cleared — invisible to every unit test (the DOM
+double does not simulate native `<select>` auto-select behaviour) and to bills.mjs (which never
+exercises an account-change-clears-the-merchant path, since a bill's account is locked once created).
+Fixed by capturing `select.value` ONCE, before any option is touched, and deciding the restore/clear
+against that captured value only, then explicitly restoring or clearing rather than trusting whatever
+the browser landed on mid-rebuild.
+
+**Evidence:**
+- `npm test` 39/651/502 (exit 0); `npm run validate` ok, 24 routes (exit 0).
+- Real headless Edge: `npm run e2e -- --only transactions` 13/13 (exit 0) standalone (first run caught
+  the `setMerchantOptions` bug directly — "switching to a shared account clears a private merchant"
+  failed with the stale merchant still shown; fixed, then a clean rerun); `npm run e2e -- --only
+  bills,transactions` 44/44 together (exit 0) on the fix branch, 50/50 (exit 0) on the fully combined
+  six-PR integration tree — proving the fix and the new scenario coexist cleanly with everything else
+  built this session.
+- `docs/REQUIREMENTS.md` gained BT-014-18, consolidating both this session's Merchant fixes
+  (Checkpoint AD's display fallback and Checkpoint AE's component-consistency fix) into one entry,
+  since they are the same regression thread, not two separate requirements.
+
+**Git hygiene.** Committed to `fix/bills-merchant-2026-09-18` (still the same PR's own branch — this
+is the third checkpoint continuing that one unit of work, never a new branch for what is clearly the
+same thread), commit `b707aca`, pushed. Re-merged into `integration/preview-2026-09-18` (`75577c9`)
+— a clean merge, no conflicts. Redeployed to Preview:
+```
+target  : budget-tracker / budget-tracker (preview)
+url     : https://polite-plant-03bb7570f-preview.eastus2.3.azurestaticapps.net
+sha     : 75577c98422ce9ddcccc3b2197e3ce476d81795b
+version : 0.1.0-alpha.1
+checks  : ok target, ok gitState, ok confirmation, ok azureResource, ok settings, ok test,
+          ok validate, ok build, ok secretScan, ok upload, ok commitSetting, ok healthCheck
+result  : SUCCESS
+```
+Independently verified live: `GET .../api/site-settings` reports `commit:
+"75577c98422ce9ddcccc3b2197e3ce476d81795b"` (exact match); anonymous `GET /api/me` returns 401.
+
+**Known gaps, stated plainly:** everything already listed under Checkpoint AA–AE's own "Known gaps"
+is still true; this checkpoint specifically closes AE's own disclosed gap (no dedicated Transactions
+Merchant e2e coverage) and found a real bug while doing so, rather than merely adding a check that
+happened to pass.
+
+**Waiting on Terry:** everything already listed under Checkpoint AA–AE's "Waiting on Terry" — nothing
+new this checkpoint besides confirmation the fix is what he wanted.
+
+**Exact next step:** none queued. Preview reflects all six PRs, the Gallery Shared/Trips follow-up,
+and all three Bills/Transactions → Merchant fixes (display fallback, component consistency, the
+account-change-clear bug), combined, as of commit `75577c9`. The next session should check whether
+Terry has reviewed/merged any of PR #13–#19, rebase/re-verify the others if `main` has moved, and
+pick up his feedback on the live Preview build.
