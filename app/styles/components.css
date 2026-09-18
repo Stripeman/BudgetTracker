@@ -98,7 +98,6 @@ fieldset.budget-line { margin: 0; padding: var(--space-3); border: 1px solid var
 .catrow__meta, .catrow > .error-text { grid-column: 1 / -1; }
 .plain-fieldset { border: 0; margin: 0; padding: 0; min-width: 0; }
 .themepick__icon .icon { width: 1.25rem; height: 1.25rem; }
-.combo__option > .icon { margin-right: var(--space-1); color: var(--text-muted); }
 .amount-dir { display: inline-flex; align-items: center; gap: var(--space-1); justify-content: flex-end; }
 .dir { display: inline-flex; color: var(--text-muted); }
 .dir--money-in { color: var(--money-in); }
@@ -248,21 +247,8 @@ fieldset.budget-line { margin: 0; padding: var(--space-3); border: 1px solid var
 .field .themepick__caret { font-size: var(--text-xs); }
 .field .themepick__toggle .icon { width: 1.15em; height: 1.15em; }
 
-/* ---------- searchable merchant picker (combobox, BT-007-01) ----------
-   In normal flow under its input, like TaskTracker's theme picker, so a scrolling dialog never
-   clips it; the list scrolls rather than growing without limit. */
-.combo { display: flex; flex-direction: column; gap: 2px; }
-.combo__list {
-  margin: 0; padding: var(--space-1) 0; list-style: none; max-height: 14rem; overflow-y: auto;
-  background: var(--surface-raised); border: 1px solid var(--control-edge); border-radius: var(--radius-sm); box-shadow: var(--shadow-sm);
-}
-.combo__list[hidden] { display: none; }
-.combo__option { padding: var(--space-2) var(--space-3); cursor: pointer; font-size: var(--text-sm); }
-.combo__option:hover, .combo__option--active { background: var(--accent-soft); }
-.combo__option--active { outline: 2px solid var(--accent); outline-offset: -2px; }
-.combo__option[aria-selected="true"] { font-weight: var(--weight-bold); }
-.combo__option--create { border-top: 1px solid var(--border); color: var(--accent-text); font-weight: var(--weight-medium); }
-.combo__empty { padding: var(--space-2) var(--space-3); color: var(--text-muted); font-size: var(--text-sm); }
+/* The Merchant field's dropdown is now the shared command picker (.cmdpick*, BT-004-05/A16) — no
+   bespoke combobox styling here any more (Terry, 2026-09-18: "I KEEP CALLING FOR CONSISTENCY"). */
 .inline-create {
   grid-column: 1 / -1; margin: 0; padding: var(--space-3); border: 1px solid var(--border-strong); border-radius: var(--radius);
   display: grid; gap: var(--space-3); grid-template-columns: repeat(auto-fit, minmax(min(12rem, 100%), 1fr));
