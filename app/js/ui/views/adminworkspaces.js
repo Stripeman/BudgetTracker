@@ -5,8 +5,10 @@
 // new nav paradigm.
 //
 // HARD BOUNDARY: the directory returns operational metadata only — id, kind, status, timestamps,
-// active member count, per-dataset record COUNTS and an approximate document size. Never a name,
-// balance, account, transaction, merchant, budget or contact. This view never tries to add one.
+// active member count and email, per-dataset record COUNTS and an approximate document size. Never
+// a workspace name, balance, account, transaction, merchant, budget or contact. This view never
+// tries to add one. Member email is a deliberate exception (Terry, 2026-09-17) to the earlier
+// "no name or email" boundary — see api/analytics/handler.js's directory() comment.
 import { el, mount } from "../dom.js";
 import { pageHead, badge } from "../components.js";
 import { messageFor } from "../../core/errors.js";
@@ -28,7 +30,7 @@ export function createView(ctx) {
   const status = el("p", { class: "field__help", role: "status" });
   const listBox = el("div");
   const content = el("div", { class: "stack", hidden: true }, [
-    el("p", { class: "field__help", text: "Operational metadata only — id, kind, status, timestamps, member count and record counts. Site administration never sees a workspace's name, balances, accounts, entries, merchants, budgets or contacts. A permanent deletion here can never do anything different to a workspace than its own owner could; it only reaches workspaces you are not a member of." }),
+    el("p", { class: "field__help", text: "Operational metadata only — id, kind, status, timestamps, member count/email and record counts. Site administration never sees a workspace's name, balances, accounts, entries, merchants, budgets or contacts. A permanent deletion here can never do anything different to a workspace than its own owner could; it only reaches workspaces you are not a member of." }),
     status,
     listBox,
   ]);
@@ -68,7 +70,10 @@ export function createView(ctx) {
           el("th", { scope: "row", "data-label": "Id", text: ws.id }),
           el("td", { "data-label": "Kind", text: WS_KIND_LABEL[ws.kind] || ws.kind }),
           el("td", { "data-label": "Status" }, [ws.status === "active" ? badge("Active") : badge(ws.status, "closed")]),
-          el("td", { "data-label": "Members", class: "num", text: String(ws.memberCount) }),
+          el("td", { "data-label": "Members" }, [
+            el("div", { class: "num", text: String(ws.memberCount) }),
+            ws.memberEmails && ws.memberEmails.length ? el("div", { class: "muted small", text: ws.memberEmails.join(", ") }) : null,
+          ]),
           el("td", { "data-label": "Records", text: datasetSummary(ws.datasets) }),
           el("td", { "data-label": "Approx. size", class: "num", text: bytes(ws.approxBytes) }),
           el("td", { "data-label": "Created", text: stamp(ws.createdAt) }),

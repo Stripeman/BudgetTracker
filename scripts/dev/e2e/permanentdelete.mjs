@@ -202,6 +202,9 @@ export async function run(h, t) {
   t.check("the directory lists the throwaway workspace by id (counts only) and never shows its name", {
     expected: { hasId: true, hasName: false }, actual: { hasId: directoryText.includes(W2.id), hasName: directoryText.includes(W2.name) },
   });
+  // Deliberate exception (Terry, 2026-09-17: "the workspace listing needs to have the real persons
+  // email address shown"): bob's real email, not just a member count.
+  t.check("the directory shows the workspace owner's real email address", { expected: true, actual: directoryText.includes("bob@example.com") });
 
   await b.dave.click({ role: "button", name: `Permanently delete workspace ${W2.id}` });
   await b.dave.waitFor("!!document.querySelector('.modal')", { what: "the admin permanent-delete dialog" });
@@ -221,6 +224,18 @@ export async function run(h, t) {
   await b.dave.settle();
   const bobAfter = await api("bob").request("accounts", { query: W2.q });
   t.check("a site administrator can permanently delete a workspace they were never a member of, reusing the exact same flow; its owner then loses access entirely", { expected: 404, actual: bobAfter.status });
+
+  // Bug fix (Terry, 2026-09-17: "i deleted the workspace permanently and while it removed the data..
+  // it didnt remove the workspace"): the directory row itself must be gone now, not just its data —
+  // and with it, the button that used to offer to "delete" an already-empty workspace again. The
+  // view already reloads itself after a successful delete (adminworkspaces.js's onDeleted), so no
+  // extra navigation is needed here.
+  const directoryAfterText = await b.dave.text("main");
+  await b.dave.shot("permdel-admin-directory-after-delete");
+  t.check("the permanently-deleted workspace no longer appears in the directory at all", { expected: false, actual: directoryAfterText.includes(W2.id) });
+  t.check("its 'Delete permanently' button is gone with it (nothing left to click)", {
+    expected: false, actual: await b.dave.exists(`button[aria-label="Permanently delete workspace ${W2.id}"]`),
+  });
 
   for (const s of Object.values(b)) { await s.settle(); t.check(`${s.name}: no exceptions, console errors or failed requests in the browser`, { expected: [], actual: s.problems({ allowHttp: [{ status: 404, path: /\/api\/accounts/ }] }) }); }
 }

@@ -92,6 +92,9 @@ describe('BT-014 whole-workspace permanent deletion', () => {
     assert.ok(entry, 'the site admin can enumerate it without being a member');
     assert.equal(entry.datasets.accounts, 3);
     assert.equal(entry.memberCount, 3);
+    // Deliberate exception (Terry, 2026-09-17): real member emails ARE shown in this listing, unlike
+    // everywhere else a site administrator looks.
+    assert.deepEqual(entry.memberEmails.sort(), ['alice@example.com', 'bob@example.com', 'carol@example.com']);
     assert.equal(JSON.stringify(entry).includes('Joint'), false, 'no account or workspace name, ever');
     assert.equal(JSON.stringify(entry).includes('Fictional Household'), false);
 
@@ -109,6 +112,18 @@ describe('BT-014 whole-workspace permanent deletion', () => {
     assert.ok(entries.some((e) => e.outcome === 'pending'), 'a durable record is written before the wipe, not only after');
     assert.ok(entries.some((e) => e.outcome === 'completed' && e.actorRole === 'site-admin'));
     assert.equal(JSON.stringify(entries).includes('Fictional Household'), false, 'no workspace name in the outside record, from either write');
+
+    // Bug fix (Terry, 2026-09-17: "i deleted the workspace permanently and while it removed the
+    // data.. it didnt remove the workspace"): the tombstone document is kept (by design, for the
+    // outside audit log above), but it no longer appears in the LIVE directory, and re-deleting an
+    // already-deleted-permanent workspace is refused rather than silently re-wiping it.
+    const dirAfter = ok(await h.call('analytics', 'GET', { as: 'dave', query: { action: 'directory' } }));
+    assert.equal(dirAfter.workspaces.some((w) => w.id === f.ws.id), false, 'the deleted workspace no longer appears in the directory');
+    const impAgain = ok(await h.call('analytics', 'POST', { as: 'dave', query: { action: 'delete-impact', workspaceId: f.ws.id } })).impact;
+    assert.equal(impAgain.blocked, true);
+    assert.match(impAgain.blockers[0], /already been permanently deleted/);
+    const redelete = await h.call('analytics', 'POST', { as: 'dave', query: { action: 'delete-permanent', workspaceId: f.ws.id }, body: { impactToken: impAgain.token, typedConfirmation: f.ws.id } });
+    assert.equal(redelete.status, 409, 'a repeat delete on an already-tombstoned workspace is refused, not a silent no-op');
   });
 
   test('an outsider (not a site administrator) cannot reach the directory or administrative deletion', async () => {

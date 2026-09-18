@@ -77,7 +77,18 @@ async function usageDashboard(ctx) {
 // attachments)". Built on the exact same `storage.list('workspaces/')` enumeration
 // countWorkspaces() above already uses for the usage totals — every field read from each document
 // is either structural (kind/status/timestamps) or a plain array length; nothing that could be a
-// name, note, balance or account/merchant/member identity is ever read here.
+// name, note, balance or account/merchant identity is ever read here. Deliberate exception, Terry,
+// 2026-09-17: "the workspace listing needs to have the real persons email address shown" — each
+// active member's own email (already stored on their member record for every workspace, and
+// already shown to that workspace's own owners/managers, `workspace-model.js` `memberView`) is
+// included here too. A workspace's name is still never read or returned.
+//
+// A `deleted-permanent` workspace's tombstone document (`workspace-deletion.js` `tombstoneOf`) is
+// deliberately kept in storage forever, but excluded from THIS listing (bug, Terry, 2026-09-17: "i
+// deleted the workspace permanently and while it removed the data.. it didnt remove the workspace"
+// — the row stayed, with an active "Delete permanently" button offering to delete an already-empty
+// document). The permanent record that a deletion happened lives in the outside audit log
+// (`site-deletions.js`, `?action=deletions`), not in this live operational listing.
 async function directory(ctx) {
   const names = (await ctx.storage.list('workspaces/')).filter((n) => n.endsWith('/workspace.json'));
   const out = [];
@@ -85,10 +96,11 @@ async function directory(ctx) {
     try {
       const { value } = await ctx.storage.getJson(name);
       const doc = readDocument('workspace', value);
-      if (!doc) continue;
+      if (!doc || doc.status === 'deleted-permanent') continue;
+      const activeMembers = (doc.members || []).filter((m) => m.status === 'active');
       out.push({
         id: doc.id, kind: doc.kind, status: doc.status, createdAt: doc.createdAt, updatedAt: doc.updatedAt || null,
-        memberCount: (doc.members || []).filter((m) => m.status === 'active').length,
+        memberCount: activeMembers.length, memberEmails: activeMembers.map((m) => m.email).filter(Boolean),
         datasets: workspaceDeletion.datasetCounts(doc), approxBytes: Buffer.byteLength(JSON.stringify(doc)),
       });
     } catch { /* one unreadable workspace does not take down the whole directory */ }
