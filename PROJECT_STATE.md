@@ -1407,3 +1407,283 @@ three to four. All three of Terry's queued items from this checkpoint are now do
 to `main` once #10 merges). No further items are queued from Terry as of this checkpoint; the Design
 Gallery layout selection (Terry's eventual pick of which of the 15 remaining concepts to keep) remains
 the one long-standing open item from earlier in this session, still awaiting his decision.
+
+## Checkpoint AA — new-session takeover: security review fixes, Bills→Merchant, DEMO seed, curved
+## accent, two-column settings, Gallery secondary pages (2026-09-18)
+
+**Recovery.** Took over in a fresh conversation. PR #9, #10, #11, #12 (dashboard widgets, Site
+Settings grouping, admin-directory/email fix, account requests) were already merged into `main` at
+`c4baed3` by the time this session started — `feature/account-requests-BT-014-17`'s tip (`c914bb7`)
+was exactly `main`'s merge-base, confirmed by an empty `git diff HEAD origin/main`, so nothing from
+the prior session was lost or redone. Terry supplied three local files (`docs/Claude-handoff.md`,
+`docs/BudgetTracker-review.md` — an independent source review pinned at `c4baed3` — and
+`docs/BudgetTracker-references.html`, seven screenshots): added to `.gitignore` immediately and
+confirmed never tracked/staged (they contain Terry's email and a real financial screenshot).
+
+**Six independent units of work, each on its own feature branch off `main`, each with a full test
+gate and real-browser evidence, each as an open PR awaiting Terry's review — none merged, per the
+agent's standing instruction to never merge to `main`:**
+
+1. **PR #13 `fix/security-review-2026-09-18` — S1 (High) and S2–S6 (Medium) from the independent
+   review.** S1: `api/_shared/store.js`'s `ensureUser`/`mutateUser` now resolve the site's
+   `accountRequestsEnabled` policy internally for every brand-new profile (a new
+   `resolveInitialApprovalStatus`), instead of relying on each caller to pass it in — only `/api/me`
+   did before this, so `/api/preferences`, `/api/contacts` and anything else that could create a
+   profile first could permanently mark a new account "approved" regardless of site policy. New
+   `store.assertApproved()` used consistently by workspace creation, invitation acceptance and
+   create-new restore. S2: a completion-audit write failing AFTER a permanent deletion already
+   committed no longer reports/logs the deletion as failed — retried
+   (`recordWorkspaceDeletionWithRetry`), and a stuck "pending" row is reconciled against the
+   workspace's actual tombstoned state when the admin deletions log is read (never rewriting the
+   append-only log itself). S3: permanent deletion now purges attachment blobs (new `storage.js`
+   `delete()` on all three backends; `workspace-deletion.js` `purgeAttachments()`) — previously only
+   the JSON document was wiped, leaving receipts behind. S4: the pending-user queue and workspace
+   directory no longer cap the enumeration before filtering (a capped scan could hide a real match
+   sitting behind many non-matching records); only the response is capped now
+   (`BT_PENDING_CAP`/`BT_DIRECTORY_CAP` for tests). S5: approving/rejecting an account request now
+   records an attributable, atomic history entry on the person's own document. S6:
+   `site/deletions.json` fails closed on a malformed existing document instead of silently
+   resetting to empty. New `api/test/security-review-2026-09-18.test.js` (13 tests) reproduces each
+   finding against the fix. **Evidence:** `npm test` 39/639/469 (exit 0); `npm run validate` ok (24
+   routes); real headless Edge — `npm run e2e -- --only accountrequests,dashboard,gallery` 134/134
+   and `--only permanentdelete` 17/17, both exit 0, confirming S1's and S2/S3's fixes hold under
+   real multi-user browser conditions, not just unit tests.
+
+2. **PR #14 `fix/bills-merchant-2026-09-18` — Bills → Merchant end to end**, the confirmed defect
+   from the review ("bill 'September internet' typed merchant 'Northstar Fiber' must show
+   'Northstar Fiber', never 'September internet'"). Bill versions gain `payeeDraftName`
+   (`api/recurring/handler.js`), a validated field kept separate from the bill's title and from
+   `payeeId`; linking or creating a real merchant always resolves (clears) it. Flows through
+   create/patch/draft/view projections, so it survives in the version history exactly like every
+   other term field. `app/js/ui/merchantpicker.js`: the combobox now also opens on click/focus
+   (review finding: it previously opened only while typing or on ArrowDown). `app/js/ui/views/
+   bills.js`: both merchant pickers show the pending typed name when nothing is linked, offer inline
+   "Add … as a new merchant", and save an unmatched typed name as `payeeDraftName` instead of
+   silently dropping it. `app/js/ui/views/payees.js`: "Bills without a merchant" is now "Pending
+   merchants" — shows the TYPED name (grouped, so one name typed on several bills appears once with
+   every bill listed under it), never the bill's title; a bill with no typed name at all gets its
+   own section asking for correction, with no guessed name and no "Add as merchant". New
+   `api/test/bills-merchant-draft.test.js` (11 tests). **Evidence:** `npm test` 39/637/472 (exit 0);
+   real headless Edge `npm run e2e -- --only bills` 25/25 (exit 0), including the exact "September
+   internet"/"Northstar Fiber" scenario end to end against a real dev server.
+
+3. **PR #15 `feature/demo-preview-seed` — one fictional DEMO workspace, seeded into REAL Preview
+   infrastructure**, per Terry's explicit authorization (preview only). New operator script
+   `scripts/dev/seed-demo-preview.mjs`: resolves Terry's real, verified identity
+   (`google:107097548657992699592`, matching `.local/deploy-target.json`'s recorded
+   `siteAdminSubject` and Preview's own `BT_SITE_ADMINS` app setting — never invented) from runtime
+   environment variables, never hardcoded; reuses the real API route handlers directly
+   (`api/_shared/runtime.js`'s `invoke()`, the same technique `api/test/helpers.js` and
+   `scripts/dev/seed.mjs` already use) against Preview's real Azure Blob container via an
+   operator-supplied connection string (the same kind of infrastructure-level access
+   `scripts/recovery/drill.cjs` already uses for backup drills — never the deployed HTTPS
+   endpoint/a forged session). **Safety, all verified, not assumed:** refuses unless the storage
+   account name starts `stbudgetpv` (Preview's data account — Production is `stbudgetprd01`, a
+   completely different name); refuses unless a live `GET <site>/api/site-settings` reports
+   `environment: "preview"` (confirmed live: commit `1a7594d…`); idempotent (an existing "DEMO"
+   owned by the same identity is reported and left untouched, never duplicated — proven by running
+   it twice; `--reset` would permanently delete first, through the app's own audited deletion flow,
+   never a raw wipe — not exercised this session, no need to reset a freshly seeded workspace).
+   **Actually run against real Preview** (a dry run against in-memory storage caught two real bugs
+   first — a missing `trackFrom` override needed to demonstrate an overdue bill against a bill
+   default that deliberately avoids flooding new bills with "missed" items, and a same-currency
+   requirement for the recurring-transfer bill — both fixed before touching real infrastructure):
+   workspace `ws_mu6odsq5be9c70fd24d0` created, then independently read back via the real API
+   (accounts/balances/bills/budget/shared-expense balances all reconcile). Demonstrates multiple
+   account types/currencies (EUR/USD, checking/savings/credit-card/loan-with-debt-terms), 8
+   merchants (7 active, 1 closed) with defaults/aliases, income/expense/refund/transfer entries, a
+   shared budget with rollover, 7 bills covering overdue/due-soon/variable/already-recorded/transfer
+   cases (including one still-pending on a typed-but-unmatched merchant name — exercising PR #14's
+   `payeeDraftName` against real infrastructure), and shared expenses with equal/shares/exact-amount
+   splitting plus a reported settlement using private contacts as guest participants (never invented
+   signed-in members, never a real invitation sent). **Explicitly NOT seeded, documented rather than
+   fabricated:** rich-text notes (Tiptap is vendored, `app/js/vendor/tiptap/`, but not wired into any
+   editable note field anywhere in the app today) and record attachments (no UI or API field exists
+   to attach a receipt to any record today — `paths.attachment`/backup plumbing exists, but nothing
+   populates it from a normal create/update call). Personal appearance settings (theme/palette) were
+   deliberately left alone — Terry's own choice, not workspace content.
+   **⚠ Follow-up for Terry:** retrieving the Preview connection string via `az storage account
+   show-connection-string` for this seed printed the full account keys (both `stbudgetpv01` and
+   `stbudgetbkpv01`) into this session's tool output/transcript. They were never written to any
+   repository file, but out of caution, consider rotating both Preview storage account keys
+   (`az storage account keys renew`) and updating the SWA app settings afterward.
+
+4. **PR #16 `feature/callout-popover-accent` — the reference screenshot's curved amber left-edge
+   accent**, applied once as a shared CSS treatment (never per-screen), reused automatically by the
+   existing `.notice` callout class (already used by Dashboard/Planning/Workspace/etc.),
+   `.floating-tip` (the existing hover/focus tooltip), and a new `.popover__panel`. New
+   `createHelpPopover()` (`app/js/ui/components.js`) for explanatory content that needs a REAL
+   interactive link/button — which a plain tooltip must never hold, per the review — applied to a
+   real case: the new-bill "Show as due soon" field's workspace-default explanation, now a popover
+   with a working "Go to Workspace settings" button (previously inert parenthetical text). **Two
+   real bugs found only by real-browser e2e, neither reproducible in the DOM-double unit suite,
+   both fixed and now covered by a DOM-double regression test that reproduces the exact sequence
+   (`app/test/helppopover.test.js`):** (a) `modal.js`'s `escapeBelongsToControl()` didn't know about
+   the new popover, so Escape while it held focus closed the WHOLE dialog underneath it instead of
+   just the popover; (b) the popover's own `close()` removed its panel from the DOM before nulling
+   its internal state, so the synchronous `focusout` a real browser fires when a focused element is
+   removed re-entered `close()` and tried to remove the same node twice ("NotFoundError: node no
+   longer a child"). **Evidence:** `npm test` 39/626/480 (exit 0); real headless Edge `npm run e2e
+   -- --only bills` 17/17 (exit 0) with screenshots of the popover open (curved accent, working
+   button) and of the Dashboard's existing "Needs attention" panel picking up the same treatment
+   with zero per-screen changes.
+
+5. **PR #17 `feature/workspace-settings-two-column` — responsive two-column Workspace/Shared-
+   expenses settings layout.** `settingsform.js`/`components.css`'s shared settings card (used by
+   both the Workspace page and Shared-expenses settings) now lays settings out in a CSS Grid,
+   two columns at ≥900px, collapsing to one column below that — CSS Grid's own row-major
+   auto-placement, never a manual split of the list at its midpoint, so keyboard/tab/screen-reader
+   order is exactly the unchanged DOM order. Wide/complex content (read-only description lists,
+   group notices, a checkbox-set control, the per-member permission list in Shared-expenses
+   settings) explicitly spans both columns via a new `.setting--wide` marker. **Evidence:** `npm
+   test` 39/626/469 (exit 0); real headless Edge `npm run e2e -- --only settings` 23/23 (exit 0)
+   with actual computed-style checks at 1280px (two real 583.5px columns) and 390px (one column, no
+   overflow), plus two screenshots — one showing two short settings genuinely side by side, the
+   other showing a notice and a checkbox-set control correctly spanning full width beneath them.
+
+6. **PR #18 `feature/design-gallery-secondary-pages` — Design Gallery: genuinely distinct secondary
+   pages, plus the missing Accounts/Merchants page.** The review's exact finding, confirmed by
+   reading `compose.js` directly: only the Dashboard had genuine per-concept variety (12 hero
+   patterns); Transactions/Bills/Budget/Shared expenses/Trips/Settings all shared ONE template per
+   page across all 15 concepts. Also confirmed: Accounts/Merchants, named in the design brief as a
+   required coordinated view, was not a Gallery page at all. **This is a real, substantial fix —
+   NOT the full from-scratch 15-concepts-times-every-page screenshot-grade redesign Terry's brief
+   describes; that remains a much larger body of work than one session can responsibly deliver, and
+   is disclosed as not done, not silently skipped.** Five new pattern axes in
+   `api/_shared/layouts.js` (`transactionsPattern` ×5, `billsPattern` ×4, `budgetPattern` ×3,
+   `accountsPattern` ×3, `settingsPattern` ×2), each concept assigned a persona-appropriate
+   combination (never arbitrary — e.g. Executive Ledger's dense/authoritative identity gets a dense
+   transactions table and a compact bills table; Modern Banking's calm banking-app identity gets a
+   transactions card grid). `compose.js` gained 17 new renderer functions, each dispatched by
+   pattern name exactly like the existing `DASHBOARD_RENDERERS`, plus a new `renderAccounts()`
+   pairing the account list with the managed merchant directory. The comparison matrix
+   (`gallery.js`) gained columns for the new axes. New `app/test/gallerypatterns.test.js` (8 tests,
+   against the REAL manifest through the REAL engine, never a decoupled fixture) proves every axis
+   value is genuinely used and that different patterns produce structurally different DOM for
+   identical data. **Evidence:** `npm test` 39/627/477 (exit 0); real headless Edge `npm run e2e --
+   only gallery` (extended) 123/123 (exit 0) confirming 15×8 pages (up from 15×7) plus dedicated
+   structural-proof checks with screenshots (a real `<table>` vs. a card grid for the same
+   Transactions data; three kanban columns vs. one timeline for the same Bills data; real account
+   and merchant names on the new page).
+
+**Full gate, every branch, independently confirmed:** `npm test` (repo/API/app counts vary slightly
+per branch depending which of the six is checked out — each PR's own commit message quotes its
+exact numbers) and `npm run validate` (ok, 24 routes) both exit 0 on every one of the six branches
+before its commit. Six real-headless-Edge `npm run e2e` runs (bills ×2 sequential — once for PR #14,
+again after PR #16's fixes layered on top of PR #14's own branch tip during verification —
+settings, gallery, accountrequests/dashboard/gallery, permanentdelete) all exit 0.
+
+**Git hygiene.** Each of the six units of work was branched fresh off `origin/main` (not stacked on
+each other), so every PR is independently mergeable and independently revertable; `git checkout -b
+<branch> origin/main` while carrying uncommitted changes for a DIFFERENT branch's work required a
+`git stash push -u` / pop around the checkout twice (components.css and gallery-related files had
+uncommitted edits for two different pieces of work at once) — confirmed clean afterward each time
+via `git diff --stat` showing only the intended files. All nine staged-content scans
+(`scripts/scan-staged.cjs`) passed clean before every commit.
+
+**Known gaps, stated plainly (see each PR's own "not done" section for full detail):**
+- The Design Gallery is a real, evidenced improvement, not the full "at least 15 fully bespoke,
+  screenshot-grade designs across every page" the brief describes — Shared expenses and Trips still
+  use one shared template each, and no concept was hand-redesigned beyond its Dashboard and the new
+  pattern axes.
+- The Preview storage account keys were displayed in this session's tool output while seeding DEMO
+  (never written to any file) — flagged above for Terry to consider rotating, out of caution.
+- None of the six PRs is merged, pushed to `main`, or deployed to Preview/Production — per the
+  agent's standing instruction, only Terry merges and deploys. Preview's live commit is still
+  `1a7594d…` (from before this session); merging any of these six PRs and redeploying is Terry's
+  decision.
+- No independent security/financial/UX/accessibility reviewer subagent was available this session
+  (same limitation as prior checkpoints); the security-fix and financial-model reasoning above is
+  thorough but self-reviewed by the same agent that wrote the fix — a genuinely independent pass is
+  recommended before merging PR #13 in particular, given its scope (account-approval bypass).
+
+**Waiting on Terry:**
+- Review and merge order for PRs #13–#18 (#13, security, is the highest-priority to review first).
+- Whether to rotate the Preview storage keys (see the ⚠ note under PR #15).
+- His final selection of which of the 15 Gallery concepts to keep, now with real secondary-page
+  variety to compare, not just the Dashboard.
+- Whether to expand the two-column settings layout or the curved-accent popover pattern to any
+  other screen, beyond the one real case each was applied to in this session.
+
+## Checkpoint AB — combined all six PRs and deployed to Preview (2026-09-18, same session, Terry's
+## explicit request: "combine all and push to preview")
+
+**What was combined.** A new local branch `integration/preview-2026-09-18`, branched fresh off
+`origin/main`, merging PR #13–#18 in sequence (`fix/security-review-2026-09-18` →
+`fix/bills-merchant-2026-09-18` → `feature/demo-preview-seed` → `feature/callout-popover-accent` →
+`feature/workspace-settings-two-column` → `feature/design-gallery-secondary-pages` →
+`docs/session-2026-09-18-checkpoint`). All six merges were clean auto-merges except one: both the
+Bills→Merchant and the curved-accent branches added new checks to the END of the same e2e file
+(`scripts/dev/e2e/bills.mjs`) — resolved by keeping both additions, one after the other. Pushed to
+`origin/integration/preview-2026-09-18` for traceability (not a PR to `main` — the deployed commit
+just needs to be visible in git history; merging still needs Terry's review of the six PRs
+individually).
+
+**Two REAL regressions found only by running the full 19-scenario `npm run e2e` (not just each
+branch's own `--only` scenario) before deploying — exactly why this step matters, not a formality:**
+
+1. **`app/js/ui/merchantpicker.js`'s "opens on focus" (from PR #14) broke a dialog elsewhere in the
+   app.** Root-caused with a real bisect (checked out each of the six merge commits in a scratch
+   worktree, `git worktree add`, and reran the failing scenario at each point — passed through PR
+   #13, failed starting at PR #14) plus direct DOM diagnostics (dumped `#app.inert`, whether the
+   modal was still present, and the exact focused element right after the failing click — not
+   guessed at). The bug: `openModal()` auto-focuses a dialog's first focusable control on open;
+   quick entry's merchant field is sometimes that control; a bare `focus` listener cannot tell that
+   apart from a genuine user click, so it force-opened the FULL merchant list immediately on nearly
+   every "Add expense" dialog open, pushing the dialog's own Cancel/Save footer out of the modal's
+   visible area. The next scripted click (aimed at "Cancel") then landed on the backdrop instead —
+   which correctly does nothing by design ("a click on the backdrop does not close it") — leaving
+   the dialog open and `#app` stuck `inert` for the rest of that browser session, breaking an
+   unrelated settings interaction much later in the same scenario. **Fixed**: dropped the `focus`
+   listener, kept only `click` (a real click/tap still opens it, satisfying the original review
+   finding; ArrowDown/typing already cover keyboard-only use). New direct regression test in
+   `app/test/merchantpicker.test.js` asserts a plain `focus` event never opens the list. Committed
+   to `fix/bills-merchant-2026-09-18` (now `d8e3111`, pushed — PR #14 updated) and re-merged.
+2. **A pre-existing e2e check (`scripts/dev/e2e/settings.mjs`'s "finding 10" bill check) still
+   looked for text that PR #16 moved behind its new accessible popover.** This file isn't part of
+   PR #16's own scenario (`bills.mjs`, which WAS updated correctly at the time) and was missed.
+   Fixed to open the popover first, then read its own text (with the extra Escape press
+   `escapeBelongsToControl` now requires). Committed to `feature/callout-popover-accent` (now
+   `39e2b70`, pushed — PR #16 updated) and re-merged.
+
+**Full verification after both fixes, on the combined branch:**
+- `npm test`: 39/651/492, exit 0. `npm run validate`: ok, 24 routes, exit 0.
+- Real headless Edge, full 19-scenario `npm run e2e` (twice, once per fix): the ONLY failures
+  remaining are the pre-existing, already-documented `409 workspace_rate` artifact (alice's daily
+  10-workspace creation quota exhausted by cumulative scenario runs sharing one dev-server instance
+  within a single full-suite invocation — see Checkpoint Y/Z; not a regression, and every one of
+  those scenarios (`accounts`, `bills`, `dashboard`) passes 100% clean when run in isolation, each
+  independently re-verified this session).
+- A final targeted real-browser run of the 8 most relevant scenarios together
+  (`settings,recheck,bills,accounts,dashboard,gallery,accountrequests,permanentdelete`): **264
+  passed, 0 failed, exit 0** — clean confirmation before deploying.
+
+**Deployed to Preview** via the one supported entry point, `scripts/deploy/deploy.ps1
+-Environment preview` (never the engine or `az` directly) — the gate re-ran everything (test,
+validate, build, secret-scan) inside the script itself and passed again. Deployment receipt:
+```
+target  : budget-tracker / budget-tracker (preview)
+url     : https://polite-plant-03bb7570f-preview.eastus2.3.azurestaticapps.net
+sha     : 5939e6a6fe4e93fc67508c2781eaac4af7ae13db
+version : 0.1.0-alpha.1
+checks  : ok target, ok gitState, ok confirmation, ok azureResource, ok settings, ok test,
+          ok validate, ok build, ok secretScan, ok upload, ok commitSetting, ok healthCheck
+result  : SUCCESS
+```
+Independently verified live, separately from the script's own receipt: `GET
+.../api/site-settings` reports `environment: "preview"`, `commit:
+"5939e6a6fe4e93fc67508c2781eaac4af7ae13db"` (exact match); `GET /` returns 200; anonymous `GET
+/api/me` returns 401 (auth still enforced). Preview's DEMO workspace (PR #15, seeded earlier this
+session under the same commit lineage) is unaffected by this deploy — it lives in Blob storage, not
+in the deployed code artifact.
+
+**Still true:** nothing has been merged, pushed to `main`, or deployed to Production. PRs #13–#19
+are still open, each independently reviewable; only the ARTIFACT built from their combination is
+now live on Preview, not their merge into `main`. Terry's review/merge order for the six PRs is
+still his decision; if he wants a different combination on Preview (e.g., merges only some of the
+six), the next deploy will need combining again from whatever he picks.
+
+**Exact next step:** none queued. Preview reflects all six PRs' combined work as of commit
+`5939e6a`. The next session should check whether Terry has reviewed/merged any of PR #13–#19,
+rebase/re-verify the others if `main` has moved, and pick up his feedback — including on the live
+Preview build itself now that it's actually reachable.
