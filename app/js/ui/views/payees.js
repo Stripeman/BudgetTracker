@@ -9,7 +9,7 @@ import { openModal } from "../modal.js";
 import { openDeleteDialog } from "../permanentdelete.js";
 import { sliceFor } from "../../core/store.js";
 import { formatDate, todayIso, MERCHANT_TYPE_LABELS } from "../../core/format.js";
-import { normalize } from "../merchantpicker.js";
+import { normalize } from "../merchantselect.js";
 import { icon, withIcon, iconLabel, defaultIconFor } from "../icons.js";
 import { createIconPicker, iconChange } from "../iconpicker.js";
 

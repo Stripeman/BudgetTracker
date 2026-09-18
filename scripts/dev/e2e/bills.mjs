@@ -76,16 +76,55 @@ export async function run(h, t) {
   })()`);
   t.check("removed once focus leaves", { expected: false, actual: after });
 
-  // A helper: find the input a <label> in the given root points at, by its own text — the same
-  // reliable way other e2e scenarios locate a field regardless of which picker sits before it in
-  // the DOM (accounts.mjs's own byLabel pattern) — `document.querySelector('[role="combobox"]')`
-  // alone is not enough here, since every pickerSelect trigger in this form ALSO has that role and
-  // the Merchant field is not first among them.
+  // A helper: find the field a <label> in the given root points at, by its own text, and read its
+  // shown value — the same reliable way other e2e scenarios locate a field regardless of which
+  // picker sits before it in the DOM (accounts.mjs's own byLabel pattern). Merchant is now the SAME
+  // command picker as Category (Terry, 2026-09-18: "the drop down to look like that of the category
+  // field ... I KEEP CALLING FOR CONSISTENCY") — the label's `for` points at the TRIGGER BUTTON, not
+  // an input, so the shown value is read from its own `.cmdpick__value` text, exactly the way
+  // settings.mjs already reads the Workspace settings' own pickers.
   const byLabelValue = (s, label) => s.evaluate(`(() => {
     const l = [...document.querySelectorAll(".modal label")].find((x) => x.textContent === ${JSON.stringify(label)});
-    const el = l && document.getElementById(l.getAttribute("for"));
-    return el ? el.value : null;
+    const target = l && document.getElementById(l.getAttribute("for"));
+    if (!target) return null;
+    const cmdValue = target.querySelector && target.querySelector(".cmdpick__value");
+    return cmdValue ? cmdValue.textContent : target.value;
   })()`);
+
+  // Opens the Merchant field (the same command picker as Category, click opens it) and types a term
+  // into its search box, leaving the panel OPEN — for a caller that still wants to act on it (search
+  // for an existing merchant, or click the pinned "Add merchant" action) rather than commit it.
+  async function openMerchantSearch(s, term, { scope = ".modal" } = {}) {
+    // A click TOGGLES the panel (commandpicker.js): only click the TRIGGER when it is not already
+    // open, so this never accidentally CLOSES it if an earlier check left it open.
+    const alreadyOpen = await s.evaluate("!!document.querySelector('.cmdpick__panel:not([hidden])')");
+    if (!alreadyOpen) {
+      const at = await s.locate({ css: ".cmdpick__trigger", label: "Merchant", scope });
+      await s.mouseClick(at.x, at.y);
+      await s.waitFor("!!document.querySelector('.cmdpick__panel:not([hidden])')", { what: "the Merchant list to open" });
+    }
+    // Focus the search box directly, always — a panel an earlier check left open via a raw JS
+    // dispatch (not a real click) may not have moved real browser focus into it, and typing must
+    // never land wherever focus happens to already be.
+    const search = await s.locate({ css: ".cmdpick__search" });
+    await s.mouseClick(search.x, search.y);
+    await s.cdp.send("Input.insertText", { text: term });
+    await s.settle({ quiet: 150 });
+  }
+
+  // Terry's exact acceptance flow: type a merchant name nothing matches and just move on — never
+  // requiring the "Add merchant" pinned action first (allowCustom, commandpicker.js A16). A click
+  // anywhere else — here, the dialog's own title — commits it, exactly like tabbing or clicking on
+  // to the next field would.
+  async function typeMerchantDraft(s, term, { scope = ".modal" } = {}) {
+    await openMerchantSearch(s, term, { scope });
+    // Shift+Tab straight out of the search box (the panel's own "first" element, commandpicker.js
+    // A16) commits the typed value regardless of whether a "+ Add merchant" pinned action is also
+    // present — a plain click risked landing on the panel itself if it happened to open upward over
+    // the dialog title, which would not count as "outside" and so would never commit.
+    await s.press("Tab", { shift: true });
+    await s.waitFor("!document.querySelector('.cmdpick__panel:not([hidden])')", { what: "the Merchant list to close after committing" });
+  }
 
   // ---- Pending merchants: the TYPED name is shown, never the bill's own title ---------------------
   await b.alice.goto("payees");
@@ -229,8 +268,29 @@ export async function run(h, t) {
     expected: { found: true, before: "false", after: "true" }, actual: opensOnClick,
   });
 
+  // ---- Terry, 2026-09-18 (verbatim): "what i did ask for was the drop down to look like that of
+  // the category field ... I KEEP CALLING FOR CONSISTENCY" — real DOM proof, not just behaviour,
+  // that Merchant is now the exact same shared component as Category, never a bespoke lookalike. --
+  const consistency = await b.alice.evaluate(`(() => {
+    const byLabel = (t) => { const l = [...document.querySelectorAll(".modal label")].find((x) => x.textContent === t); return l && document.getElementById(l.getAttribute("for")); };
+    const merchant = byLabel("Merchant");
+    const category = byLabel("Category");
+    return {
+      merchantIsCmdpickTrigger: !!(merchant && merchant.classList.contains("cmdpick__trigger")),
+      categoryIsCmdpickTrigger: !!(category && category.classList.contains("cmdpick__trigger")),
+      sameTagName: !!(merchant && category && merchant.tagName === category.tagName),
+      merchantHasNoBespokeClass: !!(merchant && !document.querySelector(".combo, .combo__list, .combo__option")),
+    };
+  })()`);
+  const shotConsistency = await b.alice.shot("bills-merchant-matches-category");
+  t.check("Merchant's trigger is the SAME .cmdpick__trigger component Category uses, both <button> elements, no bespoke combobox markup anywhere on the page", {
+    expected: { merchantIsCmdpickTrigger: true, categoryIsCmdpickTrigger: true, sameTagName: true, merchantHasNoBespokeClass: true },
+    actual: consistency,
+  });
+  t.note(`screenshot: ${shotConsistency}`);
+
   // ---- typing an unmatched name and saving persists it as the bill's own payeeDraftName -----------
-  await b.alice.fill("Merchant", "E2E Freshly Typed Merchant");
+  await typeMerchantDraft(b.alice, "E2E Freshly Typed Merchant");
   await b.alice.click({ role: "button", name: "Save changes", scope: ".modal" });
   await b.alice.waitFor("!document.querySelector('.modal')", { what: "the edit dialog to close after saving" });
   await b.alice.settle();
@@ -281,9 +341,9 @@ export async function run(h, t) {
   await b.alice.waitFor("!!document.querySelector('.modal')", { what: "the bill's edit dialog, reopened" });
   const beforeReplace = await byLabelValue(b.alice, "Merchant");
   t.check("reopening shows the just-typed pending name", { expected: "E2E Freshly Typed Merchant", actual: beforeReplace });
-  await b.alice.fill("Merchant", "E2E Inline Created Merchant");
-  await b.alice.waitForText("Add “E2E Inline Created Merchant” as a new merchant", { scope: ".modal" });
-  await b.alice.click({ text: "Add “E2E Inline Created Merchant” as a new merchant", scope: ".modal" });
+  await openMerchantSearch(b.alice, "E2E Inline Created Merchant");
+  await b.alice.waitForText("Add merchant “E2E Inline Created Merchant”", { scope: ".modal" });
+  await b.alice.click({ text: "Add merchant “E2E Inline Created Merchant”", scope: ".modal" });
   await b.alice.waitFor("document.querySelectorAll('.modal').length === 2 || (document.querySelector('.modal h2') && document.querySelector('.modal h2').textContent === 'Add merchant')", { what: "the inline create-merchant dialog to open on top" });
   await b.alice.click({ role: "button", name: "Add merchant", scope: ".modal" });
   await b.alice.waitFor("document.querySelectorAll('.modal').length <= 1", { what: "the inline create dialog to close, back to the bill editor" });
@@ -308,12 +368,9 @@ export async function run(h, t) {
   await b.alice.waitFor("!!document.querySelector('.modal')", { what: "the new-bill dialog" });
   await b.alice.fill("Name", "E2E Search For Resolved Merchant");
   await b.alice.fill("Amount", "10.00");
-  await b.alice.fill("Merchant", "Rent Landlord");
+  await openMerchantSearch(b.alice, "Rent Landlord");
   await b.alice.waitForText("E2E Rent Landlord Co", { scope: ".modal" });
-  const optionShown = await b.alice.evaluate(`(() => {
-    const opt = [...document.querySelectorAll(".modal .combo__option")].find((li) => li.textContent.includes("E2E Rent Landlord Co"));
-    return !!opt;
-  })()`);
+  const optionShown = await b.alice.evaluate(`!![...document.querySelectorAll(".modal .cmdpick__opt")].find((li) => li.textContent.includes("E2E Rent Landlord Co"))`);
   t.check("typing part of an already-resolved merchant's name filters it into the list, like Category's own search", { expected: true, actual: optionShown });
   await b.alice.click({ text: "E2E Rent Landlord Co", scope: ".modal" });
   const searchSelected = await byLabelValue(b.alice, "Merchant");
