@@ -186,7 +186,9 @@ export function createView(ctx) {
     const overrides = () => Object.fromEntries(people.filter((p) => p.pick.value !== p.m.override).map((p) => [p.m.memberId, p.pick.value]));
     return {
       group,
-      node: el("fieldset", { class: "plain-fieldset setting" }, [
+      // A per-member permission list is a complex control that can run to many rows — kept
+      // full-width in the two-column settings layout (item 5, review 2026-09-18), never squeezed.
+      node: el("fieldset", { class: "plain-fieldset setting setting--wide" }, [
         el("legend", { class: "field__label", text: perPerson.label }),
         el("p", { class: "field__help", text: "Each person follows the group setting above unless you choose Yes or No for them. Yes lets them confirm any reported payment, their own included; No lets them confirm only payments made to them. A viewer can only ever confirm payments made to them." }),
         el("div", { class: "stack" }, people.map((p) => p.node)),
