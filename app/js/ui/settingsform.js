@@ -199,7 +199,10 @@ export function createSettingsForm({ id, storageKey, onSave, onDirtyChange = () 
       pick.addEventListener("change", () => { c.clearInvalid(refs.error && refs.error.id); refreshDirty(); });
     }
     c.changed = () => JSON.stringify(c.read()) !== JSON.stringify(s.value);
-    c.wrapper = el("div", { class: "setting", dataset: { setting: s.key } }, [badgeNode, c.node, siteNote, ...moreAbout(s, withOptionNotes(s, rest))]);
+    // A set of checkboxes (often several options with longer labels) stays full-width in the
+    // two-column layout below (components.css) rather than being squeezed into one column (item 5,
+    // review 2026-09-18) — everything else is a short label+control pair, well suited to a column.
+    c.wrapper = el("div", { class: ["setting", s.type === "set" ? "setting--wide" : ""], dataset: { setting: s.key } }, [badgeNode, c.node, siteNote, ...moreAbout(s, withOptionNotes(s, rest))]);
     return c;
   }
 

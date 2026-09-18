@@ -325,6 +325,37 @@ export async function run(h, t) {
   t.check("390 px: the Workspace page has no horizontal overflow with the settings card", { expected: false, actual: overflow });
   await narrow.evaluate(`document.querySelector('${CARD}').scrollIntoView({ block: 'start' })`);
   t.note(`screenshot at 390 px: ${await narrow.shot("card-390")}`);
+
+  // ---- item 5 (review, 2026-09-18): responsive two-column settings layout, real computed styles ----
+  const columnCount = (widths) => widths.trim().split(/\s+/).length;
+  const narrowColumns = await narrow.evaluate(`(() => { const body = document.querySelector('${CARD} .settings-group__body'); return body ? getComputedStyle(body).gridTemplateColumns : null; })()`);
+  t.check("390 px: the settings groups stay a single column (never squeezed to fit two)", { expected: 1, actual: narrowColumns ? columnCount(narrowColumns) : null });
+  await b.alice.goto("workspace");
+  await b.alice.waitForText("Save settings", { scope: CARD });
+  // "Bills" has several short settings together — a clearer visual proof of the two-column layout
+  // than "Shared expenses" alone (which has just one), for the screenshot taken right below.
+  await openGroup(b.alice, CARD, "Bills");
+  await b.alice.evaluate(`(() => { const b = [...document.querySelectorAll('${CARD} button.settings-group__toggle')].find((x) => x.textContent === 'Bills'); b.scrollIntoView({ block: 'start' }); })()`);
+  const wideLayout = await b.alice.evaluate(`(() => {
+    const body = document.querySelector('${CARD} .settings-group__body');
+    if (!body) return null;
+    const cols = getComputedStyle(body).gridTemplateColumns;
+    const first = body.querySelector('.setting:not(.setting--wide)');
+    const wide = body.querySelector('.setting--wide, .settings-dl');
+    return {
+      columns: cols, gridColumnOfShort: first ? getComputedStyle(first).gridColumn : null,
+      gridColumnOfWide: wide ? getComputedStyle(wide).gridColumn : null,
+    };
+  })()`);
+  const shotWide = await b.alice.shot("workspace-settings-two-column");
+  t.check("desktop width (1280 px): the settings groups lay out as two columns", { expected: 2, actual: wideLayout && wideLayout.columns ? columnCount(wideLayout.columns) : null });
+  t.check("a short control sits in one column (not spanning both)", { expected: true, actual: !!(wideLayout && wideLayout.gridColumnOfShort && !/^1\s*\/\s*(-1|\d+\s*span)/.test(wideLayout.gridColumnOfShort) && wideLayout.gridColumnOfShort !== "1 / 3") });
+  if (wideLayout && wideLayout.gridColumnOfWide) {
+    t.check("a wide/read-only/complex control spans both columns, never squeezed into one", { expected: true, actual: /span 2|1 \/ -1|1 \/ 3/.test(wideLayout.gridColumnOfWide) });
+  } else {
+    t.note("no wide/read-only control present in this workspace's open settings group to check — covered separately by app/test/workspacesettings.test.js's CSS-independent structural assertions");
+  }
+  t.note(`desktop grid-template-columns: ${wideLayout && wideLayout.columns}; screenshot: ${shotWide}`);
   await b.alice.cdp.send("Emulation.setEmulatedMedia", { features: [{ name: "prefers-color-scheme", value: "dark" }, { name: "prefers-reduced-motion", value: "reduce" }] });
   await b.alice.goto("workspace");
   await b.alice.waitForText("Save settings", { scope: CARD });

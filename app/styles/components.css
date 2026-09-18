@@ -721,6 +721,22 @@ fieldset.budget-line { margin: 0; padding: var(--space-3); border: 1px solid var
 .settings-group__toggle[aria-expanded="true"]::before { content: "▾" / ""; }
 .settings-group__body { display: flex; flex-direction: column; gap: var(--space-4); padding: 0 0 var(--space-4); }
 .settings-group__body[hidden] { display: none; }
+/* Responsive two-column layout for Workspace/Shared-expenses settings (item 5, review 2026-09-18):
+   on a wide enough screen, related short controls sit side by side instead of one long column;
+   below that, or for anything genuinely wide (a table-like read-only list, a per-member permission
+   control, a checkbox set, or a group note), it stays a single column. This is CSS Grid's own
+   row-major auto-placement — settings simply flow left-to-right, top-to-bottom in the SAME order
+   they are in the DOM (never re-sorted or bisected into two separate halves), so keyboard/tab order
+   and screen-reader order are exactly the visual order, unchanged from the single-column layout. */
+@media (min-width: 900px) {
+  .settings-group__body {
+    display: grid; grid-template-columns: repeat(2, minmax(0, 1fr));
+    column-gap: var(--space-6); row-gap: var(--space-4); align-items: start;
+  }
+  .settings-group__body > .notice,
+  .settings-group__body > .settings-dl,
+  .settings-group__body > .setting--wide { grid-column: 1 / -1; }
+}
 /* Controls at normal form width, not the whole card (finding 2). */
 .setting { max-width: 34rem; display: flex; flex-direction: column; gap: var(--space-1); }
 .setting > .badge { align-self: flex-start; }
