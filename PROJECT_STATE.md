@@ -2520,3 +2520,236 @@ and verify, per the established `deploy.ps1` workflow only. After that release i
 BT-015 on a feature branch (the most self-contained and least design-decision-blocked of the three
 backlog items), continuing straight into BT-017, and start BT-016 with the required design
 recommendation before any of its implementation.
+
+## Checkpoint AI — authorization received and acted on: PR #16 conflict resolution, PRs #16–#20 merged
+to `main`, two full Preview+Production release cycles, BT-015 built/fixed/verified end to end
+(2026-09-18, same session — Terry gave explicit, repeated, unambiguous authorization: "push to main
+(merge prs if you have any) then push to staging and then to production. i have already giving you
+explicit permission for this today. DO NOT STOP.")
+
+**1. PR #16 merge conflict resolved.** Terry reported PRs #13–#15 merged by him, and PR #16
+(`feature/callout-popover-accent`, the curved-accent/popover work) then showed conflicts. Worked
+on the PR's own branch (not a throwaway copy): fetched `origin/main`, merged it in, found the only
+real conflict in `scripts/dev/e2e/bills.mjs` — both sides had inserted content around the same
+"open a new Add bill dialog" line (HEAD: curved-accent popover checks; `origin/main`: the fuller
+Bills→Merchant checks from PR #14). Resolved by keeping BOTH: `origin/main`'s whole Bills→Merchant
+block first (ending on its own dialog-open sequence), a second explicit "goto bills → Add bill →
+wait for modal" sequence, then HEAD's popover-specific checks — no assertions from either side
+dropped. Verified: `node --check` on the merged file, full suite (`npm test` 39/650/490, exit 0),
+and targeted real-browser e2e (`bills` 37/37, dropdown+transactions 42/42, `settings` 20/20, all
+exit 0). Committed and pushed on the PR branch; `gh pr view 16 --json mergeable,mergeStateStatus`
+then reported `MERGEABLE` / `CLEAN`.
+
+**2. PRs #16–#19 merged into `main`.** Per Terry's follow-up ("after you resolve the conflicts for
+pr 16, perform the merges for the rest of the PRs into main" / "are you merging 17, 18 and 19 or
+shall i?" confirming yes), merged sequentially with `gh pr merge --merge --delete-branch=false`,
+re-checking each remaining PR's mergeability after every merge (merging one can change another's
+computed diff): #16 (callout/popover accent), #17 (Workspace/Shared-expenses settings responsive
+two-column layout), #18 (Design Gallery secondary pages: Accounts/Merchants), #19 (a
+`PROJECT_STATE.md` checkpoint doc-only PR). No regressions introduced — confirmed by the full gate
+passing on `main` after each merge.
+
+**3. First Preview + Production release cycle.** Built `main` in an isolated worktree
+(`.local/worktrees/main-deploy`, gitignored scratch space) so the primary checkout's own
+in-progress BT-015 work was never disturbed. Two real setup problems, both fixed, not hidden: (a)
+a fresh worktree has no `.local/deploy-target.json` or `.local/bin/gitleaks.exe` — `.local/` is
+per-worktree even though `.git` is shared — copied both from the primary checkout; (b)
+`git worktree add <path> origin/main` produces a detached HEAD, which `deploy.ps1` refuses — fixed
+with `git checkout -B main origin/main` inside the worktree. Deployed with the one supported entry
+point only: `./scripts/deploy/deploy.ps1 -Environment preview`, then
+`./scripts/deploy/deploy.ps1 -Environment production -AuthorizedProduction -Confirm 'budget-tracker'`
+(exact Static Web App name read from `.local/deploy-target.json`, never invented). Storage keys
+were never rotated. Verified independently and live, not assumed from a successful script exit:
+  - Preview: commit matches `main` at merge time; `GET /api/me` anonymous → `401`.
+  - Production (`https://budget.remsik.org`): commit matches Preview exactly; anonymous `/api/me`
+    → `401`.
+
+**4. BT-015 (compact "::" record action menus) built, debugged with real bugs found and fixed, and
+fully verified.** New shared component `app/js/ui/actionsmenu.js` (`createActionsMenu`), built on
+the same overlay engine (`app/js/ui/overlay.js`) and dismissal registry (`app/js/ui/popup.js`) as
+BT-004-08's dropdown fix and the existing theme/command pickers — not a new, divergent popup
+mechanism. New shared `"more"` icon added identically to both `app/js/ui/icons.js` and
+`api/_shared/icons.js` (kept equal by the existing `icons.test.js` cross-check). Wired into
+Accounts, Bills, Merchants (payees) and Transactions, preserving each screen's EXACT pre-existing
+action order (e.g. Accounts: Edit→Close/Reopen→Who can see this→Remove→Delete permanently;
+Transactions: Edit→Reverse→Move→History→Delete→Delete permanently) with destructive actions
+visually separated (`.actionsmenu__item--separated`). `modal.js`'s escape/outside-click handling
+extended to recognize the new panel/toggle classes, matching the existing pattern for other
+overlays. Three real bugs found by testing, not assumed:
+  - **36px touch target.** `.actionsmenu__toggle` inherited `var(--control-height, 2.25rem)` = 36px;
+    the dedicated e2e scenario's own "comfortable mobile touch target (>=40x40)" check failed with
+    `actual: false`. Fixed with a dedicated 44px minimum independent of the shared control-height
+    token.
+  - **Sr-only tooltip text polluting menu-item text assertions.** Bills' "Record next" info-tip and
+    Transactions' disabled-Move hover explanation both legitimately include an off-screen
+    `.sr-only` span; several e2e checks were reading raw `textContent`. Fixed by cloning the node
+    and stripping `.sr-only` children before reading text, everywhere this pattern occurred.
+  - **Zero-items dead-menu edge case.** `createActionsMenu` correctly renders no toggle at all when
+    an individually-permission-gated item list is empty (matches pre-BT-015 behavior — never a "::"
+    that opens to nothing) — but this meant a zero-item row had no toggle of its own to dismiss a
+    *different*, previously-opened sibling row's menu, which broke a real unit test
+    (`movetransaction.test.js`). Root-caused (not patched around): fixed the test's `openRowMenu`
+    helper to find and click closed any currently-`aria-expanded="true"` toggle anywhere in the
+    document before opening the target row's own toggle, mirroring the actual real-world mechanism.
+  - Distinct from "mount node" vs. "operable node": `infoTip(node, text, id)` returns a *new*
+    wrapper, not the same node — `createActionsMenu` finds the innermost
+    `button`/`[tabindex]` descendant for role/focus/keyboard-nav purposes while using the outer
+    wrapper for panel layout.
+  Final verification: dedicated new e2e scenario `scripts/dev/e2e/actionsmenu.mjs` (no-reflow
+  proof, exact per-screen action order, destructive-item separation, full keyboard navigation,
+  outside-click dismissal, 44px mobile touch target) — 19/19 passed. Every existing e2e scenario
+  and unit test touching row actions across all four screens was updated to open the new menu
+  first (`Session.openRecordMenu()` harness helper added) rather than clicking legacy buttons
+  directly. **Full unfiltered `npm run e2e`: 645 passed / 0 failed / 0 skipped, exit 0.**
+  `npm test`: 39 files / 652 suites / 511 subtests (whichever count matches the coverage — see raw
+  output), exit 0. `npm run validate`: exit 0. `docs/REQUIREMENTS.md`'s BT-015 row updated from
+  "Planned" to "Built and verified" with this evidence.
+
+**5. Second Preview + Production release cycle.** Per Terry's clarified sequence ("after your PR
+merges... push to preview and then production. then continue both sets of work... then do the
+same"), merged `origin/main` (now containing PRs #16–#19) back into the working branch
+`integration/preview-2026-09-18` (one clean auto-merge, no conflicts this time), opened PR #20
+("BT-004-08/09, BT-013-08, BT-014-18, BT-015: dropdown overlay, Gallery typography, e2e isolation,
+compact actions menu"), merged it into `main` (`e613a72`), and repeated the exact same
+worktree-based `deploy.ps1` process (a second scratch worktree, `.local/deploy-target.json` and
+`gitleaks.exe` copied in again). Verified independently on both environments again:
+  - Preview (`https://polite-plant-03bb7570f-preview.eastus2.3.azurestaticapps.net`): commit
+    `e613a72bdebbfcb82c579c4f9343654be8623869`, environment `preview`, anonymous `/api/me` → `401`.
+  - Production (`https://budget.remsik.org`): commit `e613a72bdebbfcb82c579c4f9343654be8623869`
+    (exact match to Preview), environment `production`, anonymous `/api/me` → `401`.
+
+**6. Housekeeping.** `git worktree remove --force` failed with "Permission denied" for both
+deploy worktrees (likely a Windows file lock inside `node_modules`); not forced further since
+`.local/` is gitignored and harmless either way — `git worktree prune` clears git's own tracking
+where the directory itself can't yet be removed. `git worktree list` confirms only the primary
+checkout and the long-running per-agent worktrees remain tracked; the two ad hoc deploy worktrees
+are gone from tracking (any leftover directory under `.local/worktrees/` is inert, gitignored
+scratch space, not repository state).
+
+**7. BT-016 (shared-expense contacts/external participation) — research done, design
+recommendation delivered to Terry, implementation NOT started (blocked on his decision as required
+by his own instruction).** Read `api/_shared/people.js`, `api/_shared/workspace-model.js`,
+`api/_shared/authz.js`, `api/contacts/handler.js`. Finding: the existing typed reference system
+(`member:<id>` = authenticated workspace member with real app access per role; `contact:<id>` =
+workspace-shared contact, no login, no access; `pcontact:<id>` = one person's own private contact,
+no login, no access, usable only on that person's private records) plus the already-built
+lightweight `group`/`trip` workspace kinds (distinct from full-scope `household`) already
+structurally cover most of Terry's three-tier distinction (calculation-only reference / invited
+viewer / authenticated editor). The real open design question is narrower than it first looked:
+today, inviting a participant who needs to sign in means inviting them into a workspace, which
+grants visibility into that WHOLE workspace's shared-expense ledger — there is no existing
+narrower, single-expense-only sharing boundary. Recommendation given to Terry: prefer directing
+sign-in-needing external participants into a dedicated, purpose-scoped `group` or `trip`
+workspace (cheap, reuses already-built and already-tested infrastructure, and its scope is the
+whole point of a trip/group in the first place) rather than building a genuinely new
+per-expense-only access-control mechanism, unless Terry specifically wants people to see only one
+shared expense and nothing else in that group/trip — in which case that would be new work, not a
+small addition, since no code path today grants visibility narrower than a workspace.
+
+**8. BT-017 (redesign My Settings and Workspace Settings) — real inventory done, implementation
+NOT yet started.** Read `app/js/ui/views/settings.js`, `app/js/ui/settingsform.js`,
+`app/js/ui/views/workspace.js`. My Settings is ~8 separate flat `<section class="card">` blocks
+stacked vertically with no grouping, no collapsing and no responsive multi-column layout (Your
+name, Appearance, Display and privacy, Private contacts, Staging link, Deleted workspaces,
+Category colours [admin], Icon catalogue [admin]) — almost certainly the source of the "cluttered"
+complaint. Workspace Settings already has collapsible groups (`settings-group__toggle`, first
+group open by default), a responsive two-column CSS grid (from BT-011 item 5 / PR #17), and
+consistent unsaved/saved/error states — much closer to what Terry described wanting. Proposed next
+step: apply the same task-oriented grouping and reuse `settingsform.js`'s existing shared
+group/collapse component on My Settings, rather than inventing a second settings-layout pattern.
+Not implemented yet this checkpoint; continuing as the next unblocked slice of backlog work.
+
+**Waiting on Terry:** the BT-016 design recommendation above is now delivered — if he wants the
+narrower true per-expense-only sharing boundary instead of the recommended group/trip-workspace
+approach, that changes BT-016 from a small integration into real new access-control design and
+implementation work. Otherwise, nothing new is blocking; BT-017 continues as unblocked work per
+Terry's own "continue other unblocked work" instruction, followed by another
+merge-to-`main`-then-Preview-then-Production cycle once it reaches a verified checkpoint, per his
+explicit "do the same" instruction — without pausing to ask again.
+
+**Exact next step (superseded by Checkpoint AJ below):** continue BT-017 (My Settings regrouping,
+reusing `settingsform.js`'s existing collapsible/two-column pattern) on a feature branch; when it
+reaches a verified checkpoint (full gate + targeted e2e), merge to `main` and repeat the
+established Preview-then-Production `deploy.ps1` release process again; begin BT-016
+implementation only once Terry confirms which of the two options above he wants.
+
+## Checkpoint AJ — BT-017 first increment: My Settings regrouped into task-oriented, collapsible
+sections on `feature/settings-redesign-BT-017` (2026-09-18, same session, continuing unblocked
+backlog work per Terry's own "continue other unblocked work" instruction while BT-016 waits on his
+decision)
+
+**What changed.** `app/js/ui/views/settings.js`'s ~8 previously flat, ungrouped `<section
+class="card">` blocks (Your name, Appearance, Display and privacy, Private contacts, Staging link,
+Deleted workspaces, Category colours and icons, Icon catalogue) are now grouped into five named,
+collapsible, task-oriented sections: **Profile & appearance**, **Display, privacy & contacts**,
+**Staging link**, **Category colours & icons**, **Deleted workspaces**. New shared module
+`app/js/ui/settingsgroup.js` (`createSettingsGroup`) provides the disclosure shell — same CSS
+classes (`settings-group`, `settings-group__toggle`, `settings-group__body`) and the same
+per-browser localStorage-remembered open/closed behaviour as Workspace Settings' own groups in
+`settingsform.js` — so both pages look and behave the same, per Terry's own coherence requirement.
+`settingsform.js` itself was deliberately left untouched (no risk to the already-verified Workspace
+Settings page); the new module is a separate, additive shell only My Settings uses so far.
+
+No individual card's own internal logic, markup or event handling changed at all — each keeps
+rendering and updating itself exactly as before; only how the cards are grouped, labelled and
+shown/collapsed changed. `colourCard`, `catalogCard` and `deletedCard` gained `card--full` (the
+existing full-width-in-grid class already used by `colourCard`) so a section containing only one
+card, or two naturally-stacking ones, doesn't leave an awkward empty half-column.
+
+**Default open/closed decision, and why (a real regression caught and fixed, not assumed away).**
+First pass collapsed every section except the first ("first group open," matching
+`settingsform.js`'s own convention for its much longer settings lists). Running the existing real
+e2e suite immediately caught THREE real regressions from that choice, not hypothetical ones:
+  - `deleteworkspace.mjs` navigates straight to My Settings and expects the just-deleted
+    workspace's name and its "Bring back" button immediately visible and clickable, with no extra
+    click to expand anything.
+  - `staging.mjs` clicks "Clear my saved address" by role/name right after navigating to My
+    Settings, with no scoping into an assumed-open ancestor — a hidden (collapsed) ancestor removes
+    a button from the accessibility tree entirely, so an unscoped role/name click would not find it
+    at all, not merely time out.
+  - `overlay.mjs` measures the Colour palette control and the Display-and-privacy card's exact
+    position on the page (BT-004-08's no-reflow proof) — both need to already be open, not behind a
+    click.
+  Root-caused instead of patched around: rather than leaving everything open (which would not meet
+  Terry's own "collapsible advanced sections" criterion at all), only **Category colours & icons**
+  — genuinely optional, mostly-administrative customization — starts collapsed by default. Every
+  other section, including ones that only sometimes appear at all (Deleted workspaces), starts open
+  exactly as visible as before; nothing that used to be immediately visible now needs an extra
+  click to find. This is a closer, more literal reading of "collapsible ADVANCED sections" than the
+  first pass, not just a workaround for the failing tests.
+
+**Verification.**
+  - New dedicated e2e scenario `scripts/dev/e2e/mysettings.mjs` (`--only mysettings`): confirms the
+    task-oriented section names and order; confirms only "Category colours & icons" starts
+    collapsed while the everyday sections start open; confirms a collapsed section's content is
+    genuinely hidden (not merely styled shut); confirms expanding it reveals the real, pre-existing
+    Category colours and icons card; confirms every existing card (name, staging, display and
+    privacy) still renders inside its new section; confirms collapsing a section persists across a
+    real page reload, exactly like Workspace Settings' own groups; confirms no console
+    errors/exceptions/failed requests. **7/7 passed, exit 0.**
+  - Full unfiltered `npm run e2e`: **652 passed / 0 failed / 0 skipped, exit 0** (up from 645 before
+    this change, the +7 being the new scenario; zero regressions elsewhere, including the three
+    real ones caught and fixed above).
+  - `npm test`: **39/652/511, exit 0.** `npm run validate`: **exit 0** (24 routes).
+  - `docs/REQUIREMENTS.md`'s BT-017 row updated to "Partially built" with this evidence; explicitly
+    notes what remains open (a fuller personal-vs-workspace visual distinction beyond the existing
+    source badges, and a broader visual/spacing pass) — not overclaimed as finished.
+
+**Not done in this increment (disclosed, not silently skipped).** Workspace Settings itself was not
+touched (it already met most of BT-017's criteria per the Checkpoint AI inventory, and touching an
+already-verified, already-released page carries its own regression risk for no clear benefit yet).
+The "personal-vs-workspace" visual distinction and "a clearly separated destructive area" criteria
+from Terry's original brief are only partly addressed (existing source badges already say
+inherited/customized/locked; "Deleted workspaces" is arguably the closest thing My Settings has to
+a destructive/recovery area, and it is not yet visually distinguished as such beyond being its own
+named section). A further visual/spacing pass and a similar look at whether Workspace Settings
+needs any changes remain open work, tracked here rather than declared complete.
+
+**Waiting on Terry:** unchanged from Checkpoint AI — the BT-016 recommendation is delivered and
+awaiting his decision; nothing new is blocking.
+
+**Exact next step:** merge this branch (`feature/settings-redesign-BT-017`) to `main` and repeat
+the established Preview-then-Production `deploy.ps1` release cycle, per Terry's explicit "do the
+same" instruction; continue BT-017 with the remaining open items above, or move to another
+unblocked backlog item, afterward; begin BT-016 implementation only once Terry confirms which of
+the two recommended options he wants.
