@@ -2806,10 +2806,98 @@ decision; (3) going forward, any further "merge to main" / "deploy Production" s
 work sequence will need to come from him directly, not from a repeated instruction to this agent —
 flagged now so it does not need re-discovering on a future context reset.
 
-**Exact next step (superseded by Checkpoint AM below):** continue BT-017's remaining open items
+**Exact next step (superseded by Checkpoint AL below):** continue BT-017's remaining open items
 (personal-vs-workspace visual distinction, a broader visual/spacing pass) or move to other
 unblocked backlog work; prepare any further work as reviewed, pushed feature branches with open
 PRs ready for Terry to merge, rather than assuming this agent can merge or deploy Production itself.
+
+## Checkpoint AL — Production caught up by Terry; BT-018 ("Add as bill") and the simplified slice of
+BT-016 ("Add person") built and verified, each as its own PR; working through Terry's full batch
+(new feature → BT-016 → BT-017 → BT-009/011/013/014/015, BT-007/010 on hold) (2026-09-18, same
+session)
+
+**Production confirmed caught up.** After Checkpoint AK's Preview-only deploy, Terry ran the
+Production deploy himself. Independently verified via the anonymous `GET /api/site-settings`
+endpoint (includes `app.commit`, no auth required): both Preview and Production report
+`521fd5705e28d72df817ff7bdd07b62d839b4136` (through PR #22) at the time this checkpoint's work
+began.
+
+**Terry's full batch, in his own stated order:** (1) new feature — a button on a transaction to add
+it as a bill, carrying its data over; (2) BT-016 — "I figured you would add a button that opened
+the existing modal to add a person"; (3) continue BT-017; (4) continue BT-009, BT-011, BT-013,
+BT-014, BT-015; BT-007 and BT-010 stay on hold. He separately referenced "expanded Shared Expenses
+and Design Gallery requirements... below" to be recorded now but not started until this batch is
+done — **that text did not actually arrive in his message** (nothing appeared after "below"); noted
+here as a genuine, disclosed gap to ask him about, not invented or guessed at.
+
+**1. BT-018 (new): "Add as bill" on a transaction — built, tested, PR #23.** A new item on each
+transaction's compact actions menu (BT-015), right after Edit, opens the SAME "Add bill" dialog
+`bills.js` already uses (`openBillEditor(ctx, bill, opts)` gains a backward-compatible
+`opts.prefill`/`opts.title` — the form is never switched into "editing" mode, so every field stays
+exactly as editable as a normal new bill, and `createBody()` already reads only live form controls
+at submit time, so nothing here can silently carry a stale value into what is actually saved),
+pre-filled from the entry's own account, direction, amount, category, merchant, notes, responsible
+person and date. Two real bugs found by testing, not assumed: (a) a transaction's amount is SIGNED
+(negative for money out, `money.toDecimal`) while a bill's is an unsigned magnitude with direction
+supplied separately — `billPrefillFrom` strips the sign; (b) initially offered on every entry,
+including a hand-entered "owed to others" placeholder where no real money moved — a real regression
+against the EXISTING `recheck` e2e scenario's own exact-menu-list assertion, fixed by gating on
+`directionOf(t) !== "no-money-moved"` (a bill is a real scheduled payment, which a payable
+placeholder is not). New `app/test/billfromtransaction.test.js` (7 tests) and dedicated real-browser
+`scripts/dev/e2e/addbillfromentry.mjs` (6/6, exit 0): every field genuinely visible/correct in a
+real browser, submission creates a real bill through the real API, and the original transaction is
+left completely unchanged (same revision/amount/notes) — this only ever creates, never edits.
+**Full regression on this branch:** `npm test` 39/652/518 exit 0; full `npm run e2e` 658/658 exit 0.
+PR: https://github.com/Stripeman/BudgetTracker/pull/23 (branch
+`feature/add-bill-from-transaction`), CI not yet polled at checkpoint time.
+
+**2. BT-016 (simplified slice): "Add person" — built, tested, PR #24.** Investigated what "the
+existing modal to add a person" could mean before building anything: there was in fact NO existing
+modal to add a person anywhere in the app — only My Settings' inline (non-modal) PRIVATE contact
+form, and Workspace Settings' inline (non-modal) email-based member invite. Built the modal Terry
+described, for the first time, in the place his own framing points to (Shared Expenses): an "Add
+person…" button on the Add/Edit shared-expense dialog (`openAddPersonModal`, `app/js/ui/views/
+group.js`), gated exactly like "Add expense" itself (`data.permissions.canAdd` — never offered to a
+viewer, server-enforced too since `POST /api/contacts` already refuses viewers). Creates a real
+workspace-shared CONTACT via the ALREADY-EXISTING `POST /api/contacts { scope: "workspace" }` route
+(no backend change needed — the permission and record type already existed; there was simply no UI
+reaching it) and splices the new person straight into BOTH the "Paid by" (unchecked) and "Shared
+by" (checked) lists of the STILL-OPEN expense dialog — refactored `payerRows`/`splitRows` from
+inline `.map()` builders into named `makePayerRow`/`makeSplitRow` functions so a dynamically-added
+row is wired identically to the initial ones (same event listeners, same live preview). Nothing
+already typed in the expense dialog (description, amount, etc.) is lost. New
+`app/test/addperson.test.js` (3 tests) and dedicated real-browser `scripts/dev/e2e/addperson.mjs`
+(6/6, exit 0, two browsers: alice adds a person and saves a real expense including their real
+computed share; carol, a viewer, never sees the button anywhere). **Full regression on this
+branch:** `npm test` 39/652/514 exit 0; targeted `npm run e2e -- --only addperson,shared,recheck`
+61/61 exit 0. PR: https://github.com/Stripeman/BudgetTracker/pull/24 (branch
+`feature/add-person-BT-016`), CI not yet polled at checkpoint time.
+
+**Explicitly NOT done by this slice (disclosed, not silently narrowed):** the larger BT-016 design
+question from Checkpoint AI — whether a participant who needs to actually SIGN IN gets invited into
+a dedicated `group`/`trip` workspace (recommended) or needs a genuinely new, narrower
+single-expense-only sharing boundary — is untouched and still awaits Terry's decision. This
+increment only covers non-signing-in contacts, which is what his own message specifically asked
+for ("add a button that opened the existing modal to add a person").
+
+**Branching note for future sessions:** both PRs above were built on top of each other's WORKING
+TREE at different points (the primary checkout had ended up directly on `main` with uncommitted
+work partway through this session — caught and corrected before committing anything to `main`
+itself). Each was then re-based onto a clean branch off `origin/main` individually (via
+`git stash` + `git checkout -b <name> origin/main` + `git stash pop`, resolving the resulting
+`scripts/dev/e2e/run.mjs` registration-array conflict by hand to keep each PR's diff scoped to
+only its own scenario) so the two PRs stay independent and either can merge without the other.
+
+**Waiting on Terry:** (1) merge PR #23 and PR #24 (this agent's role cannot merge PRs or deploy
+Production itself, per Checkpoint AK); (2) the actual text of the "expanded Shared Expenses and
+Design Gallery requirements" he referenced but did not include; (3) the BT-016 group/trip-vs-
+narrower-sharing decision from Checkpoint AI, still open.
+
+**Exact next step:** continue Terry's stated order — BT-017 (personal-vs-workspace visual
+distinction, a broader visual/spacing pass), then BT-009/011/013/014/015 continuation work,
+BT-007/BT-010 on hold — preparing each as its own reviewed, tested, pushed branch with an open PR,
+without waiting for #23/#24 to merge first (they are independent), and without pausing to ask
+permission again per Terry's explicit "don't stop, continue" instruction this session.
 
 ## Checkpoint AM — worked through Terry's full batch: BT-017 continuation and BT-014's private-
 contact deletion gap built as two more PRs (#25, #26); honest status on BT-009/011/013/015
