@@ -1605,7 +1605,85 @@ via `git diff --stat` showing only the intended files. All nine staged-content s
 - Whether to expand the two-column settings layout or the curved-accent popover pattern to any
   other screen, beyond the one real case each was applied to in this session.
 
-**Exact next step:** none queued — this session's authorized work (security review fixes, Bills→
-Merchant, DEMO seed, curved accent, two-column settings, Gallery secondary pages) is complete and
-in six open PRs. The next session should start by checking whether Terry has merged any of PR
-#13–#18, rebasing/re-verifying the others if `main` has moved, and picking up his review feedback.
+## Checkpoint AB — combined all six PRs and deployed to Preview (2026-09-18, same session, Terry's
+## explicit request: "combine all and push to preview")
+
+**What was combined.** A new local branch `integration/preview-2026-09-18`, branched fresh off
+`origin/main`, merging PR #13–#18 in sequence (`fix/security-review-2026-09-18` →
+`fix/bills-merchant-2026-09-18` → `feature/demo-preview-seed` → `feature/callout-popover-accent` →
+`feature/workspace-settings-two-column` → `feature/design-gallery-secondary-pages` →
+`docs/session-2026-09-18-checkpoint`). All six merges were clean auto-merges except one: both the
+Bills→Merchant and the curved-accent branches added new checks to the END of the same e2e file
+(`scripts/dev/e2e/bills.mjs`) — resolved by keeping both additions, one after the other. Pushed to
+`origin/integration/preview-2026-09-18` for traceability (not a PR to `main` — the deployed commit
+just needs to be visible in git history; merging still needs Terry's review of the six PRs
+individually).
+
+**Two REAL regressions found only by running the full 19-scenario `npm run e2e` (not just each
+branch's own `--only` scenario) before deploying — exactly why this step matters, not a formality:**
+
+1. **`app/js/ui/merchantpicker.js`'s "opens on focus" (from PR #14) broke a dialog elsewhere in the
+   app.** Root-caused with a real bisect (checked out each of the six merge commits in a scratch
+   worktree, `git worktree add`, and reran the failing scenario at each point — passed through PR
+   #13, failed starting at PR #14) plus direct DOM diagnostics (dumped `#app.inert`, whether the
+   modal was still present, and the exact focused element right after the failing click — not
+   guessed at). The bug: `openModal()` auto-focuses a dialog's first focusable control on open;
+   quick entry's merchant field is sometimes that control; a bare `focus` listener cannot tell that
+   apart from a genuine user click, so it force-opened the FULL merchant list immediately on nearly
+   every "Add expense" dialog open, pushing the dialog's own Cancel/Save footer out of the modal's
+   visible area. The next scripted click (aimed at "Cancel") then landed on the backdrop instead —
+   which correctly does nothing by design ("a click on the backdrop does not close it") — leaving
+   the dialog open and `#app` stuck `inert` for the rest of that browser session, breaking an
+   unrelated settings interaction much later in the same scenario. **Fixed**: dropped the `focus`
+   listener, kept only `click` (a real click/tap still opens it, satisfying the original review
+   finding; ArrowDown/typing already cover keyboard-only use). New direct regression test in
+   `app/test/merchantpicker.test.js` asserts a plain `focus` event never opens the list. Committed
+   to `fix/bills-merchant-2026-09-18` (now `d8e3111`, pushed — PR #14 updated) and re-merged.
+2. **A pre-existing e2e check (`scripts/dev/e2e/settings.mjs`'s "finding 10" bill check) still
+   looked for text that PR #16 moved behind its new accessible popover.** This file isn't part of
+   PR #16's own scenario (`bills.mjs`, which WAS updated correctly at the time) and was missed.
+   Fixed to open the popover first, then read its own text (with the extra Escape press
+   `escapeBelongsToControl` now requires). Committed to `feature/callout-popover-accent` (now
+   `39e2b70`, pushed — PR #16 updated) and re-merged.
+
+**Full verification after both fixes, on the combined branch:**
+- `npm test`: 39/651/492, exit 0. `npm run validate`: ok, 24 routes, exit 0.
+- Real headless Edge, full 19-scenario `npm run e2e` (twice, once per fix): the ONLY failures
+  remaining are the pre-existing, already-documented `409 workspace_rate` artifact (alice's daily
+  10-workspace creation quota exhausted by cumulative scenario runs sharing one dev-server instance
+  within a single full-suite invocation — see Checkpoint Y/Z; not a regression, and every one of
+  those scenarios (`accounts`, `bills`, `dashboard`) passes 100% clean when run in isolation, each
+  independently re-verified this session).
+- A final targeted real-browser run of the 8 most relevant scenarios together
+  (`settings,recheck,bills,accounts,dashboard,gallery,accountrequests,permanentdelete`): **264
+  passed, 0 failed, exit 0** — clean confirmation before deploying.
+
+**Deployed to Preview** via the one supported entry point, `scripts/deploy/deploy.ps1
+-Environment preview` (never the engine or `az` directly) — the gate re-ran everything (test,
+validate, build, secret-scan) inside the script itself and passed again. Deployment receipt:
+```
+target  : budget-tracker / budget-tracker (preview)
+url     : https://polite-plant-03bb7570f-preview.eastus2.3.azurestaticapps.net
+sha     : 5939e6a6fe4e93fc67508c2781eaac4af7ae13db
+version : 0.1.0-alpha.1
+checks  : ok target, ok gitState, ok confirmation, ok azureResource, ok settings, ok test,
+          ok validate, ok build, ok secretScan, ok upload, ok commitSetting, ok healthCheck
+result  : SUCCESS
+```
+Independently verified live, separately from the script's own receipt: `GET
+.../api/site-settings` reports `environment: "preview"`, `commit:
+"5939e6a6fe4e93fc67508c2781eaac4af7ae13db"` (exact match); `GET /` returns 200; anonymous `GET
+/api/me` returns 401 (auth still enforced). Preview's DEMO workspace (PR #15, seeded earlier this
+session under the same commit lineage) is unaffected by this deploy — it lives in Blob storage, not
+in the deployed code artifact.
+
+**Still true:** nothing has been merged, pushed to `main`, or deployed to Production. PRs #13–#19
+are still open, each independently reviewable; only the ARTIFACT built from their combination is
+now live on Preview, not their merge into `main`. Terry's review/merge order for the six PRs is
+still his decision; if he wants a different combination on Preview (e.g., merges only some of the
+six), the next deploy will need combining again from whatever he picks.
+
+**Exact next step:** none queued. Preview reflects all six PRs' combined work as of commit
+`5939e6a`. The next session should check whether Terry has reviewed/merged any of PR #13–#19,
+rebase/re-verify the others if `main` has moved, and pick up his feedback — including on the live
+Preview build itself now that it's actually reachable.
