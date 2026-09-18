@@ -28,6 +28,10 @@ import { icon, withIcon, defaultIconFor } from "../icons.js";
 import { amountWithDirection, transferLabel, amountText } from "../components.js";
 import { directionOf } from "../icons.js";
 import { createActionsMenu } from "../actionsmenu.js";
+// bills.js already imports choosableMerchants/canAddEntries/addEntriesBlocked from this module; this
+// is the one place the dependency runs the other way, calling into it only from an onClick handler
+// (never at module-evaluation time), which ES modules resolve correctly either way.
+import { openBillEditor } from "./bills.js";
 
 export { amountWithDirection };
 
@@ -61,6 +65,38 @@ export function reversalLock(t) {
   if (t.reversedBy) return "This entry has been reversed, so its amount, date, type, category and merchant can no longer change. To correct it, add a new entry.";
   if (t.links && t.links.reverses) return "This is a reversal, so its amount, date, type, category and merchant always match the entry it reverses. To correct it, add a new entry.";
   return null;
+}
+
+// "Add as bill" (Terry, 2026-09-18: "button next to a transaction to add transaction as a bill and
+// carry over/refill data from the transaction to bill"): what a NEW bill starts with from this
+// entry — its own account, direction, amount, category, merchant, notes, responsible person and
+// date (as the bill's first-payment date), nothing guessed beyond what the entry already says. A
+// bill's own recurrence (how often, how many days ahead it is due) has no equivalent on a single
+// entry, so those are left at openBillEditor's normal new-bill defaults, exactly as if "Add bill"
+// had been opened directly. Only "income" and "transfer" map onto a bill's own kind/billType;
+// every other transaction kind (expense, adjustment, advance, reimbursement, …) leaves both at the
+// bill form's own default, since a bill only really distinguishes those three directions today.
+// A transaction's own amount is SIGNED (negative for money out, e.g. "-45.67"; ledger.js's
+// transactionView, via money.toDecimal); a bill's amount is always an unsigned magnitude — its
+// direction picker supplies the sign back where it matters (bills.js's own signedAmount()) — so the
+// sign is stripped here, never carried into the bill's Amount field.
+export function billPrefillFrom(t) {
+  const income = t.kind === "income";
+  const transfer = t.kind === "transfer";
+  return {
+    name: t.payeeName || "",
+    accountId: t.accountId,
+    kind: transfer ? "transfer" : income ? "income" : undefined,
+    billType: income ? "income" : undefined,
+    toAccountId: transfer && t.counterpartAccountId ? t.counterpartAccountId : undefined,
+    amount: String(t.amount || "").replace(/^-/, ""),
+    categoryId: t.categoryId || undefined,
+    payeeId: t.payeeId || undefined,
+    payeeName: t.payeeName || undefined,
+    notes: t.notes || undefined,
+    responsible: t.responsible || undefined,
+    schedule: { startDate: t.date },
+  };
 }
 
 // A reversal and its original are deleted together (FIN-R2), so the dialog says so.
@@ -255,11 +291,23 @@ export function createView(ctx) {
       // BT-015 compact record actions menu (Terry, 2026-09-18): exact preserved order Edit, Reverse,
       // Move (renamed from "Move to another account"), History, Delete, Delete permanently — same
       // permission checks, same handlers, same confirmations, unchanged. Remove/Delete and Delete
-      // permanently keep their distinct meanings (recoverable vs irreversible).
+      // permanently keep their distinct meanings (recoverable vs irreversible). "Add as bill" (Terry,
+      // 2026-09-18) is a new addition placed right after Edit — a recognized recurring payment
+      // becomes a bill without retyping it.
       el("td", { "data-label": "" }, [createActionsMenu({
         label: `Actions for ${t.payeeName || "entry"} on ${t.date}`,
         items: [
           t.canEdit ? { text: "Edit", onClick: () => openQuickEntry(ctx, { transaction: t }), attrs: { "aria-label": `Edit ${t.payeeName || "entry"} on ${t.date}` } } : null,
+          // Opens the SAME "Add bill" dialog bills.js itself uses, pre-filled from this entry's own
+          // account, amount, category, merchant, notes and responsible person (billPrefillFrom,
+          // below) — nothing guessed beyond what the entry already says, and every field stays as
+          // editable as a normal new bill, since the form is never switched into "editing" mode
+          // (openBillEditor's opts.prefill contract). Gated exactly like the Bills page's own "Add
+          // bill" button (canAddEntries): no dead menu item when no account can take a new bill.
+          // Never offered on an entry where no money actually moved (an amount owed to others, or a
+          // share someone else paid, BT-009 recheck N3/L4, directionOf() === "no-money-moved") — a
+          // bill is a real scheduled payment from an account, which a payable placeholder is not.
+          t.canEdit && canAddEntries(state) && directionOf(t) !== "no-money-moved" ? { text: "Add as bill", onClick: () => openBillEditor(ctx, null, { prefill: billPrefillFrom(t), title: "New bill from entry" }), attrs: { "aria-label": `Add ${t.payeeName || "entry"} on ${t.date} as a bill` } } : null,
           // Corrections never overwrite history (BT-001-05): a reversal cancels an entry, even a
           // reconciled one, and every change is listed under History.
           // Entries recorded from Shared expenses are reversed or removed only from there (N2).
