@@ -1802,3 +1802,127 @@ state.
 follow-up, combined, as of commit `b987c75`. The next session should check whether Terry has
 reviewed/merged any of PR #13–#19, rebase/re-verify the others if `main` has moved, and pick up his
 feedback — including on the live Preview build itself.
+
+## Checkpoint AD — Bills → Merchant: fixed a REAL regression Terry found on Preview, redeployed
+## (2026-09-18, same session, Terry's explicit report: "The Bills → Merchant workflow is still
+## incorrect. Treat this as an unfinished requirement and regression, not a new feature request.")
+
+**Terry's report, verbatim in substance:** the exact "September internet" / "Northstar Fiber"
+acceptance scenario from the original review still failed on the live Preview build (deployed at
+Checkpoint AB's `5939e6a`, still live at Checkpoint AC's `b987c75` when this report arrived) — a
+bill's saved-but-unlinked typed merchant name went blank in places it should have shown, even
+though PR #14 (`fix/bills-merchant-2026-09-18`, Checkpoint AA) had already shipped real, tested
+work on this exact feature.
+
+**First step, as explicitly instructed: checked the actual Preview build against the branch before
+touching anything**, to know whether this was missing code, incorrect code, or an outdated
+deployment. Traced every consumer of `payeeId`/`payeeName`/`payeeDraftName` across
+`api/recurring/handler.js` and `app/js/ui/views/bills.js`. Verdict: **incorrect code, already
+deployed** — not missing, not stale. The server's `termsView()` projection already returned
+`payeeDraftName` correctly on every bill and every version (confirmed by reading the handler
+directly); the bill editor's own Merchant picker already read it correctly as `current`. The real
+bug was narrower and specific: **two READ-ONLY display sites in `bills.js` checked only
+`payeeName`, with no fallback to `payeeDraftName`:**
+1. The All-bills list row's merchant sub-line (`b.payeeName ? el(...) : null` — showed nothing at
+   all once a merchant record didn't exist yet for the typed name).
+2. The bill's own "Terms over time" history table (`v.payeeName || "—"` — showed an em dash for
+   any version that only ever had a typed, unmatched name).
+
+Both were real, both matched Terry's report exactly, and both are now `payeeName || payeeDraftName`
+fallbacks — the two values are mutually exclusive by construction (the server clears the draft the
+moment a real merchant is linked), so this is a fallback, never a merge of two live values. Also,
+while tracing every acceptance-scenario detail literally against the current code: renamed the
+Pending-merchants section's button from "Add as merchant" to the exact label **"Add merchant"**
+Terry's report specified (same action, wording only), and added a real-browser check that an
+already-resolved merchant is selectable on a BRAND NEW bill by typing part of its name and choosing
+it from the filtered list — the literal last line of Terry's acceptance scenario ("Add another
+bill: 'Northstar Fiber' is now selectable in the Merchant dropdown, which behaves like Category"),
+which nothing before this session had actually exercised end to end.
+
+**New regression coverage, both layers:**
+- `app/test/pickerbills.test.js`: 4 new DOM-double tests against the REAL `createView`/`bills.js`
+  (a typed-but-unlinked name shows on the list row and in "Terms over time"; a linked merchant's
+  real name is shown, not a stale draft; a bill with neither shows no merchant line at all, nothing
+  guessed from its own title). One real test-authoring bug caught and fixed while writing these,
+  before it ever reached the browser: this DOM-double's `querySelectorAll` only supports simple
+  compound selectors (`tag.class[attr]`), never a descendant combinator like `"tbody tr"` — it
+  silently matches nothing rather than erroring, which the first draft of these tests didn't
+  realize until they failed for the wrong reason. Fixed to `"tr"` plus a `.find()` filter.
+- `app/test/pickerviews.test.js`: existing "Add as merchant" assertions renamed to "Add merchant"
+  (same behavior, matching the label change).
+- `scripts/dev/e2e/bills.mjs` (real headless Edge): extended with the exact same list-row and
+  history-table checks against a REAL running server and REAL browser DOM, plus the new-bill
+  merchant-search-and-select check. **This real-browser run caught two genuine test-authoring bugs
+  of its own that the unit tests could not have caught, since they depend on real seeded data
+  interacting across two separate tables on the same page:**
+  1. The list-row checks initially used a bare `document.querySelectorAll("tbody tr")` text search
+     — a real browser DOES support that selector (unlike the DOM double above), but the SAME bill
+     text also legitimately appears in the separate "Needs attention" table above (since the test's
+     bills are due soon/overdue on purpose), which has no merchant column at all; `.find()` matched
+     that row first and failed. Fixed by requiring a `td[data-label="Schedule"]` cell too — a
+     column only the "All bills" table has.
+  2. The "Terms over time" check initially read version row index `[0]` — but versions are appended
+     chronologically (`r.versions.push(version)`, server-side), so index 0 is the bill's ORIGINAL
+     version from creation (correctly "—", nothing was ever typed on it); the version that gained
+     the typed name is the LAST row. Fixed to read the last cell, not the first.
+  Both were caught and root-caused by actually reading the failing checks' own reported actual
+  values (not assumed), then verified fixed by a clean rerun — exactly the kind of thing real
+  seeded data with multiple genuinely different bills exposes that a single hand-built DOM-double
+  fixture does not.
+
+**Evidence, most recent, all real:**
+- `npm test` 500/500 app-suite count on the fix branch (477/477 in isolation before combining, then
+  500/500 again after re-merging into the six-PR integration branch), exit 0 both times.
+- `npm run validate` ok, 24 routes, exit 0.
+- Real headless Edge, `npm run e2e -- --only bills`: 30/30 on the fix branch alone (no popover
+  section — that belongs to a different PR), then **36/36 on the full six-PR combination** (bills +
+  the BT-011-09 popover/curved-accent checks together, since both branches touch the same e2e
+  file), exit 0 both times, cleanup verified.
+- A broader real-browser sanity pass on the combined tree before redeploying:
+  `npm run e2e -- --only settings,accountrequests,gallery,permanentdelete` — **182 passed, 0
+  failed, exit 0** — confirms the `payees.js` button-rename didn't disturb anything else that
+  touches that page.
+
+**Git hygiene.** Fixed on `fix/bills-merchant-2026-09-18` (PR #14's own branch — the natural home
+for a fix to that PR's own feature, never a new branch for what is clearly a continuation of the
+same unit of work), commit `cd9e745`, pushed. Re-merged into `integration/preview-2026-09-18`
+(`fe57d15`) with one real merge conflict in `scripts/dev/e2e/bills.mjs` (both this fix and PR #16's
+popover work independently added checks after the same "a real merchant, once linked" line) —
+resolved by keeping both, in two separate "Add bill" dialog openings (one for the merchant-search
+proof, one for the popover proof), verified with `node --check` and the full real-browser rerun
+above, not just a clean git merge.
+
+**Redeployed to Preview**, same one supported entry point:
+```
+target  : budget-tracker / budget-tracker (preview)
+url     : https://polite-plant-03bb7570f-preview.eastus2.3.azurestaticapps.net
+sha     : fe57d157cba78ef27b975a663deed45336c2cbab
+version : 0.1.0-alpha.1
+checks  : ok target, ok gitState, ok confirmation, ok azureResource, ok settings, ok test,
+          ok validate, ok build, ok secretScan, ok upload, ok commitSetting, ok healthCheck
+result  : SUCCESS
+```
+Independently verified live, separately from the script's own receipt: `GET .../api/site-settings`
+reports `commit: "fe57d157cba78ef27b975a663deed45336c2cbab"` (exact match); `GET /` returns 200;
+anonymous `GET /api/me` returns 401 (auth still enforced).
+
+**What was preserved, as instructed:** no persisted-data shape changed (`payeeDraftName` already
+existed and was already being written and read correctly server-side); this checkpoint fixed only
+how two READ-ONLY views render an existing field, so older bills' real data is unaffected. Where an
+older bill genuinely never had a typed name stored (created before PR #14 shipped, or via direct
+API without one), nothing is invented or guessed from its title — confirmed by a dedicated test
+("a bill with neither a linked merchant nor a typed name shows no merchant line at all").
+
+**Known gaps, stated plainly:** everything already listed under Checkpoint AB/AC's own "Known gaps"
+sections is still true and not repeated here. This checkpoint is scoped narrowly to the one
+regression Terry reported; it does not re-review the rest of Bills → Merchant beyond what his exact
+report named.
+
+**Waiting on Terry:** everything already listed under Checkpoint AA/AB/AC's "Waiting on Terry",
+plus: confirmation that the exact acceptance scenario now holds on the redeployed Preview build
+(`fe57d15`) from his own browser, not just this session's automated evidence.
+
+**Exact next step:** none queued. Preview reflects all six PRs, the Gallery Shared/Trips follow-up,
+and this Bills → Merchant display fix, combined, as of commit `fe57d15`. The next session should
+check whether Terry has reviewed/merged any of PR #13–#19, rebase/re-verify the others if `main`
+has moved, and pick up his feedback on the live Preview build.
