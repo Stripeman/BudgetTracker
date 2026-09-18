@@ -115,3 +115,23 @@
 .gframe, .gframe * { box-sizing: border-box; }
 .gframe__main { min-width: 0; }
 .ggrid, .gsplit, .gcompare { min-width: 0; }
+
+/* ---------------------------------------------------------------------------------------------- */
+/* Secondary-page composition patterns (review, 2026-09-18): Transactions/Bills/Budget/Accounts each
+   now have several genuinely distinct renderers (compose.js), not one shared template. These rules
+   are the small set of new building blocks those renderers need; everything else reuses .gcard,
+   .ggrid, .gmeter, .gtimeline, .grow etc. already defined above. */
+.gtable-dense th, .gtable-dense td { padding: var(--space-2) var(--space-3); font-size: var(--text-sm); }
+.gtable-dense .num, .gtable-dense th.num { text-align: right; font-variant-numeric: tabular-nums; }
+
+.ggrid--cards { grid-template-columns: repeat(auto-fill, minmax(13rem, 1fr)); }
+.gminicard { border: 1px solid var(--border); border-radius: var(--radius); padding: var(--space-3); display: flex; flex-direction: column; gap: var(--space-1); min-width: 0; }
+.gminicard__amount { font-weight: var(--weight-medium); }
+
+.gkanban { display: grid; grid-template-columns: 1fr; gap: var(--space-4); min-width: 0; }
+@media (min-width: 48rem) { .gkanban { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+
+.gbarrow { display: grid; grid-template-columns: minmax(8rem, 12rem) 1fr auto; align-items: center; gap: var(--space-3); padding: var(--space-2) 0; }
+.gbarrow__track { height: 0.6rem; border-radius: var(--radius-pill); background: var(--surface-sunken); overflow: hidden; }
+.gbarrow__fill { height: 100%; width: var(--pct, 0%); background: var(--bar, var(--accent)); }
+.gmeter--inline { width: 6rem; display: inline-block; }

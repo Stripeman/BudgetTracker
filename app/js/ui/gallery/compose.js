@@ -19,8 +19,8 @@ import { icon, withIcon } from "../icons.js";
 import { formatAmount } from "../../core/format.js";
 import * as fx from "./fixtures.js";
 
-const PAGE_LABEL = { dashboard: "Dashboard", transactions: "Transactions", bills: "Bills", budget: "Budget", shared: "Shared expenses", trips: "Trips", settings: "Settings" };
-const PAGE_ICON = { dashboard: "chart-pie", transactions: "receipt", bills: "calendar", budget: "target", shared: "users", trips: "suitcase", settings: "user" };
+const PAGE_LABEL = { dashboard: "Dashboard", transactions: "Transactions", bills: "Bills", budget: "Budget", accounts: "Accounts / Merchants", shared: "Shared expenses", trips: "Trips", settings: "Settings" };
+const PAGE_ICON = { dashboard: "chart-pie", transactions: "receipt", bills: "calendar", budget: "target", accounts: "bank", shared: "users", trips: "suitcase", settings: "user" };
 const BILL_STATUS_LABEL = { overdue: "Overdue", "due-soon": "Due soon", upcoming: "Upcoming" };
 
 const cat = (id) => fx.categoryById.get(id);
@@ -263,26 +263,173 @@ function pageTitle(pageId) {
   return el("div", { class: "gpage__head" }, [el("h2", {}, [withIcon(PAGE_ICON[pageId], PAGE_LABEL[pageId])])]);
 }
 
-function renderTransactions() {
-  return el("div", { class: "gpage gpage--list" }, [
-    pageTitle("transactions"),
-    gcard("All entries", "receipt", el("ul", { class: "stack" }, fx.transactions.map(txRow)), { full: true }),
+// ---- Transactions: five genuinely different compositions (review, 2026-09-18) ---------------------
+function txnFlatList() {
+  return [gcard("All entries", "receipt", el("ul", { class: "stack" }, fx.transactions.map(txRow)), { full: true })];
+}
+function txnGroupedByDate() {
+  const byDate = new Map();
+  for (const t of fx.transactions) { if (!byDate.has(t.date)) byDate.set(t.date, []); byDate.get(t.date).push(t); }
+  return [...byDate.entries()].map(([date, rows]) => gcard(date, "calendar", el("ul", { class: "stack" }, rows.map(txRow)), { full: true }));
+}
+function txnDenseTable() {
+  const rows = fx.transactions.map((t) => {
+    const m = t.payee ? merchant(t.payee) : null;
+    const c = t.category ? cat(t.category) : null;
+    return el("tr", {}, [
+      el("td", { text: t.date }),
+      el("td", {}, [m ? withIcon(m.icon, m.name) : el("span", { text: t.label || "Transfer" })]),
+      el("td", {}, [c ? categoryLabel(c.name, c.color, c.icon) : el("span", { class: "muted small", text: "—" })]),
+      el("td", { class: "num" }, [amountText(t.amount, "EUR", fx.prefs)]),
+    ]);
+  });
+  const table = el("table", { class: "table gtable-dense" }, [
+    el("thead", {}, [el("tr", {}, ["Date", "Merchant", "Category", "Amount"].map((h) => el("th", { scope: "col", class: h === "Amount" ? "num" : "", text: h })))]),
+    el("tbody", {}, rows),
   ]);
+  return [gcard("All entries", "receipt", el("div", { class: "table-wrap" }, [table]), { full: true })];
+}
+function txnCardList() {
+  const cards = fx.transactions.map((t) => {
+    const m = t.payee ? merchant(t.payee) : null;
+    const c = t.category ? cat(t.category) : null;
+    return el("div", { class: "gminicard" }, [
+      m ? withIcon(m.icon, m.name) : el("strong", { text: t.label || "Transfer" }),
+      el("div", { class: "gminicard__amount" }, [amountText(t.amount, "EUR", fx.prefs)]),
+      el("div", { class: "muted small" }, [t.date, c ? " · " : "", c ? categoryLabel(c.name, c.color, c.icon) : null]),
+    ]);
+  });
+  return [gcard("All entries", "receipt", el("div", { class: "ggrid ggrid--cards" }, cards), { full: true })];
+}
+function txnFilterFirst() {
+  const filters = gcard("Filters", "filter", el("ul", { class: "stack" }, ["Account: All", "Category: All", "Person: All", "Period: This month"].map((f) => el("li", { text: f }))));
+  const list = gcard("Matching entries", "receipt", el("ul", { class: "stack" }, fx.transactions.map(txRow)));
+  return [el("div", { class: "gsplit" }, [filters, list])];
+}
+const TRANSACTIONS_RENDERERS = { "flat-list": txnFlatList, "grouped-by-date": txnGroupedByDate, "dense-table": txnDenseTable, "card-list": txnCardList, "filter-first": txnFilterFirst };
+function renderTransactions(concept) {
+  const fn = TRANSACTIONS_RENDERERS[concept.transactionsPattern] || txnFlatList;
+  return el("div", { class: "gpage gpage--list" }, [pageTitle("transactions"), ...fn()]);
 }
 
-function renderBills() {
+// ---- Bills: four genuinely different compositions --------------------------------------------------
+function billsGroupedStatus() {
   const groups = [["Overdue", "overdue"], ["Due soon", "due-soon"], ["Upcoming", "upcoming"]];
-  return el("div", { class: "gpage gpage--list" }, [
-    pageTitle("bills"),
-    ...groups.map(([label, status]) => {
-      const rows = fx.bills.filter((b) => b.status === status);
-      return rows.length ? gcard(label, "calendar", el("ul", { class: "stack" }, rows.map(billRow)), { full: true }) : null;
-    }),
+  return groups.map(([label, status]) => {
+    const rows = fx.bills.filter((b) => b.status === status);
+    return rows.length ? gcard(label, "calendar", el("ul", { class: "stack" }, rows.map(billRow)), { full: true }) : null;
+  });
+}
+function billsTimeline() {
+  const events = [...fx.bills].sort((a, b) => (a.dueDate < b.dueDate ? -1 : 1));
+  return [gcard("All bills, in order", "clock", el("ol", { class: "gtimeline" }, events.map((b) => el("li", { class: ["gtimeline__item", b.status === "overdue" ? "gtimeline__item--past" : "gtimeline__item--future"] }, [el("span", { class: "gtimeline__date muted small", text: b.dueDate }), billRow(b)]))), { full: true })];
+}
+function billsKanban() {
+  const groups = [["Overdue", "overdue"], ["Due soon", "due-soon"], ["Upcoming", "upcoming"]];
+  return [el("div", { class: "gkanban" }, groups.map(([label, status]) => gcard(label, "calendar", el("ul", { class: "stack" }, fx.bills.filter((b) => b.status === status).map(billRow)))))];
+}
+function billsCompactTable() {
+  const rows = fx.bills.map((b) => el("tr", {}, [
+    el("td", {}, [withIcon(b.icon, b.name)]),
+    el("td", {}, [badge(BILL_STATUS_LABEL[b.status], b.status === "overdue" ? "danger" : b.status === "due-soon" ? "warning" : "")]),
+    el("td", { text: b.dueDate }),
+    el("td", { class: "num" }, [amountText(b.kind === "income" ? b.amount : `-${b.amount}`, b.currency, fx.prefs)]),
+  ]));
+  const table = el("table", { class: "table gtable-dense" }, [
+    el("thead", {}, [el("tr", {}, ["Bill", "Status", "Due", "Amount"].map((h) => el("th", { scope: "col", class: h === "Amount" ? "num" : "", text: h })))]),
+    el("tbody", {}, rows),
   ]);
+  return [gcard("All bills", "calendar", el("div", { class: "table-wrap" }, [table]), { full: true })];
+}
+const BILLS_RENDERERS = { "grouped-status": billsGroupedStatus, timeline: billsTimeline, "kanban-columns": billsKanban, "compact-table": billsCompactTable };
+function renderBills(concept) {
+  const fn = BILLS_RENDERERS[concept.billsPattern] || billsGroupedStatus;
+  return el("div", { class: "gpage gpage--list" }, [pageTitle("bills"), ...fn()]);
 }
 
-function renderBudget() {
-  return el("div", { class: "gpage gpage--list" }, [pageTitle("budget"), ...heroEnvelopeGrid()]);
+// ---- Budget: three genuinely different compositions --------------------------------------------------
+function budgetBarComparison() {
+  const rows = fx.budget.lines.map((l) => {
+    const c = cat(l.category);
+    const pct = Math.min(100, Math.round((Number(l.spent) / Number(l.planned)) * 100));
+    return el("div", { class: "gbarrow" }, [
+      categoryLabel(c.name, c.color, c.icon),
+      el("div", { class: "gbarrow__track" }, [el("div", { class: "gbarrow__fill", vars: { "--pct": `${pct}%`, "--bar": c.color } })]),
+      el("span", { class: "muted small", text: `${l.spent} of ${l.planned}` }),
+    ]);
+  });
+  return [gcard("Planned vs spent, by category", "chart-line", el("div", { class: "stack" }, rows), { full: true })];
+}
+function budgetListProgress() {
+  const rows = fx.budget.lines.map((l) => {
+    const c = cat(l.category);
+    const over = Number(l.available) < 0;
+    const pct = Math.min(100, Math.round((Number(l.spent) / Number(l.planned)) * 100));
+    return el("tr", {}, [
+      el("td", {}, [categoryLabel(c.name, c.color, c.icon)]),
+      el("td", {}, [el("div", { class: "gmeter gmeter--inline" }, [el("div", { class: "gmeter__fill", vars: { "--pct": `${pct}%` } })])]),
+      el("td", { class: "num" }, [el("span", { class: over ? "money--out" : "", text: `${over ? "−" : ""}${l.available.replace("-", "")}` })]),
+    ]);
+  });
+  const table = el("table", { class: "table gtable-dense" }, [
+    el("thead", {}, [el("tr", {}, ["Category", "Progress", "Available"].map((h) => el("th", { scope: "col", class: h === "Available" ? "num" : "", text: h })))]),
+    el("tbody", {}, rows),
+  ]);
+  return [gcard("Budget lines", "target", el("div", { class: "table-wrap" }, [table]), { full: true })];
+}
+const BUDGET_RENDERERS = { "envelope-grid": heroEnvelopeGrid, "bar-comparison": budgetBarComparison, "list-progress": budgetListProgress };
+function renderBudget(concept) {
+  const fn = BUDGET_RENDERERS[concept.budgetPattern] || heroEnvelopeGrid;
+  return el("div", { class: "gpage gpage--list" }, [pageTitle("budget"), ...fn()]);
+}
+
+// ---- Accounts / Merchants: a page the Gallery was missing entirely (review, 2026-09-18 — the
+// design brief names "Accounts/Merchants" as one of the required coordinated views per concept).
+// Three genuinely different compositions, each pairing the account list with the managed merchant
+// directory, since real BudgetTracker keeps both on view together (app/js/ui/views/accounts.js and
+// payees.js are separate pages, but every concept's OWN Accounts view choice is asked to cover both). --
+function accountsCardGrid() {
+  const cards = fx.accounts.map((a) => el("div", { class: "gminicard" }, [
+    withIcon(a.icon, a.name),
+    el("div", { class: "gminicard__amount" }, [money(a.balance, a.currency, fx.prefs)]),
+    el("div", { class: "muted small", text: a.access === "shared" ? "Shared with workspace" : "Private · yours" }),
+  ]));
+  const merchantChips = fx.merchants.map((m) => el("span", { class: "badge" }, [withIcon(m.icon, m.name)]));
+  return [
+    gcard("Accounts", "bank", el("div", { class: "ggrid ggrid--cards" }, cards), { full: true }),
+    gcard("Merchants", "store", el("div", { class: "row" }, merchantChips), { full: true }),
+  ];
+}
+function accountsTable() {
+  const rows = fx.accounts.map((a) => el("tr", {}, [
+    el("td", {}, [withIcon(a.icon, a.name)]),
+    el("td", { text: a.type }),
+    el("td", { text: a.currency }),
+    el("td", { class: "num" }, [money(a.balance, a.currency, fx.prefs)]),
+  ]));
+  const table = el("table", { class: "table gtable-dense" }, [
+    el("thead", {}, [el("tr", {}, ["Account", "Type", "Currency", "Balance"].map((h) => el("th", { scope: "col", class: h === "Balance" ? "num" : "", text: h })))]),
+    el("tbody", {}, rows),
+  ]);
+  const merchantRows = fx.merchants.map((m) => el("tr", {}, [el("td", {}, [withIcon(m.icon, m.name)])]));
+  const merchantTable = el("table", { class: "table gtable-dense" }, [el("thead", {}, [el("tr", {}, [el("th", { scope: "col", text: "Merchant" })])]), el("tbody", {}, merchantRows)]);
+  return [
+    gcard("Accounts", "bank", el("div", { class: "table-wrap" }, [table]), { full: true }),
+    gcard("Merchants", "store", el("div", { class: "table-wrap" }, [merchantTable]), { full: true }),
+  ];
+}
+function accountsGroupedByType() {
+  const byType = new Map();
+  for (const a of fx.accounts) { if (!byType.has(a.type)) byType.set(a.type, []); byType.get(a.type).push(a); }
+  const typeLabel = { checking: "Checking", "credit-card": "Credit cards", savings: "Savings", loan: "Loans" };
+  const groups = [...byType.entries()].map(([type, list]) => gcard(typeLabel[type] || type, "bank", list.map((a) => el("div", { class: "row" }, [withIcon(a.icon, a.name), el("span", { class: "app__spacer" }), money(a.balance, a.currency, fx.prefs)]))));
+  const merchantChips = fx.merchants.map((m) => el("span", { class: "badge" }, [withIcon(m.icon, m.name)]));
+  return [...groups, gcard("Merchants", "store", el("div", { class: "row" }, merchantChips), { full: true })];
+}
+const ACCOUNTS_RENDERERS = { "card-grid": accountsCardGrid, table: accountsTable, "grouped-by-type": accountsGroupedByType };
+function renderAccounts(concept) {
+  const fn = ACCOUNTS_RENDERERS[concept.accountsPattern] || accountsCardGrid;
+  return el("div", { class: "gpage gpage--list" }, [pageTitle("accounts"), ...fn()]);
 }
 
 function renderShared() {
@@ -316,18 +463,33 @@ function renderTrips() {
   ]);
 }
 
-function renderSettings() {
-  return el("div", { class: "gpage gpage--list" }, [
-    pageTitle("settings"),
-    gcard("Workspace settings (illustrative)", "user", el("ul", { class: "stack" }, fx.settingsSample.map((s) => el("li", { class: "grow" }, [
-      el("span", {}, [el("strong", { text: s.label })]),
-      el("span", { class: "app__spacer" }),
-      badge(s.type === "boolean" ? (s.value ? "On" : "Off") : (((s.options || []).find((o) => o.value === s.value) || {}).label || String(s.value))),
-    ]))), { full: true }),
-  ]);
+function settingValueBadge(s) {
+  return badge(s.type === "boolean" ? (s.value ? "On" : "Off") : (((s.options || []).find((o) => o.value === s.value) || {}).label || String(s.value)));
+}
+function settingsFlatList() {
+  return [gcard("Workspace settings (illustrative)", "user", el("ul", { class: "stack" }, fx.settingsSample.map((s) => el("li", { class: "grow" }, [
+    el("span", {}, [el("strong", { text: s.label })]),
+    el("span", { class: "app__spacer" }),
+    settingValueBadge(s),
+  ]))), { full: true })];
+}
+// Mirrors the REAL responsive two-column settings layout shipped in the application itself (item 5,
+// settingsform.js/components.css .settings-group__body) — reusing the exact same class names, so a
+// concept that chooses this pattern previews the production mechanism, not a lookalike.
+function settingsTwoColumnGrouped() {
+  const rows = fx.settingsSample.map((s) => el("div", { class: "setting" }, [
+    el("strong", { text: s.label }),
+    settingValueBadge(s),
+  ]));
+  return [gcard("Workspace settings (illustrative)", "user", el("div", { class: "settings-group__body" }, rows), { full: true })];
+}
+const SETTINGS_RENDERERS = { "flat-list": settingsFlatList, "two-column-grouped": settingsTwoColumnGrouped };
+function renderSettings(concept) {
+  const fn = SETTINGS_RENDERERS[concept.settingsPattern] || settingsFlatList;
+  return el("div", { class: "gpage gpage--list" }, [pageTitle("settings"), ...fn()]);
 }
 
-const PAGE_RENDERERS = { dashboard: renderDashboard, transactions: renderTransactions, bills: renderBills, budget: renderBudget, shared: renderShared, trips: renderTrips, settings: renderSettings };
+const PAGE_RENDERERS = { dashboard: renderDashboard, transactions: renderTransactions, bills: renderBills, budget: renderBudget, accounts: renderAccounts, shared: renderShared, trips: renderTrips, settings: renderSettings };
 
 // ---- the frame: nav + page, driven by the concept's own composition parameters --------------------
 function renderNav(concept, activeId, onNavigate, requiredPages) {
