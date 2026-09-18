@@ -19,6 +19,7 @@
 /* margin 0: the icon picker's field label is a <p>, whose default margin pushed its control 12 px below
    the controls beside it (UX review U4, seen in headless Edge). */
 .field__label { font-size: var(--text-sm); font-weight: var(--weight-medium); margin: 0; }
+.field__label-row { display: inline-flex; align-items: center; gap: var(--space-1); }
 .field__help { font-size: var(--text-xs); color: var(--text-muted); }
 .field__input {
   min-height: var(--control-height); padding: var(--control-padding-y) var(--control-padding-x);
@@ -119,8 +120,27 @@ fieldset.budget-line { margin: 0; padding: var(--space-3); border: 1px solid var
 /* ---------- states ---------- */
 .state { padding: var(--space-6) var(--space-4); text-align: center; color: var(--text-muted); border: 1px dashed var(--border-strong); border-radius: var(--radius-lg); }
 .state--error { border-style: solid; border-color: var(--color-danger); color: var(--color-danger-text); background: var(--surface); }
-.notice { padding: var(--space-3); border-radius: var(--radius); background: var(--surface-sunken); font-size: var(--text-sm); color: var(--text-muted); }
-.notice--warning { border-left: 3px solid var(--color-warning); }
+/* Curved colored left-edge accent (BT-011-09; the reference screenshot's amber left-edge curve),
+   for informational callouts, tooltips and popovers alike, so the treatment is defined once and
+   reused everywhere it applies — never copied per screen. `overflow: hidden` on the rounded
+   container clips the accent bar's square top/bottom to the container's own border-radius, so the
+   colored edge visually CURVES into the corner instead of sticking out past it as a plain
+   `border-left` would once the container itself has rounded corners (Terry: "the line should
+   follow the container's rounded left edge, not become an oversized decorative arc"). The color
+   is a custom property so a semantic modifier only needs to set one value; plain `.notice` (no
+   modifier) stays a neutral, low-emphasis grey so existing informational text is not repainted a
+   loud color it never asked for. */
+.notice {
+  position: relative; overflow: hidden; isolation: isolate;
+  padding: var(--space-3) var(--space-3) var(--space-3) calc(var(--space-3) + 5px);
+  border-radius: var(--radius); background: var(--surface-sunken); font-size: var(--text-sm); color: var(--text-muted);
+  --notice-accent: var(--border-strong);
+}
+.notice::before { content: ""; position: absolute; inset: 0 auto 0 0; width: 4px; background: var(--notice-accent); }
+.notice--info { --notice-accent: var(--color-info); }
+.notice--warning { --notice-accent: var(--color-warning); }
+.notice--danger { --notice-accent: var(--color-danger); }
+.notice--success { --notice-accent: var(--color-success); }
 .error-text { color: var(--color-danger-text); font-size: var(--text-sm); }
 .muted { color: var(--text-muted); }
 .small { font-size: var(--text-sm); }
@@ -480,7 +500,7 @@ fieldset.budget-line { margin: 0; padding: var(--space-3); border: 1px solid var
   z-index: 70;
   width: max-content;
   max-width: 17rem;
-  padding: 0.45rem 0.65rem;
+  padding: 0.45rem 0.65rem 0.45rem calc(0.65rem + 5px);
   border: 1px solid var(--border-strong);
   border-radius: 6px;
   background: var(--surface-raised);
@@ -490,9 +510,36 @@ fieldset.budget-line { margin: 0; padding: var(--space-3); border: 1px solid var
   white-space: normal;
   box-shadow: 0 6px 18px rgb(0 0 0 / 0.25);
   pointer-events: none;
+  /* Same curved left-edge accent as .notice (BT-011-09) — clipped to the box's own rounded corner. */
+  overflow: hidden; isolation: isolate;
 }
+.floating-tip::before { content: ""; position: absolute; inset: 0 auto 0 0; width: 4px; background: var(--color-info); }
 @media (prefers-reduced-motion: no-preference) { .floating-tip { animation: tip-in 0.1s ease-out; } }
 @keyframes tip-in { from { opacity: 0; } to { opacity: 1; } }
+
+/* Accessible POPOVER for INTERACTIVE explanatory content (a real link or button), distinct from
+   the inert `.floating-tip` above: "Interactive content belongs in an accessible popover, not a
+   tooltip containing inaccessible links" (review, 2026-09-18). `createHelpPopover()`
+   (app/js/ui/components.js) manages open/close, Escape, outside-click and focus return; this is
+   only the shared visual, the same curved left-edge accent again. */
+.popover-anchor { position: relative; display: inline-flex; }
+.popover__trigger {
+  display: inline-flex; align-items: center; justify-content: center; width: 1.25rem; height: 1.25rem;
+  border-radius: var(--radius-pill); border: 1px solid var(--border-strong); background: var(--surface);
+  color: var(--text-muted); font-size: 0.7rem; line-height: 1; cursor: pointer; padding: 0;
+}
+.popover__trigger:hover, .popover__trigger[aria-expanded="true"] { color: var(--accent); border-color: var(--accent); }
+.popover__panel {
+  position: fixed; z-index: 70; width: max-content; max-width: 20rem;
+  padding: var(--space-3) var(--space-3) var(--space-3) calc(var(--space-3) + 5px);
+  border: 1px solid var(--border-strong); border-radius: var(--radius); background: var(--surface-raised); color: var(--text);
+  font-size: var(--text-sm); line-height: 1.4; box-shadow: var(--shadow);
+  overflow: hidden; isolation: isolate;
+}
+.popover__panel::before { content: ""; position: absolute; inset: 0 auto 0 0; width: 4px; background: var(--color-info); }
+.popover__panel p { margin: 0 0 var(--space-2); }
+.popover__panel .btn, .popover__panel a { margin-top: var(--space-1); }
+@media (prefers-reduced-motion: no-preference) { .popover__panel { animation: tip-in 0.1s ease-out; } }
 
 /* ---------- shared expenses (BT-009) ---------- */
 .split-list { display: grid; gap: var(--space-2); }

@@ -148,6 +148,72 @@ export function infoTip(node, text, id) {
   return el("span", { class: "tip-anchor" }, [node, el("span", { class: "sr-only", id, text })]);
 }
 
+// An accessible POPOVER for explanatory content that includes something INTERACTIVE — a real link
+// or button — which a plain tooltip must never hold (review, 2026-09-18: "Interactive content
+// belongs in an accessible popover, not a tooltip containing inaccessible links"). Unlike
+// `infoTip()` above (which wraps a control that is already the primary action), this is its OWN
+// small "?" trigger beside a label, so opening it never also fires an unrelated action. Opens on
+// click AND on focus+Enter/Space (a real button, so touch and keyboard both just work); closes on
+// Escape (returning focus to the trigger), on an outside click, or when focus leaves both the
+// trigger and the panel. `content` is one or more DOM nodes (a paragraph, a link, a button).
+export function createHelpPopover({ label, content, id = uid("help") }) {
+  const trigger = el("button", {
+    type: "button", class: "popover__trigger", "aria-expanded": "false", "aria-controls": id,
+    "aria-label": label || "More information", text: "?",
+  });
+  let panel = null;
+  const reposition = () => { if (panel) placeFloatingTip(panel, trigger); };
+  function onDocClick(e) {
+    if (panel && e.target !== trigger && !trigger.contains(e.target) && !panel.contains(e.target)) close();
+  }
+  function onKey(e) {
+    if (e.key === "Escape" && panel) { e.preventDefault(); close(); trigger.focus(); }
+  }
+  function onFocusOut(e) {
+    // Closes only once focus has actually left both the trigger and the panel (not on every
+    // internal focus change while tabbing between the panel's own controls).
+    const next = e.relatedTarget;
+    if (panel && next !== trigger && !(next && panel.contains(next))) close();
+  }
+  function open() {
+    if (panel) return;
+    panel = el("div", { class: "popover__panel", id, role: "group", "aria-label": label || "More information" }, [].concat(content));
+    document.body.appendChild(panel);
+    trigger.setAttribute("aria-expanded", "true");
+    reposition();
+    document.addEventListener("mousedown", onDocClick, true);
+    document.addEventListener("keydown", onKey, true);
+    panel.addEventListener("focusout", onFocusOut);
+    if (typeof window !== "undefined") {
+      window.addEventListener("scroll", reposition, { capture: true, passive: true });
+      window.addEventListener("resize", reposition, { passive: true });
+    }
+    const focusable = panel.querySelector("a[href], button, input, select, textarea, [tabindex]");
+    if (focusable && typeof focusable.focus === "function") focusable.focus();
+  }
+  function close() {
+    if (!panel) return;
+    // Real-browser bug fix (2026-09-18): the panel holds real, focused content, so removing it
+    // fires a synchronous focusout that re-enters this same close() through onFocusOut BEFORE the
+    // line below would have nulled `panel` — the reentrant call then tried to remove the same node
+    // a second time ("NotFoundError: the node to be removed is no longer a child of this node").
+    // Capturing the node and nulling `panel` FIRST makes the reentrant call's own `if (!panel)
+    // return;` guard fire instead, exactly like it does for every other close path.
+    const node = panel;
+    panel = null;
+    trigger.setAttribute("aria-expanded", "false");
+    document.removeEventListener("mousedown", onDocClick, true);
+    document.removeEventListener("keydown", onKey, true);
+    if (typeof window !== "undefined") {
+      window.removeEventListener("scroll", reposition, { capture: true });
+      window.removeEventListener("resize", reposition);
+    }
+    if (node.remove) node.remove(); else if (node.parentNode) node.parentNode.removeChild(node);
+  }
+  trigger.addEventListener("click", () => { if (panel) close(); else open(); });
+  return el("span", { class: "popover-anchor" }, [trigger]);
+}
+
 // Three states, as the brief asks (UX-009): a value you chose, a value inherited from the site or
 // the built-in default, or a value the site has locked.
 const SOURCE_LABELS = { personal: "Customized", site: "Inherited", default: "Inherited", locked: "Locked by site" };
