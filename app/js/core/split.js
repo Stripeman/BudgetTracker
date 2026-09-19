@@ -213,3 +213,47 @@ export function previewSplit({ amount, currency, method, lines, payers }) {
   out.ok = errors.length === 0;
   return out;
 }
+
+// BT-009-25: itemized receipt allocation — a faithful mirror of
+// api/_shared/groups.js's `computeItemization`, for the live preview only; the server recomputes
+// and validates everything and is authoritative (api/test/group-itemized.test.js keeps them
+// identical on the same hand-computed worked example, docs/BT-009-25-WORKED-EXAMPLES.md §2).
+// `itemLines`: [{ description, quantity, unitPrice: "12.00", refs: [ref,...] }]. `fees`:
+// { tax, tip, discount, fee } as decimal strings (blank/undefined = 0). Returns
+// { ok, itemsSubtotalMinor, grandTotalMinor, unallocatedMinor, perPerson: Map<ref, minor>, errors }.
+export function previewItemization(itemLines, fees, totalMinor, currency) {
+  const errors = [];
+  const perPerson = new Map();
+  const add = (ref, amt) => perPerson.set(ref, (perPerson.get(ref) || 0) + amt);
+  let itemsSubtotalMinor = 0;
+  for (const line of itemLines) {
+    const quantity = Number(line.quantity);
+    const unitPriceMinor = parseAmount(line.unitPrice, currency);
+    if (!line.description || !line.description.trim()) { errors.push("Every item needs a description."); continue; }
+    if (!Number.isFinite(quantity) || quantity <= 0) { errors.push(`"${line.description}": enter a quantity greater than zero.`); continue; }
+    if (unitPriceMinor === null || unitPriceMinor <= 0) { errors.push(`"${line.description}": enter a unit price greater than zero.`); continue; }
+    if (!line.refs || !line.refs.length) { errors.push(`"${line.description}": choose who shares this line.`); continue; }
+    const lineTotal = Math.round(quantity * unitPriceMinor);
+    itemsSubtotalMinor += lineTotal;
+    const parts = allocate(lineTotal, line.refs.map(() => 1));
+    line.refs.forEach((ref, j) => add(ref, parts[j]));
+  }
+  const feeMinor = (text) => { if (!text || !String(text).trim()) return 0; const m = parseAmount(text, currency); return m === null ? NaN : m; };
+  const taxMinor = feeMinor(fees.tax);
+  const tipMinor = feeMinor(fees.tip);
+  const discountMinor = feeMinor(fees.discount);
+  const otherFeeMinor = feeMinor(fees.fee);
+  if ([taxMinor, tipMinor, discountMinor, otherFeeMinor].some((v) => Number.isNaN(v) || v < 0)) errors.push("Tax, tip, discount and fee must each be a non-negative amount.");
+  const netExtra = (Number.isNaN(taxMinor) ? 0 : taxMinor) + (Number.isNaN(tipMinor) ? 0 : tipMinor) - (Number.isNaN(discountMinor) ? 0 : discountMinor) + (Number.isNaN(otherFeeMinor) ? 0 : otherFeeMinor);
+  if (!errors.length && netExtra !== 0 && itemsSubtotalMinor <= 0) errors.push("Tax, tip, discount or a fee needs at least one item line to allocate against.");
+  if (!errors.length && netExtra !== 0 && itemsSubtotalMinor > 0) {
+    const refs = [...perPerson.keys()];
+    const weights = refs.map((ref) => perPerson.get(ref));
+    const parts = allocate(Math.abs(netExtra), weights);
+    const sign = netExtra < 0 ? -1 : 1;
+    refs.forEach((ref, j) => add(ref, sign * parts[j]));
+  }
+  const grandTotalMinor = itemsSubtotalMinor + netExtra;
+  const unallocatedMinor = totalMinor === null ? null : totalMinor - grandTotalMinor;
+  return { ok: errors.length === 0 && unallocatedMinor === 0, itemsSubtotalMinor, grandTotalMinor, unallocatedMinor, perPerson, errors };
+}

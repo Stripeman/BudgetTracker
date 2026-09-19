@@ -41,6 +41,7 @@ function ctxWith({ events = [], currentEvent = null, canManage = true, canAdd = 
     createGroupEvent: async (ws, body) => { calls.push({ kind: "create-event", body }); return { event: { id: "gev_new0000001", name: body.name, description: body.description, status: "active", isDefault: false, expenseCount: 0, settlementCount: 0 } }; },
     groupEventStatus: async (ws, body) => { calls.push({ kind: "event-status", body }); return { event: {} }; },
     createGroupExpense: async (ws, body, key) => { calls.push({ kind: "create-expense", body, key }); return { expense: {} }; },
+    updateGroupExpense: async (ws, body) => { calls.push({ kind: "update-expense", body }); return { expense: {} }; },
     groupAction: async (ws, action, body) => { calls.push({ kind: action, body }); return {}; },
     sharedExport: async (ws, format, eventId) => { calls.push({ kind: "export", ws, format, eventId }); return { filename: `shared-expenses.${format}`, mime: "text/plain", content: "x", encoding: "text" }; },
   };
@@ -181,5 +182,80 @@ describe("BT-009-20/21 events card: the directory, its access note, and lifecycl
     await tick();
     const combined = calls.filter((c) => c.kind === "export").find((c) => c.format === "json");
     assert.deepEqual(combined, { kind: "export", ws: "ws_1", format: "json", eventId: null });
+  });
+
+  test("BT-009-22: Add event offers 'Copy setup from' when other events exist; choosing one prefills Description and sends templateEventId", async () => {
+    const events = [
+      { id: "gev_1", name: "Ski trip", description: "Our annual ski week", status: "active", isDefault: true, expenseCount: 0, settlementCount: 0, createdBy: "Alice", createdAt: "" },
+    ];
+    const { ctx, state, calls } = ctxWith({ events });
+    const v = createGroupView(ctx);
+    v.update(state);
+    buttonNamed(v.element, "Add event…").click();
+    const dialog = document.body.querySelector(".modal");
+    const templateSelect = dialog.querySelectorAll("select").find((s) => s.querySelectorAll("option").some((o) => o.textContent === "Ski trip"));
+    assert.ok(templateSelect, "a template picker offering the existing event exists");
+    templateSelect.value = "gev_1";
+    templateSelect.dispatchEvent(new DomEvent("change", { bubbles: true }));
+    const description = dialog.querySelector("textarea");
+    assert.equal(description.value, "Our annual ski week", "choosing a template visibly prefills the description");
+    type(dialog.querySelector("input"), "Winter trip 2");
+    buttonNamed(dialog, "Add event").click();
+    await tick();
+    const created = calls.find((c) => c.kind === "create-event");
+    assert.equal(created.body.templateEventId, "gev_1");
+    assert.equal(created.body.description, "Our annual ski week");
+  });
+
+  test("BT-009-22: with no other events, Add event offers no template picker", () => {
+    const { ctx, state } = ctxWith({ events: [] });
+    const v = createGroupView(ctx);
+    v.update(state);
+    buttonNamed(v.element, "Add event…").click();
+    const dialog = document.body.querySelector(".modal");
+    assert.equal(dialog.querySelectorAll("select").length, 0, "no template picker when there is nothing yet to copy from");
+  });
+
+  test("BT-009-24: correcting an expense offers a real 'Event' picker; moving it to another active event sends eventId, and 'Keep in its current event' sends none", async () => {
+    const events = [
+      { id: "gev_1", name: "Ski trip", status: "active", isDefault: true, expenseCount: 1, settlementCount: 0, createdBy: "Alice", createdAt: "" },
+      { id: "gev_2", name: "Book club", status: "active", isDefault: false, expenseCount: 0, settlementCount: 0, createdBy: "Alice", createdAt: "" },
+      { id: "gev_3", name: "Closed one", status: "closed", isDefault: false, expenseCount: 0, settlementCount: 0, createdBy: "Alice", createdAt: "" },
+    ];
+    const { ctx, state, calls } = ctxWith({ events });
+    state.group.data.expenses = [{
+      id: "exp_1", description: "Lift passes", date: "2026-09-11", categoryId: null, notes: "",
+      currency: "EUR", amount: "80.00", amountMinor: 8000, eventId: "gev_1", original: null,
+      payers: [{ ref: "member:a", amount: "80.00" }], split: { method: "equal", lines: [{ ref: "member:a" }, { ref: "member:b" }] },
+      shares: [{ ref: "member:a", amount: "40.00" }, { ref: "member:b", amount: "40.00" }],
+      revision: 1, canEdit: true, canVoid: true, myLedger: null, amendmentCount: 0,
+    }];
+    const v = createGroupView(ctx);
+    v.update(state);
+    buttonNamed(v.element, "Edit").click();
+    const dialog = document.body.querySelector(".modal");
+    const eventSelect = dialog.querySelectorAll("select").find((s) => s.querySelectorAll("option").some((o) => o.textContent.includes('Keep in "Ski trip"')));
+    assert.ok(eventSelect, "a real Event picker offers to keep or move");
+    const optionLabels = eventSelect.querySelectorAll("option").map((o) => o.textContent);
+    assert.deepEqual(optionLabels, ['Keep in "Ski trip"', 'Move to "Book club"'], "only OTHER ACTIVE events are offered as a destination — never the closed one");
+
+    // Submitting unchanged sends no eventId at all.
+    type(dialog.querySelector('input[placeholder="Why is this being corrected?"]'), "no real change");
+    buttonNamed(dialog, "Save correction").click();
+    await tick();
+    const unchanged = calls.find((c) => c.kind === "update-expense");
+    assert.equal("eventId" in unchanged.body, false, "keeping the same event sends no eventId");
+
+    // Reopen the dialog: choosing "Book club" and saving sends eventId: gev_2.
+    buttonNamed(v.element, "Edit").click();
+    const dialog2 = document.body.querySelector(".modal");
+    const eventSelect2 = dialog2.querySelectorAll("select").find((s) => s.querySelectorAll("option").some((o) => o.textContent.includes('Keep in "Ski trip"')));
+    eventSelect2.value = "gev_2";
+    eventSelect2.dispatchEvent(new DomEvent("change", { bubbles: true }));
+    type(dialog2.querySelector('input[placeholder="Why is this being corrected?"]'), "moving to the right event");
+    buttonNamed(dialog2, "Save correction").click();
+    await tick();
+    const moved = calls.filter((c) => c.kind === "update-expense").pop();
+    assert.equal(moved.body.eventId, "gev_2");
   });
 });

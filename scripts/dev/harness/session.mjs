@@ -328,6 +328,32 @@ class Session {
     return now;
   }
 
+  // Attaches a real file to an <input type="file"> by CSS selector (CDP's DOM.setFileInputFiles
+  // needs an actual path readable by the browser process, not raw bytes) — the input's own native
+  // `change` event fires once Chromium attaches it, exactly as when a person picks a file. Content
+  // is written to a throwaway file under this run's own isolated evidence directory (never the
+  // repo, never `.local/dev-data`) and left there with the rest of the run's evidence (screenshots
+  // included) rather than removed immediately, since the browser reads it lazily and asynchronously
+  // after this call returns.
+  async uploadFile(cssSelector, content, { filename = "upload.csv" } = {}) {
+    const { root } = await this.cdp.send("DOM.getDocument");
+    const { nodeId } = await this.cdp.send("DOM.querySelector", { nodeId: root.nodeId, selector: cssSelector });
+    if (!nodeId) throw new Error(`${this.name}: no element matches "${cssSelector}" for a file upload.`);
+    const tmpDir = assertUnderLocal(path.join(this.runDir, "uploads"));
+    fs.mkdirSync(tmpDir, { recursive: true });
+    const filePath = path.join(tmpDir, `${Date.now()}-${filename}`);
+    fs.writeFileSync(filePath, content, "utf8");
+    await this.cdp.send("DOM.setFileInputFiles", { files: [filePath], nodeId });
+    await this.settle();
+  }
+
+  // Real network-level offline emulation (CDP Network.emulateNetworkConditions) — every fetch the
+  // page makes genuinely fails, exactly as it would with no connection, rather than a page script
+  // faking a rejected promise (BT-009-26 offline entry).
+  async setOffline(offline) {
+    await this.cdp.send("Network.emulateNetworkConditions", { offline, latency: 0, downloadThroughput: offline ? 0 : -1, uploadThroughput: offline ? 0 : -1 });
+  }
+
   async press(key, { times = 1, shift = false } = {}) {
     const d = keyDef(key);
     for (let i = 0; i < times; i += 1) {
@@ -407,6 +433,13 @@ class Session {
       ...this.log.failed.map((f) => `failed ${f.method} ${f.path}: ${f.error}`),
       ...this.log.http.filter((h) => !allowed(h)).map((h) => `HTTP ${h.status} ${h.method} ${h.path}`),
     ];
+  }
+
+  // Clears everything `problems()` would report so far — for a scenario that deliberately induces
+  // a failure (BT-009-26's real network-level offline emulation) and wants only genuine problems
+  // reported afterward, never the expected failure it caused on purpose.
+  resetLog() {
+    this.log.exceptions = []; this.log.console = []; this.log.failed = []; this.log.http = [];
   }
 
   async close() {

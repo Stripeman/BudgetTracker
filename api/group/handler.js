@@ -47,6 +47,27 @@
 //                                           a money-shaped method.
 //   POST ?action=create-split-preset  { name, method, lines }   any writer
 //   POST ?action=delete-split-preset  { presetId }   its own creator, or a manager/owner
+//   GET  ?action=payment-requests            in-app-only payment reminders (BT-009-26): never an
+//                                           email/SMS/push, since no delivery provider or
+//                                           credentials are configured for this workspace.
+//   POST ?action=create-payment-request  { from, to, amount, currency?, note? }   the person owed
+//                                           money (`to`), or a manager/owner acting for a contact
+//   POST ?action=dismiss-payment-request { requestId }   the person being reminded (`from`) only
+//   POST ?action=cancel-payment-request  { requestId }   whoever sent it, or a manager/owner
+//   POST ?action=preview-import  { csv, mapping? }   Splitwise CSV import (BT-009-26), NEVER
+//                                           mutating: parses a Splitwise CSV export, plans each row
+//                                           (mapping each of Splitwise's own person columns to a
+//                                           real member/contact ref, or `null` to skip them),
+//                                           validates it exactly like a real create would, and flags
+//                                           any likely duplicate already recorded. A row whose own
+//                                           currency differs from this workspace's reporting
+//                                           currency is refused (Splitwise's export carries no
+//                                           exchange rate to convert it), never guessed.
+//   POST ?action=confirm-import  { csv, mapping?, rows: [rowIndex, ...], eventId? }   creates a
+//                                           real expense or payment for each CHOSEN row that still
+//                                           validates (each independent; one row failing leaves the
+//                                           rest of the batch unaffected) — any writer, same rights
+//                                           as adding an expense or reporting a payment by hand.
 //
 // A group needs no account: an expense records who paid and who shared, nothing more (Terry,
 // 2026-09-14). Nothing is ever deleted (BT-001-05): corrections keep before and after values with a
@@ -91,14 +112,15 @@ const model = require('../_shared/workspace-model');
 const siteSettings = require('../_shared/site');
 const workspaceSettings = require('../_shared/workspace-settings');
 const { readDocument } = require('../_shared/schema');
+const splitwiseImport = require('../_shared/splitwise-import');
 
 // `confirmBackdated` accompanies `ledger` wherever both may appear: it answers the FA-1 warning (below)
 // when starting to record on an account would backdate confirmed cash the caller has not yet seen.
-const CREATE_KEYS = ['description', 'date', 'amount', 'currency', 'rate', 'rateSource', 'rateDate', 'categoryId', 'notes', 'payers', 'split', 'ledger', 'confirmBackdated', 'eventId'];
-const PATCH_KEYS = ['expenseId', 'revision', 'reason', 'description', 'date', 'amount', 'currency', 'rate', 'rateSource', 'rateDate', 'categoryId', 'notes', 'payers', 'split', 'eventId'];
+const CREATE_KEYS = ['description', 'date', 'amount', 'currency', 'rate', 'rateSource', 'rateDate', 'categoryId', 'notes', 'payers', 'split', 'itemization', 'ledger', 'confirmBackdated', 'eventId'];
+const PATCH_KEYS = ['expenseId', 'revision', 'reason', 'description', 'date', 'amount', 'currency', 'rate', 'rateSource', 'rateDate', 'categoryId', 'notes', 'payers', 'split', 'itemization', 'eventId'];
 const SETTLE_KEYS = ['from', 'to', 'amount', 'currency', 'date', 'method', 'notes', 'ledger', 'confirmBackdated', 'eventId'];
 // Every correction keeps the before and after values of these fields.
-const TRACKED = ['description', 'date', 'amountMinor', 'original', 'categoryId', 'notes', 'payers', 'split', 'shares', 'eventId'];
+const TRACKED = ['description', 'date', 'amountMinor', 'original', 'categoryId', 'notes', 'payers', 'split', 'shares', 'eventId', 'itemization'];
 const LINK_KEY = Object.freeze({ expense: 'groupExpenseId', settlement: 'groupSettlementId' });
 
 const selfRef = (member) => `member:${member.id}`;
@@ -350,6 +372,352 @@ async function deleteSplitPreset(ctx, req) {
   return { body: result };
 }
 
+// ---- settlement units (BT-009-25: couples/families) -------------------------------------------
+// A unit merges >=2 real, individually identifiable participants for the SETTLE-UP VIEW and its
+// payment suggestions only (groups.js's `unitSuggest`) — it never changes who paid what, who owes
+// what, or grants anyone access to anything; a real settlement is always still between two real
+// people, never a unit (`groups.js`'s own doc comment on `unitSuggest`). A unit holds no financial
+// data of its own, so removing one only ever affects future display/suggestions, never any
+// historical record — it is soft-deactivated (kept for audit, like every other record in this
+// codebase) rather than truly erased, the same convention `groupSplitPresets` and every other
+// non-financial convenience record already follows.
+const UNIT_KEYS = ['name', 'memberRefs'];
+function unitView(doc, u) {
+  return { id: u.id, name: u.name, memberRefs: u.memberRefs, createdBy: nameOf(doc, u.createdBy), createdAt: u.createdAt };
+}
+async function listUnits(ctx, req) {
+  const wsId = requireId(query(req, 'workspaceId'), 'workspaceId');
+  const { doc } = await store.loadWorkspace(ctx, wsId);
+  return { body: { units: (doc.groupSettlementUnits || []).filter((u) => u.active !== false).map((u) => unitView(doc, u)) } };
+}
+async function createUnit(ctx, req) {
+  const wsId = requireId(query(req, 'workspaceId'), 'workspaceId');
+  const body = fields.onlyKeys(readBody(req), UNIT_KEYS);
+  const { result } = await mutateGroup(ctx, wsId, (doc, member) => {
+    requireWriter(member);
+    const check = groups.participantChecker(doc);
+    const rawRefs = Array.isArray(body.memberRefs) ? body.memberRefs : [];
+    if (rawRefs.length < 2) throw badRequest('A settlement unit needs at least two people.', 'invalid_unit');
+    const memberRefs = rawRefs.map((ref) => { if (typeof ref !== 'string' || !ref) throw badRequest('memberRefs is missing or not a valid identifier.', 'invalid_id'); return check(ref); });
+    if (new Set(memberRefs).size !== memberRefs.length) throw badRequest('The same person is named twice.', 'invalid_unit');
+    const activeUnits = (doc.groupSettlementUnits || []).filter((u) => u.active !== false);
+    if (memberRefs.some((ref) => activeUnits.some((u) => u.memberRefs.includes(ref)))) throw conflict('Someone named here is already in another settlement unit.', 'unit_overlap');
+    const nowIso = ctx.nowIso();
+    const unit = { id: newId('gsu'), name: fields.text(body.name, { field: 'Name', max: 80, required: true }), memberRefs, active: true, createdBy: member.subject, createdAt: nowIso };
+    doc.groupSettlementUnits = [...(doc.groupSettlementUnits || []), unit];
+    audit.record(doc, { actor: member.subject, action: 'group.settlement-unit.create', targetType: 'group-settlement-unit', targetId: unit.id, at: nowIso });
+    return { unit: unitView(doc, unit) };
+  });
+  return { status: 201, body: result };
+}
+async function deleteUnit(ctx, req) {
+  const wsId = requireId(query(req, 'workspaceId'), 'workspaceId');
+  const body = fields.onlyKeys(readBody(req), ['unitId']);
+  const id = requireId(body.unitId, 'unitId');
+  const { result } = await mutateGroup(ctx, wsId, (doc, member) => {
+    const u = (doc.groupSettlementUnits || []).find((x) => x.id === id);
+    if (!u || u.active === false) throw notFound('Unknown settlement unit.');
+    if (u.createdBy !== member.subject && !isManager(member)) throw forbidden('Only the person who created this settlement unit, or a manager or owner, can remove it.');
+    u.active = false;
+    audit.record(doc, { actor: member.subject, action: 'group.settlement-unit.delete', targetType: 'group-settlement-unit', targetId: id, at: ctx.nowIso() });
+    return { removed: true };
+  });
+  return { body: result };
+}
+
+// ---- shared income / prepaid contributions / deposits (BT-009-25) -----------------------------
+// "Distinguish money contributed in advance from actual income, expenses, refundable deposits and
+// returned funds. Contributions must not count as income or spending merely because money moved.
+// Preserve who contributed, who holds the money and how it is subsequently applied or returned"
+// (Terry, 2026-09-19). Modeled as its OWN record type, `groupContributions` — never an `expense` or
+// `income` transaction kind on anyone's private account, and NEVER netted against the ordinary
+// Shared-expenses balance (`groups.balances()` is completely untouched by this section): a fund-paid
+// expense is still recorded as a perfectly ordinary shared expense (the holder as its real payer,
+// matching who actually transacted), and this is a fully separate, parallel report of who put money
+// in, who holds it, and how much of it has since been applied or returned — two honest, independently
+// correct numbers a person may need to look at together, never blended into one (this is a
+// deliberate design decision, not an oversight — see docs/BT-009-25-WORKED-EXAMPLES.md §4's own
+// recorded ambiguity and recommendation). `heldMinor` is always derived (amount − applied − returned),
+// never stored, so it can never drift from the two histories that produce it.
+const CONTRIBUTION_KEYS = ['contributor', 'holder', 'amount', 'kind', 'date', 'notes'];
+const CONTRIBUTION_KINDS = ['contribution', 'deposit'];
+function contributionView(doc, member, c) {
+  const dec = (m) => money.toDecimal(m, c.currency);
+  const heldMinor = c.amountMinor - c.appliedMinor - c.returnedMinor;
+  return {
+    id: c.id, contributor: c.contributor, holder: c.holder, kind: c.kind, date: c.date, notes: c.notes || '',
+    currency: c.currency, amount: dec(c.amountMinor), amountMinor: c.amountMinor,
+    applied: dec(c.appliedMinor), appliedMinor: c.appliedMinor,
+    returned: dec(c.returnedMinor), returnedMinor: c.returnedMinor,
+    held: dec(heldMinor), heldMinor,
+    createdBy: nameOf(doc, c.createdBy), createdBySelf: c.createdBy === member.subject, createdAt: c.createdAt,
+    history: (c.history || []).map((h) => ({ ...h, by: nameOf(doc, h.by) })),
+  };
+}
+async function listContributions(ctx, req) {
+  const wsId = requireId(query(req, 'workspaceId'), 'workspaceId');
+  const { doc, member } = await store.loadWorkspace(ctx, wsId);
+  return { body: { contributions: (doc.groupContributions || []).map((c) => contributionView(doc, member, c)) } };
+}
+async function createContribution(ctx, req) {
+  const wsId = requireId(query(req, 'workspaceId'), 'workspaceId');
+  const body = fields.onlyKeys(readBody(req), CONTRIBUTION_KEYS);
+  const { result } = await mutateGroup(ctx, wsId, (doc, member) => {
+    requireWriter(member);
+    const check = groups.participantChecker(doc);
+    if (typeof body.contributor !== 'string' || !body.contributor) throw badRequest('contributor is missing or not a valid identifier.', 'invalid_id');
+    if (typeof body.holder !== 'string' || !body.holder) throw badRequest('holder is missing or not a valid identifier.', 'invalid_id');
+    const contributor = check(body.contributor);
+    const holder = check(body.holder);
+    const amountMinor = groups.positiveAmount(body.amount, reportingCurrency(doc), 'Amount');
+    const kind = fields.oneOf(body.kind, CONTRIBUTION_KINDS, 'Kind');
+    const nowIso = ctx.nowIso();
+    const c = {
+      id: newId('gct'), contributor, holder, amountMinor, currency: reportingCurrency(doc), kind,
+      date: fields.date(body.date, 'Date') || nowIso.slice(0, 10), notes: fields.text(body.notes, { field: 'Notes', max: 2000, multiline: true }),
+      appliedMinor: 0, returnedMinor: 0, createdBy: member.subject, createdAt: nowIso,
+      history: [{ at: nowIso, by: member.subject, event: 'create' }],
+    };
+    doc.groupContributions = [...(doc.groupContributions || []), c];
+    audit.record(doc, { actor: member.subject, action: 'group.contribution.create', targetType: 'group-contribution', targetId: c.id, at: nowIso });
+    return { contribution: contributionView(doc, member, c) };
+  });
+  return { status: 201, body: result };
+}
+// One shared implementation for "apply" (held -> applied, e.g. used toward a fund-paid expense) and
+// "return" (held -> returned, e.g. the leftover handed back, or a deposit given back) — the two
+// destinations Terry's own instruction names, both governed by the identical "never more than what
+// is still held" rule and the identical audit/history shape.
+function contributionMove(field, action) {
+  return async (ctx, req) => {
+    const wsId = requireId(query(req, 'workspaceId'), 'workspaceId');
+    const body = fields.onlyKeys(readBody(req), ['contributionId', 'amount', 'note']);
+    const id = requireId(body.contributionId, 'contributionId');
+    const { result } = await mutateGroup(ctx, wsId, (doc, member) => {
+      requireWriter(member);
+      const c = (doc.groupContributions || []).find((x) => x.id === id);
+      if (!c) throw notFound('Unknown contribution.');
+      const amountMinor = groups.positiveAmount(body.amount, c.currency, 'Amount');
+      const heldMinor = c.amountMinor - c.appliedMinor - c.returnedMinor;
+      if (amountMinor > heldMinor) {
+        throw conflict(`Only ${money.toDecimal(heldMinor, c.currency)} of this contribution is still held.`, 'exceeds_held');
+      }
+      const nowIso = ctx.nowIso();
+      c[field] += amountMinor;
+      const note = fields.text(body.note, { field: 'Note', max: 200 });
+      c.history = [...(c.history || []), { at: nowIso, by: member.subject, event: action, amountMinor, ...(note ? { note } : {}) }];
+      audit.record(doc, { actor: member.subject, action: `group.contribution.${action}`, targetType: 'group-contribution', targetId: c.id, at: nowIso });
+      return { contribution: contributionView(doc, member, c) };
+    });
+    return { body: result };
+  };
+}
+const applyContribution = contributionMove('appliedMinor', 'apply', 'applied');
+const returnContribution = contributionMove('returnedMinor', 'return', 'returned');
+
+// ---- in-app payment reminders / requests (BT-009-26) ------------------------------------------
+// "Begin with authorized in-app functionality. If external delivery needs a provider or
+// credentials, identify that exact dependency and finish the in-app workflow meanwhile. Do not
+// send real messages to contacts without explicit authorization" (Terry, 2026-09-19). This is a
+// fully in-app record, `groupPaymentRequests`: one member nudging another that money is owed, in
+// the SAME reporting/open currency a payment could already be made in. It sends no email, SMS or
+// push notification — that would need a delivery provider and credentials this workspace has none
+// of; the exact dependency is recorded here rather than silently skipped or faked. A request never
+// moves money or changes a balance by itself; only an actual ?action=settle does that, exactly as
+// today. `to` is who is owed (normally the creator's own self ref, or a contact the creator
+// manages) and `from` is who is being reminded to pay — the same shape as ?action=settle's
+// `from`/`to` so the two concepts stay easy to compare and never get confused with each other.
+const REQUEST_KEYS = ['from', 'to', 'amount', 'currency', 'note'];
+function requestView(doc, member, r) {
+  // `from`/`to` are left as plain refs, resolved to names on the client from the same
+  // `participants` list every other ref on this page already resolves against (settlementView
+  // does the same, for the identical reason: one place decides "you" vs a real name).
+  return {
+    id: r.id, from: r.from, to: r.to,
+    currency: r.currency, amount: money.toDecimal(r.amountMinor, r.currency), amountMinor: r.amountMinor,
+    note: r.note || '', status: r.status, createdBy: nameOf(doc, r.createdBy), createdBySelf: r.createdBy === member.subject, createdAt: r.createdAt,
+    respondedAt: r.respondedAt || null,
+  };
+}
+async function listRequests(ctx, req) {
+  const wsId = requireId(query(req, 'workspaceId'), 'workspaceId');
+  const { doc, member } = await store.loadWorkspace(ctx, wsId);
+  return { body: { paymentRequests: (doc.groupPaymentRequests || []).map((r) => requestView(doc, member, r)) } };
+}
+async function createRequest(ctx, req) {
+  const wsId = requireId(query(req, 'workspaceId'), 'workspaceId');
+  const body = fields.onlyKeys(readBody(req), REQUEST_KEYS);
+  const { result } = await mutateGroup(ctx, wsId, (doc, member) => {
+    requireWriter(member);
+    const check = groups.participantChecker(doc);
+    if (typeof body.from !== 'string' || !body.from) throw badRequest('from is missing or not a valid identifier.', 'invalid_id');
+    if (typeof body.to !== 'string' || !body.to) throw badRequest('to is missing or not a valid identifier.', 'invalid_id');
+    const from = check(body.from);
+    const to = check(body.to);
+    if (from === to) throw badRequest('A payment reminder needs two different people.', 'invalid_request');
+    const me = selfRef(member);
+    const forContact = to.startsWith('contact:') && isManager(member);
+    if (to !== me && !forContact) throw forbidden('Only the person who is owed money, or a manager or owner acting for a contact, can send a payment reminder for it.');
+    const currency = settlementCurrency(doc, body.currency);
+    const amountMinor = groups.positiveAmount(body.amount, currency, 'Amount');
+    const nowIso = ctx.nowIso();
+    const r = {
+      id: newId('gpr'), from, to, amountMinor, currency,
+      note: fields.text(body.note, { field: 'Note', max: 500 }),
+      status: 'open', createdBy: member.subject, createdAt: nowIso, respondedAt: null,
+    };
+    doc.groupPaymentRequests = [...(doc.groupPaymentRequests || []), r];
+    audit.record(doc, { actor: member.subject, action: 'group.payment-request.create', targetType: 'group-payment-request', targetId: r.id, at: nowIso });
+    return { paymentRequest: requestView(doc, member, r) };
+  });
+  return { status: 201, body: result };
+}
+// One implementation for the two ways an open request stops being open: the person being reminded
+// dismisses it (they have seen it — never means it was paid; that is still only ?action=settle),
+// or whoever sent it (or a manager/owner) cancels it because it is no longer needed.
+function requestRespond(newStatus, allow) {
+  return async (ctx, req) => {
+    const wsId = requireId(query(req, 'workspaceId'), 'workspaceId');
+    const body = fields.onlyKeys(readBody(req), ['requestId']);
+    const id = requireId(body.requestId, 'requestId');
+    const { result } = await mutateGroup(ctx, wsId, (doc, member) => {
+      const r = (doc.groupPaymentRequests || []).find((x) => x.id === id);
+      if (!r) throw notFound('Unknown payment reminder.');
+      if (r.status !== 'open') throw conflict('This reminder was already resolved.', 'already_resolved');
+      if (!allow(r, member)) throw forbidden('You cannot resolve this payment reminder.');
+      const nowIso = ctx.nowIso();
+      r.status = newStatus;
+      r.respondedAt = nowIso;
+      audit.record(doc, { actor: member.subject, action: `group.payment-request.${newStatus}`, targetType: 'group-payment-request', targetId: r.id, at: nowIso });
+      return { paymentRequest: requestView(doc, member, r) };
+    });
+    return { body: result };
+  };
+}
+const dismissRequest = requestRespond('dismissed', (r, member) => r.from === selfRef(member));
+const cancelRequest = requestRespond('cancelled', (r, member) => r.createdBy === member.subject || isManager(member));
+
+// ---- Splitwise import (BT-009-26) --------------------------------------------------------------
+// "Start with the specified Splitwise import, including mapping, validation, duplicate detection
+// and a non-mutating preview before confirmed import" (Terry, 2026-09-19). `api/_shared/
+// splitwise-import.js` only parses the CSV and PLANS each row; every plan is turned into a real
+// record here using the exact same `expenseMoney`/settlement construction a manual entry already
+// goes through, so an imported record can never bypass a rule a hand-entered one would have to
+// follow. Preview never calls `mutateGroup` — it only reads.
+const IMPORT_KEYS = ['csv', 'mapping'];
+const CONFIRM_IMPORT_KEYS = [...IMPORT_KEYS, 'rows', 'eventId'];
+function readImportBody(req, extraKeys = []) {
+  const body = fields.onlyKeys(readBody(req), [...IMPORT_KEYS, ...extraKeys]);
+  if (typeof body.csv !== 'string') throw badRequest('Choose a Splitwise CSV export to import.', 'invalid_csv');
+  const mapping = body.mapping && typeof body.mapping === 'object' && !Array.isArray(body.mapping) ? body.mapping : {};
+  return { csv: body.csv, mapping, body };
+}
+// One row's plan, checked against the LIVE document (an inactive member, a removed category, or a
+// document that changed since the file was exported can only be known now, never from the CSV
+// alone) and marked with any likely duplicate already recorded — advisory only, never a hard block.
+function importRowView(doc, plan) {
+  if (!plan.ok) return { index: plan.index, ok: false, skip: !!plan.skip, reason: plan.reason, message: plan.message, raw: plan.raw };
+  let err = null;
+  try {
+    if (plan.kind === 'expense') {
+      expenseMoney(doc, { description: plan.description, date: plan.date, amount: plan.amount, categoryId: plan.categoryId, notes: plan.notes, payers: plan.payers, split: plan.split }, null, null, {});
+    } else {
+      const check = groups.participantChecker(doc);
+      check(plan.from); check(plan.to);
+      if (plan.from === plan.to) throw badRequest('A payment needs two different people.', 'same_person');
+      settlementCurrency(doc, plan.currency);
+      groups.positiveAmount(plan.amount, plan.currency, 'Amount');
+    }
+  } catch (e) { err = e; }
+  const duplicate = plan.kind === 'expense' ? splitwiseImport.duplicateOfExpense(doc, plan) : splitwiseImport.duplicateOfSettlement(doc, plan);
+  return {
+    index: plan.index, ok: !err, reason: err ? (err.code || 'invalid') : null, message: err ? err.message : null,
+    kind: plan.kind, raw: plan.raw, roundingNote: plan.roundingNote || null,
+    ...(plan.kind === 'expense' ? { description: plan.description, categoryId: plan.categoryId } : { from: plan.from, to: plan.to }),
+    date: plan.date, amount: plan.amount, currency: plan.currency,
+    duplicateOf: duplicate ? duplicate.id : null,
+  };
+}
+async function previewImport(ctx, req) {
+  const wsId = requireId(query(req, 'workspaceId'), 'workspaceId');
+  const { csv, mapping } = readImportBody(req);
+  const { doc, member } = await store.loadWorkspace(ctx, wsId);
+  requireWriter(member);
+  const { header, personColumns, plans } = splitwiseImport.planAll(doc, csv, mapping);
+  const rows = plans.map((p) => importRowView(doc, p));
+  const summary = {
+    total: rows.length, importable: rows.filter((r) => r.ok).length,
+    duplicates: rows.filter((r) => r.ok && r.duplicateOf).length, refused: rows.filter((r) => !r.ok && !r.skip).length,
+  };
+  return { body: { header, personColumns, rows, summary } };
+}
+async function confirmImport(ctx, req) {
+  const wsId = requireId(query(req, 'workspaceId'), 'workspaceId');
+  const { csv, mapping, body } = readImportBody(req, ['rows', 'eventId']);
+  const rowsBody = body.rows;
+  if (!Array.isArray(rowsBody) || !rowsBody.length) throw badRequest('Choose at least one row to import.', 'invalid_rows');
+  const wanted = new Set(rowsBody.map((n) => { if (!Number.isInteger(n) || n < 0) throw badRequest('rows must be a list of row numbers.', 'invalid_rows'); return n; }));
+  const { result } = await mutateGroup(ctx, wsId, (doc, member) => {
+    requireWriter(member);
+    const nowIso = ctx.nowIso();
+    const groupEvent = resolveEvent(doc, member, nowIso, body.eventId !== undefined ? { eventId: body.eventId } : {});
+    const { plans } = splitwiseImport.planAll(doc, csv, mapping);
+    const imported = []; const skipped = [];
+    for (const plan of plans) {
+      if (!wanted.has(plan.index)) continue;
+      if (!plan.ok) { skipped.push({ index: plan.index, reason: plan.reason, message: plan.message }); continue; }
+      try {
+        if (plan.kind === 'expense') {
+          assertEventWritable(groupEvent);
+          const m = expenseMoney(doc, { description: plan.description, date: plan.date, amount: plan.amount, categoryId: plan.categoryId, notes: plan.notes, payers: plan.payers, split: plan.split }, null, member, {});
+          const rec = {
+            id: newId('gex'), description: fields.text(plan.description, { field: 'Description', max: 120, required: true }),
+            date: plan.date, currency: m.currency, amountMinor: m.amountMinor, original: m.original,
+            categoryId: checkCategory(doc, plan.categoryId), notes: fields.text(plan.notes, { field: 'Notes', max: 2000, multiline: true }),
+            payers: m.payers, split: m.split, shares: m.shares, eventId: groupEvent.id,
+            createdBy: member.subject, createdAt: nowIso, revision: 1, voidedAt: null,
+            history: [{ revision: 1, at: nowIso, by: member.subject, event: 'create' }], amendments: [], ledgerLinks: [],
+            importedFrom: 'splitwise',
+          };
+          doc.groupExpenses = [...(doc.groupExpenses || []), rec];
+          audit.record(doc, { actor: member.subject, action: 'group.expense.create', targetType: 'group-expense', targetId: rec.id, at: nowIso, fields: ['importedFromSplitwise'] });
+          followOwnLink(ctx, doc, member, rec, 'expense', 'Shared expense (imported from Splitwise)');
+          imported.push({ index: plan.index, kind: 'expense', id: rec.id });
+        } else {
+          assertEventWritable(groupEvent, { allowWhenClosed: true });
+          const currency = settlementCurrency(doc, plan.currency);
+          const check = groups.participantChecker(doc);
+          const from = check(plan.from); const to = check(plan.to);
+          if (from === to) throw badRequest('A payment needs two different people.', 'same_person');
+          const receiver = to === selfRef(member) && groupSettings.get(doc, 'receiverConfirms');
+          const s = {
+            id: newId('gst'), from, to, amountMinor: groups.positiveAmount(plan.amount, currency, 'Amount'), currency, eventId: groupEvent.id,
+            date: plan.date, method: '', notes: fields.text(plan.notes, { field: 'Notes', max: 500, multiline: true }),
+            status: receiver ? 'confirmed' : 'reported', confirmedBy: receiver ? member.subject : null, confirmedAt: receiver ? nowIso : null,
+            createdBy: member.subject, createdAt: nowIso, revision: 1, voidedAt: null, reportedAgainOf: null,
+            history: [{ revision: 1, at: nowIso, by: member.subject, event: 'reported' }, ...(receiver ? [{ revision: 1, at: nowIso, by: member.subject, event: 'confirmed' }] : [])],
+            ledgerLinks: [], importedFrom: 'splitwise',
+          };
+          doc.groupSettlements = [...(doc.groupSettlements || []), s];
+          audit.record(doc, { actor: member.subject, action: 'group.settlement.report', targetType: 'group-settlement', targetId: s.id, at: nowIso, fields: ['importedFromSplitwise'] });
+          if (receiver) audit.record(doc, { actor: member.subject, action: 'group.settlement.confirm', targetType: 'group-settlement', targetId: s.id, at: nowIso });
+          followOwnLink(ctx, doc, member, s, 'settlement', 'Repayment (imported from Splitwise)');
+          imported.push({ index: plan.index, kind: 'settlement', id: s.id });
+        }
+      } catch (e) {
+        // Something the preview could not have known changed underneath this one row (a mapped
+        // member left, an event closed) — this row alone is left out; the rest of the batch, each
+        // its own independent record, is unaffected (never an all-or-nothing batch failure for
+        // records that have nothing to do with one another).
+        skipped.push({ index: plan.index, reason: e.code || 'invalid', message: e.message });
+      }
+    }
+    if (imported.length) audit.record(doc, { actor: member.subject, action: 'group.import.splitwise', targetType: 'workspace', targetId: doc.id, at: nowIso, fields: [`imported:${imported.length}`, `skipped:${skipped.length}`] });
+    return { imported, skipped };
+  });
+  return { status: result.imported.length ? 201 : 200, body: result };
+}
+
 // Who may correct or void a shared expense: the group setting "changeExpenses" (Terry, 2026-09-14).
 // Viewers never may.
 const canChangeExpense = (doc, e, member) => writer(member)
@@ -434,10 +802,31 @@ function expenseMoney(doc, body, rec, member = null, mine = {}) {
     if (money.sum(payers.map((p) => p.amountMinor)) !== amountMinor) throw badRequest('The amount changed, so say again who paid how much.', 'payer_total');
   }
   let split;
-  if (!rec || body.split !== undefined) split = groups.normalizeSplit(body.split === undefined ? defaultSplit(doc, member, mine) : body.split, amountMinor, currency, check);
-  else {
+  let itemization;
+  // BT-009-25: an itemized receipt is a genuinely different INPUT shape (line items, quantities,
+  // tax/tip/discount/fee — never a single "value per person" like every other method), so it is
+  // sent as its own `body.itemization` field rather than forced into `split.lines`; the server
+  // computes the final per-person amounts once here (`computeItemization`), then feeds them through
+  // the EXACT SAME 'itemized' handling as every other stored split (computeShares/storedSplitBroken
+  // treat it identically to 'amounts') — one canonical downstream calculation, never a second one.
+  if (body.itemization !== undefined) {
+    const computed = groups.computeItemization(body.itemization, amountMinor, currency, check);
+    split = groups.normalizeSplit({ method: 'itemized', lines: computed.lines }, amountMinor, currency, check);
+    itemization = computed.itemization;
+  } else if (!rec || body.split !== undefined) {
+    // 'itemized' is reachable ONLY via `body.itemization` above (which always accompanies real
+    // line-item data) — never as a bare `split.method` a client could type directly, which would
+    // otherwise store an 'itemized' expense with no itemization behind it at all.
+    if (body.split !== undefined && body.split && body.split.method === 'itemized') {
+      throw badRequest('An itemized split needs its line items — send them as "itemization", not "split".', 'invalid_split');
+    }
+    split = groups.normalizeSplit(body.split === undefined ? defaultSplit(doc, member, mine) : body.split, amountMinor, currency, check);
+    itemization = undefined;
+  } else {
     split = structuredClone(rec.split);
+    itemization = rec.itemization ? structuredClone(rec.itemization) : undefined;
     if (split.method === 'amounts' && money.sum(split.lines.map((l) => l.value)) !== amountMinor) throw badRequest('The amount changed, so give the split amounts again.', 'split_amount_total');
+    if (split.method === 'itemized' && money.sum(split.lines.map((l) => l.value)) !== amountMinor) throw badRequest('The amount changed, so give the itemized allocation again.', 'split_amount_total');
     if (split.method === 'fixed-remainder') {
       const fixedTotal = money.sum(split.lines.filter((l) => l.value !== null).map((l) => l.value));
       const hasRemainder = split.lines.some((l) => l.value === null);
@@ -445,7 +834,7 @@ function expenseMoney(doc, body, rec, member = null, mine = {}) {
     }
   }
   const shares = groups.computeShares(amountMinor, split).shares.map(({ ref, amountMinor: a }) => ({ ref, amountMinor: a }));
-  return { currency, amountMinor, payers, split, shares, original };
+  return { currency, amountMinor, payers, split, shares, original, itemization };
 }
 
 // ---- the personal ledger ------------------------------------------------------------------------
@@ -813,16 +1202,111 @@ function expenseView(ctx, doc, member, e) {
     payers: e.payers.map((p) => ({ ref: p.ref, amount: dec(p.amountMinor), amountMinor: p.amountMinor })),
     // 'fixed-remainder' lines are either a fixed minor amount (shown as decimal, like 'amounts')
     // or null (shares the remainder) — never converted, since money.toDecimal has no null case.
-    split: { method: e.split.method, lines: e.split.lines.map((l) => ({ ref: l.ref, value: (e.split.method === 'amounts' || (e.split.method === 'fixed-remainder' && l.value !== null)) ? dec(l.value) : l.value })) },
+    split: { method: e.split.method, lines: e.split.lines.map((l) => ({ ref: l.ref, value: (e.split.method === 'amounts' || e.split.method === 'itemized' || (e.split.method === 'fixed-remainder' && l.value !== null)) ? dec(l.value) : l.value })) },
     shares: e.shares.map((s, i) => ({ ref: s.ref, amount: dec(s.amountMinor), amountMinor: s.amountMinor, adjustmentMinor: adjustment(i) })),
+    // BT-009-25: the raw item lines/tax/tip/discount/fee that PRODUCED the 'itemized' split above —
+    // purely descriptive (the real, authoritative shares are already in `shares` above), shown in
+    // decimal form for display and as the starting point for a later correction.
+    itemization: e.itemization ? {
+      lines: e.itemization.lines.map((l) => ({ description: l.description, quantity: l.quantity, unitPrice: dec(l.unitPriceMinor), unitPriceMinor: l.unitPriceMinor, refs: l.refs })),
+      tax: dec(e.itemization.taxMinor), tip: dec(e.itemization.tipMinor), discount: dec(e.itemization.discountMinor), fee: dec(e.itemization.feeMinor),
+      taxMinor: e.itemization.taxMinor, tipMinor: e.itemization.tipMinor, discountMinor: e.itemization.discountMinor, feeMinor: e.itemization.feeMinor,
+    } : null,
     rounding: { residualMinor, residual: dec(residualMinor) },
     status: e.voidedAt ? 'void' : 'active', voidedAt: e.voidedAt || null, voidReason: e.voidReason || '', voidedBy: e.voidedBy ? nameOf(doc, e.voidedBy) : null,
     createdBy: nameOf(doc, e.createdBy), createdBySelf: e.createdBy === member.subject, createdAt: e.createdAt, updatedAt: e.updatedAt || null,
     revision: e.revision, amendmentCount: (e.amendments || []).length, canEdit: changeable, canVoid: changeable,
   };
+  // BT-009-25: how much of this expense has already been refunded (active refunds only), and
+  // whether one may still be recorded — the same authority and event-lifecycle rule as correcting
+  // the expense itself (a closed/archived event blocks a new refund exactly like a correction).
+  const activeRefunds = (doc.groupRefunds || []).filter((r) => r.refundOf === e.id && !r.voidedAt);
+  const refundedMinor = money.sum([0, ...activeRefunds.map((r) => r.amountMinor)]);
+  out.refundedMinor = refundedMinor;
+  out.refunded = dec(refundedMinor);
+  out.canRefund = changeable && refundedMinor < e.amountMinor;
   const mine = myLedger(ctx, doc, member, e, 'expense');
   if (mine) out.myLedger = mine;
   return out;
+}
+
+// BT-009-25: a refund's own view — same shape discipline as an expense (split/shares/rounding), and
+// the same amendment convention (voided, never deleted, with who/when/why kept).
+function refundView(doc, member, rf) {
+  const dec = (m) => money.toDecimal(m, rf.currency);
+  return {
+    id: rf.id, refundOf: rf.refundOf, amountMinor: rf.amountMinor, amount: dec(rf.amountMinor), currency: rf.currency,
+    date: rf.date, reason: rf.reason || '',
+    split: { method: rf.split.method, lines: rf.split.lines.map((l) => ({ ref: l.ref, value: (rf.split.method === 'amounts' || (rf.split.method === 'fixed-remainder' && l.value !== null)) ? dec(l.value) : l.value })) },
+    shares: rf.shares.map((s) => ({ ref: s.ref, amount: dec(s.amountMinor), amountMinor: s.amountMinor })),
+    status: rf.voidedAt ? 'void' : 'active', voidedAt: rf.voidedAt || null, voidReason: rf.voidReason || '',
+    createdBy: nameOf(doc, rf.createdBy), createdBySelf: rf.createdBy === member.subject, createdAt: rf.createdAt,
+  };
+}
+
+// ---- linked refunds (BT-009-25) -----------------------------------------------------------------
+// "Retain the original expense and record a separate linked refund... default to the original
+// allocation, allow an explicitly reviewed adjustment... show the effects on balances and any
+// resulting repayment obligations. Never silently rewrite confirmed settlements" (Terry, 2026-09-19;
+// worked example, hand-computed and corrected to a genuine zero-sum result, in
+// docs/BT-009-25-WORKED-EXAMPLES.md §3). A refund's allocation is a real split of the refunded
+// amount — the SAME `normalizeSplit`/`computeShares` machinery an expense's own split already uses,
+// one canonical calculation, never reinvented — among the people whose true cost decreases; the
+// original expense's own record is never edited (`groups.balances()` applies the effect on read).
+// Blocked by the same event-lifecycle rule as a correction: a closed/archived event refuses a new
+// refund exactly like it refuses a new correction, never silently allowed through a side door.
+const REFUND_KEYS = ['expenseId', 'amount', 'date', 'reason', 'split'];
+async function createRefund(ctx, req) {
+  const wsId = requireId(query(req, 'workspaceId'), 'workspaceId');
+  const body = fields.onlyKeys(readBody(req), REFUND_KEYS);
+  const { result } = await mutateGroup(ctx, wsId, (doc, member) => {
+    const e = findExpense(doc, requireId(body.expenseId, 'expenseId'));
+    if (!canChangeExpense(doc, e, member)) throw forbidden(expenseRuleText(doc));
+    if (e.voidedAt) throw conflict('This expense is void, so it cannot be refunded. A void already takes it out of the balances.', 'voided');
+    assertEventWritable(eventOf(doc, e));
+    const amountMinor = groups.positiveAmount(body.amount, e.currency, 'Refund amount');
+    const alreadyRefunded = money.sum([0, ...(doc.groupRefunds || []).filter((r) => r.refundOf === e.id && !r.voidedAt).map((r) => r.amountMinor)]);
+    if (money.sum([alreadyRefunded, amountMinor]) > e.amountMinor) {
+      throw conflict(`Refunding ${money.toDecimal(amountMinor, e.currency)} would refund more than the ${money.toDecimal(e.amountMinor, e.currency)} expense${alreadyRefunded ? ` (${money.toDecimal(alreadyRefunded, e.currency)} already refunded)` : ''}.`, 'refund_exceeds_expense');
+    }
+    const check = groups.participantChecker(doc);
+    // Default to the original expense's own split (same method/people) when the caller sends none —
+    // "default to the original allocation, allow an explicitly reviewed adjustment".
+    const splitInput = body.split !== undefined ? body.split : { method: e.split.method, lines: e.split.lines.map((l) => ({ ref: l.ref, value: l.value })) };
+    const split = groups.normalizeSplit(splitInput, amountMinor, e.currency, check);
+    const computed = groups.computeShares(amountMinor, split);
+    const nowIso = ctx.nowIso();
+    const rf = {
+      id: newId('grf'), refundOf: e.id, amountMinor, currency: e.currency,
+      date: fields.date(body.date, 'Date') || nowIso.slice(0, 10),
+      reason: fields.text(body.reason, { field: 'Reason', max: 200 }),
+      split, shares: computed.shares, voidedAt: null, voidReason: '', voidedBy: null,
+      createdBy: member.subject, createdAt: nowIso,
+    };
+    doc.groupRefunds = [...(doc.groupRefunds || []), rf];
+    audit.record(doc, { actor: member.subject, action: 'group.refund.create', targetType: 'group-refund', targetId: rf.id, at: nowIso });
+    return { refund: refundView(doc, member, rf), expense: expenseView(ctx, doc, member, e) };
+  });
+  return { status: 201, body: result };
+}
+async function voidRefund(ctx, req) {
+  const wsId = requireId(query(req, 'workspaceId'), 'workspaceId');
+  const body = fields.onlyKeys(readBody(req), ['refundId', 'reason']);
+  const id = requireId(body.refundId, 'refundId');
+  const { result } = await mutateGroup(ctx, wsId, (doc, member) => {
+    const rf = (doc.groupRefunds || []).find((x) => x.id === id);
+    if (!rf) throw notFound('Unknown refund.');
+    if (rf.voidedAt) throw conflict('This refund is already void.', 'voided');
+    const e = findExpense(doc, rf.refundOf);
+    if (!canChangeExpense(doc, e, member)) throw forbidden(expenseRuleText(doc));
+    assertEventWritable(eventOf(doc, e));
+    const reason = fields.text(body.reason, { field: 'Reason', max: 200, required: true });
+    const nowIso = ctx.nowIso();
+    rf.voidedAt = nowIso; rf.voidedBy = member.subject; rf.voidReason = reason;
+    audit.record(doc, { actor: member.subject, action: 'group.refund.void', targetType: 'group-refund', targetId: rf.id, at: nowIso });
+    return { refund: refundView(doc, member, rf), expense: expenseView(ctx, doc, member, e) };
+  });
+  return { body: result };
 }
 
 // Who may confirm a DISPUTED payment (group setting "settleDisputes", financial recheck F1): its receiver
@@ -899,6 +1383,14 @@ function balancesView(doc, parts) {
   return groups.balances(doc, parts.map((p) => p.ref), { ensureCurrency: reportingCurrency(doc), countReported: groupSettings.get(doc, 'countReported') }).map((b) => {
     const dec = (m) => money.toDecimal(m, b.currency);
     const pair = (x) => ({ from: x.from, to: x.to, amountMinor: x.amountMinor, amount: dec(x.amountMinor) });
+    // BT-009-25: a unit-merged suggestion carries the same from/to/amount shape, plus which side (if
+    // either) is a unit, its display name, and the REAL person who would actually pay/receive —
+    // always present, never hidden behind the unit's own name.
+    const unitPair = (x) => ({
+      from: x.from, to: x.to, amountMinor: x.amountMinor, amount: dec(x.amountMinor),
+      fromIsUnit: x.fromIsUnit, toIsUnit: x.toIsUnit, fromName: x.fromName || names.get(x.from) || 'Unknown', toName: x.toName || names.get(x.to) || 'Unknown',
+      fromRef: x.fromRef, toRef: x.toRef,
+    });
     return {
       currency: b.currency,
       rows: b.rows.map((r) => ({
@@ -912,6 +1404,29 @@ function balancesView(doc, parts) {
       })),
       suggestions: b.suggestions.map(pair),
       direct: b.direct.map(pair),
+      unitSuggestions: (b.unitSuggestions || []).map(unitPair),
+    };
+  });
+}
+
+// BT-009-26: insights — event spending/category/participant/settlement summaries, "derived from
+// canonical calculations" (`groups.insights`, itself reading the exact same records `balances()`
+// does), "respecting permissions and currencies" (the SAME caller who could already load this page
+// sees these — never a wider audience; one table per currency, never mixed).
+function insightsView(doc, scopedDoc, parts) {
+  const names = new Map(parts.map((p) => [p.ref, p.name]));
+  const categoryName = (id) => { if (!id) return 'Uncategorized'; const c = (doc.categories || []).find((x) => x.id === id); return c ? c.name : 'Uncategorized'; };
+  return groups.insights(scopedDoc, parts.map((p) => p.ref), { ensureCurrency: reportingCurrency(doc) }).map((t) => {
+    const dec = (m) => money.toDecimal(m, t.currency);
+    return {
+      currency: t.currency, totalSpentMinor: t.totalSpentMinor, totalSpent: dec(t.totalSpentMinor), expenseCount: t.expenseCount,
+      byCategory: t.byCategory.map((c) => ({ categoryId: c.categoryId, name: categoryName(c.categoryId), totalMinor: c.totalMinor, total: dec(c.totalMinor), count: c.count })),
+      byParticipant: t.byParticipant.map((p) => ({ ref: p.ref, name: names.get(p.ref) || 'Unknown', paidMinor: p.paidMinor, paid: dec(p.paidMinor), shareMinor: p.shareMinor, share: dec(p.shareMinor) })),
+      settlements: {
+        confirmedMinor: t.settlements.confirmedMinor, confirmed: dec(t.settlements.confirmedMinor), confirmedCount: t.settlements.confirmedCount,
+        pendingMinor: t.settlements.pendingMinor, pending: dec(t.settlements.pendingMinor), pendingCount: t.settlements.pendingCount,
+        disputedMinor: t.settlements.disputedMinor, disputed: dec(t.settlements.disputedMinor), disputedCount: t.settlements.disputedCount,
+      },
     };
   });
 }
@@ -953,7 +1468,10 @@ async function list(ctx, req) {
   if (action === 'export') return exportReport(ctx, req);
   if (action === 'events') return listEvents(ctx, req);
   if (action === 'split-presets') return listSplitPresets(ctx, req);
-  if (action !== undefined && action !== 'balances') throw notFound();
+  if (action === 'units') return listUnits(ctx, req);
+  if (action === 'contributions') return listContributions(ctx, req);
+  if (action === 'payment-requests') return listRequests(ctx, req);
+  if (action !== undefined && action !== 'balances' && action !== 'insights') throw notFound();
   const wsId = requireId(query(req, 'workspaceId'), 'workspaceId');
   const { doc, member } = await store.loadWorkspace(ctx, wsId);
   // BT-009-21: an optional ?eventId= scopes expenses/settlements/balances to ONE event — the event
@@ -970,6 +1488,7 @@ async function list(ctx, req) {
   const parts = groups.participants(doc, ctx.principal);
   const balances = balancesView(scopedDoc, parts);
   if (action === 'balances') return { body: { currency: reportingCurrency(doc), balances } };
+  if (action === 'insights') return { body: { currency: reportingCurrency(doc), insights: insightsView(doc, scopedDoc, parts) } };
   return {
     body: {
       currency: reportingCurrency(doc), kind: doc.kind,
@@ -979,6 +1498,9 @@ async function list(ctx, req) {
       participants: parts,
       expenses: [...(scopedDoc.groupExpenses || [])].sort(newestFirst).map((e) => expenseView(ctx, doc, member, e)),
       settlements: [...(scopedDoc.groupSettlements || [])].sort(newestFirst).map((s) => settlementView(ctx, doc, member, s)),
+      // BT-009-25: linked refunds, scoped to the same event as the expenses above (a refund has no
+      // `eventId` of its own — it follows its linked expense's).
+      refunds: (() => { const scopedIds = new Set((scopedDoc.groupExpenses || []).map((e) => e.id)); return (doc.groupRefunds || []).filter((r) => scopedIds.has(r.refundOf)).map((r) => refundView(doc, member, r)); })(),
       // The caller's own accounts for their part of the group, per currency; shown only to them, and
       // left out when there are none (like `myLedger` on a record).
       ...(() => { const mine = myLedgers(ctx, doc, member, entryIndex(doc, member.subject)); return mine.length ? { myLedgers: mine } : {}; })(),
@@ -997,6 +1519,17 @@ async function list(ctx, req) {
       // BT-009-25: saved split presets, embedded with the rest so the Add expense dialog needs no
       // second round trip to offer them.
       splitPresets: (doc.groupSplitPresets || []).map((p) => presetView(doc, member, p)),
+      // BT-009-25: settlement units — embedded so the Settle-up card needs no second round trip.
+      // `unitSuggestions` (inside `balances`, per currency) is already computed by groups.balances()
+      // above and needs nothing extra here.
+      settlementUnits: (doc.groupSettlementUnits || []).filter((u) => u.active !== false).map((u) => unitView(doc, u)),
+      // BT-009-25: shared income / prepaid contributions / deposits — a fully separate report, never
+      // merged into `balances` above (see the long comment on contributionView's section).
+      contributions: (doc.groupContributions || []).map((c) => contributionView(doc, member, c)),
+      // BT-009-26: in-app payment reminders — open ones only need to reach every member, but past
+      // (dismissed/cancelled) ones are kept for anyone who could have seen them, exactly like every
+      // other non-financial convenience record in this document.
+      paymentRequests: (doc.groupPaymentRequests || []).map((r) => requestView(doc, member, r)),
     },
   };
 }
@@ -1028,7 +1561,7 @@ async function createExpense(ctx, req) {
       id: newId('gex'), description: fields.text(body.description, { field: 'Description', max: 120, required: true }),
       date: fields.date(body.date, 'Date') || nowIso.slice(0, 10), currency: m.currency, amountMinor: m.amountMinor, original: m.original,
       categoryId: checkCategory(doc, body.categoryId), notes: fields.text(body.notes, { field: 'Notes', max: 2000, multiline: true }),
-      payers: m.payers, split: m.split, shares: m.shares, eventId: groupEvent.id,
+      payers: m.payers, split: m.split, shares: m.shares, ...(m.itemization ? { itemization: m.itemization } : {}), eventId: groupEvent.id,
       createdBy: member.subject, createdAt: nowIso, revision: 1, voidedAt: null,
       history: [{ revision: 1, at: nowIso, by: member.subject, event: 'create' }], amendments: [], ledgerLinks: [],
     };
@@ -1077,9 +1610,18 @@ async function patchExpense(ctx, req) {
       payers: m.payers, split: m.split, shares: m.shares,
       eventId: toEvent ? toEvent.id : e.eventId,
     };
+    // A correction that moves away from 'itemized' must never leave a stale itemization behind —
+    // tracked and audited like any other field, via the same `before`/`next` comparison, but the
+    // record itself uses a real `delete` (never a lingering `null`) since every other reader treats
+    // "itemized" as "the key is present" (`invariantProblem`, `expenseView`), not "the key is null".
+    before.itemization = e.itemization === undefined ? null : structuredClone(e.itemization);
+    const nextItemization = m.itemization ? structuredClone(m.itemization) : null;
+    next.itemization = nextItemization;
     const changes = TRACKED.filter((k) => JSON.stringify(before[k]) !== JSON.stringify(next[k])).map((k) => ({ field: k, from: before[k], to: structuredClone(next[k]) }));
     if (!changes.length) return { expense: expenseView(ctx, doc, member, e) };
+    delete next.itemization;
     Object.assign(e, next);
+    if (nextItemization) e.itemization = nextItemization; else delete e.itemization;
     e.revision += 1;
     e.updatedAt = nowIso;
     e.updatedBy = member.subject;
@@ -1360,6 +1902,11 @@ const ACTIONS = Object.freeze({
   void: voidRecord, settle: createSettlement, confirm: settlementChange('confirm'), dispute: settlementChange('dispute'), ledger: ledgerAction, settings: settingsAction,
   'create-event': createEvent, 'event-status': eventStatusAction,
   'create-split-preset': createSplitPreset, 'delete-split-preset': deleteSplitPreset,
+  'create-unit': createUnit, 'delete-unit': deleteUnit,
+  'create-refund': createRefund, 'void-refund': voidRefund,
+  'create-contribution': createContribution, 'apply-contribution': applyContribution, 'return-contribution': returnContribution,
+  'create-payment-request': createRequest, 'dismiss-payment-request': dismissRequest, 'cancel-payment-request': cancelRequest,
+  'preview-import': previewImport, 'confirm-import': confirmImport,
 });
 
 async function post(ctx, req) {

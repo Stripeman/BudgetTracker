@@ -1,10 +1,12 @@
-// BT-009-20/21, in a real browser: creating a named shared-expense event, adding an expense to it,
-// switching between the combined (all-events) view and one event's own scoped view, and closing an
-// event blocking a new expense while a payment can still be recorded against it.
+// BT-009-20/21/22/23/24, in a real browser: creating a named shared-expense event (including one
+// copied from a template), adding an expense to it, switching between the combined (all-events)
+// view and one event's own scoped view, moving an expense to another active event, exporting one
+// event's own data, and closing an event blocking a new expense while a payment can still be
+// recorded against it.
 import { createWorkspace } from "../harness/fixtures.mjs";
 
 export const name = "groupevents";
-export const title = "BT-009-20/21: the shared-expense event directory, picker and lifecycle, in a real browser";
+export const title = "BT-009-20/21/22/23/24: the shared-expense event directory, templates, cross-event moves, exports and lifecycle, in a real browser";
 export const needsBrowser = true;
 
 const EVENTS = '[aria-labelledby="grp-events"]';
@@ -26,9 +28,36 @@ export async function run(h, t) {
   await alice.click({ role: "button", name: "Add event…", scope: EVENTS });
   await alice.waitFor("!!document.querySelector('.modal')", { what: "the Add event dialog" });
   await alice.fill({ label: "Name", scope: ".modal" }, "E2E Ski trip");
+  await alice.fill({ label: "Description (optional)", scope: ".modal" }, "Skiing trip expenses");
   await alice.shot("1-add-event-dialog");
   await alice.click({ role: "button", name: "Add event", scope: ".modal" });
   await alice.waitFor("!document.querySelector('.modal')", { what: "the dialog to close after saving" });
+  await alice.waitForText('Showing only "E2E Ski trip"', { scope: "main" });
+
+  // ---- 1.5. BT-009-22: a real "Copy setup from" template, in the browser ---------------------------
+  await alice.click({ role: "button", name: "Add event…", scope: EVENTS });
+  await alice.waitFor("!!document.querySelector('.modal')", { what: "the Add event dialog" });
+  await alice.fill({ label: "Name", scope: ".modal" }, "E2E Book club");
+  await alice.choose("Copy setup from (optional)", "E2E Ski trip", { scope: ".modal" });
+  // A <textarea>'s assigned .value is never reflected in its .textContent (a real DOM behaviour,
+  // not this feature) — waitForText would never see it, so this waits on the real property instead.
+  await alice.waitFor("document.querySelector('.modal textarea')?.value === 'Skiing trip expenses'", { what: "the Description field to be prefilled from the template" });
+  const prefilled = await alice.evaluate("document.querySelector('.modal textarea').value");
+  t.check("choosing a template visibly prefills the Description field with the template's own text", { expected: "Skiing trip expenses", actual: prefilled });
+  // Change it before saving — proving the prefill is a real, editable starting point, not a locked copy.
+  await alice.fill({ label: "Description (optional)", scope: ".modal" }, "Weekly book club expenses");
+  await alice.shot("1.5-add-event-from-template");
+  await alice.click({ role: "button", name: "Add event", scope: ".modal" });
+  await alice.waitFor("!document.querySelector('.modal')", { what: "the dialog to close after saving" });
+  await alice.waitForText('Showing only "E2E Book club"', { scope: "main" });
+  const bookClubEvent = (await api("alice").ok("group", { query: { ...W.q, action: "events" } })).events.find((e) => e.name === "E2E Book club");
+  t.check("the template's description was copied and then genuinely overridden by what was typed afterwards; participants/expenses are never touched by a template (none exist yet on the new event)", {
+    expected: { description: "Weekly book club expenses", expenseCount: 0, settlementCount: 0 },
+    actual: { description: bookClubEvent.description, expenseCount: bookClubEvent.expenseCount, settlementCount: bookClubEvent.settlementCount },
+  });
+  // Back to the ski trip for the rest of this scenario.
+  await alice.click({ role: "button", name: "Show every event combined", scope: EVENTS });
+  await alice.click({ role: "button", name: "View only E2E Ski trip", scope: EVENTS });
   await alice.waitForText('Showing only "E2E Ski trip"', { scope: "main" });
 
   // ---- 2. Add an expense while viewing this event; it must belong to it, not the workspace default -
@@ -39,6 +68,29 @@ export async function run(h, t) {
   await alice.click({ role: "button", name: "Save expense", scope: ".modal" });
   await alice.waitFor("!document.querySelector('.modal')", { what: "the dialog to close after saving" });
   await alice.waitForText("E2E lift passes", { scope: EXPENSES });
+
+  // ---- 2.5. BT-009-24: a real cross-event move, in the browser -------------------------------------
+  // A throwaway second expense, added to the ski trip only to be moved away — proving the move is
+  // safe and real without disturbing "E2E lift passes" (still the subject of the export check below).
+  await alice.click({ role: "button", name: "Add expense", scope: ".page-head" });
+  await alice.waitFor("!!document.querySelector('.modal')", { what: "the Add shared expense dialog" });
+  await alice.fill({ label: "Description", scope: ".modal" }, "E2E throwaway" );
+  await alice.fill({ label: "Amount (EUR)", scope: ".modal" }, "10.00");
+  await alice.click({ role: "button", name: "Save expense", scope: ".modal" });
+  await alice.waitFor("!document.querySelector('.modal')", { what: "the dialog to close after saving" });
+  await alice.waitForText("E2E throwaway", { scope: EXPENSES });
+  await alice.click({ role: "button", name: "Edit E2E throwaway", scope: EXPENSES });
+  await alice.waitFor("!!document.querySelector('.modal')", { what: "the correction dialog" });
+  await alice.choose("Event", 'Move to "E2E Book club"', { scope: ".modal" });
+  await alice.fill({ label: "Reason for this correction", scope: ".modal" }, "Wrong event, moving it");
+  await alice.shot("2.5-move-to-another-event");
+  await alice.click({ role: "button", name: "Save correction", scope: ".modal" });
+  await alice.waitFor("!document.querySelector('.modal')", { what: "the dialog to close after saving" });
+  const bookClubExport = await api("alice").ok("group", { query: { ...W.q, action: "export", format: "json", eventId: bookClubEvent.id } });
+  const movedExpense = JSON.parse(bookClubExport.content);
+  t.check("the moved expense's own eventId genuinely changed, verified directly against the API — it now belongs to E2E Book club, not E2E Ski trip", {
+    expected: ["E2E throwaway"], actual: movedExpense.expenses.map((e) => e.description),
+  });
 
   // ---- 3. Back to the combined view: the event now shows one real expense counted against it ------
   await alice.click({ role: "button", name: "Show every event combined", scope: EVENTS });
