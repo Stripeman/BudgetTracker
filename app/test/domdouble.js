@@ -60,6 +60,14 @@ class Node {
     this.attributes.set(name, String(value));
     if (name === "disabled") this.disabled = true;
     if (name === "checked") this.checked = true;
+    // A real HTMLInputElement reflects its "value" content attribute into the live `.value`
+    // property at creation (the attribute is the element's "default value"); this dom double
+    // never did, so any control built with `input({ value: "…" })` — the normal way group.js
+    // (and any other view) seeds an existing record's starting value — silently read back "" in
+    // every test until the test itself called `type()` first. Genuinely never exercised before
+    // BT-009-13's shared-expense correction tests, the first ones to check a field's initial
+    // value without typing into it first.
+    if (name === "value" && (this.tagName === "INPUT" || this.tagName === "OPTION")) this.value = String(value);
   }
   getAttribute(name) { return this.attributes.has(name) ? this.attributes.get(name) : null; }
   hasAttribute(name) { return this.attributes.has(name); }

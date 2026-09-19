@@ -3374,3 +3374,122 @@ remains an available agent action after merge).
 -merged BT-009-15 frontend work), then continue down the backlog per Terry's next instruction — most
 likely BT-009-13's own frontend increment (an amount/currency/rate entry field in the expense
 dialog), BT-009-11 or BT-009-14, unless redirected.
+
+## Checkpoint AS — Terry supplied the expanded Shared Expenses (events) and Design Gallery
+(replacement) requirements directly, recorded in the repository; BT-009-13 finished end to end
+including a root-cause correction-contract fix; BT-009-11/14/BT-013 split into dependency-ordered
+sub-items (2026-09-19, new session)
+
+**0. Reconciliation.** Fetched `origin/main`: `ec9de2969d470a16483eb37eaea7b9911f896e42` (merges PR
+#32), matching exactly what Terry reported independently inspecting. No open PRs or issues. Verified
+Preview's ACTUAL deployed commit directly (`GET /api/site-settings`'s public `app.commit`, not
+assumed from prior wording): `3fcdc52e6228d9b9033ed587c6a7a6c0821a11f9` (PR #29) — confirmed stale,
+missing PR #31 (BT-009-15 frontend) and PR #32 (BT-009-13 backend), and now this PR too. Not
+redeployed yet this checkpoint (see "waiting on Terry" / next step).
+
+**1. Expanded requirements recorded in the repository, not chat-dependent.** New
+`docs/SHARED_EXPENSES_AND_DESIGN_GALLERY_REQUIREMENTS.md` records Terry's full 2026-09-19 message
+verbatim in organized form — the event-based Shared Expenses redesign (directory, lifecycle,
+participants/access, expense entry/splitting, balances/settlement, migration, exports, planning
+scope) and the replacement Design Gallery (15 substantially redesigned concepts, required page
+coverage, review/selection). Linked from `docs/REQUIREMENTS.md`'s intro and from the BT-009/BT-013
+rows. This document does NOT embed Terry's actual reference screenshots/HTML
+(`docs/BudgetTracker-references.html`, gitignored, local-only, never committed) — only the
+requirement text itself, which contains no private images or financial data.
+
+**2. BT-009-13 finished end to end, including the specific regression Terry asked to be reproduced
+and fixed at its root.** Confirmed and reproduced (both in a dom-double test and in a real browser,
+before fixing anything) the exact bug described: the shared-expense editor
+(`app/js/ui/views/group.js`) initialized its one Amount field from the expense's CONVERTED reporting
+figure and always resubmitted it on every save, even a description-only correction; since
+`api/group/handler.js`'s `expenseMoney` interprets a resubmitted amount in the expense's own original
+currency when `original` exists, a converted 92.00 EUR could be resent as "92.00" and reinterpreted
+as 92.00 USD, converting it a SECOND time (84.64 EUR) — and multi-payer/exact-split corrections could
+additionally fail validation because the payer amounts no longer summed to the wrongly-recomputed
+total.
+
+**Root fix (not a symptom patch):** the dialog now tracks the original-currency amount, exchange
+rate, source and date as their own fields — a "Currency" picker (new expenses only; fixed and shown,
+never editable, once recorded) and an "Original amount and exchange rate" fieldset, shown only for a
+foreign-currency expense. `app/js/core/split.js` gained a client-side `parseRate`/`convert` mirror of
+`api/_shared/money.js`'s exact round-half-even BigInt algorithm, for the live reporting-currency
+preview the payer/split fields need (server remains authoritative). **The actual fix:** a correction
+now sends `amount`/`currency`/`rate`/`rateSource`/`rateDate` to the server ONLY when at least one of
+them genuinely changed from the record's own stored values (`moneyChanged()`, mirroring the existing
+`editBody()` only-send-what-changed pattern already used by `transactions.js`, which `group.js` had
+never adopted); an unrelated change sends none of them, so the server's existing safe branch is taken
+and the stored, already-converted figure is never reinterpreted. When the amount genuinely changes,
+it is resent in the expense's OWN original currency, converting exactly once.
+
+**Also completed (the rest of BT-009-13's acceptance criteria):** the expenses list row and the
+correction-history dialog both show the original amount/currency/rate alongside the converted figure;
+`api/_shared/sharedexport.js` (BT-014-06) gained "Original amount"/"Original currency"/"Exchange
+rate" columns/fields in CSV/XLSX/JSON/PDF.
+
+**Two real, first-time-hit dom-double gaps found and fixed** (not product bugs, matching this
+project's established pattern): a real `HTMLInputElement`/`HTMLOptionElement` reflects its "value"
+content attribute into the live `.value` property at creation; this dom double's `setAttribute` never
+did, for either tag — never exercised before because no earlier group.js test checked a field's
+*initial* value without calling `type()` first (no editing/correction test existed for this dialog at
+all before this checkpoint). Fixed generally in `app/test/domdouble.js` itself (not this feature's own
+test file), since it is generic browser behaviour any future test could need.
+
+**Evidence:** `api/test/group-multicurrency.test.js` (7 tests, unchanged from Checkpoint AR's backend
+work) plus two updated pre-existing sharedexport tests for the new export columns and a new dedicated
+one proving a foreign-currency expense's original amount/currency/rate appear correctly in JSON, CSV
+and XLSX. New `app/test/group-multicurrency.test.js` (5 tests): a description-only correction on a
+foreign expense resends none of amount/currency/rate/rateSource/rateDate; an intentional amount
+correction resends it in its own original currency and reuses the stored rate; a description-only
+correction with MULTIPLE payers still validates and saves (the exact multi-payer symptom, fixed); a
+plain expense's correction is unaffected; a new foreign-currency expense sends everything correctly.
+`pickergroup.test.js`/`addperson.test.js` updated for the dialog's new "Currency"/"Rate source"
+pickers and fieldset ordering (made robust to legend text rather than DOM position). New dedicated
+real-browser scenario `scripts/dev/e2e/groupcurrency.mjs` (6/6 passed, exit 0) — the fullest possible
+proof: adds a real 100.00 USD expense that converts to 92.00 EUR; a description-only correction and a
+page reload prove the amount is STILL exactly 92.00 EUR (92.00 × 0.92 = 84.64 would be the
+regression); an intentional amount correction to 110.00 USD correctly converts, at the reused rate,
+to 101.20 EUR. **Full regression:** `npm test` 40/676/530 exit 0; `npm --prefix api test` 669/669 exit
+0; `npm run validate` ok (24 routes); full `npm run e2e` 676/676 exit 0.
+
+**3. BT-009-11 (the old catch-all) split into dependency-ordered, testable sub-items** in
+`docs/REQUIREMENTS.md`, per Terry's explicit instruction not to be asked again which to start and to
+use dependency order instead: **BT-009-20** (the event foundation — directory, lifecycle
+Active/Closed/Archived, migration of today's one workspace-wide ledger into a single legacy event) is
+recorded as the next, blocking item, exactly matching Terry's own stated priority ("implement the
+event foundation before extensions that would otherwise need rework"); **BT-009-21** (event-scoped
+participant access), **BT-009-22** (event templates), **BT-009-23** (per-event exports) and
+**BT-009-24** (safe cross-event data moves) are recorded as depending on it; **BT-009-25** (split
+presets, fixed+remainder, couples-as-a-unit, itemized tax/tip/discount/fee, refunds, shared
+income/deposits) and **BT-009-26** (offline entry, Splitwise import, payment requests/reminders, group
+insights) are recorded as independently buildable now, to be re-verified once events exist. BT-009-14
+(receipt photos) reconciled into BT-009-25's scope, noting its real dependency is the still-unbuilt
+receipts/attachment architecture, not the event foundation. BT-013 (Design Gallery) is marked
+**explicitly not accepted as complete**, quoting Terry directly, with the full replacement scope
+recorded as new **BT-013-06**.
+
+**4. NOT started in code this checkpoint, disclosed honestly rather than rushed:** the event
+foundation (BT-009-20) itself and the replacement Design Gallery (BT-013-06) are both large,
+multi-session architectural efforts — building either one in the remaining space of this same
+response, on top of an already-substantial financial-correction fix, would risk exactly what
+CLAUDE.md's working discipline (requirement → failing test → implementation → full suite, one
+reviewed increment at a time) and the repository's financial-integrity invariants (ETag-guarded
+read-modify-write, versioned/idempotent/tested/recoverable migrations, never guessing historical event
+boundaries) are meant to prevent: an undertested, rushed change to the shared-expense DATA MODEL
+itself. Recording the full requirement and a real, honest dependency order (section 3 above) — rather
+than a half-built events schema with no migration tests — is the responsible unit of work for this
+checkpoint. BT-009-20 is queued as the explicit next step.
+
+**PR:** not yet opened at the time of this checkpoint entry — branch
+`feature/group-multicurrency-BT-009-13` already has PR #32 merged; this checkpoint's work is being
+prepared as a new PR from a fresh branch cut off current `origin/main`.
+
+**Waiting on Terry:** (1) merge the PR this checkpoint becomes; (2) explicit confirmation or
+correction of the BT-009-20..26 dependency order recorded here (a reasonable default, not a claim of
+his prior explicit sign-off on this exact breakdown); (3) Production redeploy once ready (Preview
+redeploy remains an available agent action after merge — currently still stale at PR #29's commit).
+
+**Exact next step:** redeploy Preview once this PR merges (catches up PR #31, #32 and this one), then
+begin BT-009-20 (the event foundation) as the recorded next unblocked item — schema design first
+(a new `doc.groupEvents` collection, one legacy/default event per workspace via a versioned, tested,
+idempotent migration, before any lifecycle or UI work), per Terry's explicit "implement the event
+foundation before extensions" priority.

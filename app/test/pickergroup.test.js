@@ -58,7 +58,10 @@ describe("BT-004-05 shared expenses: the expense dialog", () => {
     const { ctx } = groupCtx();
     const dialog = openGroupExpense(ctx).element;
     assert.deepEqual(nativeDropdowns(dialog), []);
-    assert.deepEqual(pickerLabels(dialog), ["Category", "Split", "Account"]);
+    // BT-009-13: a new expense may also be entered in a currency other than the workspace's own,
+    // with its own exchange-rate source picker — "Currency" and "Rate source" join the pickers
+    // this dialog has always had.
+    assert.deepEqual(pickerLabels(dialog), ["Currency", "Category", "Rate source", "Split", "Account"]);
     assert.equal(spoken(pickerNamed(dialog, "Category")), "Category: No category. Choose.");
     assert.equal(spoken(pickerNamed(dialog, "Split")), "Split: Equally. Choose.");
     assert.deepEqual(offeredOptions(pickerNamed(dialog, "Category")), ["No category", "Groceries", "Outings"], "income categories are not offered");
