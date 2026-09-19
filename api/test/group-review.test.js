@@ -693,7 +693,10 @@ describe('S8: the integrity check covers personal ledger links and the entries t
     ok(await act(h, f, 'bob', 'ledger', { currency: 'EUR', accountId: null }));
     await restoreAs(h, f, early, 'replace');
     const { value: doc } = await h.storage.getJson(`workspaces/${f.ws.id}/workspace.json`);
-    assert.deepEqual(doc.superseded.map((s) => s.record.id), [e.id]);
+    // BT-009-20: the expense's own event did not exist yet in the early backup either (it was
+    // lazily created for this very expense), so replace correctly sets it aside too — nothing
+    // dropped, exactly like the expense itself (BT-001-05).
+    assert.deepEqual(doc.superseded.map((s) => s.record.id), [e.id, e.eventId]);
     assert.ok(doc.transactions.some((t) => t.links && t.links.groupExpenseId === e.id), 'Bob\'s reversed entries still name it');
     await backupNow(h, f);
   });

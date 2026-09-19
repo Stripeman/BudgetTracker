@@ -58,7 +58,9 @@ test('a document from a newer schema is refused with 503 and not modified', asyn
   const ws = (await h.call('workspaces', 'POST', { as: 'alice', body: { name: 'Future' } })).body.workspace;
   const name = `workspaces/${ws.id}/workspace.json`;
   const { value } = await h.storage.getJson(name);
-  const future = { ...value, schemaVersion: 2 };
+  // BT-009-20 bumped the workspace schema to 2 (a version this app now understands and migrates
+  // to); "from the future" now means anything newer than THAT, not literally 2.
+  const future = { ...value, schemaVersion: 3 };
   await h.storage.putJson(name, future);
   const before = (await h.storage.getBytes(name)).bytes.toString();
   const res = await h.call('workspaces', 'PATCH', { as: 'alice', query: { id: ws.id }, body: { name: 'Changed' } });
