@@ -95,11 +95,32 @@ export function percentText(units) {
   return `${Math.floor(units / PERCENT_UNIT)}${frac ? `.${frac}` : ""}`;
 }
 
-// groups.computeShares. `split.lines[].value`: null (equal), whole shares, a percentage string, or
-// minor units (amounts).
+// groups.computeShares. `split.lines[].value`: null (equal, or a "fixed-remainder" line sharing
+// the remainder), whole shares, a percentage string, or minor units (amounts, or a
+// "fixed-remainder" line's own fixed amount).
 export function computeShares(totalMinor, split) {
   if (split.method === "amounts") {
     return { shares: split.lines.map((l) => ({ ref: l.ref, amountMinor: l.value, adjustmentMinor: 0 })), residualMinor: 0 };
+  }
+  // BT-009-25: a fixed line keeps its own exact amount; a line with no value shares whatever is
+  // left, equally, via the same deterministic largest-remainder allocation as every other method.
+  if (split.method === "fixed-remainder") {
+    const fixedTotal = sumOf(split.lines.filter((l) => l.value !== null).map((l) => l.value));
+    const remainderTotal = totalMinor - fixedTotal;
+    const remainderCount = split.lines.filter((l) => l.value === null).length;
+    const remainderParts = remainderCount ? allocate(remainderTotal, split.lines.filter((l) => l.value === null).map(() => 1)) : [];
+    const remainderFloor = remainderCount ? Math.floor(remainderTotal / remainderCount) : 0;
+    let ri = 0;
+    return {
+      shares: split.lines.map((l) => {
+        if (l.value !== null) return { ref: l.ref, amountMinor: l.value, adjustmentMinor: 0 };
+        const amountMinor = remainderParts[ri];
+        const adjustmentMinor = amountMinor - remainderFloor;
+        ri += 1;
+        return { ref: l.ref, amountMinor, adjustmentMinor };
+      }),
+      residualMinor: remainderTotal - remainderFloor * remainderCount,
+    };
   }
   const weights = split.lines.map((l) => (split.method === "equal" ? 1 : split.method === "shares" ? l.value : percentUnits(l.value)));
   const parts = allocate(totalMinor, weights);
@@ -158,6 +179,18 @@ export function previewSplit({ amount, currency, method, lines, payers }) {
         errors.push(`The percentages add up to ${percentText(sum)}%. They must add up to exactly 100%.`);
         values = null;
       } else values = units.map(percentText);
+    }
+  } else if (method === "fixed-remainder") {
+    // A blank value shares the remainder; anything else must be a real amount more than zero.
+    const minor = lines.map((l) => (String(l.value ?? "").trim() === "" ? null : parseAmount(l.value, currency)));
+    const i = minor.findIndex((m, idx) => m === null && String(lines[idx].value ?? "").trim() !== "");
+    if (i >= 0) { errors.push(`${lines[i].name}: enter an amount more than zero, or leave it blank to share the rest.`); values = null; }
+    else {
+      const fixedSum = sumOf(minor.filter((m) => m !== null));
+      const remainderCount = minor.filter((m) => m === null).length;
+      if (fixedSum > totalMinor) { errors.push(`The fixed amounts add up to ${fmt(fixedSum)}, more than the expense's ${fmt(totalMinor)}.`); values = null; }
+      else if (!remainderCount && fixedSum !== totalMinor) { errors.push(`With no one left to share the remainder, the fixed amounts must add up to exactly ${fmt(totalMinor)}.`); values = null; }
+      else values = minor;
     }
   } else {
     const minor = lines.map((l) => parseAmount(l.value, currency));

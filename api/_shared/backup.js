@@ -191,6 +191,7 @@ function manifestOf(doc, attachments) {
       ...(Array.isArray(doc.groupExpenses) ? { groupExpenses: doc.groupExpenses.length } : {}),
       ...(Array.isArray(doc.groupSettlements) ? { groupSettlements: doc.groupSettlements.length } : {}),
       ...(Array.isArray(doc.groupEvents) ? { groupEvents: doc.groupEvents.length } : {}),
+      ...(Array.isArray(doc.groupSplitPresets) ? { groupSplitPresets: doc.groupSplitPresets.length } : {}),
     },
     balances: [...balances(doc).entries()].map(([accountId, minor]) => ({ accountId, minor })),
   };
@@ -267,7 +268,7 @@ function scopeFor(doc, subject, role) {
   };
 }
 
-const COLLECTIONS = ['accounts', 'transactions', 'payees', 'categories', 'contacts', 'recurring', 'budgets', 'groupExpenses', 'groupSettlements', 'groupEvents'];
+const COLLECTIONS = ['accounts', 'transactions', 'payees', 'categories', 'contacts', 'recurring', 'budgets', 'groupExpenses', 'groupSettlements', 'groupEvents', 'groupSplitPresets'];
 // Directory records a replace never removes: records outside the caller's scope may refer to them,
 // and the directory is never pruned (security review SEC-B1 and SEC-R4 for contacts, BT-001-05).
 const KEEP_ON_REPLACE = new Set(['categories', 'payees', 'contacts']);
@@ -287,6 +288,9 @@ function inScope(doc, scope) {
     // Shared-expense events (BT-009-20) are the same shared, owner-scope record as the expenses and
     // payments that belong to them — never restored separately from the records they organize.
     groupEvents: scope.shared ? (doc.groupEvents || []) : [],
+    // Saved split presets (BT-009-25) are shared, proportion-only convenience data — same scope
+    // as the events and expenses they help fill in, never a financial record on their own.
+    groupSplitPresets: scope.shared ? (doc.groupSplitPresets || []) : [],
   };
 }
 
@@ -423,6 +427,10 @@ function plan({ current, archived, mode, principal, member, nowIso, newWorkspace
       // fresh one (`resolveEvent`), never pointing at an event that does not exist.
       groupEvents: forgetOthers(arc.groupEvents.map(scrub)),
       defaultEventId: archived.defaultEventId && arc.groupEvents.some((e) => e.id === archived.defaultEventId) ? archived.defaultEventId : null,
+      // Saved split presets (BT-009-25) come along the same way; `forgetOthers` recurses through
+      // every field generically (not just the ones `scrub` names), so a preset line naming
+      // another member is mapped to "Former member" exactly like an expense's own refs are.
+      groupSplitPresets: forgetOthers(arc.groupSplitPresets.map(scrub)),
       groupLedgers: (archived.groupLedgers || []).filter((l) => l.subject === principal.subject && keepAccounts.has(l.accountId)).map((l) => ({ ...l })),
       // The group's settings come along with the group; who changed them is mapped like everything else.
       // Per-person overrides of anyone else are left behind; they are keyed by member id (S4).
@@ -569,7 +577,7 @@ function plan({ current, archived, mode, principal, member, nowIso, newWorkspace
     : diffCounts(inScope(current, scopeNow), after);
   const summary = {
     mode,
-    scope: { accounts: arc.accounts.length, transactions: arc.transactions.length, payees: arc.payees.length, categories: arc.categories.length, contacts: arc.contacts.length, recurring: arc.recurring.length, budgets: arc.budgets.length, groupExpenses: arc.groupExpenses.length, groupSettlements: arc.groupSettlements.length, groupEvents: arc.groupEvents.length },
+    scope: { accounts: arc.accounts.length, transactions: arc.transactions.length, payees: arc.payees.length, categories: arc.categories.length, contacts: arc.contacts.length, recurring: arc.recurring.length, budgets: arc.budgets.length, groupExpenses: arc.groupExpenses.length, groupSettlements: arc.groupSettlements.length, groupEvents: arc.groupEvents.length, groupSplitPresets: arc.groupSplitPresets.length },
     changes: diff,
     excluded,
     // Totals only over data that passed the integrity check: a broken amount cannot be summed.

@@ -301,5 +301,71 @@ export async function run(h, t) {
   });
   t.check("alice: no console errors/exceptions on Workspace settings", { expected: [], actual: alice.problems() });
 
+  // Compare mode (exercised above) is still active at this point (compareId persists across concept
+  // switches until explicitly removed) — leave it before the checks below, several of which click a
+  // button by its accessible name/text inside .gpreview-pane and would otherwise be genuinely
+  // ambiguous between the primary and the compare pane, both built from the same shared fixture.
+  await dave.click({ role: "button", text: "Remove from compare", scope: '[data-concept="modern-banking"]' });
+
+  // ---- per-concept colour identity (review, 2026-09-19): two concepts' own --g-accent genuinely
+  // differ, and it is scoped to each concept's own frame only (never a global/site style). ---------
+  await dave.click({ role: "button", text: "Preview this concept", scope: '[data-concept="executive-ledger"]' });
+  await dave.choose("Preview page", "Dashboard");
+  const accentA = await dave.evaluate("getComputedStyle(document.querySelector('.gpreview-pane .gframe')).getPropertyValue('--g-accent').trim()");
+  await dave.click({ role: "button", text: "Preview this concept", scope: '[data-concept="wealth-overview"]' });
+  await dave.choose("Preview page", "Dashboard");
+  const accentB = await dave.evaluate("getComputedStyle(document.querySelector('.gpreview-pane .gframe')).getPropertyValue('--g-accent').trim()");
+  const bodyAccent = await dave.evaluate("getComputedStyle(document.body).getPropertyValue('--g-accent').trim()");
+  t.check("Executive Ledger and Wealth Overview render genuinely different accent colours, scoped to each concept's own frame (never leaking onto <body>)", {
+    expected: { differ: true, notOnBody: true }, actual: { differ: !!accentA && !!accentB && accentA !== accentB, notOnBody: bodyAccent === "" },
+  });
+  t.note(`Executive Ledger --g-accent: ${accentA}; Wealth Overview --g-accent: ${accentB}`);
+  await dave.shot("accent-identity");
+
+  // ---- real interactive Settings controls (review, 2026-09-19): no longer a read-only badge list --
+  await dave.choose("Preview page", "Settings");
+  const beforeSetting = await dave.evaluate("(() => { const s = document.querySelector('.gpreview-pane select'); return s ? s.value : null; })()");
+  await dave.evaluate(`(() => {
+    const s = document.querySelector('.gpreview-pane select');
+    const other = [...s.options].map((o) => o.value).find((v) => v !== s.value);
+    s.value = other;
+    s.dispatchEvent(new Event('change', { bubbles: true }));
+  })()`);
+  const afterSetting = await dave.evaluate("(() => { const s = document.querySelector('.gpreview-pane select'); return s ? s.value : null; })()");
+  const settingsText = await dave.text(".gpreview-pane");
+  t.check("a Settings control in the real browser genuinely changes value when interacted with, and says plainly that nothing is saved", {
+    expected: { changed: true, saysPreviewOnly: true }, actual: { changed: !!beforeSetting && !!afterSetting && beforeSetting !== afterSetting, saysPreviewOnly: /Preview only/.test(settingsText) },
+  });
+  await dave.shot("settings-interactive");
+
+  // ---- Shared-expense event directory/detail (review, 2026-09-19, reflecting the real BT-009-20
+  // model): choosing one event narrows the expense list; going back shows every event combined. ----
+  await dave.choose("Preview page", "Shared expenses");
+  const sharedBefore = await dave.text(".gpreview-pane");
+  t.check("the Shared expenses preview shows a real Events directory with the sample events by name and status", {
+    expected: true, actual: /Events/.test(sharedBefore) && /General/.test(sharedBefore) && /Museum day/.test(sharedBefore) && /Closed/.test(sharedBefore),
+  });
+  await dave.click({ role: "button", name: "View only Museum day", scope: ".gpreview-pane" });
+  const sharedAfter = await dave.text(".gpreview-pane");
+  t.check("choosing an event in the real browser narrows the shared-expenses list to that event's own, with a plain-language scoped banner", {
+    expected: true, actual: /Showing only/.test(sharedAfter),
+  });
+  await dave.shot("shared-events-scoped");
+  await dave.click({ role: "button", name: "Stop viewing Museum day — show every event combined", scope: ".gpreview-pane" });
+  const sharedBack = await dave.text(".gpreview-pane");
+  t.check("going back shows every event combined again", { expected: false, actual: /Showing only/.test(sharedBack) });
+  t.check("dave: no console errors/exceptions after the Events directory walk", { expected: [], actual: dave.problems() });
+
+  // ---- the one silent no-op button (review, 2026-09-19): story-flow's "Add expense" now genuinely
+  // switches the preview to Transactions, instead of doing nothing. ----------------------------------
+  await dave.click({ role: "button", text: "Preview this concept", scope: '[data-concept="calm-budget"]' }); // dashboardPattern: story-flow
+  await dave.choose("Preview page", "Dashboard");
+  await dave.click({ role: "button", text: "Add expense", scope: ".gpreview-pane" });
+  const pageAfterAddExpense = await dave.evaluate("(() => { const f = document.querySelector('.gpreview-pane .gframe'); return f ? f.dataset.page : null; })()");
+  t.check("pressing story-flow's 'Add expense' in the real browser switches the preview page to Transactions — a real action, not a silent no-op", {
+    expected: "transactions", actual: pageAfterAddExpense,
+  });
+  t.check("dave: no console errors/exceptions after the story-flow no-op fix check", { expected: [], actual: dave.problems() });
+
   t.check("dave: no console errors/exceptions across the whole scenario", { expected: [], actual: dave.problems() });
 }
