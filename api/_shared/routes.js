@@ -14,6 +14,18 @@ const ROUTES = Object.freeze({
   // delete-permanent), never a bare DELETE, so it can never be reached by mistake.
   payees: { methods: ['GET', 'POST', 'PATCH'] },
   categories: { methods: ['GET', 'POST', 'PATCH'] },
+  // Workspace-scoped account TYPE definitions (BT-019-02): name, colour, icon, each mapped to one
+  // of the fixed underlying accounting classes in ledger.js (ACCOUNT_TYPES) — never a second,
+  // independent accounting model. Retired, never deleted, like every other managed type/directory
+  // record in this codebase.
+  'account-types': { methods: ['GET', 'POST', 'PATCH'] },
+  // Workspace-scoped category TYPE definitions (BT-019-01): name, colour, icon, each mapped to one
+  // of the two fixed category classes (expense/income) categories.js already uses — the same
+  // presentation/behaviour separation as account-types above.
+  'category-types': { methods: ['GET', 'POST', 'PATCH'] },
+  // Workspace-scoped merchant TYPE definitions (BT-019-03): name, colour, icon, each mapped to one
+  // of the fixed merchant classes merchants.js already uses — the same pattern as the two above.
+  'merchant-types': { methods: ['GET', 'POST', 'PATCH'] },
   contacts: { methods: ['GET', 'POST', 'PATCH', 'DELETE'] },
   people: { methods: ['GET'] },
   preferences: { methods: ['GET', 'PUT'] },

@@ -53,8 +53,26 @@ function checkInvariants(doc) {
   if (!doc || typeof doc !== 'object') throw invalidData('document');
   const accounts = new Map((doc.accounts || []).map((a) => [a.id, a]));
   uniqueIds(doc.accounts || [], 'account');
+  // BT-019-02: an account's own `accountTypeId`, when set, must name a real, existing account
+  // type — the same "a reference always resolves" discipline every other directory reference here
+  // already keeps. `type` itself (the fixed accounting class) is validated separately, unchanged.
+  const acctTypes = uniqueIds(doc.accountTypes || [], 'account type');
+  for (const a of doc.accounts || []) {
+    if (a.accountTypeId && !acctTypes.has(a.accountTypeId)) throw invalidData('account type reference');
+  }
   const categories = uniqueIds(doc.categories || [], 'category');
+  // BT-019-01: mirrors the account type check above exactly, for a category's own `categoryTypeId`.
+  const catTypes = uniqueIds(doc.categoryTypes || [], 'category type');
+  for (const c of doc.categories || []) {
+    if (c.categoryTypeId && !catTypes.has(c.categoryTypeId)) throw invalidData('category type reference');
+  }
   const payees = uniqueIds(doc.payees || [], 'payee');
+  // BT-019-03: mirrors the account/category type checks above exactly, for a merchant's own
+  // `merchantTypeId`.
+  const merchTypes = uniqueIds(doc.merchantTypes || [], 'merchant type');
+  for (const p of doc.payees || []) {
+    if (p.merchantTypeId && !merchTypes.has(p.merchantTypeId)) throw invalidData('merchant type reference');
+  }
   uniqueIds(doc.transactions || [], 'transaction');
   uniqueIds(doc.members || [], 'member');
   uniqueIds(doc.budgets || [], 'budget');
@@ -196,6 +214,9 @@ function manifestOf(doc, attachments) {
       ...(Array.isArray(doc.groupRefunds) ? { groupRefunds: doc.groupRefunds.length } : {}),
       ...(Array.isArray(doc.groupContributions) ? { groupContributions: doc.groupContributions.length } : {}),
       ...(Array.isArray(doc.groupPaymentRequests) ? { groupPaymentRequests: doc.groupPaymentRequests.length } : {}),
+      ...(Array.isArray(doc.accountTypes) ? { accountTypes: doc.accountTypes.length } : {}),
+      ...(Array.isArray(doc.categoryTypes) ? { categoryTypes: doc.categoryTypes.length } : {}),
+      ...(Array.isArray(doc.merchantTypes) ? { merchantTypes: doc.merchantTypes.length } : {}),
     },
     balances: [...balances(doc).entries()].map(([accountId, minor]) => ({ accountId, minor })),
   };
@@ -272,10 +293,10 @@ function scopeFor(doc, subject, role) {
   };
 }
 
-const COLLECTIONS = ['accounts', 'transactions', 'payees', 'categories', 'contacts', 'recurring', 'budgets', 'groupExpenses', 'groupSettlements', 'groupEvents', 'groupSplitPresets', 'groupSettlementUnits', 'groupRefunds', 'groupContributions', 'groupPaymentRequests'];
+const COLLECTIONS = ['accounts', 'transactions', 'payees', 'categories', 'accountTypes', 'categoryTypes', 'merchantTypes', 'contacts', 'recurring', 'budgets', 'groupExpenses', 'groupSettlements', 'groupEvents', 'groupSplitPresets', 'groupSettlementUnits', 'groupRefunds', 'groupContributions', 'groupPaymentRequests'];
 // Directory records a replace never removes: records outside the caller's scope may refer to them,
 // and the directory is never pruned (security review SEC-B1 and SEC-R4 for contacts, BT-001-05).
-const KEEP_ON_REPLACE = new Set(['categories', 'payees', 'contacts']);
+const KEEP_ON_REPLACE = new Set(['categories', 'accountTypes', 'categoryTypes', 'merchantTypes', 'payees', 'contacts']);
 
 function inScope(doc, scope) {
   return {
@@ -283,6 +304,13 @@ function inScope(doc, scope) {
     transactions: (doc.transactions || []).filter(scope.transaction),
     payees: (doc.payees || []).filter(scope.payee),
     categories: scope.shared ? (doc.categories || []) : [],
+    // Account type definitions (BT-019-02) are workspace-wide directory data, exactly like
+    // categories above — never scoped per-account.
+    accountTypes: scope.shared ? (doc.accountTypes || []) : [],
+    // Category type definitions (BT-019-01): the same workspace-wide directory scope.
+    categoryTypes: scope.shared ? (doc.categoryTypes || []) : [],
+    // Merchant type definitions (BT-019-03): the same workspace-wide directory scope.
+    merchantTypes: scope.shared ? (doc.merchantTypes || []) : [],
     contacts: scope.shared ? (doc.contacts || []) : [],
     recurring: (doc.recurring || []).filter(scope.recurring),
     budgets: (doc.budgets || []).filter(scope.budget),
@@ -431,7 +459,16 @@ function plan({ current, archived, mode, principal, member, nowIso, newWorkspace
       accounts: forgetOthers(arc.accounts.map((a) => (a.visibility === 'private' ? { ...a, ownerSubject: principal.subject } : a))),
       // Payee ownership is never transferred to the restorer (security review finding 9).
       payees: forgetOthers(payees),
-      categories: forgetOthers(archived.categories || []), transactions: forgetOthers(txns), audit: [], idempotency: {}, restoredFrom: null,
+      categories: forgetOthers(archived.categories || []),
+      // Account type definitions (BT-019-02) come along the same way as categories — workspace-wide
+      // directory data, never scoped per-account, `forgetOthers` maps any other member's identity
+      // in its history exactly like every other record here.
+      accountTypes: forgetOthers(archived.accountTypes || []),
+      // Category type definitions (BT-019-01) come along the same way.
+      categoryTypes: forgetOthers(archived.categoryTypes || []),
+      // Merchant type definitions (BT-019-03) come along the same way.
+      merchantTypes: forgetOthers(archived.merchantTypes || []),
+      transactions: forgetOthers(txns), audit: [], idempotency: {}, restoredFrom: null,
       recurring: forgetOthers(carriedBills),
       budgets: forgetOthers(arc.budgets),
       groupExpenses: forgetOthers(arc.groupExpenses.map(scrub)),
@@ -612,7 +649,7 @@ function plan({ current, archived, mode, principal, member, nowIso, newWorkspace
     : diffCounts(inScope(current, scopeNow), after);
   const summary = {
     mode,
-    scope: { accounts: arc.accounts.length, transactions: arc.transactions.length, payees: arc.payees.length, categories: arc.categories.length, contacts: arc.contacts.length, recurring: arc.recurring.length, budgets: arc.budgets.length, groupExpenses: arc.groupExpenses.length, groupSettlements: arc.groupSettlements.length, groupEvents: arc.groupEvents.length, groupSplitPresets: arc.groupSplitPresets.length, groupSettlementUnits: arc.groupSettlementUnits.length, groupRefunds: arc.groupRefunds.length, groupContributions: arc.groupContributions.length, groupPaymentRequests: arc.groupPaymentRequests.length },
+    scope: { accounts: arc.accounts.length, transactions: arc.transactions.length, payees: arc.payees.length, categories: arc.categories.length, contacts: arc.contacts.length, recurring: arc.recurring.length, budgets: arc.budgets.length, groupExpenses: arc.groupExpenses.length, groupSettlements: arc.groupSettlements.length, groupEvents: arc.groupEvents.length, groupSplitPresets: arc.groupSplitPresets.length, groupSettlementUnits: arc.groupSettlementUnits.length, groupRefunds: arc.groupRefunds.length, groupContributions: arc.groupContributions.length, groupPaymentRequests: arc.groupPaymentRequests.length, accountTypes: arc.accountTypes.length, categoryTypes: arc.categoryTypes.length, merchantTypes: arc.merchantTypes.length },
     changes: diff,
     excluded,
     // Totals only over data that passed the integrity check: a broken amount cannot be summed.

@@ -23,14 +23,15 @@ const fields = require('../_shared/fields');
 const audit = require('../_shared/audit');
 const icons = require('../_shared/icons');
 const deletion = require('../_shared/deletion');
+const accountTypes = require('../_shared/account-types');
 
 // The icon catalogue is read only when an icon is being chosen (BT-011-05).
 const catalogFor = async (ctx, body) => (body.icon !== undefined ? (await icons.readCatalog(ctx.storage)).catalog : null);
 const workspaceSettings = require('../_shared/workspace-settings');
 
 // `status` is changed only by the close and reopen actions, which need a reason.
-const EDITABLE = ['revision', 'reason', 'name', 'type', 'currency', 'institution', 'maskedNumber', 'terms', 'notes', 'openingBalance', 'openingDate', 'visibility', 'confirmShare', 'icon'];
-const TRACKED = ['name', 'type', 'currency', 'institution', 'maskedNumber', 'terms', 'notes', 'openingBalanceMinor', 'openingDate', 'visibility', 'icon'];
+const EDITABLE = ['revision', 'reason', 'name', 'type', 'accountTypeId', 'currency', 'institution', 'maskedNumber', 'terms', 'notes', 'openingBalance', 'openingDate', 'visibility', 'confirmShare', 'icon'];
+const TRACKED = ['name', 'type', 'accountTypeId', 'currency', 'institution', 'maskedNumber', 'terms', 'notes', 'openingBalanceMinor', 'openingDate', 'visibility', 'icon'];
 const snap = (a) => Object.fromEntries(TRACKED.map((f) => [f, a[f] === undefined ? null : structuredClone(a[f])]));
 const changesSince = (before, a) => TRACKED
   .filter((f) => JSON.stringify(before[f]) !== JSON.stringify(a[f] === undefined ? null : a[f]))
@@ -85,28 +86,45 @@ async function list(ctx, req) {
 
 async function create(ctx, req) {
   const wsId = requireId(query(req, 'workspaceId'), 'workspaceId');
-  const body = fields.onlyKeys(readBody(req), ['name', 'type', 'currency', 'visibility', 'openingBalance', 'openingDate', 'institution', 'maskedNumber', 'terms', 'notes', 'icon']);
+  const body = fields.onlyKeys(readBody(req), ['name', 'type', 'accountTypeId', 'currency', 'visibility', 'openingBalance', 'openingDate', 'institution', 'maskedNumber', 'terms', 'notes', 'icon']);
   const catalog = await catalogFor(ctx, body);
   const name = fields.text(body.name, { field: 'Name', max: 80, required: true });
-  const type = fields.oneOf(body.type, ledger.ACCOUNT_TYPES, 'Type');
   const currency = body.currency;
   money.precisionOf(currency);
   const visibility = fields.oneOf(body.visibility, ['private', 'shared'], 'Visibility', 'private');
-  const openingBalanceMinor = ledger.openingBalance(type, body.openingBalance, currency);
   const openingDate = fields.date(body.openingDate, 'Opening date') || ctx.nowIso().slice(0, 10);
-  const account = {
-    id: newId('acc'), name, type, currency, visibility, openingBalanceMinor, openingDate,
-    institution: fields.text(body.institution, { field: 'Institution', max: 80 }),
-    maskedNumber: ledger.maskedNumber(body.maskedNumber),
-    terms: ledger.validateTerms(type, body.terms, currency),
-    notes: fields.text(body.notes, { field: 'Notes', max: 5000, multiline: true }),
-    icon: body.icon === undefined ? null : icons.validateChoice(catalog, body.icon),
-    status: 'open', deletedAt: null, revision: 1, history: [],
-  };
   const { result } = await store.mutateWorkspace(ctx, wsId, (doc, member) => {
     if (visibility === 'shared' && !workspaceSettings.managesSharedLists(doc, member)) throw forbidden(member.role === 'viewer' ? 'Viewers cannot create shared accounts.' : 'Only owners and managers can create shared accounts in this workspace.');
     const nowIso = ctx.nowIso();
-    const record = { ...account, ownerSubject: visibility === 'private' ? member.subject : null, createdBy: member.subject, createdAt: nowIso };
+    // BT-019-02: `accountTypeId` is the friendlier, workspace-customizable way to choose a type;
+    // the account's own canonical `type` (the fixed accounting class every balance/direction/
+    // opening-balance rule already keys on) is always DERIVED from it here, once, and never
+    // re-reads the type record again — so a type later renamed or recoloured can never disagree
+    // with what an account already created from it actually is. Plain `type` alone (no
+    // accountTypeId) is still accepted unchanged, for every existing caller.
+    let type;
+    let accountTypeId = null;
+    if (body.accountTypeId !== undefined) {
+      accountTypes.ensureSystemTypes(doc, nowIso);
+      const chosen = accountTypes.findEffectiveType(doc, requireId(body.accountTypeId, 'accountTypeId'), nowIso);
+      if (!chosen || chosen.retired) throw badRequest('Unknown or retired account type.', 'invalid_account_type');
+      if (body.type !== undefined && body.type !== chosen.accountingClass) throw badRequest('This account type does not match the given type.', 'account_type_mismatch');
+      type = chosen.accountingClass;
+      accountTypeId = chosen.id;
+    } else {
+      type = fields.oneOf(body.type, ledger.ACCOUNT_TYPES, 'Type');
+    }
+    const openingBalanceMinor = ledger.openingBalance(type, body.openingBalance, currency);
+    const record = {
+      id: newId('acc'), name, type, accountTypeId, currency, visibility, openingBalanceMinor, openingDate,
+      institution: fields.text(body.institution, { field: 'Institution', max: 80 }),
+      maskedNumber: ledger.maskedNumber(body.maskedNumber),
+      terms: ledger.validateTerms(type, body.terms, currency),
+      notes: fields.text(body.notes, { field: 'Notes', max: 5000, multiline: true }),
+      icon: body.icon === undefined ? null : icons.validateChoice(catalog, body.icon),
+      status: 'open', deletedAt: null, revision: 1, history: [],
+      ownerSubject: visibility === 'private' ? member.subject : null, createdBy: member.subject, createdAt: nowIso,
+    };
     doc.accounts = [...(doc.accounts || []), record];
     ledger.assertLedgerInRange(doc);
     ledger.assertMemberQuota(doc, member, ctx.env);
@@ -142,17 +160,37 @@ async function patch(ctx, req) {
     // on this account carries this exact currency (checkInvariants, api/_shared/backup.js) and
     // reinterpreting it under a new one would silently misstate real historical amounts, not just
     // relabel them — so it locks, the same way opening balance/date lock once reconciled.
-    if ((body.type !== undefined || body.currency !== undefined) && ledger.hasEntries(doc, account)) {
+    if ((body.type !== undefined || body.accountTypeId !== undefined || body.currency !== undefined) && ledger.hasEntries(doc, account)) {
       throw conflict('This account already has activity recorded against it (entries, bills, grants or a Shared-expenses link). Type and currency are locked once anything is recorded, so existing amounts are never silently reinterpreted.', 'has_entries_locked');
     }
     const changed = [];
     if (body.name !== undefined) { account.name = fields.text(body.name, { field: 'Name', max: 80, required: true }); changed.push('name'); }
-    if (body.type !== undefined && body.type !== account.type) {
+    // BT-019-02: `accountTypeId` takes precedence when given (the friendlier picker); a bare `type`
+    // still works unchanged for compatibility, but clears any previously-chosen type record, since
+    // the raw accounting class was just set directly and no longer agrees with naming it by a type.
+    if (body.accountTypeId !== undefined) {
+      const nowIso = ctx.nowIso();
+      accountTypes.ensureSystemTypes(doc, nowIso);
+      if (body.accountTypeId === null) {
+        if (account.accountTypeId !== null) { account.accountTypeId = null; changed.push('accountTypeId'); }
+      } else {
+        const chosen = accountTypes.findEffectiveType(doc, requireId(body.accountTypeId, 'accountTypeId'), nowIso);
+        if (!chosen || chosen.retired) throw badRequest('Unknown or retired account type.', 'invalid_account_type');
+        if (body.type !== undefined && body.type !== chosen.accountingClass) throw badRequest('This account type does not match the given type.', 'account_type_mismatch');
+        if (chosen.id !== account.accountTypeId || chosen.accountingClass !== account.type) {
+          account.accountTypeId = chosen.id;
+          account.type = chosen.accountingClass;
+          account.terms = ledger.validateTerms(account.type, undefined, account.currency);
+          changed.push('accountTypeId', 'type', 'terms');
+        }
+      }
+    } else if (body.type !== undefined && body.type !== account.type) {
       account.type = fields.oneOf(body.type, ledger.ACCOUNT_TYPES, 'Type');
+      account.accountTypeId = null;
       // Type-specific terms (credit limit, APR, ...) may no longer apply to the new type — cleared
       // rather than silently carried over or left invalid; re-enter them if the new type needs them.
       account.terms = ledger.validateTerms(account.type, undefined, account.currency);
-      changed.push('type', 'terms');
+      changed.push('type', 'accountTypeId', 'terms');
     }
     if (body.currency !== undefined && body.currency !== account.currency) {
       money.precisionOf(body.currency);

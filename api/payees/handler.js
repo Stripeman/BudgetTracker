@@ -23,8 +23,19 @@ const audit = require('../_shared/audit');
 const merchants = require('../_shared/merchants');
 const icons = require('../_shared/icons');
 const deletion = require('../_shared/deletion');
+const merchantTypes = require('../_shared/merchant-types');
 
-const DETAIL_KEYS = ['name', 'type', 'aliases', 'contact', 'customerNumber', 'openedOn', 'defaultCategoryId', 'defaultAccountId', 'defaultCurrency', 'tags', 'notes', 'icon'];
+const DETAIL_KEYS = ['name', 'type', 'merchantTypeId', 'aliases', 'contact', 'customerNumber', 'openedOn', 'defaultCategoryId', 'defaultAccountId', 'defaultCurrency', 'tags', 'notes', 'icon'];
+// BT-019-03: resolves an optional `merchantTypeId` to a real, non-retired type. Returns null when
+// none was given; never re-read again after the caller uses it once to derive `type`.
+function resolveMerchantType(doc, merchantTypeId, nowIso) {
+  const id = fields.optionalId(merchantTypeId, 'Merchant type');
+  if (!id) return null;
+  merchantTypes.ensureSystemTypes(doc, nowIso);
+  const t = merchantTypes.findEffectiveType(doc, id, nowIso);
+  if (!t || t.retired) throw badRequest('Unknown or retired merchant type.', 'invalid_merchant_type');
+  return t;
+}
 // The icon catalogue is read only when an icon is being chosen (BT-011-05).
 const catalogFor = async (ctx, body) => (body.icon !== undefined ? (await icons.readCatalog(ctx.storage)).catalog : null);
 const EMPTY_CONTACT = Object.freeze({ website: '', address: '', phone: '', email: '' });
@@ -94,7 +105,16 @@ function view(doc, p, principal, member, stats, now) {
   const acct = p.defaultAccountId && (doc.accounts || []).find((a) => a.id === p.defaultAccountId && !a.deletedAt);
   const names = new Map((doc.members || []).map((m) => [m.subject, m.name || 'Member']));
   return {
-    ...out, type: p.type || 'other', aliases: p.aliases || [], notes: p.notes || '', defaultCategoryId: p.defaultCategoryId || null,
+    ...out, type: p.type || 'other',
+    // BT-019-03: the workspace's own named/coloured/iconed type this merchant was created from, if
+    // any — purely additional presentation; `type` above is always the merchant's own canonical
+    // class, never re-derived from this at read time.
+    merchantTypeId: p.merchantTypeId || null,
+    merchantType: (() => {
+      const t = (doc.merchantTypes || []).find((x) => x.id === p.merchantTypeId);
+      return t ? { id: t.id, name: t.name, color: t.color || t.defaultColor, icon: t.icon || t.defaultIcon || null, retired: !!t.retired } : null;
+    })(),
+    aliases: p.aliases || [], notes: p.notes || '', defaultCategoryId: p.defaultCategoryId || null,
     contact: { ...EMPTY_CONTACT, ...(p.contact || {}) }, customerNumber: p.customerNumber || '',
     openedOn: p.openedOn || null, closedOn: p.closedOn || null, closeReason: p.closeReason || '',
     defaultAccountId: acct && can(doc, principal, acct, 'view-transactions', now) ? acct.id : null,
@@ -221,9 +241,14 @@ async function create(ctx, req) {
     const aliasList = aliases(body.aliases);
     const dup = merchants.findDuplicates(doc, ctx.principal, now, { name, aliases: aliasList, visibility, ownerSubject });
     if (dup.exact.length && fields.bool(body.allowDuplicate, 'Allow duplicate') !== true) throw merchants.duplicateError(dup.exact[0]);
+    const chosenType = resolveMerchantType(doc, body.merchantTypeId, nowIso);
+    if (chosenType && body.type !== undefined && body.type !== chosenType.merchantClass) {
+      throw badRequest('The chosen merchant type does not match the given type.', 'merchant_type_mismatch');
+    }
     const p = {
       id: newId('pay'), name, normalizedName: merchants.normalizeName(name), aliases: aliasList, visibility, ownerSubject,
-      type: fields.oneOf(body.type, merchants.MERCHANT_TYPES, 'Merchant type', 'other'), contact: contact(body.contact),
+      type: fields.oneOf(body.type, merchants.MERCHANT_TYPES, 'Merchant type', chosenType ? chosenType.merchantClass : 'other'),
+      merchantTypeId: chosenType ? chosenType.id : null, contact: contact(body.contact),
       customerNumber: fields.text(body.customerNumber, { field: 'Customer number', max: 60 }),
       openedOn: fields.date(body.openedOn, 'Date opened'), closedOn: null, closeReason: '', status: 'active',
       defaultCategoryId: category(doc, body.defaultCategoryId), defaultAccountId: defaultAccount(doc, ctx.principal, body.defaultAccountId, visibility, now),
@@ -303,7 +328,22 @@ async function patch(ctx, req) {
       set('aliases', aliasList);
       p.normalizedName = merchants.normalizeName(name);
     }
-    if (body.type !== undefined) set('type', fields.oneOf(body.type, merchants.MERCHANT_TYPES, 'Merchant type'));
+    // BT-019-03: `merchantTypeId` takes precedence when given (the friendlier picker); a bare `type`
+    // still works unchanged for compatibility, but clears any previously-chosen type record, since
+    // the raw class was just set directly and no longer agrees with naming it by a type.
+    if (body.merchantTypeId !== undefined) {
+      if (body.merchantTypeId === null) {
+        if (p.merchantTypeId) set('merchantTypeId', null);
+      } else {
+        const chosen = resolveMerchantType(doc, body.merchantTypeId, nowIso);
+        if (body.type !== undefined && body.type !== chosen.merchantClass) throw badRequest('This merchant type does not match the given type.', 'merchant_type_mismatch');
+        if (chosen.id !== p.merchantTypeId) set('merchantTypeId', chosen.id);
+        if (chosen.merchantClass !== p.type) set('type', chosen.merchantClass);
+      }
+    } else if (body.type !== undefined) {
+      set('type', fields.oneOf(body.type, merchants.MERCHANT_TYPES, 'Merchant type'));
+      if (p.merchantTypeId) set('merchantTypeId', null);
+    }
     if (body.contact !== undefined) set('contact', contact(body.contact));
     if (body.customerNumber !== undefined) set('customerNumber', fields.text(body.customerNumber, { field: 'Customer number', max: 60 }));
     if (body.openedOn !== undefined) {

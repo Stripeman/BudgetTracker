@@ -279,10 +279,16 @@ async function create(ctx, req) {
     const nowIso = ctx.nowIso();
     const account = accountFor(doc, ctx.principal, accountId, 'create', now);
     const date = fields.date(body.date, 'Date') || nowIso.slice(0, 10);
+    // BT-020-03 (Terry, 2026-09-19): a manual interest charge, fee or balance correction on a debt
+    // account is "explicit, dated, audited... with a reason" — never silently applied. Scoped to
+    // liability accounts only, so every existing use of these same kinds elsewhere (a rounding
+    // adjustment on an ordinary asset account, say) is completely unaffected.
+    const reasonRequired = ['interest', 'fee', 'adjustment'].includes(kind) && ledger.LIABILITY_TYPES.has(account.type);
     const base = {
       date, postedDate: fields.date(body.postedDate, 'Posted date'),
       status: fields.oneOf(body.status, ledger.TX_STATUSES, 'Status', 'pending'),
-      tags: fields.tags(body.tags), notes: fields.text(body.notes, { field: 'Notes', max: 5000, multiline: true }),
+      tags: fields.tags(body.tags),
+      notes: fields.text(body.notes, { field: reasonRequired ? 'Reason' : 'Notes', max: 5000, multiline: true, required: reasonRequired }),
       links: validateLinks(body.links), createdBy: member.subject, createdAt: nowIso, revision: 1, deletedAt: null,
     };
     if (base.status === 'reconciled') throw badRequest('New entries cannot start reconciled; reconcile them against a statement.', 'invalid_status');

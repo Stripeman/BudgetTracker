@@ -123,6 +123,9 @@ export function createView(ctx) {
   const settingsBox = el("div", { class: "stack" });
   const coloursBox = el("div", { class: "stack" });
   const typesBox = el("div", { class: "stack" });
+  const accountTypesBox = el("div", { class: "stack" });
+  const categoryTypesBox = el("div", { class: "stack" });
+  const merchantTypesBox = el("div", { class: "stack" });
   // BT-019-04 (Terry, 2026-09-19): the "Category colours and icons" panel made collapsible here
   // too, consistent with My Settings' own personal-override version of it (already collapsible via
   // this exact shared shell, BT-017). Every pick inside `coloursBox` already saves immediately
@@ -148,6 +151,9 @@ export function createView(ctx) {
       el("section", { class: "card", "aria-labelledby": "ws-former" }, [el("h2", { class: "card__title", id: "ws-former", text: "Former members" }), formerBox]),
       el("section", { class: "card", "aria-labelledby": "ws-history" }, [el("h2", { class: "card__title", id: "ws-history", text: "Workspace changes" }), historyBox]),
       el("section", { class: "card card--full" }, [groupColours.element]),
+      el("section", { class: "card card--full", "aria-labelledby": "ws-account-types" }, [el("h2", { class: "card__title", id: "ws-account-types", text: "Account types" }), accountTypesBox]),
+      el("section", { class: "card card--full", "aria-labelledby": "ws-category-types" }, [el("h2", { class: "card__title", id: "ws-category-types", text: "Category types" }), categoryTypesBox]),
+      el("section", { class: "card card--full", "aria-labelledby": "ws-merchant-types" }, [el("h2", { class: "card__title", id: "ws-merchant-types", text: "Merchant types" }), merchantTypesBox]),
       el("section", { class: "card", "aria-labelledby": "ws-types" }, [el("h2", { class: "card__title", id: "ws-types", text: "Icons for types" }), typesBox]),
     ]),
     deleteBox,
@@ -443,6 +449,370 @@ export function createView(ctx) {
     }
   }
 
+  // Account TYPES (BT-019-02, Terry, 2026-09-19): a name, an editable colour and an optional icon,
+  // each mapped to one of BudgetTracker's fixed underlying accounting behaviours (asset, liability,
+  // ...). The mapping is set once, when a type is created or an account picks it; renaming or
+  // recolouring a type afterward never touches a single account or transaction. System defaults
+  // (one per accounting behaviour) always exist and cannot be retired or have their behaviour
+  // changed; a custom type's behaviour can change only while nothing uses it yet, refused and
+  // explained otherwise so it never silently reinterprets history already recorded against it.
+  let accountTypesSig = "";
+  function renderAccountTypes(state) {
+    const data = sliceFor(state, "accountTypes").data;
+    if (!data) return;
+    const canEdit = ["owner", "manager"].includes(me().role) || (me().role === "member" && managesSharedLists(state));
+    const sig = JSON.stringify([data.types, canEdit]);
+    if (sig === accountTypesSig) return;
+    accountTypesSig = sig;
+    const classLabel = (c) => ACCOUNT_TYPE_LABELS[c] || c;
+    const types = data.types.slice().sort((a, b) => (a.system === b.system ? a.name.localeCompare(b.name) : a.system ? -1 : 1));
+    if (!canEdit) {
+      mount(accountTypesBox,
+        el("p", { class: "field__help", text: "Owners and managers create and edit account types here. Each one maps to one of BudgetTracker's underlying accounting behaviours, so renaming or recolouring it never changes a balance or any history." }),
+        el("ul", { class: "stack" }, types.filter((t) => !t.retired).map((t) => el("li", { class: "row" }, [
+          categoryLabel(t.name, t.color, t.icon), badge(classLabel(t.accountingClass), "source"), t.system ? badge("Built-in") : null,
+        ]))));
+      return;
+    }
+    const newName = input({ maxlength: "60", placeholder: "e.g. Store card", autocomplete: "off" });
+    const newClass = pickerSelect(data.accountingClasses.map((c) => ({ value: c, label: classLabel(c) })), data.accountingClasses[0], {}, { search: false });
+    const createError = el("p", { class: "error-text small", role: "alert", hidden: true });
+    const createBtn = button("Add account type", async () => {
+      createError.hidden = true;
+      if (!newName.value.trim()) {
+        newName.setAttribute("aria-invalid", "true");
+        createError.textContent = "Give the type a name.";
+        createError.hidden = false;
+        newName.focus();
+        return;
+      }
+      const out = await store.actions.write((ws) => api.createAccountType(ws, { name: newName.value.trim(), accountingClass: newClass.value }), ["accountTypes"]);
+      if (!out.ok) { createError.textContent = messageFor(out.error); createError.hidden = false; return; }
+      announce(`${newName.value.trim()} added as an account type.`);
+      newName.removeAttribute("aria-invalid");
+      newName.value = "";
+    }, { variant: "primary" });
+
+    const rows = types.map((t) => {
+      const labelId = `ws-atype-${t.id}`;
+      const error = el("p", { class: "error-text small", role: "alert", hidden: true });
+      let picker = null;
+      const patchColour = async (color) => {
+        const out = await store.actions.write((ws) => api.patchAccountType(ws, { typeId: t.id, color }), ["accountTypes", "accounts"]);
+        if (out.ok) { announce(`${t.name}: colour ${color ? "saved" : "reset to default"}.`); return; }
+        if (picker) picker.select(t.color);
+        error.textContent = messageFor(out.error);
+        error.hidden = false;
+      };
+      picker = createThemePicker({
+        value: t.color, entries: colourEntries(data.palette, t.color), labelledBy: labelId,
+        listLabel: `Colours for ${t.name}`, namePrefix: `${t.name} colour`, onPick: (hex) => { void patchColour(hex); },
+      });
+      const chosenIcon = t.iconSource === "workspace" ? t.icon : null;
+      const iconPick = createIconPicker({
+        value: chosenIcon, inherited: t.defaultIcon, name: t.name, label: "Icon", tint: t.color,
+        onPick: async (id) => {
+          const out = await store.actions.write((ws) => api.patchAccountType(ws, { typeId: t.id, icon: id || null }), ["accountTypes", "accounts"]);
+          if (out.ok) { announce(`${t.name}: icon ${id ? "saved" : "reset to default"}.`); return; }
+          iconPick.select(chosenIcon);
+          error.textContent = messageFor(out.error);
+          error.hidden = false;
+        },
+      });
+      const nameInput = input({ maxlength: "60", value: t.name, autocomplete: "off" });
+      const saveName = button("Save name", async () => {
+        const value = nameInput.value.trim();
+        if (!value || value === t.name) { nameInput.value = t.name; return; }
+        const out = await store.actions.write((ws) => api.patchAccountType(ws, { typeId: t.id, name: value }), ["accountTypes", "accounts"]);
+        if (!out.ok) { nameInput.value = t.name; error.textContent = messageFor(out.error); error.hidden = false; return; }
+        announce(`Renamed to ${value}.`);
+      }, { small: true });
+      let classControl;
+      if (t.system) {
+        classControl = el("span", { class: "muted small", text: classLabel(t.accountingClass) });
+      } else if (t.usageCount > 0) {
+        classControl = el("span", { class: "muted small", text: classLabel(t.accountingClass) });
+      } else {
+        classControl = pickerSelect(data.accountingClasses.map((c) => ({ value: c, label: classLabel(c) })), t.accountingClass, { "aria-label": `Accounting behaviour for ${t.name}` }, { search: false });
+        classControl.addEventListener("change", async () => {
+          const out = await store.actions.write((ws) => api.patchAccountType(ws, { typeId: t.id, accountingClass: classControl.value }), ["accountTypes"]);
+          if (!out.ok) { classControl.value = t.accountingClass; error.textContent = messageFor(out.error); error.hidden = false; }
+          else announce(`${t.name} now behaves as ${classLabel(classControl.value)}.`);
+        });
+      }
+      const retireBtn = t.system
+        ? el("span", { class: "muted small", text: "Built-in — always available" })
+        : button(t.retired ? "Reactivate" : "Retire", async () => {
+          const out = await store.actions.write((ws) => api.patchAccountType(ws, { typeId: t.id, retired: !t.retired }), ["accountTypes"]);
+          if (!out.ok) { error.textContent = messageFor(out.error); error.hidden = false; return; }
+          announce(t.retired ? `${t.name} is available for new accounts again.` : `${t.name} retired. It stays on any account that already uses it, but is no longer offered for new ones.`);
+        }, { small: true, variant: "ghost" });
+      return el("div", { class: "catrow", role: "group", "aria-labelledby": `${labelId}-name` }, [
+        el("h3", { class: "catrow__name", id: `${labelId}-name` }, [categoryLabel(t.name, t.color, t.icon), t.system ? badge("Built-in", "source") : null, t.retired ? badge("Retired") : null]),
+        el("div", { class: "row" }, [field("Name", nameInput), saveName]),
+        el("div", { class: "field" }, [el("p", { class: "field__label", id: labelId, text: "Colour" }), picker.element]),
+        iconPick.element,
+        field("Accounting behaviour", classControl, {
+          help: t.system ? "A built-in type's own accounting behaviour never changes."
+            : t.usageCount > 0 ? `Used by ${t.usageCount} account${t.usageCount === 1 ? "" : "s"} already — locked so a change can never silently reinterpret their history. Create a new type instead.`
+              : "Change freely until an account uses this type.",
+        }),
+        error,
+        el("div", { class: "row catrow__meta" }, [
+          badge(t.colorSource === "workspace" ? "Custom colour" : "Default colour", "source"),
+          t.colorSource === "workspace" ? button("Reset colour", () => { void patchColour(null); }, { small: true, variant: "ghost", attrs: { "aria-label": `Reset to default: ${t.name} colour` } }) : null,
+          badge(chosenIcon ? "Custom icon" : "Default icon", "source"),
+          el("span", { class: "app__spacer" }), retireBtn,
+        ]),
+      ]);
+    });
+    mount(accountTypesBox,
+      el("p", { class: "field__help", text: "Each account type has a name, colour and optional icon and maps to one of BudgetTracker's underlying accounting behaviours. Renaming or recolouring never changes a balance, direction or history. A retired type stops appearing for new accounts but stays visible on any account that already uses it." }),
+      el("div", { class: "form-grid" }, [field("New type name", newName), field("Accounting behaviour", newClass), createBtn]), createError,
+      ...rows);
+  }
+
+  // Category TYPES (BT-019-01, Terry, 2026-09-19): the same mechanism as account types above, mapped
+  // to the two fixed category classes (expense/income) instead. Distinct from individual categories:
+  // a category's own income/expense class is fixed at creation and never re-derived from a type
+  // record afterward, so today's income/expense behaviour is preserved rather than a custom type
+  // label bypassing it.
+  let categoryTypesSig = "";
+  function renderCategoryTypes(state) {
+    const data = sliceFor(state, "categoryTypes").data;
+    if (!data) return;
+    const canEdit = ["owner", "manager"].includes(me().role) || (me().role === "member" && managesSharedLists(state));
+    const sig = JSON.stringify([data.types, canEdit]);
+    if (sig === categoryTypesSig) return;
+    categoryTypesSig = sig;
+    const classLabel = (c) => (c === "income" ? "Income" : "Expense");
+    const types = data.types.slice().sort((a, b) => (a.system === b.system ? a.name.localeCompare(b.name) : a.system ? -1 : 1));
+    if (!canEdit) {
+      mount(categoryTypesBox,
+        el("p", { class: "field__help", text: "Owners and managers create and edit category types here. Each one maps to expense or income, so renaming or recolouring it never changes a calculation or any history." }),
+        el("ul", { class: "stack" }, types.filter((t) => !t.retired).map((t) => el("li", { class: "row" }, [
+          categoryLabel(t.name, t.color, t.icon), badge(classLabel(t.categoryClass), "source"), t.system ? badge("Built-in") : null,
+        ]))));
+      return;
+    }
+    const newName = input({ maxlength: "60", placeholder: "e.g. Essential spending", autocomplete: "off" });
+    const newClass = pickerSelect(data.categoryClasses.map((c) => ({ value: c, label: classLabel(c) })), data.categoryClasses[0], {}, { search: false });
+    const createError = el("p", { class: "error-text small", role: "alert", hidden: true });
+    const createBtn = button("Add category type", async () => {
+      createError.hidden = true;
+      if (!newName.value.trim()) {
+        newName.setAttribute("aria-invalid", "true");
+        createError.textContent = "Give the type a name.";
+        createError.hidden = false;
+        newName.focus();
+        return;
+      }
+      const out = await store.actions.write((ws) => api.createCategoryType(ws, { name: newName.value.trim(), categoryClass: newClass.value }), ["categoryTypes"]);
+      if (!out.ok) { createError.textContent = messageFor(out.error); createError.hidden = false; return; }
+      announce(`${newName.value.trim()} added as a category type.`);
+      newName.removeAttribute("aria-invalid");
+      newName.value = "";
+    }, { variant: "primary" });
+
+    const rows = types.map((t) => {
+      const labelId = `ws-ctype-${t.id}`;
+      const error = el("p", { class: "error-text small", role: "alert", hidden: true });
+      let picker = null;
+      const patchColour = async (color) => {
+        const out = await store.actions.write((ws) => api.patchCategoryType(ws, { typeId: t.id, color }), ["categoryTypes", "categories"]);
+        if (out.ok) { announce(`${t.name}: colour ${color ? "saved" : "reset to default"}.`); return; }
+        if (picker) picker.select(t.color);
+        error.textContent = messageFor(out.error);
+        error.hidden = false;
+      };
+      picker = createThemePicker({
+        value: t.color, entries: colourEntries(data.palette, t.color), labelledBy: labelId,
+        listLabel: `Colours for ${t.name}`, namePrefix: `${t.name} colour`, onPick: (hex) => { void patchColour(hex); },
+      });
+      const chosenIcon = t.iconSource === "workspace" ? t.icon : null;
+      const iconPick = createIconPicker({
+        value: chosenIcon, inherited: t.defaultIcon, name: t.name, label: "Icon", tint: t.color,
+        onPick: async (id) => {
+          const out = await store.actions.write((ws) => api.patchCategoryType(ws, { typeId: t.id, icon: id || null }), ["categoryTypes", "categories"]);
+          if (out.ok) { announce(`${t.name}: icon ${id ? "saved" : "reset to default"}.`); return; }
+          iconPick.select(chosenIcon);
+          error.textContent = messageFor(out.error);
+          error.hidden = false;
+        },
+      });
+      const nameInput = input({ maxlength: "60", value: t.name, autocomplete: "off" });
+      const saveName = button("Save name", async () => {
+        const value = nameInput.value.trim();
+        if (!value || value === t.name) { nameInput.value = t.name; return; }
+        const out = await store.actions.write((ws) => api.patchCategoryType(ws, { typeId: t.id, name: value }), ["categoryTypes", "categories"]);
+        if (!out.ok) { nameInput.value = t.name; error.textContent = messageFor(out.error); error.hidden = false; return; }
+        announce(`Renamed to ${value}.`);
+      }, { small: true });
+      let classControl;
+      if (t.system) {
+        classControl = el("span", { class: "muted small", text: classLabel(t.categoryClass) });
+      } else if (t.usageCount > 0) {
+        classControl = el("span", { class: "muted small", text: classLabel(t.categoryClass) });
+      } else {
+        classControl = pickerSelect(data.categoryClasses.map((c) => ({ value: c, label: classLabel(c) })), t.categoryClass, { "aria-label": `Expense or income for ${t.name}` }, { search: false });
+        classControl.addEventListener("change", async () => {
+          const out = await store.actions.write((ws) => api.patchCategoryType(ws, { typeId: t.id, categoryClass: classControl.value }), ["categoryTypes"]);
+          if (!out.ok) { classControl.value = t.categoryClass; error.textContent = messageFor(out.error); error.hidden = false; }
+          else announce(`${t.name} is now ${classLabel(classControl.value).toLowerCase()}.`);
+        });
+      }
+      const retireBtn = t.system
+        ? el("span", { class: "muted small", text: "Built-in — always available" })
+        : button(t.retired ? "Reactivate" : "Retire", async () => {
+          const out = await store.actions.write((ws) => api.patchCategoryType(ws, { typeId: t.id, retired: !t.retired }), ["categoryTypes"]);
+          if (!out.ok) { error.textContent = messageFor(out.error); error.hidden = false; return; }
+          announce(t.retired ? `${t.name} is available for new categories again.` : `${t.name} retired. It stays on any category that already uses it, but is no longer offered for new ones.`);
+        }, { small: true, variant: "ghost" });
+      return el("div", { class: "catrow", role: "group", "aria-labelledby": `${labelId}-name` }, [
+        el("h3", { class: "catrow__name", id: `${labelId}-name` }, [categoryLabel(t.name, t.color, t.icon), t.system ? badge("Built-in", "source") : null, t.retired ? badge("Retired") : null]),
+        el("div", { class: "row" }, [field("Name", nameInput), saveName]),
+        el("div", { class: "field" }, [el("p", { class: "field__label", id: labelId, text: "Colour" }), picker.element]),
+        iconPick.element,
+        field("Expense or income", classControl, {
+          help: t.system ? "A built-in type's own expense/income behaviour never changes."
+            : t.usageCount > 0 ? `Used by ${t.usageCount} categor${t.usageCount === 1 ? "y" : "ies"} already — locked so a change can never silently reinterpret their history. Create a new type instead.`
+              : "Change freely until a category uses this type.",
+        }),
+        error,
+        el("div", { class: "row catrow__meta" }, [
+          badge(t.colorSource === "workspace" ? "Custom colour" : "Default colour", "source"),
+          t.colorSource === "workspace" ? button("Reset colour", () => { void patchColour(null); }, { small: true, variant: "ghost", attrs: { "aria-label": `Reset to default: ${t.name} colour` } }) : null,
+          badge(chosenIcon ? "Custom icon" : "Default icon", "source"),
+          el("span", { class: "app__spacer" }), retireBtn,
+        ]),
+      ]);
+    });
+    mount(categoryTypesBox,
+      el("p", { class: "field__help", text: "Each category type has a name, colour and optional icon and maps to expense or income. Renaming or recolouring never changes a calculation, budget or history. A retired type stops appearing for new categories but stays visible on any category that already uses it." }),
+      el("div", { class: "form-grid" }, [field("New type name", newName), field("Expense or income", newClass), createBtn]), createError,
+      ...rows);
+  }
+
+  // Merchant TYPES (BT-019-03, Terry, 2026-09-19): the same mechanism again, mapped to the fixed
+  // merchant classes (`api/_shared/merchants.js` MERCHANT_TYPES) — the smallest and least risky of
+  // the three, since a merchant's own type carries no derived financial behaviour, only a
+  // descriptive/analytics label.
+  let merchantTypesSig = "";
+  function renderMerchantTypes(state) {
+    const data = sliceFor(state, "merchantTypes").data;
+    if (!data) return;
+    const canEdit = ["owner", "manager"].includes(me().role) || (me().role === "member" && managesSharedLists(state));
+    const sig = JSON.stringify([data.types, canEdit]);
+    if (sig === merchantTypesSig) return;
+    merchantTypesSig = sig;
+    const classLabel = (c) => MERCHANT_TYPE_LABELS[c] || c;
+    const types = data.types.slice().sort((a, b) => (a.system === b.system ? a.name.localeCompare(b.name) : a.system ? -1 : 1));
+    if (!canEdit) {
+      mount(merchantTypesBox,
+        el("p", { class: "field__help", text: "Owners and managers create and edit merchant types here. Renaming or recolouring one never changes any merchant's history." }),
+        el("ul", { class: "stack" }, types.filter((t) => !t.retired).map((t) => el("li", { class: "row" }, [
+          categoryLabel(t.name, t.color, t.icon), badge(classLabel(t.merchantClass), "source"), t.system ? badge("Built-in") : null,
+        ]))));
+      return;
+    }
+    const newName = input({ maxlength: "60", placeholder: "e.g. Streaming service", autocomplete: "off" });
+    const newClass = pickerSelect(data.merchantClasses.map((c) => ({ value: c, label: classLabel(c) })), data.merchantClasses[0], {}, { search: false });
+    const createError = el("p", { class: "error-text small", role: "alert", hidden: true });
+    const createBtn = button("Add merchant type", async () => {
+      createError.hidden = true;
+      if (!newName.value.trim()) {
+        newName.setAttribute("aria-invalid", "true");
+        createError.textContent = "Give the type a name.";
+        createError.hidden = false;
+        newName.focus();
+        return;
+      }
+      const out = await store.actions.write((ws) => api.createMerchantType(ws, { name: newName.value.trim(), merchantClass: newClass.value }), ["merchantTypes"]);
+      if (!out.ok) { createError.textContent = messageFor(out.error); createError.hidden = false; return; }
+      announce(`${newName.value.trim()} added as a merchant type.`);
+      newName.removeAttribute("aria-invalid");
+      newName.value = "";
+    }, { variant: "primary" });
+
+    const rows = types.map((t) => {
+      const labelId = `ws-mtype-${t.id}`;
+      const error = el("p", { class: "error-text small", role: "alert", hidden: true });
+      let picker = null;
+      const patchColour = async (color) => {
+        const out = await store.actions.write((ws) => api.patchMerchantType(ws, { typeId: t.id, color }), ["merchantTypes", "payees"]);
+        if (out.ok) { announce(`${t.name}: colour ${color ? "saved" : "reset to default"}.`); return; }
+        if (picker) picker.select(t.color);
+        error.textContent = messageFor(out.error);
+        error.hidden = false;
+      };
+      picker = createThemePicker({
+        value: t.color, entries: colourEntries(data.palette, t.color), labelledBy: labelId,
+        listLabel: `Colours for ${t.name}`, namePrefix: `${t.name} colour`, onPick: (hex) => { void patchColour(hex); },
+      });
+      const chosenIcon = t.iconSource === "workspace" ? t.icon : null;
+      const iconPick = createIconPicker({
+        value: chosenIcon, inherited: t.defaultIcon, name: t.name, label: "Icon", tint: t.color,
+        onPick: async (id) => {
+          const out = await store.actions.write((ws) => api.patchMerchantType(ws, { typeId: t.id, icon: id || null }), ["merchantTypes", "payees"]);
+          if (out.ok) { announce(`${t.name}: icon ${id ? "saved" : "reset to default"}.`); return; }
+          iconPick.select(chosenIcon);
+          error.textContent = messageFor(out.error);
+          error.hidden = false;
+        },
+      });
+      const nameInput = input({ maxlength: "60", value: t.name, autocomplete: "off" });
+      const saveName = button("Save name", async () => {
+        const value = nameInput.value.trim();
+        if (!value || value === t.name) { nameInput.value = t.name; return; }
+        const out = await store.actions.write((ws) => api.patchMerchantType(ws, { typeId: t.id, name: value }), ["merchantTypes", "payees"]);
+        if (!out.ok) { nameInput.value = t.name; error.textContent = messageFor(out.error); error.hidden = false; return; }
+        announce(`Renamed to ${value}.`);
+      }, { small: true });
+      let classControl;
+      if (t.system) {
+        classControl = el("span", { class: "muted small", text: classLabel(t.merchantClass) });
+      } else if (t.usageCount > 0) {
+        classControl = el("span", { class: "muted small", text: classLabel(t.merchantClass) });
+      } else {
+        classControl = pickerSelect(data.merchantClasses.map((c) => ({ value: c, label: classLabel(c) })), t.merchantClass, { "aria-label": `Merchant class for ${t.name}` }, { search: false });
+        classControl.addEventListener("change", async () => {
+          const out = await store.actions.write((ws) => api.patchMerchantType(ws, { typeId: t.id, merchantClass: classControl.value }), ["merchantTypes"]);
+          if (!out.ok) { classControl.value = t.merchantClass; error.textContent = messageFor(out.error); error.hidden = false; }
+          else announce(`${t.name} is now classed as ${classLabel(classControl.value)}.`);
+        });
+      }
+      const retireBtn = t.system
+        ? el("span", { class: "muted small", text: "Built-in — always available" })
+        : button(t.retired ? "Reactivate" : "Retire", async () => {
+          const out = await store.actions.write((ws) => api.patchMerchantType(ws, { typeId: t.id, retired: !t.retired }), ["merchantTypes"]);
+          if (!out.ok) { error.textContent = messageFor(out.error); error.hidden = false; return; }
+          announce(t.retired ? `${t.name} is available for new merchants again.` : `${t.name} retired. It stays on any merchant that already uses it, but is no longer offered for new ones.`);
+        }, { small: true, variant: "ghost" });
+      return el("div", { class: "catrow", role: "group", "aria-labelledby": `${labelId}-name` }, [
+        el("h3", { class: "catrow__name", id: `${labelId}-name` }, [categoryLabel(t.name, t.color, t.icon), t.system ? badge("Built-in", "source") : null, t.retired ? badge("Retired") : null]),
+        el("div", { class: "row" }, [field("Name", nameInput), saveName]),
+        el("div", { class: "field" }, [el("p", { class: "field__label", id: labelId, text: "Colour" }), picker.element]),
+        iconPick.element,
+        field("Merchant class", classControl, {
+          help: t.system ? "A built-in type's own class never changes."
+            : t.usageCount > 0 ? `Used by ${t.usageCount} merchant${t.usageCount === 1 ? "" : "s"} already — locked so a change can never silently reinterpret their history. Create a new type instead.`
+              : "Change freely until a merchant uses this type.",
+        }),
+        error,
+        el("div", { class: "row catrow__meta" }, [
+          badge(t.colorSource === "workspace" ? "Custom colour" : "Default colour", "source"),
+          t.colorSource === "workspace" ? button("Reset colour", () => { void patchColour(null); }, { small: true, variant: "ghost", attrs: { "aria-label": `Reset to default: ${t.name} colour` } }) : null,
+          badge(chosenIcon ? "Custom icon" : "Default icon", "source"),
+          el("span", { class: "app__spacer" }), retireBtn,
+        ]),
+      ]);
+    });
+    mount(merchantTypesBox,
+      el("p", { class: "field__help", text: "Each merchant type has a name, colour and optional icon. Renaming or recolouring never changes any merchant's history. A retired type stops appearing for new merchants but stays visible on any merchant that already uses it." }),
+      el("div", { class: "form-grid" }, [field("New type name", newName), field("Merchant class", newClass), createBtn]), createError,
+      ...rows);
+  }
+
   // Icons for the workspace's account, bill and merchant types (BT-011-05). Owners and managers
   // choose; everyone else sees the result. Each group is collapsed so the card stays short.
   let typesSig = "";
@@ -495,6 +865,9 @@ export function createView(ctx) {
   let memberControls = {};
   function update(state) {
     renderColours(state);
+    renderAccountTypes(state);
+    renderCategoryTypes(state);
+    renderMerchantTypes(state);
     renderTypes(state);
     const members = sliceFor(state, "members");
     const s = stateView(members);

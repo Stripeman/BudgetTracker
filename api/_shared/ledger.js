@@ -198,6 +198,15 @@ function accountView(doc, principal, account, now) {
     access,
     ownerName: access === 'granted' ? (owner && owner.name) || 'Another member' : null,
     id: account.id, name: account.name, type: account.type, currency: account.currency,
+    // BT-019-02: the workspace's own named/coloured/iconed type this account was created from, if
+    // any (legacy accounts predating this feature simply have neither) — purely additional
+    // presentation; `type` above (and everything below keyed on it) is always the account's own
+    // canonical accounting class, never re-derived from this at read time.
+    accountTypeId: account.accountTypeId || null,
+    accountType: (() => {
+      const t = (doc.accountTypes || []).find((x) => x.id === account.accountTypeId);
+      return t ? { id: t.id, name: t.name, color: t.color || t.defaultColor, icon: t.icon || t.defaultIcon || null, retired: !!t.retired } : null;
+    })(),
     visibility: account.visibility, liability: LIABILITY_TYPES.has(account.type),
     institution: account.institution || '', maskedNumber: account.maskedNumber || '',
     openingDate: account.openingDate, status: account.status || 'open', deletedAt: account.deletedAt || null,

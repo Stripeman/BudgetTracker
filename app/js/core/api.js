@@ -133,6 +133,19 @@ export function createApiClient({ fetchImpl = globalThis.fetch.bind(globalThis),
     previewSplitwiseImport: (id, body) => request("group", { method: "POST", query: { ...ws(id), action: "preview-import" }, body }),
     confirmSplitwiseImport: (id, body) => request("group", { method: "POST", query: { ...ws(id), action: "confirm-import" }, body }),
     categories: (id) => request("categories", { query: ws(id) }),
+    // BT-019-02: workspace-scoped account TYPE definitions (name, colour, optional icon), each
+    // mapped to one of the fixed accounting classes — presentation only, never itself a balance rule.
+    accountTypes: (id) => request("account-types", { query: ws(id) }),
+    createAccountType: (id, body) => request("account-types", { method: "POST", query: ws(id), body }),
+    patchAccountType: (id, body) => request("account-types", { method: "PATCH", query: ws(id), body }),
+    // BT-019-01: the same pattern for category types (mapped to expense/income).
+    categoryTypes: (id) => request("category-types", { query: ws(id) }),
+    createCategoryType: (id, body) => request("category-types", { method: "POST", query: ws(id), body }),
+    patchCategoryType: (id, body) => request("category-types", { method: "PATCH", query: ws(id), body }),
+    // BT-019-03: the same pattern for merchant types (mapped to the fixed merchant classes).
+    merchantTypes: (id) => request("merchant-types", { query: ws(id) }),
+    createMerchantType: (id, body) => request("merchant-types", { method: "POST", query: ws(id), body }),
+    patchMerchantType: (id, body) => request("merchant-types", { method: "PATCH", query: ws(id), body }),
     icons: (id, catalogEtag) => request("icons", { query: id ? { ...ws(id), catalogEtag } : undefined }),
     updateTypeIcons: (id, typeIcons) => request("icons", { method: "PATCH", query: ws(id), body: { typeIcons } }),
     iconAction: (action, body) => request("icons", { method: "POST", query: { action }, body }),

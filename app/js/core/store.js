@@ -29,6 +29,8 @@ export function initialState() {
     accounts: emptySlice(null), transactions: emptySlice(null), payees: emptySlice(null),
     categories: emptySlice(null), members: emptySlice(null), bills: emptySlice(null),
     budgets: emptySlice(null), forecast: emptySlice(null), icons: emptySlice(null), group: emptySlice(null), monthActivity: emptySlice(null), weekActivity: emptySlice(null),
+    // BT-019-02/01/03: workspace-scoped account/category/merchant type definitions (name, colour, optional icon).
+    accountTypes: emptySlice(null), categoryTypes: emptySlice(null), merchantTypes: emptySlice(null),
     // BT-009-21: which shared-expense event's own scoped view is currently open, or null for the
     // combined (all-events) view — ambient like `selectedWorkspaceId`, so every existing
     // `write(fn, REFRESH)` call site's plain `refreshGroup()` automatically re-fetches whichever
@@ -99,12 +101,16 @@ export function createStore({ api }) {
         selectedWorkspaceId: id, groupEventFilter: null,
         accounts: emptySlice(id), transactions: emptySlice(id), payees: emptySlice(id), categories: emptySlice(id), members: emptySlice(id), bills: emptySlice(id),
         budgets: emptySlice(id), forecast: emptySlice(id), icons: emptySlice(id), group: emptySlice(id), monthActivity: emptySlice(id), weekActivity: emptySlice(id),
+        accountTypes: emptySlice(id), categoryTypes: emptySlice(id), merchantTypes: emptySlice(id),
       });
-      await Promise.all([actions.refreshAccounts(), actions.refreshCategories(), actions.refreshPayees(), actions.refreshMembers(), actions.refreshIcons()]);
+      await Promise.all([actions.refreshAccounts(), actions.refreshCategories(), actions.refreshPayees(), actions.refreshMembers(), actions.refreshIcons(), actions.refreshAccountTypes(), actions.refreshCategoryTypes(), actions.refreshMerchantTypes()]);
     },
 
     refreshAccounts: () => loadSlice("accounts", (id) => api.accounts(id)),
     refreshCategories: () => loadSlice("categories", (id) => api.categories(id)),
+    refreshAccountTypes: () => loadSlice("accountTypes", (id) => api.accountTypes(id)),
+    refreshCategoryTypes: () => loadSlice("categoryTypes", (id) => api.categoryTypes(id)),
+    refreshMerchantTypes: () => loadSlice("merchantTypes", (id) => api.merchantTypes(id)),
     refreshPayees: () => loadSlice("payees", (id) => api.payees(id)),
     refreshMembers: () => loadSlice("members", (id) => api.members(id)),
     // The icon catalogue with this workspace's type icons (BT-011-05). The last catalogue is kept and
@@ -180,8 +186,9 @@ export function createStore({ api }) {
             workspaces: list.workspaces, selectedWorkspaceId: nextId, groupEventFilter: null,
             accounts: emptySlice(nextId), transactions: emptySlice(nextId), payees: emptySlice(nextId), categories: emptySlice(nextId), members: emptySlice(nextId), bills: emptySlice(nextId),
             budgets: emptySlice(nextId), forecast: emptySlice(nextId), icons: emptySlice(nextId), group: emptySlice(nextId), monthActivity: emptySlice(nextId), weekActivity: emptySlice(nextId),
+            accountTypes: emptySlice(nextId), categoryTypes: emptySlice(nextId), merchantTypes: emptySlice(nextId),
           });
-          if (nextId) await Promise.all([actions.refreshAccounts(), actions.refreshCategories(), actions.refreshPayees(), actions.refreshMembers(), actions.refreshIcons()]);
+          if (nextId) await Promise.all([actions.refreshAccounts(), actions.refreshCategories(), actions.refreshPayees(), actions.refreshMembers(), actions.refreshIcons(), actions.refreshAccountTypes(), actions.refreshCategoryTypes(), actions.refreshMerchantTypes()]);
         } else {
           commit({ workspaces: list.workspaces });
         }
@@ -210,8 +217,9 @@ export function createStore({ api }) {
             workspaces: list.workspaces, selectedWorkspaceId: nextId, groupEventFilter: null,
             accounts: emptySlice(nextId), transactions: emptySlice(nextId), payees: emptySlice(nextId), categories: emptySlice(nextId), members: emptySlice(nextId), bills: emptySlice(nextId),
             budgets: emptySlice(nextId), forecast: emptySlice(nextId), icons: emptySlice(nextId), group: emptySlice(nextId), monthActivity: emptySlice(nextId), weekActivity: emptySlice(nextId),
+            accountTypes: emptySlice(nextId), categoryTypes: emptySlice(nextId), merchantTypes: emptySlice(nextId),
           });
-          if (nextId) await Promise.all([actions.refreshAccounts(), actions.refreshCategories(), actions.refreshPayees(), actions.refreshMembers(), actions.refreshIcons()]);
+          if (nextId) await Promise.all([actions.refreshAccounts(), actions.refreshCategories(), actions.refreshPayees(), actions.refreshMembers(), actions.refreshIcons(), actions.refreshAccountTypes(), actions.refreshCategoryTypes(), actions.refreshMerchantTypes()]);
         } else {
           commit({ workspaces: list.workspaces });
         }
