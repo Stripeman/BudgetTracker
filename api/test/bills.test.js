@@ -52,7 +52,7 @@ describe('BT-008-02 bills: data model', () => {
     code(await create(h, f.q, 'alice', { ...base, schedule: { freq: 'monthly', startDate: '2026-02-30' } }), 400, 'invalid_date');
   });
 
-  test('loan, debt and savings payments are transfers that record both sides', async () => {
+  test('a savings transfer is a bill that records both sides', async () => {
     const h = harness();
     const ws = ok(await h.call('workspaces', 'POST', { as: 'alice', body: { name: 'Plan', kind: 'personal', reportingCurrency: 'EUR' } }), 201).workspace;
     const q = { workspaceId: ws.id };
@@ -60,11 +60,60 @@ describe('BT-008-02 bills: data model', () => {
     const savings = ok(await h.call('accounts', 'POST', { as: 'alice', query: q, body: { name: 'Savings', type: 'savings', currency: 'EUR' } }), 201).account;
     const cats = await categories(h, q);
     code(await create(h, q, 'alice', { name: 'Bad', accountId: checking.id, toAccountId: savings.id, amount: '10.00', schedule: monthly('2026-09-20'), categoryId: cats.Housing }), 400, 'invalid_transfer');
-    const bill = ok(await create(h, q, 'alice', { name: 'Loan payment', billType: 'debt-payment', accountId: checking.id, toAccountId: savings.id, amount: '250.00', schedule: monthly('2026-09-20') }), 201).recurring;
+    const bill = ok(await create(h, q, 'alice', { name: 'Savings transfer', billType: 'savings', accountId: checking.id, toAccountId: savings.id, amount: '250.00', schedule: monthly('2026-09-20') }), 201).recurring;
     assert.equal(bill.kind, 'transfer');
     assert.equal(bill.toAccountName, 'Savings');
     const out = ok(await act(h, q, 'alice', 'record', { recurringId: bill.id, occurrence: '2026-09-20' }), 201);
     assert.deepEqual(out.transactions.map((t) => [t.accountName, t.amount]), [['Checking', '-250.00'], ['Savings', '250.00']]);
+  });
+
+  // BT-020-01 (Terry, 2026-09-19): a debt-payment bill specifically pays a real credit-card/loan
+  // account — never a merchant name, never just any account picked by mistake.
+  test('a debt-payment bill must pay into an actual credit-card/loan account, is a transfer, and keeps its own lender association separately', async () => {
+    const h = harness();
+    const ws = ok(await h.call('workspaces', 'POST', { as: 'alice', body: { name: 'Plan', kind: 'personal', reportingCurrency: 'EUR' } }), 201).workspace;
+    const q = { workspaceId: ws.id };
+    const checking = ok(await h.call('accounts', 'POST', { as: 'alice', query: q, body: { name: 'Checking', type: 'checking', currency: 'EUR', openingBalance: '1000.00' } }), 201).account;
+    const savings = ok(await h.call('accounts', 'POST', { as: 'alice', query: q, body: { name: 'Savings', type: 'savings', currency: 'EUR' } }), 201).account;
+    const card = ok(await h.call('accounts', 'POST', { as: 'alice', query: q, body: { name: 'Card', type: 'credit-card', currency: 'EUR', openingBalance: '-1000.00' } }), 201).account;
+    const lender = await merchant(h, q, 'alice', { name: 'Fictional Bank' });
+    code(await create(h, q, 'alice', { name: 'Bad', billType: 'debt-payment', accountId: checking.id, amount: '150.00', schedule: monthly('2026-09-20') }), 400, 'missing_field');
+    code(await create(h, q, 'alice', { name: 'Bad', billType: 'debt-payment', accountId: checking.id, toAccountId: savings.id, amount: '150.00', schedule: monthly('2026-09-20') }), 400, 'unsupported');
+    const bill = ok(await create(h, q, 'alice', {
+      name: 'Card payment', billType: 'debt-payment', accountId: checking.id, toAccountId: card.id, amount: '150.00', schedule: monthly('2026-09-20'), payeeId: lender.id,
+    }), 201).recurring;
+    assert.equal(bill.kind, 'transfer');
+    assert.equal(bill.toAccountName, 'Card');
+    assert.equal(bill.payeeName, 'Fictional Bank', 'the lender association is kept, separately from the destination account');
+    // Terry's own numbers: $150 from checking toward a $1,000 card reduces checking by 150 and the
+    // card's debt by exactly 150 (no breakdown given), never double-counted as spending.
+    const out = ok(await act(h, q, 'alice', 'record', { recurringId: bill.id, occurrence: '2026-09-20' }), 201);
+    assert.deepEqual(out.transactions.map((t) => [t.accountName, t.amount, t.kind]), [['Checking', '-150.00', 'transfer'], ['Card', '150.00', 'transfer']]);
+    const balances = ok(await h.call('accounts', 'GET', { as: 'alice', query: q })).accounts;
+    assert.equal(balances.find((a) => a.id === card.id).balance, '-850.00');
+    assert.equal(balances.find((a) => a.id === checking.id).balance, '850.00');
+  });
+
+  // BT-020-02: a $150 payment with $120 principal and $30 interest never before recorded.
+  test('an interest/fee breakdown on a debt-payment occurrence reduces cash by the full amount, principal by the remainder, and records the interest exactly once', async () => {
+    const h = harness();
+    const ws = ok(await h.call('workspaces', 'POST', { as: 'alice', body: { name: 'Plan', kind: 'personal', reportingCurrency: 'EUR' } }), 201).workspace;
+    const q = { workspaceId: ws.id };
+    const checking = ok(await h.call('accounts', 'POST', { as: 'alice', query: q, body: { name: 'Checking', type: 'checking', currency: 'EUR', openingBalance: '1000.00' } }), 201).account;
+    const card = ok(await h.call('accounts', 'POST', { as: 'alice', query: q, body: { name: 'Card', type: 'credit-card', currency: 'EUR', openingBalance: '-1000.00' } }), 201).account;
+    const bill = ok(await create(h, q, 'alice', { name: 'Card payment', billType: 'debt-payment', accountId: checking.id, toAccountId: card.id, amount: '150.00', schedule: monthly('2026-09-20') }), 201).recurring;
+    code(await act(h, q, 'alice', 'record', { recurringId: bill.id, occurrence: '2026-09-20', interestAmount: '200.00' }), 400, 'invalid_amount');
+    const out = ok(await act(h, q, 'alice', 'record', { recurringId: bill.id, occurrence: '2026-09-20', interestAmount: '30.00' }), 201);
+    assert.deepEqual(out.transactions.map((t) => [t.accountName, t.amount, t.kind]), [
+      ['Checking', '-150.00', 'transfer'], ['Card', '150.00', 'transfer'], ['Card', '-30.00', 'interest'],
+    ]);
+    const balances = ok(await h.call('accounts', 'GET', { as: 'alice', query: q })).accounts;
+    assert.equal(balances.find((a) => a.id === checking.id).balance, '850.00', 'cash reduced by the full 150.00, once');
+    assert.equal(balances.find((a) => a.id === card.id).balance, '-880.00', 'principal reduced by exactly 120.00 (1000 - 880), interest recorded, never double-counted');
+    // A non-debt-payment transfer never accepts a breakdown.
+    const savings = ok(await h.call('accounts', 'POST', { as: 'alice', query: q, body: { name: 'Savings', type: 'savings', currency: 'EUR' } }), 201).account;
+    const plain = ok(await create(h, q, 'alice', { name: 'Savings transfer', billType: 'savings', accountId: checking.id, toAccountId: savings.id, amount: '50.00', schedule: monthly('2026-09-21') }), 201).recurring;
+    code(await act(h, q, 'alice', 'record', { recurringId: plain.id, occurrence: '2026-09-21', interestAmount: '5.00' }), 400, 'invalid_field');
   });
 });
 

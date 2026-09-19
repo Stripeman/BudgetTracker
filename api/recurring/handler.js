@@ -42,6 +42,13 @@ const PATCH_KEYS = ['recurringId', 'revision', 'effectiveFrom', 'amount', 'amoun
 const catalogFor = async (ctx, body) => (body.icon !== undefined ? (await icons.readCatalog(ctx.storage)).catalog : null);
 const TERM_KEYS = ['amount', 'amountType', 'categoryId', 'payeeId', 'payeeDraftName', 'responsibleRef'];
 const NOT_FOR_TRANSFERS = ['categoryId', 'payeeId', 'payeeDraftName', 'responsibleRef'];
+// BT-020-01 (Terry, 2026-09-19): a debt-payment bill is a transfer (two real accounts — "Pay from"
+// and "Apply payment to", never a merchant name or its own account-number field), but unlike an
+// ordinary account-to-account transfer it keeps its merchant/payee association available
+// separately (the lender), so payee fields are exempt from the plain-transfer restriction above.
+// Category and responsible person stay meaningless for a transfer either way.
+const DEBT_PAYMENT_EXEMPT = new Set(['payeeId', 'payeeDraftName']);
+const isDebtPayment = (billType) => billType === 'debt-payment';
 // Bills → Merchant (security/UX review, 2026-09-18): a bill saved with a typed merchant name that
 // does not (yet) match a real managed merchant keeps that name here, validated, and entirely
 // separate from the bill's own title (`r.name`) and from the canonical `payeeId`. Selecting or
@@ -79,6 +86,15 @@ function positive(text, currency, field = 'Amount') {
   if (m <= 0) throw badRequest(`${field} must be greater than zero.`, 'invalid_amount');
   if (m > MAX_BILL_MINOR) throw badRequest(`${field} is larger than a recurring bill can be.`, 'amount_too_large');
   return m;
+}
+
+// BT-020-02: a breakdown amount (interest or fee) is optional, zero when omitted, and never negative
+// — unlike the payment amount itself it may legitimately be zero (no unrecorded interest this time).
+function nonNegative(text, currency, field) {
+  const minor = money.parseDecimal(text, currency, field);
+  if (minor < 0) throw badRequest(`${field} cannot be negative.`, 'invalid_amount');
+  if (minor > MAX_BILL_MINOR) throw badRequest(`${field} is larger than a recurring bill can be.`, 'amount_too_large');
+  return minor;
 }
 
 function reminderDays(value, fallback) {
@@ -234,16 +250,24 @@ async function draft(ctx, req) {
   if (status === 'recorded') throw conflict('This occurrence is already recorded.', 'already_recorded');
   const t = bills.termsAt(r, occurrence);
   const payee = t.payeeId && (doc.payees || []).find((p) => p.id === t.payeeId);
+  // BT-020-01: "recording an occurrence shows both accounts and the payment allocation for review
+  // before saving" — the destination's own current balance, so the client can preview the effect on
+  // the debt account before it is saved (an actual number, never inferred from the payment alone).
+  const dest = r.toAccountId ? (doc.accounts || []).find((x) => x.id === r.toAccountId) : null;
+  const destBalanceVisible = dest && !dest.deletedAt && can(doc, ctx.principal, dest, 'view-balances', now);
   return {
     body: {
       saved: false,
       draft: {
         recurringId: r.id, name: r.name, occurrence, date: recordDate(doc, r, occurrence, today), status, overdue: status === 'due' && isOverdue(r, occurrence, today),
-        kind: r.kind, accountId: r.accountId, toAccountId: r.toAccountId || null, currency: r.currency,
+        kind: r.kind, billType: r.billType, accountId: r.accountId, toAccountId: r.toAccountId || null, currency: r.currency,
         amount: money.toDecimal(t.amountMinor, r.currency), amountType: t.amountType, amountIsEstimate: t.amountType === 'variable',
         categoryId: t.categoryId, payeeId: t.payeeId || null, payeeName: payee ? payee.name : '',
         payeeDraftName: t.payeeId ? '' : (t.payeeDraftName || ''),
         responsible: people.labelFor(t.responsibleRef, { doc, user }),
+        // Only for a debt-payment bill (BT-020-02): the destination's balance now, so the client can
+        // show "this reduces the card from X to Y" before saving, with any interest/fee breakdown.
+        destinationBalance: isDebtPayment(r.billType) && destBalanceVisible ? money.toDecimal(ledger.balanceOf(doc, dest), dest.currency) : null,
       },
     },
   };
@@ -261,7 +285,10 @@ async function create(ctx, req) {
     if ((doc.recurring || []).filter((x) => !x.deletedAt).length >= MAX_BILLS) throw conflict(`This workspace has reached its limit of ${MAX_BILLS} bills. End bills you no longer need.`, 'too_many_bills');
     const billType = fields.oneOf(body.billType, bills.BILL_TYPES, 'Bill type', 'custom');
     const a = accountFor(doc, ctx.principal, requireId(body.accountId, 'accountId'), 'create', now);
+    const debtPayment = isDebtPayment(billType);
+    if (debtPayment && !body.toAccountId) throw badRequest('A loan or debt payment bill needs the account it pays into ("Apply payment to").', 'missing_field');
     const kind = fields.oneOf(body.kind, bills.KINDS, 'Kind', bills.defaultKind(billType, body.toAccountId));
+    if (debtPayment && kind !== 'transfer') throw badRequest('A loan or debt payment bill must be a transfer into the account it pays.', 'invalid_transfer');
     const sched = schedule.validateSchedule(body.schedule);
     const r = {
       id: newId('rec'), name: fields.text(body.name, { field: 'Name', max: 80, required: true }), billType, kind,
@@ -278,11 +305,24 @@ async function create(ctx, req) {
       categoryId: null, payeeId: null, payeeDraftName: '', responsibleRef: null, createdAt: nowIso, createdBy: member.subject,
     };
     if (kind === 'transfer') {
-      if (NOT_FOR_TRANSFERS.some((k) => body[k] !== undefined)) throw badRequest('Transfers between accounts have no category, payee or responsible person.', 'invalid_transfer');
+      const stillForbidden = debtPayment ? NOT_FOR_TRANSFERS.filter((k) => !DEBT_PAYMENT_EXEMPT.has(k)) : NOT_FOR_TRANSFERS;
+      if (stillForbidden.some((k) => body[k] !== undefined)) throw badRequest('Transfers between accounts have no category, payee or responsible person.', 'invalid_transfer');
       const dest = accountFor(doc, ctx.principal, requireId(body.toAccountId, 'toAccountId'), 'create', now);
       if (dest.id === a.id) throw badRequest('A transfer needs two different accounts.', 'invalid_transfer');
       if (dest.currency !== a.currency) throw badRequest('Recurring transfers between currencies are not supported yet.', 'unsupported');
+      // Explained before submission, not after (Terry's explicit requirement): a debt-payment bill's
+      // destination must actually be a credit-card, loan or other debt-bearing account — never just
+      // any account picked by mistake.
+      if (debtPayment && !ledger.LIABILITY_TYPES.has(dest.type)) {
+        throw badRequest(`${dest.name} is not a credit card, loan or other debt account, so a loan or debt payment bill cannot pay it. Choose the debt account this bill pays, or change this bill's type.`, 'unsupported');
+      }
       r.toAccountId = dest.id;
+      // The lender/merchant association stays available, kept separately from the destination
+      // account itself (Terry: "Keep the merchant/payee association available separately").
+      if (debtPayment) {
+        version.payeeId = merchants.requireMerchant(doc, ctx.principal, a, body.payeeId, now);
+        version.payeeDraftName = version.payeeId ? '' : draftMerchantName(body.payeeDraftName);
+      }
     } else {
       if (body.toAccountId !== undefined) throw badRequest('Only transfers have a destination account.', 'invalid_field');
       version.categoryId = checkCategory(doc, body.categoryId);
@@ -307,7 +347,7 @@ async function create(ctx, req) {
 // come from the terms effective on the occurrence date; a variable bill needs the actual amount.
 async function record(ctx, req) {
   const wsId = requireId(query(req, 'workspaceId'), 'workspaceId');
-  const body = fields.onlyKeys(readBody(req), ['recurringId', 'occurrence', 'amount', 'date', 'categoryId', 'payeeId', 'responsibleRef', 'notes', 'status']);
+  const body = fields.onlyKeys(readBody(req), ['recurringId', 'occurrence', 'amount', 'date', 'categoryId', 'payeeId', 'responsibleRef', 'notes', 'status', 'interestAmount', 'feeAmount']);
   const user = await readUser(ctx);
   const { result } = await store.mutateWorkspace(ctx, wsId, (doc, member) => {
     const now = ctx.now();
@@ -327,6 +367,19 @@ async function record(ctx, req) {
       throw conflict('This bill\'s category no longer exists. Choose a category for this payment or edit the bill.', 'bill_category_missing');
     }
     const magnitude = body.amount === undefined ? terms.amountMinor : positive(body.amount, r.currency);
+    // BT-020-02: an explicit principal/interest/fee breakdown, only for a debt-payment transfer. Cash
+    // still leaves the paying account by the FULL amount (unchanged below); the breakdown instead
+    // adds one 'interest' and/or one 'fee' entry directly on the debt account, atomically with the
+    // same transfer pair — which is what makes "$150 = $120 principal + $30 unrecorded interest"
+    // reduce cash by 150, principal by exactly 120 (150 transferred in, less 30 charged) and record
+    // the 30 as spending exactly once, never conflated with the transfer itself.
+    const debtBreakdown = isDebtPayment(r.billType) && r.kind === 'transfer';
+    if (!debtBreakdown && (body.interestAmount !== undefined || body.feeAmount !== undefined)) {
+      throw badRequest('A principal/interest/fee breakdown only applies to a loan or debt payment bill.', 'invalid_field');
+    }
+    const interestMinor = debtBreakdown && body.interestAmount !== undefined ? nonNegative(body.interestAmount, r.currency, 'Interest') : 0;
+    const feeMinor = debtBreakdown && body.feeAmount !== undefined ? nonNegative(body.feeAmount, r.currency, 'Fee') : 0;
+    if (interestMinor + feeMinor > magnitude) throw badRequest('The interest and fee breakdown cannot be more than the total payment.', 'invalid_amount');
     const base = {
       // An overdue occurrence is paid today unless told otherwise, so it moves from owed to spent in
       // the same budget period and what is available does not jump (financial retest FIN-T3). A
@@ -350,6 +403,15 @@ async function record(ctx, req) {
         payeeId: null, categoryId: null, responsibleRef: null, tags: [], splits: [], links: { recurringId: r.id, occurrence },
       });
       created.push(leg(a.id, -magnitude, dest.id), leg(dest.id, magnitude, a.id));
+      // Newly-recognized interest/fees, recorded once, directly on the debt account (never on the
+      // paying account, which already moved the full amount above — no double counting).
+      const breakdownLeg = (kind, amountMinor) => ({
+        ...base, id: newId('txn'), accountId: dest.id, kind, amountMinor: -amountMinor, currency: r.currency,
+        payeeId: null, categoryId: null, responsibleRef: null, transferId: null, counterpartAccountId: null,
+        tags: [], splits: [], links: { recurringId: r.id, occurrence },
+      });
+      if (interestMinor > 0) created.push(breakdownLeg('interest', interestMinor));
+      if (feeMinor > 0) created.push(breakdownLeg('fee', feeMinor));
     } else {
       created.push({
         ...base, id: newId('txn'), accountId: a.id, kind: r.kind, amountMinor: bills.signed(r.kind, magnitude), currency: r.currency,
@@ -453,7 +515,10 @@ async function patch(ctx, req) {
     const note = (field, from, to) => { if (JSON.stringify(from ?? null) !== JSON.stringify(to ?? null)) details.push({ field, from: from ?? null, to: to ?? null }); };
     let effectiveFrom = null;
     if (TERM_KEYS.some((k) => body[k] !== undefined)) {
-      if (r.kind === 'transfer' && NOT_FOR_TRANSFERS.some((k) => body[k] !== undefined)) throw badRequest('Transfers between accounts have no category, payee or responsible person.', 'invalid_transfer');
+      if (r.kind === 'transfer') {
+        const stillForbidden = isDebtPayment(r.billType) ? NOT_FOR_TRANSFERS.filter((k) => !DEBT_PAYMENT_EXEMPT.has(k)) : NOT_FOR_TRANSFERS;
+        if (stillForbidden.some((k) => body[k] !== undefined)) throw badRequest('Transfers between accounts have no category, payee or responsible person.', 'invalid_transfer');
+      }
       effectiveFrom = fields.date(body.effectiveFrom, 'Effective from', { required: true });
       if (effectiveFrom < r.schedule.startDate) throw badRequest('A change cannot take effect before the bill starts.', 'invalid_effective_date');
       const v = { ...bills.termsAt(r, effectiveFrom), id: newId('ver'), effectiveFrom, createdAt: nowIso, createdBy: member.subject };

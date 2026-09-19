@@ -2,7 +2,7 @@
 // "Who can see this" with explicit grants for private accounts (owner only). The server decides
 // everything; these controls only present what it allows.
 import { el, mount, announce } from "../dom.js";
-import { pageHead, stateView, money, accessBadge, button, field, input, pickerSelect, badge, uid } from "../components.js";
+import { pageHead, stateView, money, accessBadge, button, field, input, pickerSelect, badge, categoryLabel, uid } from "../components.js";
 import { openModal } from "../modal.js";
 import { openDeleteDialog } from "../permanentdelete.js";
 import { sliceFor } from "../../core/store.js";
@@ -119,6 +119,32 @@ function termsControls(type, terms) {
 // Presentation only; the server decides.
 const canManage = (a, sharedLists) => a.ownedBySelf || (a.visibility === "shared" && sharedLists);
 
+// BT-019-02: the workspace's account TYPE definitions (name, colour, optional icon), each mapped to
+// one of the fixed accounting classes — offered here instead of the plain fixed list whenever the
+// workspace's own types have loaded, so a custom type is a real, pickable choice everywhere an
+// account's type is chosen. `keepId` (a currently-assigned type, even a retired one) is always kept
+// in the list so a picker never silently drops the account's own current choice. Falls back to
+// `null` when the slice has not loaded yet (or a caller's test stub omits it entirely), so every
+// existing caller keeps working exactly as it always has with the fixed `ACCOUNT_TYPE_LABELS` list.
+function accountTypeChoices(state, keepId = null) {
+  const data = sliceFor(state, "accountTypes").data;
+  if (!data) return null;
+  return data.types.filter((t) => !t.retired || t.id === keepId)
+    .sort((a, b) => (a.system === b.system ? a.name.localeCompare(b.name) : a.system ? -1 : 1));
+}
+// A coloured/iconed leading mark for a type picker's options and its trigger (categoryLabel's own
+// mark, so a type reads exactly the same here as everywhere else it is shown).
+function accountTypeBadges(types) {
+  const byId = new Map((types || []).map((t) => [t.id, t]));
+  return (id) => {
+    const t = byId.get(id);
+    if (!t) return null;
+    return t.icon
+      ? el("span", { class: "catlabel__icon", "aria-hidden": "true", vars: { "--swatch": t.color || null } }, [icon(t.icon)])
+      : (t.color ? el("span", { class: "swatch-dot", "aria-hidden": "true", vars: { "--swatch": t.color } }) : null);
+  };
+}
+
 export function createView(ctx) {
   const box = el("div");
   // Removed accounts (BT-006-05): counted by the server, listed only when asked for, and forgotten
@@ -221,7 +247,10 @@ export function createView(ctx) {
           withIcon(a.icon, el("strong", { text: a.name })), a.status === "closed" ? " " : null, a.status === "closed" ? badge("Closed", "closed") : null,
           a.institution ? el("div", { class: "muted small", text: `${a.institution}${a.maskedNumber ? ` ·· ${a.maskedNumber}` : ""}` }) : null,
         ]),
-        el("td", { "data-label": "Type", text: `${ACCOUNT_TYPE_LABELS[a.type] || a.type} · ${a.currency}` }),
+        el("td", { "data-label": "Type" }, [
+          a.accountType ? categoryLabel(a.accountType.name, a.accountType.color, a.accountType.icon) : el("span", { text: ACCOUNT_TYPE_LABELS[a.type] || a.type }),
+          el("span", { class: "muted small", text: ` · ${a.currency}` }),
+        ]),
         el("td", { "data-label": "Who can see it" }, [accessBadge(a)]),
         el("td", { "data-label": "Balance", class: "num" }, [a.balance !== undefined ? money(a.balance, a.currency, prefs) : el("span", { class: "muted small", text: "Not shared with you" })]),
         // BT-015 compact record actions menu (Terry, 2026-09-18): one "::" trigger per row, right-
@@ -233,6 +262,14 @@ export function createView(ctx) {
           items: [
             canManage(a, sharedLists) ? { text: "Edit", onClick: () => openEditAccount(ctx, a), attrs: { "aria-label": `Edit ${a.name}` } } : null,
             canManage(a, sharedLists) ? { text: a.status === "closed" ? "Reopen" : "Close", onClick: () => openLifecycle(ctx, a), attrs: { "aria-label": `${a.status === "closed" ? "Reopen" : "Close"} ${a.name}` } } : null,
+            // BT-020-03/04 (Terry, 2026-09-19): manual interest, fees, payments/credits and balance
+            // corrections on a debt (liability) account — the same canonical transactions API every
+            // other entry uses, never a parallel payment system. Offered only where the account is
+            // actually a debt account and the person may add entries to it.
+            a.liability && a.capabilities.includes("create") ? { text: "Add interest charge", onClick: () => openDebtCharge(ctx, a, "interest"), attrs: { "aria-label": `Add interest charge to ${a.name}` } } : null,
+            a.liability && a.capabilities.includes("create") ? { text: "Add fee", onClick: () => openDebtCharge(ctx, a, "fee"), attrs: { "aria-label": `Add fee to ${a.name}` } } : null,
+            a.liability && a.capabilities.includes("create") ? { text: "Record payment or credit", onClick: () => openDebtPaymentOrCredit(ctx, a, accounts.data.accounts), attrs: { "aria-label": `Record a payment or credit on ${a.name}` } } : null,
+            a.liability && a.capabilities.includes("create") ? { text: "Correct balance", onClick: () => openBalanceCorrection(ctx, a), attrs: { "aria-label": `Correct the balance of ${a.name}` } } : null,
             { text: "Who can see this", onClick: () => openWhoCanSee(ctx, a), attrs: { "aria-label": `Who can see ${a.name}` } },
             canManage(a, sharedLists) ? { text: "Remove", onClick: () => openRemove(ctx, a, afterRemove), attrs: { "aria-label": `Remove ${a.name}` } } : null,
             canManage(a, sharedLists) ? { text: "Delete permanently", danger: true, onClick: () => openPermanentDelete(ctx, a, state.selectedWorkspaceId, afterRemove), attrs: { "aria-label": `Permanently delete ${a.name}` } } : null,
@@ -350,6 +387,140 @@ function openLifecycle(ctx, account) {
   });
 }
 
+// BT-020-03/04 (Terry, 2026-09-19): manual interest, fees, payments/credits and balance corrections
+// on a debt (liability) account — the canonical transactions API (kind 'interest'/'fee'/'transfer'/
+// 'refund'/'adjustment'), never a parallel payment system. A reason is required for an interest
+// charge, a fee or a balance correction (enforced server-side; asked for here up front so it is
+// never discovered only after Save).
+const centsOfDecimal = (text) => { const n = Number.parseFloat(String(text || "0").replace(",", ".")); return Number.isFinite(n) ? Math.round(n * 100) : 0; };
+const decimalOfCents = (c) => (c / 100).toFixed(2);
+
+function openDebtCharge(ctx, account, kind) {
+  const label = kind === "interest" ? "interest charge" : "fee";
+  const amount = input({ inputmode: "decimal", placeholder: "0.00", autocomplete: "off" });
+  const date = input({ type: "date" });
+  date.value = todayIso();
+  const reason = input({ maxlength: "200", autocomplete: "off" });
+  const confirm = button(`Add ${label}`, async () => {
+    modal.setError("");
+    if (!amount.value.trim()) { invalid(amount, `Enter the ${label} amount.`); return; }
+    if (!reason.value.trim()) { invalid(reason, `Give a reason for this ${label}. It is kept with the entry's history.`); return; }
+    modal.setBusy(true);
+    const out = await ctx.store.actions.write(
+      (ws) => ctx.api.createTransaction(ws, { accountId: account.id, kind, amount: amount.value.trim(), date: date.value, notes: reason.value.trim() }),
+      ["accounts", "transactions"],
+    );
+    modal.setBusy(false);
+    if (!out.ok) { modal.setError(out.error); return; }
+    announce(`${label[0].toUpperCase()}${label.slice(1)} added to ${account.name}.`);
+    modal.close();
+  }, { variant: "primary" });
+  const modal = openModal({
+    title: `Add ${label} to ${account.name}`,
+    body: [
+      el("p", { text: `This increases what is owed on ${account.name}. It is dated, audited and kept in its history — never a silent change.` }),
+      el("div", { class: "form-grid" }, [
+        field(`Amount (${account.currency})`, amount), field("Date", date),
+        field("Reason", reason, { wide: true, help: "Required. It is kept with the entry's history." }),
+      ]),
+    ],
+    actions: [button("Cancel", () => modal.close()), confirm],
+  });
+  const invalid = (control, message) => { control.setAttribute("aria-invalid", "true"); control.setAttribute("aria-errormessage", modal.errorId); modal.setError(message); control.focus(); };
+}
+
+// "Record payments and credits" (Terry): a payment is a transfer from a funding account into this
+// debt account (reduces what is owed); a credit is money returned directly to it (a refund, e.g. a
+// merchant credit) — never conflated, and neither one requires a reason (unlike interest/fee/
+// correction), matching every other ordinary transfer or refund elsewhere in the app.
+function openDebtPaymentOrCredit(ctx, account, allAccounts) {
+  const others = allAccounts.filter((a) => a.id !== account.id && a.currency === account.currency && a.status !== "closed" && a.capabilities.includes("create"));
+  const mode = pickerSelect([
+    { value: "payment", label: "Payment — from another account" },
+    { value: "credit", label: "Credit — money returned directly to this account" },
+  ], "payment", {}, { search: false });
+  const fromAccount = pickerSelect(others.map((a) => ({ value: a.id, label: `${a.name} (${a.currency})` })), (others[0] || {}).id, {}, { placeholder: "Choose an account…" });
+  const amount = input({ inputmode: "decimal", placeholder: "0.00", autocomplete: "off" });
+  const date = input({ type: "date" });
+  date.value = todayIso();
+  const fromBox = el("div", { class: "form-grid" }, [field("Pay from", fromAccount)]);
+  const syncMode = () => { fromBox.hidden = mode.value !== "payment"; };
+  syncMode();
+  mode.addEventListener("change", syncMode);
+  const confirm = button("Save", async () => {
+    modal.setError("");
+    if (!amount.value.trim()) { invalid(amount, "Enter the amount."); return; }
+    if (mode.value === "payment" && !fromAccount.value) { modal.setError("Choose the account this payment comes from."); return; }
+    const body = mode.value === "payment"
+      ? { accountId: fromAccount.value, kind: "transfer", amount: amount.value.trim(), date: date.value, transfer: { toAccountId: account.id } }
+      : { accountId: account.id, kind: "refund", amount: amount.value.trim(), date: date.value };
+    modal.setBusy(true);
+    const out = await ctx.store.actions.write((ws) => ctx.api.createTransaction(ws, body), ["accounts", "transactions"]);
+    modal.setBusy(false);
+    if (!out.ok) { modal.setError(out.error); return; }
+    announce(`${mode.value === "payment" ? "Payment" : "Credit"} recorded on ${account.name}.`);
+    modal.close();
+  }, { variant: "primary" });
+  const modal = openModal({
+    title: `Record a payment or credit on ${account.name}`,
+    body: [el("div", { class: "form-grid" }, [
+      field("Kind", mode), fromBox,
+      field(`Amount (${account.currency})`, amount), field("Date", date),
+    ])],
+    actions: [button("Cancel", () => modal.close()), confirm],
+  });
+  const invalid = (control, message) => { control.setAttribute("aria-invalid", "true"); control.setAttribute("aria-errormessage", modal.errorId); modal.setError(message); control.focus(); };
+}
+
+// BT-020-04: enter the desired balance, see the calculated adjustment and its accounting treatment,
+// then confirm — never a silent overwrite of the balance, and never a rewrite of any entry already
+// recorded (the correction is always a brand-new, separate 'adjustment' entry).
+function openBalanceCorrection(ctx, account) {
+  const desired = input({ inputmode: "decimal", placeholder: "0.00", autocomplete: "off" });
+  desired.value = account.balance || "0.00";
+  const reason = input({ maxlength: "200", autocomplete: "off" });
+  const preview = el("p", { class: "field__help", role: "status" });
+  const currentCents = centsOfDecimal(account.balance);
+  const renderPreview = () => {
+    const target = centsOfDecimal(desired.value);
+    const delta = target - currentCents;
+    if (delta === 0) { preview.textContent = `No change: ${account.name} is already at ${account.balance} ${account.currency}.`; return; }
+    const direction = delta > 0 ? "increases" : "decreases";
+    preview.textContent = `${account.name}: ${account.balance} → ${decimalOfCents(target)} ${account.currency}. This ${direction} the balance by ${decimalOfCents(Math.abs(delta))} ${account.currency}, recorded as one audited adjustment entry — nothing already recorded is changed.`;
+  };
+  desired.addEventListener("input", renderPreview);
+  renderPreview();
+  const confirm = button("Correct balance", async () => {
+    modal.setError("");
+    if (!desired.value.trim()) { invalid(desired, "Enter the desired balance."); return; }
+    const delta = centsOfDecimal(desired.value) - currentCents;
+    if (delta === 0) { announce("Nothing changed."); modal.close(); return; }
+    if (!reason.value.trim()) { invalid(reason, "Give a reason for this correction. It is kept with the entry's history."); return; }
+    modal.setBusy(true);
+    const out = await ctx.store.actions.write(
+      (ws) => ctx.api.createTransaction(ws, { accountId: account.id, kind: "adjustment", amount: decimalOfCents(delta), date: todayIso(), notes: reason.value.trim() }),
+      ["accounts", "transactions"],
+    );
+    modal.setBusy(false);
+    if (!out.ok) { modal.setError(out.error); return; }
+    announce(`${account.name}'s balance corrected.`);
+    modal.close();
+  }, { variant: "primary" });
+  const modal = openModal({
+    title: `Correct the balance of ${account.name}`,
+    body: [
+      el("p", { text: `Current balance: ${account.balance} ${account.currency}.` }),
+      el("div", { class: "form-grid" }, [
+        field(`Desired balance (${account.currency})`, desired),
+        field("Reason", reason, { wide: true, help: "Required. It is kept with the entry's history." }),
+      ]),
+      preview,
+    ],
+    actions: [button("Cancel", () => modal.close()), confirm],
+  });
+  const invalid = (control, message) => { control.setAttribute("aria-invalid", "true"); control.setAttribute("aria-errormessage", modal.errorId); modal.setError(message); control.focus(); };
+}
+
 // Every currently-editable field (BT-006): name, institution, account number, opening balance and
 // date (locked once the account has a reconciled entry), icon, notes, and — for loans and credit
 // cards — the terms. Type and currency are editable too, but only while nothing has been recorded
@@ -362,9 +533,22 @@ function openEditAccount(ctx, account) {
   const locked = !!account.reconciledLocked;
   const typeCurrencyEditable = account.hasEntries === false;
   const name = input({ required: true, maxlength: "80", value: account.name, autocomplete: "off" });
-  const typePick = typeCurrencyEditable
-    ? pickerSelect(Object.entries(ACCOUNT_TYPE_LABELS).map(([value, label]) => ({ value, label })), account.type, {}, { search: false, badgeOf: (v) => icon(defaultIconFor("account", v)) })
-    : null;
+  // BT-019-02: the workspace's own account types (system and custom, name/colour/icon) are offered
+  // once loaded; the account's own current type record — even a retired one — always stays a valid
+  // choice so the picker never silently drops it. `typeChoices` null means the slice has not loaded
+  // (or, in a test double, does not exist at all): the fixed accounting-class list is offered
+  // exactly as it always has been, `type` sent exactly as before — nothing about that path changes.
+  const typeChoices = typeCurrencyEditable ? accountTypeChoices(ctx.store.getState(), account.accountTypeId) : null;
+  const currentTypeId = account.accountTypeId || (typeChoices ? (typeChoices.find((t) => t.system && t.accountingClass === account.type) || {}).id : null);
+  const typePick = !typeCurrencyEditable ? null
+    : typeChoices
+      ? pickerSelect(typeChoices.map((t) => ({ value: t.id, label: t.name })), currentTypeId || typeChoices[0].id, {}, { search: false, badgeOf: accountTypeBadges(typeChoices) })
+      : pickerSelect(Object.entries(ACCOUNT_TYPE_LABELS).map(([value, label]) => ({ value, label })), account.type, {}, { search: false, badgeOf: (v) => icon(defaultIconFor("account", v)) });
+  // The accounting class implied by whatever is currently picked — what terms/icon defaults and the
+  // "did the underlying behaviour change" checks below actually depend on, never the raw picker value
+  // once that value is a type id rather than a class.
+  const classOf = new Map((typeChoices || []).map((t) => [t.id, t.accountingClass]));
+  const pickedClass = () => (!typePick ? account.type : typeChoices ? (classOf.get(typePick.value) || account.type) : typePick.value);
   const currencyPick = typeCurrencyEditable ? pickerSelect(CURRENCIES.map((c) => ({ value: c, label: c })), account.currency) : null;
   const institution = input({ maxlength: "80", value: account.institution || "", autocomplete: "off" });
   const last = input({ inputmode: "numeric", maxlength: "4", placeholder: "Last 2–4 digits only", value: account.maskedNumber || "", autocomplete: "off" });
@@ -375,21 +559,22 @@ function openEditAccount(ctx, account) {
   const iconPick = createIconPicker({ value: chosen, inherited: chosen ? defaultIconFor("account", account.type) : account.icon, name: account.name });
   const reason = input({ maxlength: "200", placeholder: "Optional", autocomplete: "off" });
   // Terms are type-specific (credit limit, APR, ...): if the type picker changes, the terms shown
-  // must follow the NEWLY chosen type, not the account's original one, or the form would offer
-  // fields the server would refuse (and drop any it no longer recognises) for the type about to be
-  // saved. Rebuilt in place whenever the type selection changes.
+  // must follow the NEWLY chosen type's accounting class, not the account's original one, or the
+  // form would offer fields the server would refuse (and drop any it no longer recognises) for the
+  // class about to be saved. Rebuilt in place whenever the type selection changes.
   const termsBox = el("div");
-  let terms = termsControls(typePick ? typePick.value : account.type, account.terms);
+  let terms = termsControls(pickedClass(), account.terms);
   let initialTerms = terms ? JSON.stringify(canonicalTerms(account.type, account.terms)) : null;
   const renderTerms = () => {
     mount(termsBox, terms ? el("fieldset", { class: "form-grid budget-line field--wide" }, [el("legend", { class: "field__label", text: terms.legend }), ...terms.fields]) : null);
   };
   if (typePick) {
     typePick.addEventListener("change", () => {
-      // A type change (this session's own case) clears terms server-side too — the form mirrors
-      // that rather than offering stale, possibly-invalid fields for the new type.
-      terms = typePick.value === account.type ? termsControls(account.type, account.terms) : termsControls(typePick.value, null);
-      initialTerms = typePick.value === account.type && terms ? JSON.stringify(canonicalTerms(account.type, account.terms)) : (terms ? JSON.stringify(terms.collect()) : null);
+      // A class change (this session's own case) clears terms server-side too — the form mirrors
+      // that rather than offering stale, possibly-invalid fields for the new class.
+      const cls = pickedClass();
+      terms = cls === account.type ? termsControls(account.type, account.terms) : termsControls(cls, null);
+      initialTerms = cls === account.type && terms ? JSON.stringify(canonicalTerms(account.type, account.terms)) : (terms ? JSON.stringify(terms.collect()) : null);
       renderTerms();
     });
   }
@@ -399,7 +584,11 @@ function openEditAccount(ctx, account) {
     if (!name.value.trim()) { name.setAttribute("aria-invalid", "true"); name.setAttribute("aria-errormessage", modal.errorId); modal.setError("Give the account a name."); name.focus(); return; }
     const body = { accountId: account.id, revision: account.revision };
     if (name.value.trim() !== account.name) body.name = name.value.trim();
-    if (typePick && typePick.value !== account.type) body.type = typePick.value;
+    const classChanged = !!typePick && pickedClass() !== account.type;
+    if (typePick) {
+      if (typeChoices) { if (typePick.value !== currentTypeId) body.accountTypeId = typePick.value; }
+      else if (typePick.value !== account.type) body.type = typePick.value;
+    }
     if (currencyPick && currencyPick.value !== account.currency) body.currency = currencyPick.value;
     if (institution.value.trim() !== (account.institution || "")) body.institution = institution.value.trim();
     if (last.value.trim() !== (account.maskedNumber || "")) body.maskedNumber = last.value.trim();
@@ -408,10 +597,10 @@ function openEditAccount(ctx, account) {
     if (notes.value !== (account.notes || "")) body.notes = notes.value;
     const icon = iconChange(chosen, iconPick.getValue());
     if (icon !== undefined) body.icon = icon;
-    // Terms are sent explicitly only when the type is NOT also changing (a type change already
-    // clears/reapplies terms server-side); when it is, and the user configured new terms for the
-    // new type in this same save, those are sent too.
-    if (terms && (body.type !== undefined || (() => { const current = JSON.stringify(terms.collect()); return current !== initialTerms; })())) {
+    // Terms are sent explicitly only when the underlying accounting class is NOT also changing (a
+    // class change already clears/reapplies terms server-side); when it is, and the user configured
+    // new terms for the new class in this same save, those are sent too.
+    if (terms && (classChanged || (() => { const current = JSON.stringify(terms.collect()); return current !== initialTerms; })())) {
       body.terms = terms.collect();
     }
     if (Object.keys(body).length === 2) { announce("Nothing changed."); modal.close(); return; }
@@ -429,7 +618,7 @@ function openEditAccount(ctx, account) {
       field("Name", name),
       typePick
         ? field("Type", typePick, { help: TYPE_CURRENCY_EDITABLE })
-        : field("Type", input({ readonly: true, value: ACCOUNT_TYPE_LABELS[account.type] || account.type }), { help: TYPE_CURRENCY_LOCKED }),
+        : field("Type", input({ readonly: true, value: (account.accountType && account.accountType.name) || ACCOUNT_TYPE_LABELS[account.type] || account.type }), { help: TYPE_CURRENCY_LOCKED }),
       currencyPick
         ? field("Currency", currencyPick, { help: TYPE_CURRENCY_EDITABLE })
         : field("Currency", input({ readonly: true, value: account.currency }), { help: TYPE_CURRENCY_LOCKED }),
@@ -450,12 +639,19 @@ function openAddAccount(ctx) {
   const key = newIdempotencyKey();
   const name = input({ required: true, maxlength: "80" });
   // The dropdowns are TaskTracker's command picker (BT-004-05). Each type shows the icon an account
-  // of that type gets by default (BT-011-05), beside its name.
-  const type = pickerSelect(Object.entries(ACCOUNT_TYPE_LABELS).map(([value, label]) => ({ value, label })), "checking", {}, { search: false, badgeOf: (v) => icon(defaultIconFor("account", v)) });
-  // The "Default" icon follows the chosen type (BT-011-05).
+  // of that type gets by default (BT-011-05), beside its name. BT-019-02: the workspace's own
+  // account types (system and custom) are offered once loaded — see accountTypeChoices' own comment
+  // for the exact, test-preserving fallback to the fixed list when they are not.
+  const typeChoices = accountTypeChoices(ctx.store.getState());
+  const classOf = new Map((typeChoices || []).map((t) => [t.id, t.accountingClass]));
+  const pickedClass = (value) => (typeChoices ? (classOf.get(value) || "checking") : value);
+  const type = typeChoices
+    ? pickerSelect(typeChoices.map((t) => ({ value: t.id, label: t.name })), (typeChoices.find((t) => t.accountingClass === "checking") || typeChoices[0]).id, {}, { search: false, badgeOf: accountTypeBadges(typeChoices) })
+    : pickerSelect(Object.entries(ACCOUNT_TYPE_LABELS).map(([value, label]) => ({ value, label })), "checking", {}, { search: false, badgeOf: (v) => icon(defaultIconFor("account", v)) });
+  // The "Default" icon follows the chosen type's accounting class (BT-011-05).
   const iconBox = el("div");
   let iconPick = null;
-  const makeIconPicker = (value = null) => { iconPick = createIconPicker({ value, inherited: defaultIconFor("account", type.value), name: "New account" }); mount(iconBox, iconPick.element); };
+  const makeIconPicker = (value = null) => { iconPick = createIconPicker({ value, inherited: defaultIconFor("account", pickedClass(type.value)), name: "New account" }); mount(iconBox, iconPick.element); };
   makeIconPicker();
   type.addEventListener("change", () => makeIconPicker(iconPick.getValue()));
   const currency = pickerSelect(CURRENCIES.map((c) => ({ value: c, label: c })), (ctx.store.getState().workspaces.find((w) => w.id === ctx.store.getState().selectedWorkspaceId) || {}).reportingCurrency || "EUR");
@@ -467,7 +663,8 @@ function openAddAccount(ctx) {
   const save = button("Create account", async () => {
     modal.setError("");
     modal.setBusy(true);
-    const body = { name: name.value, type: type.value, currency: currency.value, visibility: visibility.value, openingDate: openingDate.value };
+    const body = { name: name.value, currency: currency.value, visibility: visibility.value, openingDate: openingDate.value };
+    if (typeChoices) body.accountTypeId = type.value; else body.type = type.value;
     if (opening.value.trim()) body.openingBalance = opening.value.trim();
     if (institution.value.trim()) body.institution = institution.value.trim();
     if (last.value.trim()) body.maskedNumber = last.value.trim();
@@ -503,7 +700,12 @@ function openAddAccount(ctx) {
 export function quickAddAccountForm(ctx, { name: initialName = "", onCreated, onCancel }) {
   const key = newIdempotencyKey();
   const name = input({ required: true, maxlength: "80", value: initialName, autocomplete: "off" });
-  const type = pickerSelect(Object.entries(ACCOUNT_TYPE_LABELS).map(([value, label]) => ({ value, label })), "checking", {}, { search: false, badgeOf: (v) => icon(defaultIconFor("account", v)) });
+  // BT-019-02: same merged system+custom type list as the full Add Account form, with the same
+  // test-preserving fallback to the fixed list when the workspace's own types have not loaded.
+  const typeChoices = accountTypeChoices(ctx.store.getState());
+  const type = typeChoices
+    ? pickerSelect(typeChoices.map((t) => ({ value: t.id, label: t.name })), (typeChoices.find((t) => t.accountingClass === "checking") || typeChoices[0]).id, {}, { search: false, badgeOf: accountTypeBadges(typeChoices) })
+    : pickerSelect(Object.entries(ACCOUNT_TYPE_LABELS).map(([value, label]) => ({ value, label })), "checking", {}, { search: false, badgeOf: (v) => icon(defaultIconFor("account", v)) });
   const currency = pickerSelect(CURRENCIES.map((c) => ({ value: c, label: c })), (ctx.store.getState().workspaces.find((w) => w.id === ctx.store.getState().selectedWorkspaceId) || {}).reportingCurrency || "EUR");
   const visibility = pickerSelect([{ value: "private", label: "Private — only you (you can share it later)" }, { value: "shared", label: "Shared — every workspace member per their role" }], "private", {}, { search: false });
   const errorBox = el("p", { class: "state state--error", role: "alert", hidden: true });
@@ -518,7 +720,8 @@ export function quickAddAccountForm(ctx, { name: initialName = "", onCreated, on
     }
     create.disabled = true;
     cancel.disabled = true;
-    const body = { name: name.value.trim(), type: type.value, currency: currency.value, visibility: visibility.value };
+    const body = { name: name.value.trim(), currency: currency.value, visibility: visibility.value };
+    if (typeChoices) body.accountTypeId = type.value; else body.type = type.value;
     const out = await ctx.store.actions.write((ws) => ctx.api.createAccount(ws, body, key), ["accounts"]);
     create.disabled = false;
     cancel.disabled = false;

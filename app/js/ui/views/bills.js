@@ -30,7 +30,9 @@ const PRESETS = [
   { value: "custom", label: "Custom…" },
 ];
 const DIRECTIONS = [{ value: "expense", label: "Money out" }, { value: "income", label: "Money in" }, { value: "transfer", label: "Transfer to another account" }];
-const defaultDirection = (billType) => (billType === "income" ? "income" : billType === "savings" ? "transfer" : "expense");
+// BT-020-01 (Terry, 2026-09-19): a loan or debt payment bill IS a transfer, by default and
+// discoverably — "Pay from" the funding account into the actual credit-card/loan account being paid.
+const defaultDirection = (billType) => (billType === "income" ? "income" : (billType === "savings" || billType === "debt-payment") ? "transfer" : "expense");
 const stamp = (iso) => String(iso || "").replace("T", " ").slice(0, 16);
 
 export function scheduleLabel(s, dateFormat) {
@@ -292,9 +294,36 @@ async function openRecord(ctx, bill, occurrence) {
   const status = pickerSelect([{ value: "pending", label: "Pending" }, { value: "cleared", label: "Cleared" }], "pending", {}, { search: false });
   // Income and transfers are described as what they are, not as payments (UX2-001).
   const income = bill.kind === "income";
+  // BT-020-02 (Terry, 2026-09-19): a debt-payment bill's occurrence may carry an explicit, reviewed
+  // principal/interest/fee breakdown, so "$150 = $120 principal + $30 unrecorded interest" is made
+  // unmistakable before saving, never conflated with the transfer itself.
+  const isDebtPayment = draft.billType === "debt-payment";
+  const interestAmount = input({ inputmode: "decimal", autocomplete: "off", placeholder: "0.00" });
+  const feeAmount = input({ inputmode: "decimal", autocomplete: "off", placeholder: "0.00" });
+  const allocationPreview = el("p", { class: "field__help", role: "status" });
+  const centsOf = (text) => { const n = Number.parseFloat(String(text || "0").replace(",", ".")); return Number.isFinite(n) ? Math.round(n * 100) : 0; };
+  const fromCents = (c) => (c / 100).toFixed(2);
+  const renderAllocation = () => {
+    if (!isDebtPayment) return;
+    const total = centsOf(amount.value);
+    const interest = centsOf(interestAmount.value);
+    const fee = centsOf(feeAmount.value);
+    const principal = total - interest - fee;
+    const parts = [`${fromCents(Math.max(principal, 0))} reduces the balance owed on ${bill.toAccountName || "the debt account"}`];
+    if (interest > 0) parts.push(`${fromCents(interest)} recorded as interest`);
+    if (fee > 0) parts.push(`${fromCents(fee)} recorded as a fee`);
+    let text = `Paying ${fromCents(total)} ${draft.currency}: ${parts.join("; ")}.`;
+    if (draft.destinationBalance !== null && draft.destinationBalance !== undefined) {
+      const beforeCents = centsOf(draft.destinationBalance);
+      const afterCents = beforeCents + principal;
+      text += ` ${bill.toAccountName || "The account"}'s balance: ${draft.destinationBalance} → ${fromCents(afterCents)} ${draft.currency}.`;
+    }
+    if (principal < 0) text += " The breakdown is more than the total payment — reduce it before saving.";
+    allocationPreview.textContent = text;
+  };
   const words = income
     ? { amount: "Amount received", date: "Date received", who: "Payer", action: "Record income" }
-    : isTransfer ? { amount: "Amount moved", date: "Date moved", who: "Merchant", action: "Record transfer" }
+    : isTransfer ? { amount: isDebtPayment ? "Amount paid" : "Amount moved", date: isDebtPayment ? "Date paid" : "Date moved", who: "Merchant", action: isDebtPayment ? "Record payment" : "Record transfer" }
       : { amount: "Amount paid", date: "Date paid", who: "Merchant", action: "Record payment" };
   const where = isTransfer ? `from ${bill.accountName} to ${bill.toAccountName || "another account"}` : income ? `into ${bill.accountName}` : `from ${bill.accountName}`;
   const record = el("button", { type: "button", class: "btn btn--primary", text: words.action });
@@ -310,13 +339,20 @@ async function openRecord(ctx, bill, occurrence) {
           ? "Filled in with the due date (Workspace settings)." : "Filled in with today's date (Workspace settings).") } : {}),
         isTransfer ? null : field(words.who, merchantSelect),
         isTransfer ? null : field("Category", category),
+        isDebtPayment ? field(`Of this, interest not already on ${bill.toAccountName || "the debt account"} (optional)`, interestAmount) : null,
+        isDebtPayment ? field("Of this, a fee not already recorded (optional)", feeAmount) : null,
         field("Status", status),
         field("Notes", notes, { wide: true }),
       ]),
+      isDebtPayment ? allocationPreview : null,
       el("p", { class: "field__help", text: "Nothing is saved until you record it. These values apply to this payment only, not to the bill." }),
     ],
     actions: [cancel, record],
   });
+  if (isDebtPayment) {
+    for (const c of [amount, interestAmount, feeAmount]) c.addEventListener("input", renderAllocation);
+    renderAllocation();
+  }
   record.addEventListener("click", async () => {
     modal.setError("");
     const value = amount.value.trim();
@@ -334,6 +370,10 @@ async function openRecord(ctx, bill, occurrence) {
       if ((category.value || null) !== (draft.categoryId || null)) body.categoryId = category.value || null;
       const chosenPayeeId = readMerchantSelect(merchantSelect).payeeId;
       if (chosenPayeeId !== (draft.payeeId || null)) body.payeeId = chosenPayeeId;
+    }
+    if (isDebtPayment) {
+      if (interestAmount.value.trim()) body.interestAmount = interestAmount.value.trim();
+      if (feeAmount.value.trim()) body.feeAmount = feeAmount.value.trim();
     }
     modal.setBusy(true);
     const out = await ctx.store.actions.write((ws) => ctx.api.billAction(ws, "record", body, key), ["bills", "transactions", "accounts"]);
@@ -497,7 +537,18 @@ export function openBillEditor(ctx, bill = null, opts = {}) {
   // account is locked; nothing here is relevant to change on an edit). Wired below, once the modal
   // and its swappable body exist.
   const account = pickerSelect(accounts.map((a) => ({ value: a.id, label: `${a.name} (${a.currency})` })), b.accountId || (accounts[0] || {}).id, { disabled: editing }, { badgeOf: accountMarks, placeholder: "Choose an account…", create: editing ? null : { label: "New account", onPick: (term) => startQuickAddAccount(term, account) } });
-  const toAccount = pickerSelect(accounts.map((a) => ({ value: a.id, label: `${a.name} (${a.currency})` })), b.toAccountId || "", { disabled: editing }, { badgeOf: accountMarks, placeholder: "Choose an account…", create: editing ? null : { label: "New account", onPick: (term) => startQuickAddAccount(term, toAccount) } });
+  // BT-020-01: "Apply payment to" offers every account while its bill type is not (yet) a loan or
+  // debt payment; once it is, only a real credit-card/loan/other-debt account is offered, so an
+  // unsupported choice is explained (by never being offered) before submission, not after — the
+  // server's own `liability` flag on each account (never re-derived here) decides which qualify.
+  const debtDestinations = accounts.filter((a) => a.liability);
+  const toAccount = pickerSelect((billType.value === "debt-payment" ? debtDestinations : accounts).map((a) => ({ value: a.id, label: `${a.name} (${a.currency})` })), b.toAccountId || "", { disabled: editing }, { badgeOf: accountMarks, placeholder: "Choose an account…", create: editing ? null : { label: "New account", onPick: (term) => startQuickAddAccount(term, toAccount) } });
+  function refreshToAccountOptions() {
+    const previous = toAccount.value;
+    const list = billType.value === "debt-payment" ? debtDestinations : accounts;
+    toAccount.replaceChildren(...list.map((a) => el("option", { value: a.id, text: `${a.name} (${a.currency})` })));
+    toAccount.value = list.some((a) => a.id === previous) ? previous : "";
+  }
   const amount = input({ inputmode: "decimal", autocomplete: "off" });
   amount.value = b.amount || "";
   const amountType = pickerSelect([{ value: "fixed", label: "Always the same" }, { value: "variable", label: "Varies (estimate)" }], b.amountType || "fixed", {}, { search: false });
@@ -540,13 +591,40 @@ export function openBillEditor(ctx, bill = null, opts = {}) {
     responsible.value = (b.responsible && b.responsible.ref) || "";
   }).catch(() => {});
 
-  const transferOnly = el("div", { class: "form-grid", hidden: direction.value !== "transfer" }, [field("To account", toAccount)]);
-  const notTransfer = el("div", { class: "form-grid", hidden: direction.value === "transfer" }, [
+  // BT-020-01: "Pay from" / "Apply payment to" for a loan or debt payment bill, the plain "Account" /
+  // "To account" for every other kind of bill (an ordinary savings transfer, say) — the SAME two
+  // picker controls throughout, only their visible label changes, so nothing already chosen is lost.
+  const lockedHelp = editing ? "Can't be changed. End this bill and add a new one." : undefined;
+  const accountFieldBox = el("div");
+  const toAccountFieldBox = el("div");
+  const renderAccountLabels = () => {
+    const debt = billType.value === "debt-payment";
+    mount(accountFieldBox, field(debt ? "Pay from" : "Account", account, { help: lockedHelp }));
+    mount(toAccountFieldBox, field(debt ? "Apply payment to" : "To account", toAccount));
+  };
+  renderAccountLabels();
+  const transferOnly = el("div", { class: "form-grid", hidden: direction.value !== "transfer" }, [toAccountFieldBox]);
+  // The lender/merchant association stays available even for a debt-payment transfer (Terry: "Keep
+  // the merchant/payee association available separately") — category and responsible person still
+  // make no sense for any transfer.
+  const merchantBox = el("div", { class: "form-grid" }, [
     field("Merchant", merchantSelect, { help: "Search your merchants, or type a name and leave it — it's saved with the bill and shown on the Merchants tab as a pending merchant until you (or anyone) add it for real. “Add merchant” resolves it immediately instead, if you'd rather." }),
-    field("Category", category), field("Responsible person", responsible),
   ]);
-  const syncDirection = () => { transferOnly.hidden = direction.value !== "transfer"; notTransfer.hidden = direction.value === "transfer"; };
-  billType.addEventListener("change", () => { makeIconPicker(iconPick.getValue()); if (!editing) { direction.value = defaultDirection(billType.value); syncDirection(); } });
+  const categoryResponsibleBox = el("div", { class: "form-grid" }, [field("Category", category), field("Responsible person", responsible)]);
+  const syncDirection = () => {
+    const isTransfer = direction.value === "transfer";
+    const isDebt = billType.value === "debt-payment";
+    transferOnly.hidden = !isTransfer;
+    merchantBox.hidden = isTransfer && !isDebt;
+    categoryResponsibleBox.hidden = isTransfer;
+  };
+  syncDirection();
+  billType.addEventListener("change", () => {
+    makeIconPicker(iconPick.getValue());
+    renderAccountLabels();
+    refreshToAccountOptions();
+    if (!editing) { direction.value = defaultDirection(billType.value); syncDirection(); } else syncDirection();
+  });
   direction.addEventListener("change", syncDirection);
   preset.addEventListener("change", () => { customBox.hidden = preset.value !== "custom"; });
   account.addEventListener("change", () => {
@@ -557,13 +635,12 @@ export function openBillEditor(ctx, bill = null, opts = {}) {
   const scheduleFields = editing
     ? [el("p", { class: "field--wide muted", text: `${scheduleLabel(b.schedule, df)}, from ${formatDate(b.schedule.startDate, df)}. To change how often it repeats, end this bill and add a new one.` }), field("End date (optional)", endDate)]
     : [field("Repeats", preset), customBox, field("First payment", startDate), field("End date (optional)", endDate)];
-  const locked = editing ? "Can't be changed. End this bill and add a new one." : undefined;
   const form = el("form", { class: "form-grid", novalidate: true, id: `bill-form-${key}` }, [
-    field("Name", name), field("Type", billType), iconBox, field("Direction", direction, { help: locked }),
-    field("Account", account, { help: locked }), transferOnly,
+    field("Name", name), field("Type", billType), iconBox, field("Direction", direction, { help: lockedHelp }),
+    accountFieldBox, transferOnly,
     field("Amount", amount), field("Amount is", amountType),
     ...scheduleFields,
-    notTransfer,
+    merchantBox, categoryResponsibleBox,
     // It decides when a bill shows as due soon; there are no notifications yet (UX2-005).
     // A new bill says where its number came from (UX/accessibility review of eefd115, finding 10);
     // editing an existing bill does not — it already has its own explicit value, not the workspace
@@ -638,8 +715,16 @@ export function openBillEditor(ctx, bill = null, opts = {}) {
     const out = { name: name.value.trim(), billType: billType.value, kind: direction.value, accountId: account.value, amount: amount.value.trim(), amountType: amountType.value, schedule, reminderDays: Number(reminder.value || 0) };
     if (notes.value.trim()) out.notes = notes.value;
     if (iconPick.getValue()) out.icon = iconPick.getValue();
-    if (direction.value === "transfer") out.toAccountId = toAccount.value;
-    else {
+    if (direction.value === "transfer") {
+      out.toAccountId = toAccount.value;
+      // BT-020-01: a debt-payment transfer keeps its lender association, separately from the
+      // destination account itself.
+      if (billType.value === "debt-payment") {
+        const { payeeId, payeeDraftName } = readMerchantSelect(merchantSelect);
+        if (payeeId) out.payeeId = payeeId;
+        else if (payeeDraftName) out.payeeDraftName = payeeDraftName;
+      }
+    } else {
       const { payeeId, payeeDraftName } = readMerchantSelect(merchantSelect);
       if (payeeId) out.payeeId = payeeId;
       // Nothing selected, but something was typed: keep it as a pending merchant name (never the
@@ -672,6 +757,12 @@ export function openBillEditor(ctx, bill = null, opts = {}) {
       // picked, or already picked before opening this editor) always clears it.
       if (nextDraft !== (b.payeeDraftName || "")) terms.payeeDraftName = nextDraft;
       if ((responsible.value || null) !== ((b.responsible && b.responsible.ref) || null)) terms.responsibleRef = responsible.value || null;
+    } else if (b.billType === "debt-payment") {
+      // BT-020-01: a debt-payment transfer's lender association is still editable, separately from
+      // its (locked) destination account.
+      const { payeeId: pid, payeeDraftName: nextDraft } = readMerchantSelect(merchantSelect);
+      if (pid !== (b.payeeId || null)) terms.payeeId = pid;
+      if (nextDraft !== (b.payeeDraftName || "")) terms.payeeDraftName = nextDraft;
     }
     if (Object.keys(terms).length) Object.assign(out, terms, { effectiveFrom: effectiveFrom.value });
     return out;

@@ -4,7 +4,7 @@
 // merchant. Closed merchants stay listed (Show: Active / Closed / All) and keep their history.
 // Every change shows who made it, when, what changed and why.
 import { el, mount, announce } from "../dom.js";
-import { stateView, badge, button, amountText, field, input, pickerSelect, categoryBadges, iconBadges } from "../components.js";
+import { stateView, badge, button, amountText, field, input, pickerSelect, categoryBadges, iconBadges, categoryLabel } from "../components.js";
 import { openModal } from "../modal.js";
 import { openDeleteDialog } from "../permanentdelete.js";
 import { sliceFor } from "../../core/store.js";
@@ -139,7 +139,8 @@ export function createView(ctx) {
               withIcon(p.icon || "store", el("strong", { text: p.name })), " ",
               p.visibility === "shared" ? badge("Shared", "shared") : badge("Private", "private"), " ",
               p.status === "closed" ? badge(p.closedOn ? `Closed ${formatDate(p.closedOn, dateFormat)}` : "Closed", "closed") : null,
-              p.type && p.type !== "other" ? el("div", { class: "muted small", text: MERCHANT_TYPE_LABELS[p.type] || p.type }) : null,
+              p.merchantType ? el("div", { class: "muted small" }, [categoryLabel(p.merchantType.name, p.merchantType.color, p.merchantType.icon)])
+                : (p.type && p.type !== "other" ? el("div", { class: "muted small", text: MERCHANT_TYPE_LABELS[p.type] || p.type }) : null),
               p.referenceOnly ? el("div", { class: "muted small", text: "Seen through an entry shared with you" }) : null,
             ]
             : [el("span", { class: "muted small", text: `${p.name} (${st.currency})` })]),
@@ -224,14 +225,38 @@ export function openMerchantEditor(ctx, merchant = null, { prefillName = "", onC
   const visibility = pickerSelect([{ value: "private", label: "Private to me" }].concat(canShare ? [{ value: "shared", label: "Shared with the workspace" }] : []), editing ? m.visibility : (canShare ? "shared" : "private"), {}, { search: false });
   const visibilityEditable = !editing || (m.visibility === "private" && m.ownedBySelf && canShare);
   if (!visibilityEditable) visibility.disabled = true;
+  // BT-019-03: the workspace's own merchant types (system and custom) are offered once loaded, with
+  // the same test-preserving fallback to the fixed list when they are not (see accounts.js's own
+  // accountTypeChoices for the identical pattern and reasoning).
+  const merchantTypeChoices = (() => {
+    const data = sliceFor(state, "merchantTypes").data;
+    if (!data) return null;
+    const keepId = m.merchantTypeId || null;
+    return data.types.filter((t) => !t.retired || t.id === keepId).sort((a, b) => (a.system === b.system ? a.name.localeCompare(b.name) : a.system ? -1 : 1));
+  })();
+  const merchantClassOf = new Map((merchantTypeChoices || []).map((t) => [t.id, t.merchantClass]));
+  const currentMerchantTypeId = m.merchantTypeId || (merchantTypeChoices ? (merchantTypeChoices.find((t) => t.system && t.merchantClass === (m.type || 'other')) || {}).id : null);
+  const merchantTypeBadges = (types) => {
+    const byId = new Map((types || []).map((t) => [t.id, t]));
+    return (id) => {
+      const t = byId.get(id);
+      if (!t) return null;
+      return t.icon
+        ? el("span", { class: "catlabel__icon", "aria-hidden": "true", vars: { "--swatch": t.color || null } }, [icon(t.icon)])
+        : (t.color ? el("span", { class: "swatch-dot", "aria-hidden": "true", vars: { "--swatch": t.color } }) : null);
+    };
+  };
   // Each type shows the icon a merchant of that type gets by default (BT-011-05); fourteen types are
   // long enough that the picker offers its search box anyway.
-  const type = pickerSelect(Object.entries(MERCHANT_TYPE_LABELS).map(([value, label]) => ({ value, label })), m.type || "other", {}, { search: false, badgeOf: (v) => icon(defaultIconFor("merchant", v)) });
+  const type = merchantTypeChoices
+    ? pickerSelect(merchantTypeChoices.map((t) => ({ value: t.id, label: t.name })), currentMerchantTypeId || merchantTypeChoices[0].id, {}, { search: false, badgeOf: merchantTypeBadges(merchantTypeChoices) })
+    : pickerSelect(Object.entries(MERCHANT_TYPE_LABELS).map(([value, label]) => ({ value, label })), m.type || "other", {}, { search: false, badgeOf: (v) => icon(defaultIconFor("merchant", v)) });
+  const pickedMerchantClass = () => (merchantTypeChoices ? (merchantClassOf.get(type.value) || "other") : type.value);
   // The icon (BT-011-05); "Default" follows the chosen type.
   const chosenIcon = editing && m.iconSource === "record" ? m.icon : null;
   const iconBox = el("div");
   let iconPick = null;
-  const makeIconPicker = (value) => { iconPick = createIconPicker({ value, inherited: defaultIconFor("merchant", type.value), name: m.name || "New merchant" }); mount(iconBox, iconPick.element); };
+  const makeIconPicker = (value) => { iconPick = createIconPicker({ value, inherited: defaultIconFor("merchant", pickedMerchantClass()), name: m.name || "New merchant" }); mount(iconBox, iconPick.element); };
   makeIconPicker(chosenIcon);
   type.addEventListener("change", () => makeIconPicker(iconPick.getValue()));
   const website = input({ type: "url", value: c.website || "", placeholder: "https://" });
@@ -262,8 +287,12 @@ export function openMerchantEditor(ctx, merchant = null, { prefillName = "", onC
   const contactNow = () => ({ website: website.value.trim(), address: address.value.trim(), phone: phone.value.trim(), email: email.value.trim() });
 
   function body(allowDuplicate) {
+    // BT-019-03: once the workspace's own merchant types have loaded, the picker's value is a type
+    // id, sent as `merchantTypeId`; otherwise the fixed list is sent as the raw `type`, exactly as
+    // before — never both, and every existing caller keeps working unchanged.
+    const typeField = merchantTypeChoices ? { merchantTypeId: type.value } : { type: type.value };
     const values = {
-      name: name.value.trim(), type: type.value, aliases: list(aliases.value), contact: contactNow(), customerNumber: customerNumber.value.trim(),
+      name: name.value.trim(), ...typeField, aliases: list(aliases.value), contact: contactNow(), customerNumber: customerNumber.value.trim(),
       openedOn: openedOn.value || null, defaultCategoryId: defaultCategory.value || null, defaultAccountId: defaultAccount.value || null,
       defaultCurrency: defaultCurrency.value.trim().toUpperCase() || null, tags: list(tags.value), notes: notes.value,
     };
@@ -271,7 +300,8 @@ export function openMerchantEditor(ctx, merchant = null, { prefillName = "", onC
     // Only changed fields are sent, so the history records real changes.
     const out = { payeeId: m.id, revision: m.revision };
     const same = (a, b) => JSON.stringify(a ?? null) === JSON.stringify(b ?? null);
-    const before = { name: m.name, type: m.type || "other", aliases: m.aliases || [], contact: { website: c.website || "", address: c.address || "", phone: c.phone || "", email: c.email || "" }, customerNumber: m.customerNumber || "", openedOn: m.openedOn || null, defaultCategoryId: m.defaultCategoryId || null, defaultAccountId: m.defaultAccountId || null, defaultCurrency: m.defaultCurrency || null, tags: m.tags || [], notes: m.notes || "" };
+    const beforeType = merchantTypeChoices ? { merchantTypeId: m.merchantTypeId || null } : { type: m.type || "other" };
+    const before = { name: m.name, ...beforeType, aliases: m.aliases || [], contact: { website: c.website || "", address: c.address || "", phone: c.phone || "", email: c.email || "" }, customerNumber: m.customerNumber || "", openedOn: m.openedOn || null, defaultCategoryId: m.defaultCategoryId || null, defaultAccountId: m.defaultAccountId || null, defaultCurrency: m.defaultCurrency || null, tags: m.tags || [], notes: m.notes || "" };
     for (const [k, v] of Object.entries(values)) if (!same(v, before[k])) out[k] = v;
     if (visibilityEditable && visibility.value !== m.visibility) out.visibility = visibility.value;
     const icon = iconChange(chosenIcon, iconPick.getValue());
