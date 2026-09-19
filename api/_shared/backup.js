@@ -190,6 +190,7 @@ function manifestOf(doc, attachments) {
       // still verify byte for byte (BT-009).
       ...(Array.isArray(doc.groupExpenses) ? { groupExpenses: doc.groupExpenses.length } : {}),
       ...(Array.isArray(doc.groupSettlements) ? { groupSettlements: doc.groupSettlements.length } : {}),
+      ...(Array.isArray(doc.groupEvents) ? { groupEvents: doc.groupEvents.length } : {}),
     },
     balances: [...balances(doc).entries()].map(([accountId, minor]) => ({ accountId, minor })),
   };
@@ -229,7 +230,15 @@ function parsePayload(payload) {
     const bytes = Buffer.from(a.base64, 'base64');
     if (bytes.toString('base64') !== a.base64 || sha256(bytes) !== a.sha256) throw invalidData('attachment hash');
   }
-  const recomputed = manifestOf(doc, data.attachments);
+  // Verified against the RAW stored payload (`data.workspace`), never the migrated `doc` (BT-009-20):
+  // a schema migration can add fields a genuinely older archive's own stored manifest never counted
+  // (here, `groupEvents`, backfilled onto a pre-events workspace's expenses/settlements on read) —
+  // recomputing from the migrated shape would make every such archive fail its own byte-for-byte
+  // integrity check the moment it upgrades, which is exactly the silent incompatibility this check
+  // exists to catch, not cause. For an archive already at the current schema version (every archive
+  // made after this change), `data.workspace` and the migrated `doc` are identical, so this changes
+  // nothing for them.
+  const recomputed = manifestOf(data.workspace, data.attachments);
   if (JSON.stringify(recomputed) !== JSON.stringify(data.manifest)) throw invalidData('manifest');
   return { doc, attachments: data.attachments, manifest: data.manifest };
 }
@@ -258,7 +267,7 @@ function scopeFor(doc, subject, role) {
   };
 }
 
-const COLLECTIONS = ['accounts', 'transactions', 'payees', 'categories', 'contacts', 'recurring', 'budgets', 'groupExpenses', 'groupSettlements'];
+const COLLECTIONS = ['accounts', 'transactions', 'payees', 'categories', 'contacts', 'recurring', 'budgets', 'groupExpenses', 'groupSettlements', 'groupEvents'];
 // Directory records a replace never removes: records outside the caller's scope may refer to them,
 // and the directory is never pruned (security review SEC-B1 and SEC-R4 for contacts, BT-001-05).
 const KEEP_ON_REPLACE = new Set(['categories', 'payees', 'contacts']);
@@ -275,6 +284,9 @@ function inScope(doc, scope) {
     // Shared expenses and payments are shared group records: owner scope, like shared accounts (BT-009).
     groupExpenses: scope.shared ? (doc.groupExpenses || []) : [],
     groupSettlements: scope.shared ? (doc.groupSettlements || []) : [],
+    // Shared-expense events (BT-009-20) are the same shared, owner-scope record as the expenses and
+    // payments that belong to them — never restored separately from the records they organize.
+    groupEvents: scope.shared ? (doc.groupEvents || []) : [],
   };
 }
 
@@ -404,6 +416,13 @@ function plan({ current, archived, mode, principal, member, nowIso, newWorkspace
       budgets: forgetOthers(arc.budgets),
       groupExpenses: forgetOthers(arc.groupExpenses.map(scrub)),
       groupSettlements: forgetOthers(arc.groupSettlements.map(scrub)),
+      // The events those expenses/payments belong to come along the same way (BT-009-20); `scrub`
+      // already generically maps `createdBy`/`history[].by` (an event has no amendments or
+      // ledgerLinks, so those branches simply do nothing for it). `defaultEventId` follows only
+      // when its event actually came along — otherwise the next expense here lazily creates a
+      // fresh one (`resolveEvent`), never pointing at an event that does not exist.
+      groupEvents: forgetOthers(arc.groupEvents.map(scrub)),
+      defaultEventId: archived.defaultEventId && arc.groupEvents.some((e) => e.id === archived.defaultEventId) ? archived.defaultEventId : null,
       groupLedgers: (archived.groupLedgers || []).filter((l) => l.subject === principal.subject && keepAccounts.has(l.accountId)).map((l) => ({ ...l })),
       // The group's settings come along with the group; who changed them is mapped like everything else.
       // Per-person overrides of anyone else are left behind; they are keyed by member id (S4).
@@ -550,7 +569,7 @@ function plan({ current, archived, mode, principal, member, nowIso, newWorkspace
     : diffCounts(inScope(current, scopeNow), after);
   const summary = {
     mode,
-    scope: { accounts: arc.accounts.length, transactions: arc.transactions.length, payees: arc.payees.length, categories: arc.categories.length, contacts: arc.contacts.length, recurring: arc.recurring.length, budgets: arc.budgets.length, groupExpenses: arc.groupExpenses.length, groupSettlements: arc.groupSettlements.length },
+    scope: { accounts: arc.accounts.length, transactions: arc.transactions.length, payees: arc.payees.length, categories: arc.categories.length, contacts: arc.contacts.length, recurring: arc.recurring.length, budgets: arc.budgets.length, groupExpenses: arc.groupExpenses.length, groupSettlements: arc.groupSettlements.length, groupEvents: arc.groupEvents.length },
     changes: diff,
     excluded,
     // Totals only over data that passed the integrity check: a broken amount cannot be summed.

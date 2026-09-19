@@ -3479,17 +3479,110 @@ itself. Recording the full requirement and a real, honest dependency order (sect
 than a half-built events schema with no migration tests — is the responsible unit of work for this
 checkpoint. BT-009-20 is queued as the explicit next step.
 
-**PR:** not yet opened at the time of this checkpoint entry — branch
-`feature/group-multicurrency-BT-009-13` already has PR #32 merged; this checkpoint's work is being
-prepared as a new PR from a fresh branch cut off current `origin/main`.
+**PR: https://github.com/Stripeman/BudgetTracker/pull/33 — merged by Terry** (`1161d1cdaeb78c5fe1991a5426d7a54a2580ee97`),
+confirmed via `git fetch`/`gh pr view` (`state: MERGED`), not merely reported. `main` fast-forwarded
+locally to the same commit; no other open PRs at the time.
+
+**Preview redeployed and independently verified** (this checkpoint, an available agent action —
+merging/Production remain Terry's alone): `scripts/deploy/deploy.ps1 -Environment preview` ran the
+full gate again (test/validate/build/secret-scan, all `ok`) and reported `SUCCESS`; independently
+re-confirmed (not just trusting the receipt) via a direct, unauthenticated `GET
+https://polite-plant-03bb7570f-preview.eastus2.3.azurestaticapps.net/api/site-settings` — its public
+`app.commit` reads `1161d1cdaeb78c5fe1991a5426d7a54a2580ee97`, exactly the merge commit. Preview is
+current; BT-009-13's fix (and PR #31's BT-009-15 frontend) are now live there. Production has not
+been touched — that remains Terry's own action.
+
+**Waiting on Terry:** (1) explicit confirmation or correction of the BT-009-20..26 dependency order
+recorded above (a reasonable default, not a claim of his prior explicit sign-off on this exact
+breakdown); (2) Production redeploy when ready.
+
+## Checkpoint AT — BT-009-20, the Shared-Expense Events foundation, built backend-first and fully
+tested: schema migration, lifecycle API, and a real backup-compatibility hazard found and fixed
+(2026-09-19, same session, continuing directly from Checkpoint AS)
+
+**What was built.** Every `groupExpense`/`groupSettlement` now belongs to a stable `eventId`.
+`api/_shared/schema.js` gained this repository's first-ever real schema migration (workspace
+1→2): `migrateWorkspaceV1` back-fills a pre-existing workspace's records into one legacy event
+(`gev_legacy`, deterministic, idempotent — proven by migrating the same un-migrated document
+twice and getting the identical result, never a second event); a workspace with no shared-expense
+records needs no legacy event at all. A workspace's very first expense or payment, naming no
+event, lazily creates a plain "General" event in the SAME write (`resolveEvent`,
+`api/group/handler.js`) — no separate provisioning step anyone could forget to run, and "no event-
+picking ceremony before the very first expense" mirrors Terry's own "no new workspace for every
+dinner" instinct. New routes: `GET ?action=events` (the directory — name, status, counts, which
+one is default); `POST ?action=create-event` (any writer, matching "Add expense" itself); `POST
+?action=event-status` (manager/owner only, audited; active↔closed↔archived, archived returns only
+via active directly — a disclosed, reasonable default for "the appropriate permission," not a
+literal instruction). Lifecycle exactly as specified: **closed** blocks new expenses and expense
+corrections/voids but a new settlement, confirming, disputing or voiding a PAYMENT all stay
+possible ("settlement/dispute resolution remains possible," Terry, 2026-09-19); **archived** is
+fully read-only, no exception either way. Proven by a test that checks the exact balance figure
+before and after closing an event with a payment recorded against it — closing/archiving never
+forgives debt, erases history or forces a balance to zero. The existing combined (all-events) `GET`
+view, balances, and expense/settlement lists are UNCHANGED in shape and behaviour by default —
+this is purely additive underneath them, exactly the "foundation before extensions" instruction:
+only `events`/`defaultEventId` are new top-level keys, and each expense/settlement view gains its
+own `eventId`; nothing existing was rewired to be event-scoped yet (that is BT-009-21's job).
+
+**A real, first-time-ever hazard found and fixed while building this, not guessed at afterward:**
+`api/_shared/backup.js`'s own archive-integrity check recomputes a stored archive's manifest from
+the document and compares it byte-for-byte to what was sealed, to prove nothing was silently
+altered. Since this is the very first schema migration this codebase has ever shipped, nobody had
+ever had to reason about what a migration that adds a new COUNTABLE field does to that check: it
+would have made EVERY existing archive that has shared expenses fail its own manifest check the
+moment it was opened after this change shipped — an entirely avoidable backup-integrity regression
+this checkpoint's own tests caught before it could ship, not something inherited or assumed safe.
+Fixed by recomputing the check from the RAW stored payload rather than the migrated in-memory
+document (provably identical for any archive already at the current schema version, i.e. every
+archive made after this change — so this changes nothing for them); proven by a test that manually
+builds and seals a genuinely pre-events (schema v1) archive with `backup.manifestOf`/`archive.seal`
+directly and confirms it still opens cleanly and migrates correctly. `api/_shared/backup.js` and
+`api/_shared/groups.js`'s `invariantProblem` were also extended so `groupEvents` is backed up,
+restored (replace/merge/create-new all tested to carry an expense's event along with it, never
+leaving a dangling `eventId`) and integrity-checked exactly like `groupExpenses`/`groupSettlements`
+always have been.
+
+**Evidence:** new `api/test/group-events.test.js`, 10 tests — lazy default creation and reuse
+(never a duplicate); named-event creation and its permission gating (any writer, viewer refused);
+the full closed/archived lifecycle including the balance/history-untouched proof and permission-
+gated reopening; invalid transitions refused (`invalid_transition`, `no_change`); the migration
+itself, with and without existing records, directly via `readDocument`, confirmed deterministic
+and idempotent; `groups.invariantProblem`'s new checks (duplicate event ids, an invalid status, a
+dangling `eventId`, and a genuinely old document with no `eventId` at all still passing — the same
+tolerance already given to documents without ledger links); the old-archive manifest-compatibility
+fix itself; and a full replace/merge/create-new restore round trip proving an expense's event comes
+along correctly in every mode. Two pre-existing fixtures updated for the version bump and the now-
+correct expectation that a replace restore sets aside a record's event alongside the record itself
+(`api/test/storage.test.js`'s "future schema" version, `api/test/group-review.test.js`'s superseded-
+ids assertion) — not weakened, brought in line with the new, correct behaviour.
+
+**Full regression:** `npm test` 40/676/530 exit 0; `npm --prefix api test` 679/679 exit 0 (up from
+669 — the 10 new tests); `npm run validate` ok (24 routes); full `npm run e2e` 676/676 exit 0
+(unaffected — no frontend changed this checkpoint).
+
+**Deliberately not done this checkpoint, disclosed honestly:** no frontend UI at all for the event
+directory or picker — every expense still implicitly uses the lazily-created default event,
+observably identical to a user as "before events existed." No dedicated real-browser e2e scenario
+for events (there is nothing in the UI yet to exercise). BT-009-21 (event-scoped participant
+access — the natural next increment, likely paired with the frontend directory/picker),
+BT-009-22 (templates), BT-009-23 (per-event exports) and BT-009-24 (safe cross-event moves) are
+all still unstarted, exactly as recorded in Checkpoint AS. Independent financial/security review of
+this module has not been run by a separate reviewer subagent (none available this session) — self-
+reviewed against all three lenses, including deliberately writing the backup-compatibility test
+FIRST (it failed before the raw-payload fix, confirmed the hazard was real, not theoretical) before
+writing the fix, per the requirement→failing-test→implementation discipline.
+
+**PR:** not yet opened at the time of this checkpoint entry.
 
 **Waiting on Terry:** (1) merge the PR this checkpoint becomes; (2) explicit confirmation or
-correction of the BT-009-20..26 dependency order recorded here (a reasonable default, not a claim of
-his prior explicit sign-off on this exact breakdown); (3) Production redeploy once ready (Preview
-redeploy remains an available agent action after merge — currently still stale at PR #29's commit).
+correction of the BT-009-20..26 dependency order (still open from Checkpoint AS); (3) whether the
+event lifecycle's permission defaults chosen here (any writer creates an event; only a manager or
+owner closes/archives/reopens one) match his intent, or should be a per-workspace setting instead
+(the existing group-settings pattern, e.g. `changeExpenses`, would be the natural place if so);
+(4) Production redeploy when ready (Preview is still at `1161d1cdaeb78c5fe1991a5426d7a54a2580ee97`,
+one commit behind this checkpoint's work until its own PR merges and Preview is redeployed again).
 
-**Exact next step:** redeploy Preview once this PR merges (catches up PR #31, #32 and this one), then
-begin BT-009-20 (the event foundation) as the recorded next unblocked item — schema design first
-(a new `doc.groupEvents` collection, one legacy/default event per workspace via a versioned, tested,
-idempotent migration, before any lifecycle or UI work), per Terry's explicit "implement the event
-foundation before extensions" priority.
+**Exact next step:** open this checkpoint's PR; once merged, redeploy Preview; then begin BT-009-21
+(event-scoped participant access) paired with the first real frontend increment — an event
+directory/picker in the Shared Expenses UI — since a backend-only foundation with no way to ever
+see or choose a second event from the app itself has limited standalone value to Terry.

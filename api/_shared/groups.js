@@ -519,6 +519,20 @@ function invariantProblem(doc) {
       activeLinks.add(k);
     }
   }
+  // BT-009-20: every shared-expense event has a stable id, a valid lifecycle status, and every
+  // expense/settlement's `eventId`, when set, names a real one. A record without an `eventId` at
+  // all (a document from before events existed, not yet migrated) passes unchanged — the same
+  // tolerance the ledger-link check just above already applies to older archives.
+  const eventIds = (doc.groupEvents || []).map((e) => e.id);
+  if (unique(eventIds).length !== eventIds.length) return 'group event ids';
+  for (const e of doc.groupEvents || []) {
+    if (typeof e.id !== 'string' || !e.id) return 'group event ids';
+    if (!['active', 'closed', 'archived'].includes(e.status)) return 'group event status';
+  }
+  const events = new Set(eventIds);
+  for (const r of [...(doc.groupExpenses || []), ...(doc.groupSettlements || [])]) {
+    if (r.eventId !== undefined && r.eventId !== null && !events.has(r.eventId)) return 'group event reference';
+  }
   for (const r of [...(doc.groupExpenses || []), ...(doc.groupSettlements || [])]) {
     if (r.ledgerLinks === undefined) continue;
     if (!Array.isArray(r.ledgerLinks)) return 'group ledger link';

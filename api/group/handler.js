@@ -27,6 +27,20 @@
 //                                           the group in that currency on their own private account
 //                                           (accountId), bring their entries up to date (no accountId)
 //                                           or stop recording (accountId: null)
+//   GET  ?action=events                     the event directory (BT-009-20): every named event, its
+//                                           status and counts. An expense/settlement's `eventId`
+//                                           (also optionally in POST { eventId }, default the
+//                                           workspace's own default event, created lazily on first
+//                                           use) says which one it belongs to; the plain GET above is
+//                                           unchanged — every event combined, exactly as before events
+//                                           existed.
+//   POST ?action=create-event   { name, description?, icon?, color? }   any writer
+//   POST ?action=event-status   { eventId, status: active|closed|archived, reason? }   manager/owner
+//                                           only, audited. Closed: no new expenses, but new/confirmed/
+//                                           disputed settlements and voiding a payment stay possible;
+//                                           expense corrections and expense voids need it reopened.
+//                                           Archived: fully read-only. Never forgives debt or erases
+//                                           history either way.
 //
 // A group needs no account: an expense records who paid and who shared, nothing more (Terry,
 // 2026-09-14). Nothing is ever deleted (BT-001-05): corrections keep before and after values with a
@@ -74,9 +88,9 @@ const { readDocument } = require('../_shared/schema');
 
 // `confirmBackdated` accompanies `ledger` wherever both may appear: it answers the FA-1 warning (below)
 // when starting to record on an account would backdate confirmed cash the caller has not yet seen.
-const CREATE_KEYS = ['description', 'date', 'amount', 'currency', 'rate', 'rateSource', 'rateDate', 'categoryId', 'notes', 'payers', 'split', 'ledger', 'confirmBackdated'];
+const CREATE_KEYS = ['description', 'date', 'amount', 'currency', 'rate', 'rateSource', 'rateDate', 'categoryId', 'notes', 'payers', 'split', 'ledger', 'confirmBackdated', 'eventId'];
 const PATCH_KEYS = ['expenseId', 'revision', 'reason', 'description', 'date', 'amount', 'currency', 'rate', 'rateSource', 'rateDate', 'categoryId', 'notes', 'payers', 'split'];
-const SETTLE_KEYS = ['from', 'to', 'amount', 'currency', 'date', 'method', 'notes', 'ledger', 'confirmBackdated'];
+const SETTLE_KEYS = ['from', 'to', 'amount', 'currency', 'date', 'method', 'notes', 'ledger', 'confirmBackdated', 'eventId'];
 // Every correction keeps the before and after values of these fields.
 const TRACKED = ['description', 'date', 'amountMinor', 'original', 'categoryId', 'notes', 'payers', 'split', 'shares'];
 const LINK_KEY = Object.freeze({ expense: 'groupExpenseId', settlement: 'groupSettlementId' });
@@ -159,6 +173,113 @@ const findSettlement = (doc, id) => {
   if (!s) throw notFound('Unknown payment.');
   return s;
 };
+
+// ---- events (BT-009-20) ---------------------------------------------------------------------
+// Shared expenses now belong to a named, stable EVENT (Terry, 2026-09-19): its own id, name,
+// description, icon/colour and lifecycle status. This is the FOUNDATION only — a workspace's own
+// balances/expenses/settlements views stay exactly as they were (all events combined) unless a
+// caller explicitly asks to see one event's own slice, so nothing existing changes shape or
+// behaviour by default. `api/_shared/schema.js`'s migration back-fills every pre-existing record
+// into one legacy event; a workspace with no records yet has none until its first expense/payment
+// lazily creates one (`resolveEvent` below) — never guessing separate historical boundaries.
+const EVENT_STATUSES = ['active', 'closed', 'archived'];
+const findEvent = (doc, id) => {
+  const e = (doc.groupEvents || []).find((x) => x.id === id);
+  if (!e) throw notFound('Unknown event.');
+  return e;
+};
+// The event a record belongs to, or null for a record that predates events entirely and was
+// never migrated (defensive only — every record in a document that has gone through
+// `readDocument` has an `eventId`; this only guards a document read some other way, e.g. a test
+// fixture built by hand).
+const eventOf = (doc, rec) => (rec.eventId ? (doc.groupEvents || []).find((e) => e.id === rec.eventId) || null : null);
+// Active: everything allowed. Closed: "no new expenses; outstanding balances remain visible and
+// settlement/dispute resolution remains possible" (Terry, 2026-09-19) — callers that still allow a
+// closed event pass `allowWhenClosed`. Archived is always fully read-only, with no exception.
+function assertEventWritable(event, { allowWhenClosed = false } = {}) {
+  if (!event) return;
+  if (event.status === 'archived') throw conflict(`"${event.name}" is archived and read-only. Reopen it first.`, 'event_archived');
+  if (event.status === 'closed' && !allowWhenClosed) throw conflict(`"${event.name}" is closed. Reopen it to make this change.`, 'event_closed');
+}
+// The event a new expense/settlement belongs to: the one named in the request, or the workspace's
+// current default. A workspace that has never had a shared-expense record yet has no default —
+// its very first one lazily creates a plain "General" event, atomically, in the same write (never
+// a separate provisioning step nobody remembers to run). Terry, 2026-09-19: "Do not require a new
+// workspace for every dinner, outing or event" — the reverse holds too: no event-picking ceremony
+// is required before the very first expense either.
+function resolveEvent(doc, member, nowIso, body) {
+  if (body.eventId !== undefined) return findEvent(doc, requireId(body.eventId, 'eventId'));
+  if (doc.defaultEventId) {
+    const ev = (doc.groupEvents || []).find((e) => e.id === doc.defaultEventId);
+    if (ev) return ev;
+  }
+  const ev = { id: newId('gev'), name: 'General', description: '', icon: null, color: null, status: 'active', createdAt: nowIso, createdBy: member.subject, history: [{ at: nowIso, by: member.subject, event: 'create' }] };
+  doc.groupEvents = [...(doc.groupEvents || []), ev];
+  doc.defaultEventId = ev.id;
+  return ev;
+}
+function eventView(doc, ev) {
+  const isDefault = doc.defaultEventId === ev.id;
+  const expenseCount = (doc.groupExpenses || []).filter((e) => e.eventId === ev.id).length;
+  const settlementCount = (doc.groupSettlements || []).filter((s) => s.eventId === ev.id).length;
+  return {
+    id: ev.id, name: ev.name, description: ev.description || '', icon: ev.icon || null, color: ev.color || null,
+    status: ev.status, isDefault, expenseCount, settlementCount,
+    createdBy: nameOf(doc, ev.createdBy), createdAt: ev.createdAt,
+  };
+}
+const EVENT_CREATE_KEYS = ['name', 'description', 'icon', 'color'];
+async function listEvents(ctx, req) {
+  const wsId = requireId(query(req, 'workspaceId'), 'workspaceId');
+  const { doc } = await store.loadWorkspace(ctx, wsId);
+  return { body: { events: (doc.groupEvents || []).map((e) => eventView(doc, e)) } };
+}
+async function createEvent(ctx, req) {
+  const wsId = requireId(query(req, 'workspaceId'), 'workspaceId');
+  const body = fields.onlyKeys(readBody(req), EVENT_CREATE_KEYS);
+  const { result } = await mutateGroup(ctx, wsId, (doc, member) => {
+    requireWriter(member);
+    const nowIso = ctx.nowIso();
+    const ev = {
+      id: newId('gev'), name: fields.text(body.name, { field: 'Name', max: 80, required: true }),
+      description: fields.text(body.description, { field: 'Description', max: 500, multiline: true }),
+      icon: body.icon !== undefined && body.icon !== null ? fields.text(body.icon, { field: 'Icon', max: 40 }) : null,
+      color: body.color !== undefined && body.color !== null ? fields.text(body.color, { field: 'Colour', max: 20 }) : null,
+      status: 'active', createdAt: nowIso, createdBy: member.subject, history: [{ at: nowIso, by: member.subject, event: 'create' }],
+    };
+    doc.groupEvents = [...(doc.groupEvents || []), ev];
+    if (!doc.defaultEventId) doc.defaultEventId = ev.id;
+    audit.record(doc, { actor: member.subject, action: 'group.event.create', targetType: 'group-event', targetId: ev.id, at: nowIso });
+    return { event: eventView(doc, ev) };
+  });
+  return { status: 201, body: result };
+}
+// Active <-> closed <-> archived, and archived back to active directly (a restore). Never the
+// no-op of "changing" to the same status, so history only ever records a real transition.
+const EVENT_TRANSITIONS = { active: ['closed', 'archived'], closed: ['active', 'archived'], archived: ['active'] };
+async function eventStatusAction(ctx, req) {
+  const wsId = requireId(query(req, 'workspaceId'), 'workspaceId');
+  const body = fields.onlyKeys(readBody(req), ['eventId', 'status', 'reason']);
+  const id = requireId(body.eventId, 'eventId');
+  const status = fields.oneOf(body.status, EVENT_STATUSES, 'Status');
+  const { result } = await mutateGroup(ctx, wsId, (doc, member) => {
+    // Closing, archiving or reopening an event is a structural, workspace-wide change — a higher
+    // bar than adding one's own expense (Terry, 2026-09-19: "requires the appropriate permission
+    // and an audited action"), so a manager or owner only; disclosed as a reasonable default, not
+    // a literal instruction.
+    if (!isManager(member)) throw forbidden('Only a manager or owner can close, archive or reopen an event.');
+    const ev = findEvent(doc, id);
+    if (ev.status === status) throw conflict(`This event is already ${status}.`, 'no_change');
+    if (!(EVENT_TRANSITIONS[ev.status] || []).includes(status)) throw conflict(`An event cannot go directly from ${ev.status} to ${status}.`, 'invalid_transition');
+    const nowIso = ctx.nowIso();
+    const reason = fields.text(body.reason, { field: 'Reason', max: 200 });
+    ev.status = status;
+    ev.history = [...(ev.history || []), { at: nowIso, by: member.subject, event: status, ...(reason ? { reason } : {}) }];
+    audit.record(doc, { actor: member.subject, action: `group.event.${status}`, targetType: 'group-event', targetId: ev.id, at: nowIso, ...(reason ? { fields: ['status'] } : {}) });
+    return { event: eventView(doc, ev) };
+  });
+  return { body: result };
+}
 // Who may correct or void a shared expense: the group setting "changeExpenses" (Terry, 2026-09-14).
 // Viewers never may.
 const canChangeExpense = (doc, e, member) => writer(member)
@@ -600,7 +721,11 @@ function expenseView(ctx, doc, member, e) {
   try { computed = groups.computeShares(e.amountMinor, e.split); } catch { computed = null; }
   const adjustment = (i) => (computed && computed.shares[i] && computed.shares[i].ref === e.shares[i].ref && computed.shares[i].amountMinor === e.shares[i].amountMinor ? computed.shares[i].adjustmentMinor : 0);
   const residualMinor = computed ? computed.residualMinor : 0;
-  const changeable = canChangeExpense(doc, e, member) && !e.voidedAt;
+  // BT-009-20: a closed or archived event's own expenses can never be corrected or voided from
+  // here (reopening the event is a separate, audited, manager/owner action) — never offering a
+  // control the server would refuse anyway.
+  const eventLocked = (() => { const ev = eventOf(doc, e); return !!ev && ev.status !== 'active'; })();
+  const changeable = canChangeExpense(doc, e, member) && !e.voidedAt && !eventLocked;
   // BT-009-13: the original entered amount/currency/rate, preserved exactly as recorded — refreshing
   // rates elsewhere never touches this. `amount`/`amountMinor`/`currency` above stay the CONVERTED
   // reporting-currency figures every share/balance/settlement calculation already uses; this is
@@ -608,6 +733,7 @@ function expenseView(ctx, doc, member, e) {
   const original = e.original ? { amount: money.toDecimal(e.original.amountMinor, e.original.currency), amountMinor: e.original.amountMinor, currency: e.original.currency, rate: e.original.rate, rateSource: e.original.rateSource, rateDate: e.original.rateDate } : null;
   const out = {
     id: e.id, description: e.description, date: e.date, currency: e.currency, amount: dec(e.amountMinor), amountMinor: e.amountMinor, original,
+    eventId: e.eventId || null,
     categoryId: e.categoryId || null, notes: e.notes || '',
     payers: e.payers.map((p) => ({ ref: p.ref, amount: dec(p.amountMinor), amountMinor: p.amountMinor })),
     split: { method: e.split.method, lines: e.split.lines.map((l) => ({ ref: l.ref, value: e.split.method === 'amounts' ? dec(l.value) : l.value })) },
@@ -653,9 +779,14 @@ function settlementView(ctx, doc, member, s) {
   const me = selfRef(member);
   const toContact = s.to.startsWith('contact:');
   const live = !s.voidedAt;
-  const open = live && writer(member);
+  // BT-009-20: only an ARCHIVED event blocks confirming/disputing/voiding a payment (closed still
+  // allows "settlement/dispute resolution", Terry, 2026-09-19) — never offering a control the
+  // server would refuse anyway.
+  const archivedLocked = (() => { const ev = eventOf(doc, s); return !!ev && ev.status === 'archived'; })();
+  const open = live && writer(member) && !archivedLocked;
   const out = {
     id: s.id, from: s.from, to: s.to, amount: money.toDecimal(s.amountMinor, s.currency), amountMinor: s.amountMinor, currency: s.currency,
+    eventId: s.eventId || null,
     date: s.date, method: s.method || '', notes: s.notes || '', status: s.status, voided: !!s.voidedAt,
     voidedAt: s.voidedAt || null, voidReason: s.voidReason || '', voidedBy: s.voidedBy ? nameOf(doc, s.voidedBy) : null,
     disputeReason: s.disputeReason || '', confirmedBy: s.confirmedBy ? nameOf(doc, s.confirmedBy) : null, confirmedAt: s.confirmedAt || null,
@@ -676,9 +807,9 @@ function settlementView(ctx, doc, member, s) {
     // confirms (S5). Once confirmed, only the receiving member or a manager or owner may withdraw it (S6).
     // Per person (Terry, 2026-09-14): an owner's or manager's override for this member, otherwise the group setting.
     // A disputed payment follows "Who can settle a disputed payment" (F1).
-    canConfirm: live && s.status !== 'confirmed' && (settlesDispute(doc, s) ? canSettleDispute(doc, s, member)
+    canConfirm: live && !archivedLocked && s.status !== 'confirmed' && (settlesDispute(doc, s) ? canSettleDispute(doc, s, member)
       : s.to === me || (groupSettings.confirmsAny(doc, member) ? writer(member) : s.from !== me && toContact && open && isManager(member))),
-    canDispute: live && s.status === 'reported' && canDisputePayment(doc, s, member),
+    canDispute: live && !archivedLocked && s.status === 'reported' && canDisputePayment(doc, s, member),
     canVoid: open && (s.status === 'confirmed' ? canWithdraw(doc, s, member) : (s.createdBy === member.subject || isManager(member))),
   };
   const mine = myLedger(ctx, doc, member, s, 'settlement');
@@ -734,6 +865,7 @@ async function list(ctx, req) {
   const action = query(req, 'action');
   if (action === 'history') return recordHistory(ctx, req);
   if (action === 'export') return exportReport(ctx, req);
+  if (action === 'events') return listEvents(ctx, req);
   if (action !== undefined && action !== 'balances') throw notFound();
   const wsId = requireId(query(req, 'workspaceId'), 'workspaceId');
   const { doc, member } = await store.loadWorkspace(ctx, wsId);
@@ -756,6 +888,11 @@ async function list(ctx, req) {
       basis: groupSettings.get(doc, 'countReported')
         ? 'Balances count confirmed payments only. Suggested and direct payments also count reported payments as made, so nobody is asked to pay twice; suggestions count a reported payment only up to what is owed. Disputed payments are not counted.'
         : 'Balances count confirmed payments only. Reported payments are not counted until they are confirmed, in the suggested and direct payments too. Disputed payments are not counted.',
+      // BT-009-20 (the event foundation, additive only): the event directory and the current
+      // default. Expenses/settlements/balances above stay exactly the same — every event
+      // combined, precisely as before events existed — until per-event scoping (BT-009-21+)
+      // gives a caller a real reason to ask for just one.
+      events: (doc.groupEvents || []).map((e) => eventView(doc, e)), defaultEventId: doc.defaultEventId || null,
     },
   };
 }
@@ -777,12 +914,17 @@ async function createExpense(ctx, req) {
   const { result } = await mutateGroup(ctx, wsId, (doc, member) => {
     requireWriter(member);
     const nowIso = ctx.nowIso();
+    // BT-009-20: resolved (and, for a workspace's very first expense, lazily created) BEFORE
+    // `expenseMoney` reads anything else, so "no such event" or "that event is closed/archived"
+    // both fail this write cleanly, before any other field is even validated.
+    const groupEvent = resolveEvent(doc, member, nowIso, body);
+    assertEventWritable(groupEvent);
     const m = expenseMoney(doc, body, null, member, mine);
     const rec = {
       id: newId('gex'), description: fields.text(body.description, { field: 'Description', max: 120, required: true }),
       date: fields.date(body.date, 'Date') || nowIso.slice(0, 10), currency: m.currency, amountMinor: m.amountMinor, original: m.original,
       categoryId: checkCategory(doc, body.categoryId), notes: fields.text(body.notes, { field: 'Notes', max: 2000, multiline: true }),
-      payers: m.payers, split: m.split, shares: m.shares,
+      payers: m.payers, split: m.split, shares: m.shares, eventId: groupEvent.id,
       createdBy: member.subject, createdAt: nowIso, revision: 1, voidedAt: null,
       history: [{ revision: 1, at: nowIso, by: member.subject, event: 'create' }], amendments: [], ledgerLinks: [],
     };
@@ -805,6 +947,9 @@ async function patchExpense(ctx, req) {
     const e = findExpense(doc, id);
     if (!canChangeExpense(doc, e, member)) throw forbidden(expenseRuleText(doc));
     if (e.voidedAt) throw conflict('This expense is void, so it cannot be changed. Add a new expense instead.', 'voided');
+    // BT-009-20: "Expense corrections on closed events require reopening" (Terry, 2026-09-19) —
+    // closed is not enough for a correction, unlike a new settlement against it.
+    assertEventWritable(eventOf(doc, e));
     checkRevision(e, body.revision);
     const reason = requireReason(body.reason, 'this correction');
     const nowIso = ctx.nowIso();
@@ -841,6 +986,11 @@ async function createSettlement(ctx, req) {
   const { result } = await mutateGroup(ctx, wsId, (doc, member) => {
     requireWriter(member);
     const nowIso = ctx.nowIso();
+    // BT-009-20: "settlement/dispute resolution remains possible" on a CLOSED event (Terry,
+    // 2026-09-19) — a new payment report is exactly that, so closed does not block it; archived
+    // (fully read-only) still does.
+    const groupEvent = resolveEvent(doc, member, nowIso, body);
+    assertEventWritable(groupEvent, { allowWhenClosed: true });
     const currency = settlementCurrency(doc, body.currency);
     const check = groups.participantChecker(doc);
     const from = check(body.from);
@@ -854,7 +1004,7 @@ async function createSettlement(ctx, req) {
     // one, and confirming it settles that dispute. The receiver recording it confirms it over the dispute.
     const earlier = (doc.groupSettlements || []).find((x) => x.from === from && x.to === to && x.currency === currency && x.status === 'disputed' && !x.voidedAt) || null;
     const s = {
-      id: newId('gst'), from, to, amountMinor: groups.positiveAmount(body.amount, currency, 'Amount'), currency,
+      id: newId('gst'), from, to, amountMinor: groups.positiveAmount(body.amount, currency, 'Amount'), currency, eventId: groupEvent.id,
       date: fields.date(body.date, 'Date') || nowIso.slice(0, 10),
       method: fields.text(body.method, { field: 'Payment method', max: 60 }), notes: fields.text(body.notes, { field: 'Notes', max: 500, multiline: true }),
       status: receiver ? 'confirmed' : 'reported', confirmedBy: receiver ? member.subject : null, confirmedAt: receiver ? nowIso : null,
@@ -888,6 +1038,9 @@ function settlementChange(kind) {
       const me = selfRef(member);
       // A viewer may confirm or dispute a payment made to them, and nothing else (security review S7).
       if (s.to !== me) requireWriter(member);
+      // BT-009-20: confirming or disputing is exactly the "settlement/dispute resolution" a closed
+      // event still allows; only archived blocks it.
+      assertEventWritable(eventOf(doc, s), { allowWhenClosed: true });
       const nowIso = ctx.nowIso();
       if (kind === 'confirm') {
         // "Can confirm payments" (Terry, 2026-09-14): the owner's or manager's override for this person
@@ -970,6 +1123,10 @@ async function voidRecord(ctx, req) {
         : 'Only the person who added this payment, or a manager or owner, can void it.');
     }
     if (rec.voidedAt) throw conflict(`This ${type === 'expense' ? 'expense' : 'payment'} is already void.`, 'already_void');
+    // BT-009-20: voiding an expense is correction-like (blocked once closed, per Terry's rule for
+    // expense corrections); voiding a payment is dispute/settlement resolution, which a closed
+    // event still allows — only archived (fully read-only) blocks it.
+    assertEventWritable(eventOf(doc, rec), { allowWhenClosed: type === 'settlement' });
     checkRevision(rec, body.revision);
     const reason = requireReason(body.reason, 'voiding it');
     const nowIso = ctx.nowIso();
@@ -1085,7 +1242,10 @@ async function settingsAction(ctx, req) {
   return { body: result };
 }
 
-const ACTIONS = Object.freeze({ void: voidRecord, settle: createSettlement, confirm: settlementChange('confirm'), dispute: settlementChange('dispute'), ledger: ledgerAction, settings: settingsAction });
+const ACTIONS = Object.freeze({
+  void: voidRecord, settle: createSettlement, confirm: settlementChange('confirm'), dispute: settlementChange('dispute'), ledger: ledgerAction, settings: settingsAction,
+  'create-event': createEvent, 'event-status': eventStatusAction,
+});
 
 async function post(ctx, req) {
   const action = query(req, 'action');
