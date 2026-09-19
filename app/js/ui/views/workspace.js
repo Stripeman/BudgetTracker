@@ -5,6 +5,7 @@
 import { el, mount, announce } from "../dom.js";
 import { pageHead, stateView, field, input, pickerSelect, controlElement, button, badge, commitOnConfirm, categoryLabel } from "../components.js";
 import { createSettingsForm, settingText } from "../settingsform.js";
+import { createSettingsGroup } from "../settingsgroup.js";
 import { trackUnsaved } from "../../core/unsaved.js";
 import { createThemePicker } from "../themepicker.js";
 import { colourEntries } from "../../core/categories.js";
@@ -122,6 +123,17 @@ export function createView(ctx) {
   const settingsBox = el("div", { class: "stack" });
   const coloursBox = el("div", { class: "stack" });
   const typesBox = el("div", { class: "stack" });
+  // BT-019-04 (Terry, 2026-09-19): the "Category colours and icons" panel made collapsible here
+  // too, consistent with My Settings' own personal-override version of it (already collapsible via
+  // this exact shared shell, BT-017). Every pick inside `coloursBox` already saves immediately
+  // (no draft/unsaved state exists to lose — see the PATCH calls below), and this shell never
+  // rebuilds `nodes`, only toggles their visibility, so an in-flight save or a validation error
+  // already shown inline survives a collapse/reopen untouched. Starts OPEN (never previously
+  // collapsible here, so nothing about today's visible behaviour changes until a person chooses to
+  // collapse it themselves) and remembers that choice per browser, separately from My Settings' own
+  // remembered groups.
+  const WORKSPACE_GROUP_KEY = "settings.workspace.groups";
+  const groupColours = createSettingsGroup({ id: "ws-g-colours", storageKey: WORKSPACE_GROUP_KEY, name: "Category colours and icons", defaultOpen: true, nodes: [coloursBox] });
   // "Delete workspace" (owners only): a separate danger-style card at the bottom of the page, outside
   // the two-column grid, built only for an owner (finding: it must not exist in the DOM for anyone else).
   const deleteBox = el("div");
@@ -135,7 +147,7 @@ export function createView(ctx) {
       el("section", { class: "card", "aria-labelledby": "ws-activity" }, [el("h2", { class: "card__title", id: "ws-activity", text: "Recent activity" }), auditBox]),
       el("section", { class: "card", "aria-labelledby": "ws-former" }, [el("h2", { class: "card__title", id: "ws-former", text: "Former members" }), formerBox]),
       el("section", { class: "card", "aria-labelledby": "ws-history" }, [el("h2", { class: "card__title", id: "ws-history", text: "Workspace changes" }), historyBox]),
-      el("section", { class: "card card--full", "aria-labelledby": "ws-colours" }, [el("h2", { class: "card__title", id: "ws-colours", text: "Category colours and icons" }), coloursBox]),
+      el("section", { class: "card card--full" }, [groupColours.element]),
       el("section", { class: "card", "aria-labelledby": "ws-types" }, [el("h2", { class: "card__title", id: "ws-types", text: "Icons for types" }), typesBox]),
     ]),
     deleteBox,

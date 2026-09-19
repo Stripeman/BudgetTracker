@@ -54,6 +54,7 @@ import * as overlay from "./overlay.mjs";
 import * as quota from "./quota.mjs";
 import * as actionsmenu from "./actionsmenu.mjs";
 import * as mysettings from "./mysettings.mjs";
+import * as workspacecolours from "./workspacecolours.mjs";
 import * as addbillfromentry from "./addbillfromentry.mjs";
 import * as addperson from "./addperson.mjs";
 import * as contactjoins from "./contactjoins.mjs";
@@ -69,10 +70,11 @@ import * as grouprequests from "./grouprequests.mjs";
 import * as groupsplitwise from "./groupsplitwise.mjs";
 import * as groupoffline from "./groupoffline.mjs";
 
-const SCENARIOS = [privacy, shared, concurrency, guards, dropdown, staging, recheck, settings, accounts, bills, remove, deleteworkspace, move, analytics, login, gallery, permanentdelete, dashboard, accountrequests, transactions, overlay, quota, actionsmenu, mysettings, addbillfromentry, addperson, contactjoins, groupcurrency, groupevents, groupsplits, groupunits, grouprefunds, groupitemized, groupfund, groupinsights, grouprequests, groupsplitwise, groupoffline];
+const SCENARIOS = [privacy, shared, concurrency, guards, dropdown, staging, recheck, settings, accounts, bills, remove, deleteworkspace, move, analytics, login, gallery, permanentdelete, dashboard, accountrequests, transactions, overlay, quota, actionsmenu, mysettings, workspacecolours, addbillfromentry, addperson, contactjoins, groupcurrency, groupevents, groupsplits, groupunits, grouprefunds, groupitemized, groupfund, groupinsights, grouprequests, groupsplitwise, groupoffline];
 const ALIASES = { group: "shared", "shared-expenses": "shared", picker: "dropdown", dropdowns: "dropdown", "route-guards": "guards", "staging-link": "staging", "workspace-settings": "settings", "edit-account": "accounts", "remove-account": "remove", "delete-workspace": "deleteworkspace", archive: "deleteworkspace", "move-entry": "move", "move-account": "move", usage: "analytics", "site-usage": "analytics", "sign-in": "login", landing: "login", "design-gallery": "gallery", layouts: "gallery", "permanent-delete": "permanentdelete", "bt-014": "permanentdelete", "record-deletion": "permanentdelete", tooltip: "bills", "record-next": "bills", "spending-by-category": "dashboard", "top-merchants": "dashboard", "this-week": "dashboard", "account-requests": "accountrequests", "bt-014-17": "accountrequests", "quick-entry": "transactions", "add-expense": "transactions", "new-merchant": "transactions", "no-reflow": "overlay", "icon-picker": "overlay", "theme-picker": "overlay", "colour-palette": "overlay", "workspace-rate": "quota", "workspace-quota": "quota", "rate-limit": "quota", "record-actions": "actionsmenu", "bt-015": "actionsmenu", "action-menu": "actionsmenu", "compact-actions": "actionsmenu", "my-settings": "mysettings", "bt-017": "mysettings", "settings-redesign": "mysettings", "add-as-bill": "addbillfromentry", "bill-from-entry": "addbillfromentry", "bill-from-transaction": "addbillfromentry", "add-a-person": "addperson", "bt-016": "addperson", "contact-joins": "contactjoins", "bt-009-15": "contactjoins", "multi-currency": "groupcurrency", "foreign-currency": "groupcurrency", "bt-009-13": "groupcurrency", "events": "groupevents", "event-directory": "groupevents", "bt-009-20": "groupevents", "bt-009-21": "groupevents", "fixed-remainder": "groupsplits", "split-presets": "groupsplits", "bt-009-25": "groupsplits", "settlement-units": "groupunits", households: "groupunits", "couples-families": "groupunits", refunds: "grouprefunds", "linked-refunds": "grouprefunds", itemized: "groupitemized", "itemized-receipts": "groupitemized", fund: "groupfund", contributions: "groupfund", deposits: "groupfund", insights: "groupinsights", reminders: "grouprequests", "payment-requests": "grouprequests", "payment-reminders": "grouprequests", "bt-009-26": "grouprequests",
   splitwise: "groupsplitwise", "splitwise-import": "groupsplitwise", import: "groupsplitwise",
-  offline: "groupoffline", "offline-entry": "groupoffline" };
+  offline: "groupoffline", "offline-entry": "groupoffline",
+  "workspace-colours": "workspacecolours", "category-colours": "workspacecolours", "bt-019-04": "workspacecolours" };
 const rel = (p) => path.relative(ROOT, p).replace(/\\/g, "/");
 
 let args;

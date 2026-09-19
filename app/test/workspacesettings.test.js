@@ -609,3 +609,67 @@ describe("Settings card (shared by the workspace and group settings; UX review o
     assert.equal(settingText(period, "custom"), "custom");
   });
 });
+
+// BT-019-04 (Terry, 2026-09-19): the "Category colours and icons" panel, made collapsible here too
+// — consistent with My Settings' own personal-override version of it (already collapsible via the
+// same shared shell, BT-017). All data is fictional.
+describe("BT-019-04 Workspace page: the Category colours and icons panel is collapsible", () => {
+  afterEach(() => { delete globalThis.localStorage; });
+
+  function withCategory(options) {
+    const base = page(options);
+    base.state.categories = { workspaceId: "ws_1", status: "ready", error: null, data: {
+      categories: [{ id: "cat_food", name: "Groceries", color: "#16a34a", colorSource: "workspace", icon: null, iconSource: "default", defaultIcon: null }],
+      palette: [{ hex: "#16a34a", label: "Green" }, { hex: "#2563eb", label: "Blue" }],
+    } };
+    return base;
+  }
+
+  async function openWithColours(options) {
+    const { ctx, state, calls } = withCategory(options);
+    const view = createWorkspace(ctx);
+    dom.body.appendChild(view.element);
+    view.update(state);
+    for (let i = 0; i < 5; i += 1) await tick();
+    return { view, calls, root: view.element };
+  }
+
+  test("has a real, labelled toggle; starts open (never previously collapsible, so nothing visible changes until a person collapses it); shows the real category colour picker", async () => {
+    const { root } = await openWithColours();
+    const toggle = groupToggle(root, "Category colours and icons");
+    assert.ok(toggle, "a real toggle button exists");
+    assert.equal(toggle.getAttribute("aria-expanded"), "true");
+    const body = bodyOf(root, "Category colours and icons");
+    assert.equal(body.hidden, false);
+    assert.match(body.textContent, /Groceries/);
+    assert.ok(body.querySelector(".themepick__toggle"), "the real colour picker is inside");
+  });
+
+  test("collapsing hides the body without removing it, and the choice is remembered in this browser across a fresh page instance", async () => {
+    const store = {};
+    globalThis.localStorage = { getItem: (k) => (k in store ? store[k] : null), setItem: (k, v) => { store[k] = String(v); } };
+    const { root } = await openWithColours();
+    const toggle = groupToggle(root, "Category colours and icons");
+    const body = bodyOf(root, "Category colours and icons");
+    toggle.click();
+    assert.equal(toggle.getAttribute("aria-expanded"), "false");
+    assert.equal(body.hidden, true);
+    assert.match(body.textContent, /Groceries/, "collapsing hides the panel, it does not empty it");
+
+    const { root: root2 } = await openWithColours();
+    assert.equal(groupToggle(root2, "Category colours and icons").getAttribute("aria-expanded"), "false", "remembered closed, per browser");
+  });
+
+  test("collapsing and reopening never rebuilds the panel's own content: the exact same picker and error-slot nodes survive, so nothing already typed or shown can be lost", async () => {
+    const { root } = await openWithColours();
+    const toggle = groupToggle(root, "Category colours and icons");
+    const body = bodyOf(root, "Category colours and icons");
+    const pickerBefore = body.querySelector(".themepick__toggle");
+    const errorBefore = body.querySelector(".error-text");
+    assert.ok(pickerBefore && errorBefore, "fixture sanity: the real picker and its inline-error slot both exist");
+    toggle.click(); // collapse
+    toggle.click(); // reopen
+    assert.equal(body.querySelector(".themepick__toggle"), pickerBefore, "the same picker element, never rebuilt");
+    assert.equal(body.querySelector(".error-text"), errorBefore, "the same error slot element, never rebuilt — a save failure shown there survives a collapse/reopen");
+  });
+});
