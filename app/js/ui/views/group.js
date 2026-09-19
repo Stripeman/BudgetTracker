@@ -18,6 +18,7 @@ import { formatAmount, formatDate, todayIso } from "../../core/format.js";
 import { previewSplit, precisionOf, formatMinor, parseAmount, parseRate, convert } from "../../core/split.js";
 import { icon, withIcon } from "../icons.js";
 import { messageFor } from "../../core/errors.js";
+import { downloadFile } from "../permanentdelete.js";
 // Values in words exactly as the workspace settings card shows them (eefd115).
 import { createSettingsForm, settingText } from "../settingsform.js";
 import { trackUnsaved } from "../../core/unsaved.js";
@@ -26,9 +27,13 @@ import { trackUnsaved } from "../../core/unsaved.js";
 const INTRO_CHANGE = "These decide how everyone in this group works. Owners and managers change them. Each one starts with how Shared expenses has always worked, and every change is kept below.";
 const INTRO_READ = "These decide how everyone in this group works. Owners and managers change them; you can see how it is set up and every change below.";
 
-export const METHOD_LABELS = Object.freeze({ equal: "Equally", amounts: "By amounts", percentages: "By percentages", shares: "By shares" });
-const VALUE_LABELS = { amounts: "Amount for", percentages: "Percent for", shares: "Shares for" };
-const VALUE_HINTS = { amounts: "0.00", percentages: "%", shares: "1" };
+export const METHOD_LABELS = Object.freeze({ equal: "Equally", amounts: "By amounts", percentages: "By percentages", shares: "By shares", "fixed-remainder": "Fixed amounts, then split the rest" });
+// BT-009-25: only PROPORTIONS (never a money-shaped method) can be saved as a reusable preset —
+// mirrors api/_shared/groups.js's own `PRESET_METHODS` exactly (a plain literal here since the
+// browser bundle cannot `require` that server module; the server is authoritative either way).
+const PRESET_METHODS = ["equal", "shares", "percentages"];
+const VALUE_LABELS = { amounts: "Amount for", percentages: "Percent for", shares: "Shares for", "fixed-remainder": "Fixed amount for" };
+const VALUE_HINTS = { amounts: "0.00", percentages: "%", shares: "1", "fixed-remainder": "0.00 or leave blank" };
 const STATUS_LABELS = { reported: "Reported", confirmed: "Confirmed", disputed: "Disputed" };
 const EVENT_LABELS = { create: "Added", update: "Corrected", void: "Voided", reported: "Reported as paid", confirmed: "Confirmed as received", disputed: "Disputed",
   "confirmed-by-reporter": "Confirmed by the person who reported it", withdrawn: "Confirmation withdrawn", "confirmed-over-dispute": "Confirmed over a dispute", "reported-again": "Reported again after a dispute" };
@@ -41,6 +46,18 @@ const FIELD_LABELS = { description: "Description", date: "Date", amountMinor: "A
 // of for picker convenience only).
 const FOREIGN_CURRENCIES = ["USD", "EUR", "GBP", "CHF", "SEK", "NOK", "DKK", "PLN", "CZK", "HUF", "CAD", "AUD", "NZD", "JPY", "SGD", "HKD", "INR", "ZAR"];
 const RATE_SOURCE_LABELS = { manual: "Entered manually", "bank-posted": "From the bank statement", provider: "From a rate provider", agreed: "Agreed with the group" };
+
+// BT-009-20/21: an event's lifecycle status, in words, and the confirm-style prose for changing it.
+const EVENT_STATUS_LABELS = { active: "Active", closed: "Closed", archived: "Archived" };
+const EVENT_STATUS_HELP = {
+  closed: "No new expenses can be added to it, but settling up (recording, confirming, disputing or voiding a payment) stays possible. Nothing already recorded changes, and no balance is forgiven.",
+  archived: "Fully read-only: no new expenses or payments, and nothing existing can be changed. Nothing already recorded changes, and no balance is forgiven.",
+  active: "New expenses and payments are allowed again, and existing ones can be corrected again.",
+};
+// Same transitions the server allows (api/group/handler.js EVENT_TRANSITIONS) — never offering a
+// button the server would refuse.
+const EVENT_TRANSITIONS_UI = { active: ["closed", "archived"], closed: ["active", "archived"], archived: ["active"] };
+const EVENT_TRANSITION_LABEL = { active: "Reopen", closed: "Close", archived: "Archive" };
 
 const titled = (id, iconId, text) => el("h2", { class: "card__title", id }, [withIcon(iconId, text)]);
 const groupData = (state) => sliceFor(state, "group").data || null;
@@ -96,6 +113,11 @@ export function createView(ctx) {
   const settleBox = el("div");
   const expensesBox = el("div");
   const paymentsBox = el("div");
+  // BT-009-20/21: the event directory and, when one is open, its own scoped view. A separate card
+  // rather than folded into the page head, so its own honest access-scope note always sits right
+  // next to the thing it is explaining.
+  const eventsBox = el("div");
+  const eventsCard = el("section", { class: "card", "aria-labelledby": "grp-events" }, [titled("grp-events", "tag", "Events"), eventsBox]);
   // The group's settings (Terry, 2026-09-14), in the settings card shared with the workspace settings:
   // owners and managers change them, everyone else reads them and their history (decision 11).
   const settingsBox = el("div");
@@ -118,6 +140,7 @@ export function createView(ctx) {
     intro,
     el("div", { class: "stack" }, [
       needs,
+      eventsCard,
       // Full width: the balances table has seven columns (half width clipped the balance itself).
       el("section", { class: "card", "aria-labelledby": "grp-balances" }, [titled("grp-balances", "scale", "Balances"), balancesBox]),
       el("section", { class: "card", "aria-labelledby": "grp-settle" }, [titled("grp-settle", "users", "Settle up"), settleBox]),
@@ -133,17 +156,20 @@ export function createView(ctx) {
     const slice = sliceFor(state, "group");
     const data = slice.data;
     const loading = stateView(slice);
-    if (loading && !data) { mount(actions); mount(needs); mount(balancesBox, loading); mount(settleBox); mount(expensesBox); mount(paymentsBox); return; }
+    if (loading && !data) { mount(actions); mount(needs); mount(eventsBox, loading); mount(balancesBox, loading); mount(settleBox); mount(expensesBox); mount(paymentsBox); return; }
     const fmt = fmtFor(state);
     const names = namesOf(data);
     const me = data.permissions.selfRef;
     const nameOf = (ref) => (ref === me ? "You" : names.get(ref) || "Someone");
     const effective = ((state.preferences || {}).effective) || {};
+    const scoped = data.currentEvent || null;
     mount(actions, ...(data.permissions.canAdd ? [
-      button("Add expense", () => openGroupExpense(ctx), { variant: "primary" }),
-      button("Record a payment", () => openRecordPayment(ctx)),
+      button("Add expense", () => openGroupExpense(ctx, { eventId: scoped ? scoped.id : null }), { variant: "primary" }),
+      button("Record a payment", () => openRecordPayment(ctx, { eventId: scoped ? scoped.id : null })),
     ] : [el("p", { class: "muted small", text: "You can see this group's expenses but not add or change them." })]));
-    intro.textContent = "Record who paid and who shared. No bank account is needed; balances show who owes whom.";
+    intro.textContent = scoped
+      ? `Showing only "${scoped.name}" (${(EVENT_STATUS_LABELS[scoped.status] || scoped.status).toLowerCase()}). A new expense or payment here is added to this event.`
+      : "Record who paid and who shared. No bank account is needed; balances show who owes whom.";
 
     // Entries on the person's own account that no longer match what the group records.
     const review = [...data.expenses.map((e) => ["expense", e]), ...data.settlements.map((s) => ["settlement", s])].filter(([, r]) => r.myLedger && r.myLedger.needsReview && !r.myLedger.accountUnavailable);
@@ -159,6 +185,7 @@ export function createView(ctx) {
       ]))),
     ]) : null);
 
+    renderEvents(data);
     const tables = shownTables(data);
     renderBalances(tables, data, fmt, nameOf);
     renderSettle(tables, data, fmt, nameOf, me);
@@ -267,6 +294,97 @@ export function createView(ctx) {
   }
 
   // One table per currency shown (the reporting currency, then any other with an open balance).
+  // BT-009-20/21: the event directory. Combined view first (or "back to it" when scoped), then
+  // every event with its status, counts and a way to view it; a manager/owner also gets the
+  // status-transition actions. The honest access-scope note always sits right here, not buried.
+  function renderEvents(data) {
+    const events = data.events || [];
+    const scoped = data.currentEvent || null;
+    const rows = events.map((e) => {
+      const isCurrent = scoped && scoped.id === e.id;
+      const transitions = EVENT_TRANSITIONS_UI[e.status] || [];
+      return el("li", { class: "grow" }, [
+        el("span", {}, [withIcon("tag", e.name), e.isDefault ? el("span", { class: "muted small" }, [" (default)"]) : null]),
+        badge(EVENT_STATUS_LABELS[e.status] || e.status, e.status === "archived" ? "closed" : e.status === "closed" ? "warning" : ""),
+        el("span", { class: "muted small", text: `${e.expenseCount} expense${e.expenseCount === 1 ? "" : "s"}, ${e.settlementCount} payment${e.settlementCount === 1 ? "" : "s"}` }),
+        el("span", { class: "app__spacer" }),
+        isCurrent
+          ? button("Viewing this event", () => void ctx.store.actions.setGroupEventFilter(null), { small: true, variant: "primary", attrs: { "aria-label": `Stop viewing ${e.name} — show every event combined` } })
+          : button("View", () => void ctx.store.actions.setGroupEventFilter(e.id), { small: true, attrs: { "aria-label": `View only ${e.name}` } }),
+        button("Export…", () => openExportModal(ctx, { eventId: e.id, title: `Export "${e.name}"` }), { small: true, attrs: { "aria-label": `Export ${e.name}` } }),
+        data.permissions.canManage && transitions.length
+          ? el("span", { class: "row" }, transitions.map((t) => button(EVENT_TRANSITION_LABEL[t], () => void changeEventStatus(e, t), { small: true, variant: t === "archived" ? "danger" : "", attrs: { "aria-label": `${EVENT_TRANSITION_LABEL[t]} ${e.name}` } })))
+          : null,
+      ]);
+    });
+    mount(eventsBox,
+      el("p", { class: "field__help", text: data.eventAccessNote || "" }),
+      scoped ? el("p", { class: "row" }, [
+        el("span", { text: `Currently viewing only "${scoped.name}".` }),
+        button("Show every event combined", () => void ctx.store.actions.setGroupEventFilter(null), { small: true }),
+      ]) : null,
+      events.length ? el("ul", { class: "stack" }, rows) : el("p", { class: "muted small", text: "No named events yet — every expense goes to a plain \"General\" event until you add one." }),
+      el("div", { class: "row" }, [
+        data.permissions.canAdd ? button("Add event…", () => openAddEventModal(ctx), { small: true }) : null,
+        button("Export everything…", () => openExportModal(ctx, { title: "Export every shared expense" }), { small: true }),
+      ]),
+    );
+  }
+  // BT-009-23: the same authorized PDF/CSV/XLSX/JSON export BT-014-06 already offers before a
+  // deletion, reachable directly from Shared expenses too — scoped to one event when `eventId` is
+  // given, every event combined otherwise. Downloading never changes anything, so no confirmation.
+  function openExportModal(ctx, { eventId = null, title }) {
+    const status = el("p", { class: "muted small", role: "status" });
+    const wsId = ctx.store.getState().selectedWorkspaceId;
+    const download = async (format) => {
+      status.textContent = `Preparing the ${format.toUpperCase()} download…`;
+      try {
+        const out = await ctx.api.sharedExport(wsId, format, eventId);
+        downloadFile(out.filename, out.mime, out.content, out.encoding);
+        status.textContent = "Downloaded.";
+        announce("Shared-expenses information downloaded.");
+      } catch (err) {
+        status.textContent = messageFor(err);
+      }
+    };
+    const modal = openModal({
+      title,
+      body: [
+        el("p", { text: "Participants, dates, descriptions, currencies, amounts, splits, settlements and outstanding balances — authorized for you to see, exactly as the page already shows them." }),
+        el("div", { class: "row" }, [
+          button("CSV", () => void download("csv"), { small: true }),
+          button("JSON", () => void download("json"), { small: true }),
+          button("XLSX", () => void download("xlsx"), { small: true }),
+          button("PDF", () => void download("pdf"), { small: true }),
+        ]),
+        status,
+      ],
+      actions: [button("Close", () => modal.close())],
+    });
+  }
+
+  // Closing/archiving/reopening (manager/owner only, server-enforced too): a small confirm dialog
+  // stating the real effect in words (Terry, 2026-09-19: closing/archiving never forgives debt,
+  // erases history or forces a balance to zero — said here, not just true underneath), with an
+  // optional reason kept in the event's own history.
+  async function changeEventStatus(event, status) {
+    const reason = input({ maxlength: "200", autocomplete: "off", placeholder: "Optional" });
+    const modal = openModal({
+      title: `${EVENT_TRANSITION_LABEL[status]} "${event.name}"?`,
+      body: [el("p", { text: EVENT_STATUS_HELP[status] }), field("Reason (optional)", reason)],
+      actions: [button("Cancel", () => modal.close()), button(EVENT_TRANSITION_LABEL[status], () => void go(), { variant: status === "archived" ? "danger" : "primary" })],
+    });
+    async function go() {
+      modal.setBusy(true);
+      const body = { eventId: event.id, status, ...(reason.value.trim() ? { reason: reason.value.trim() } : {}) };
+      const out = await ctx.store.actions.write((ws) => ctx.api.groupEventStatus(ws, body), ["group"]);
+      modal.setBusy(false);
+      if (!out.ok) { modal.setError(out.error); return; }
+      announce(`"${event.name}" is now ${(EVENT_STATUS_LABELS[status] || status).toLowerCase()}.`);
+      modal.close();
+    }
+  }
+
   function renderBalances(tables, data, fmt, nameOf) {
     const active = new Set(data.participants.filter((p) => p.active).map((p) => p.ref));
     const blocks = tables.map((table) => [table, table.rows.filter((r) => active.has(r.ref) || !isZero(r.paid) || !isZero(r.share) || !isZero(r.net))]).filter(([, rows]) => rows.length);
@@ -316,7 +434,7 @@ export function createView(ctx) {
           el("span", { text: `${nameOf(s.from)} ${s.from === me ? "pay" : "pays"} ${s.to === me ? "you" : nameOf(s.to)}` }),
           el("span", { class: "app__spacer" }),
           amountText(s.amount, c),
-          data.permissions.canAdd ? button("Record payment", () => openRecordPayment(ctx, { from: s.from, to: s.to, amount: s.amount, currency: c }), { small: true, attrs: { "aria-label": `Record payment of ${fmt(s.amount, c)} from ${nameOf(s.from)} to ${nameOf(s.to)}` } }) : null,
+          data.permissions.canAdd ? button("Record payment", () => openRecordPayment(ctx, { from: s.from, to: s.to, amount: s.amount, currency: c, eventId: data.currentEvent ? data.currentEvent.id : null }), { small: true, attrs: { "aria-label": `Record payment of ${fmt(s.amount, c)} from ${nameOf(s.from)} to ${nameOf(s.to)}` } }) : null,
         ]))),
       ]; }) : [el("div", { class: "state", text: "Everyone is settled up." })]),
       el("p", { class: "card__meta", text: data.basis }),
@@ -484,11 +602,41 @@ export function openAddPersonModal(ctx, { onCreated } = {}) {
   return modal;
 }
 
+// BT-009-20/21: a small, focused create-only dialog for a new named event — any writer, matching
+// "Add expense" itself (server-enforced too: `requireWriter`). The first event ever created in a
+// workspace silently becomes its default; every one after that is just another choice.
+export function openAddEventModal(ctx) {
+  const name = input({ maxlength: "80", autocomplete: "off", required: true });
+  const description = el("textarea", { class: "field__input", maxlength: "500" });
+  const form = el("form", { class: "form-grid", novalidate: true, id: "add-event-form" }, [
+    field("Name", name, { wide: true, help: "For example: a trip, a dinner series, or any group of expenses you want to track and settle together." }),
+    field("Description (optional)", description, { wide: true }),
+  ]);
+  const save = el("button", { type: "submit", class: "btn btn--primary", text: "Add event", form: "add-event-form" });
+  const cancel = button("Cancel", () => modal.close());
+  const modal = openModal({ title: "Add event", body: [form], actions: [cancel, save] });
+  async function submit() {
+    modal.setError("");
+    if (!name.value.trim()) { name.setAttribute("aria-invalid", "true"); modal.setError("Give this event a name."); name.focus(); return; }
+    modal.setBusy(true);
+    const out = await ctx.store.actions.write((ws) => ctx.api.createGroupEvent(ws, { name: name.value.trim(), description: description.value.trim() }), ["group"]);
+    modal.setBusy(false);
+    if (!out.ok) { modal.setError(out.error); return; }
+    announce(`"${out.result.event.name}" added.`);
+    modal.close();
+    // Switch straight to viewing the new event — the reason someone just made one.
+    await ctx.store.actions.setGroupEventFilter(out.result.event.id);
+  }
+  save.addEventListener("click", (e) => { e.preventDefault(); void submit(); });
+  form.addEventListener("submit", (e) => { e.preventDefault(); void submit(); });
+  return modal;
+}
+
 // ---- Add or correct an expense -------------------------------------------------------------------
 // Everyone who can take part is listed once under "Paid by" and once under "Shared by", with a
 // checkbox each. A live preview shows each share and any rounding adjustment, and every problem is
 // said inside the dialog before anything is sent.
-export function openGroupExpense(ctx, { expense = null } = {}) {
+export function openGroupExpense(ctx, { expense = null, eventId = null } = {}) {
   const state = ctx.store.getState();
   const data = groupData(state);
   if (!data) { announce("Shared expenses are still loading. Try again in a moment."); void ctx.store.actions.refreshGroup(); return null; }
@@ -576,6 +724,53 @@ export function openGroupExpense(ctx, { expense = null } = {}) {
   const splitRows = people.map((p) => makeSplitRow(p));
   const splitListEl = el("div", { class: "split-list" }, splitRows.map((r) => r.row));
   const everyone = button("Everyone", () => { for (const r of splitRows) r.box.checked = r.p.active || r.box.checked; refresh(); }, { small: true, attrs: { "aria-label": "Share with everyone" } });
+  // BT-009-25: applying a saved preset replaces who is checked and their values outright (a preset
+  // represents "this is who is typically in it"); the amount itself is never touched — presets are
+  // proportions, reusable at any expense size.
+  function applyPreset(preset) {
+    method.value = preset.method;
+    const byRef = new Map(preset.lines.map((l) => [l.ref, l.value]));
+    for (const r of splitRows) {
+      r.box.checked = byRef.has(r.p.ref);
+      const v = byRef.get(r.p.ref);
+      r.val.value = v === null || v === undefined ? "" : String(v);
+    }
+    refresh();
+  }
+  const presetPicker = (data.splitPresets || []).length
+    ? pickerSelect([{ value: "", label: "Choose one…" }, ...data.splitPresets.map((p) => ({ value: p.id, label: p.name }))], "", {}, { search: false })
+    : null;
+  const presetControl = presetPicker ? commitOnConfirm(presetPicker, (v) => {
+    if (v) { const preset = data.splitPresets.find((p) => p.id === v); if (preset) applyPreset(preset); }
+    presetControl.reset("");
+  }) : null;
+  const savePresetButton = button("Save this split as a preset…", () => openSaveSplitPreset(), { small: true });
+  function openSaveSplitPreset() {
+    const snap = snapshot();
+    if (!PRESET_METHODS.includes(snap.method)) { announce("Only Equally, By shares or By percentages splits can be saved as a preset — those are the ones that make sense at any expense size."); return; }
+    if (snap.lines.length < 2) { announce("Choose at least two people to save a split preset."); return; }
+    const name = input({ maxlength: "80", autocomplete: "off", required: true });
+    const form = el("form", { class: "form-grid", novalidate: true, id: "save-split-preset-form" }, [field("Name", name, { wide: true, help: "For example: “Housemates” or “Alice and Bob, 60/40”." })]);
+    const save = el("button", { type: "submit", class: "btn btn--primary", text: "Save preset", form: "save-split-preset-form" });
+    const modal = openModal({ title: "Save this split as a preset", body: [form], actions: [button("Cancel", () => modal.close()), save] });
+    async function submit() {
+      modal.setError("");
+      if (!name.value.trim()) { name.setAttribute("aria-invalid", "true"); modal.setError("Give this preset a name."); name.focus(); return; }
+      const lines = snap.lines.map((l) => {
+        if (snap.method === "equal") return { ref: l.ref };
+        if (snap.method === "shares") return { ref: l.ref, value: Number(String(l.value).trim()) };
+        return { ref: l.ref, value: String(l.value).trim() };
+      });
+      modal.setBusy(true);
+      const out = await ctx.store.actions.write((ws) => ctx.api.createSplitPreset(ws, { name: name.value.trim(), method: snap.method, lines }), ["group"]);
+      modal.setBusy(false);
+      if (!out.ok) { modal.setError(out.error); return; }
+      announce(`"${out.result.preset.name}" saved. It will be offered next time you add a shared expense.`);
+      modal.close();
+    }
+    save.addEventListener("click", (e) => { e.preventDefault(); void submit(); });
+    form.addEventListener("submit", (e) => { e.preventDefault(); void submit(); });
+  }
   const preview = el("div", { class: "split-preview", "aria-live": "polite" });
   const problems = el("ul", { class: "split-problems error-text", "aria-live": "polite" });
   // "Add person" (BT-016): someone not already a choosable participant (not a workspace member,
@@ -731,7 +926,8 @@ export function openGroupExpense(ctx, { expense = null } = {}) {
     el("fieldset", { class: "plain-fieldset field--wide" }, [el("legend", { class: "field__label", text: "Paid by" }), payerListEl, payersNote, addPerson ? el("div", { class: "stack" }, [addPerson, el("p", { class: "field__help", text: "Not a workspace member yet — records who took part, without giving them application access." })]) : null]),
     el("fieldset", { class: "plain-fieldset field--wide" }, [
       el("legend", { class: "field__label", text: "Shared by" }),
-      el("div", { class: "row" }, [field("Split", method), everyone]),
+      el("div", { class: "row" }, [field("Split", method), everyone, savePresetButton]),
+      presetPicker ? field("Use a saved split", presetPicker) : null,
       splitListEl,
       preview, problems,
     ]),
@@ -765,6 +961,9 @@ export function openGroupExpense(ctx, { expense = null } = {}) {
       if (snap.method === "equal") return { ref: l.ref };
       if (snap.method === "shares") return { ref: l.ref, value: Number(String(l.value).trim()) };
       if (snap.method === "percentages") return { ref: l.ref, value: String(l.value).trim() };
+      // BT-009-25: a blank value under "Fixed amounts, then split the rest" shares the remainder —
+      // sent with no `value` at all, exactly what the server's own "left blank" contract expects.
+      if (snap.method === "fixed-remainder" && String(l.value ?? "").trim() === "") return { ref: l.ref };
       return { ref: l.ref, value: formatMinor(parseAmount(l.value, currency), currency) };
     };
     const body = {
@@ -788,6 +987,10 @@ export function openGroupExpense(ctx, { expense = null } = {}) {
     }
     if (editing) body.categoryId = category.value || null;
     else if (category.value) body.categoryId = category.value;
+    // BT-009-21: a new expense started while viewing one event's own scoped page joins THAT event,
+    // never silently the workspace's separate default — reassigning an existing expense to a
+    // different event is not something this dialog does (that is BT-009-24's safe-move work).
+    if (!editing && eventId) body.eventId = eventId;
     const withLedger = !editing && !ledgerField.hidden && ledgerBox.checked && ledgerAccount.value;
     if (withLedger) body.ledger = { accountId: ledgerAccount.value };
     modal.setBusy(true);
@@ -808,7 +1011,7 @@ export function openGroupExpense(ctx, { expense = null } = {}) {
 // Recording a payment never moves money: it records that someone says they paid. The receiver
 // confirms it (a manager or owner for a contact); someone recording money they received themselves
 // is the confirmation.
-export function openRecordPayment(ctx, { from = null, to = null, amount: preset = "", currency: presetCurrency = null } = {}) {
+export function openRecordPayment(ctx, { from = null, to = null, amount: preset = "", currency: presetCurrency = null, eventId = null } = {}) {
   const state = ctx.store.getState();
   const data = groupData(state);
   if (!data) { announce("Shared expenses are still loading. Try again in a moment."); void ctx.store.actions.refreshGroup(); return null; }
@@ -863,6 +1066,8 @@ export function openRecordPayment(ctx, { from = null, to = null, amount: preset 
     if (fromSel.value === toSel.value) { modal.setError("A payment needs two different people."); return; }
     const body = { from: fromSel.value, to: toSel.value, amount: formatMinor(minor, currency), currency, date: date.value };
     if (methodText.value.trim()) body.method = methodText.value.trim();
+    // BT-009-21: a payment reported while viewing one event's own scoped page joins THAT event.
+    if (eventId) body.eventId = eventId;
     const withLedger = !ledgerField.hidden && ledgerBox.checked && ledgerAccount.value;
     if (withLedger) body.ledger = { accountId: ledgerAccount.value };
     modal.setBusy(true);

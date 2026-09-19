@@ -41,6 +41,12 @@
 //                                           expense corrections and expense voids need it reopened.
 //                                           Archived: fully read-only. Never forgives debt or erases
 //                                           history either way.
+//   GET  ?action=split-presets              saved split presets (BT-009-25): who is typically in a
+//                                           recurring split and in what PROPORTION, reusable across
+//                                           expense sizes. 'equal'/'shares'/'percentages' only — never
+//                                           a money-shaped method.
+//   POST ?action=create-split-preset  { name, method, lines }   any writer
+//   POST ?action=delete-split-preset  { presetId }   its own creator, or a manager/owner
 //
 // A group needs no account: an expense records who paid and who shared, nothing more (Terry,
 // 2026-09-14). Nothing is ever deleted (BT-001-05): corrections keep before and after values with a
@@ -89,10 +95,10 @@ const { readDocument } = require('../_shared/schema');
 // `confirmBackdated` accompanies `ledger` wherever both may appear: it answers the FA-1 warning (below)
 // when starting to record on an account would backdate confirmed cash the caller has not yet seen.
 const CREATE_KEYS = ['description', 'date', 'amount', 'currency', 'rate', 'rateSource', 'rateDate', 'categoryId', 'notes', 'payers', 'split', 'ledger', 'confirmBackdated', 'eventId'];
-const PATCH_KEYS = ['expenseId', 'revision', 'reason', 'description', 'date', 'amount', 'currency', 'rate', 'rateSource', 'rateDate', 'categoryId', 'notes', 'payers', 'split'];
+const PATCH_KEYS = ['expenseId', 'revision', 'reason', 'description', 'date', 'amount', 'currency', 'rate', 'rateSource', 'rateDate', 'categoryId', 'notes', 'payers', 'split', 'eventId'];
 const SETTLE_KEYS = ['from', 'to', 'amount', 'currency', 'date', 'method', 'notes', 'ledger', 'confirmBackdated', 'eventId'];
 // Every correction keeps the before and after values of these fields.
-const TRACKED = ['description', 'date', 'amountMinor', 'original', 'categoryId', 'notes', 'payers', 'split', 'shares'];
+const TRACKED = ['description', 'date', 'amountMinor', 'original', 'categoryId', 'notes', 'payers', 'split', 'shares', 'eventId'];
 const LINK_KEY = Object.freeze({ expense: 'groupExpenseId', settlement: 'groupSettlementId' });
 
 const selfRef = (member) => `member:${member.id}`;
@@ -228,7 +234,7 @@ function eventView(doc, ev) {
     createdBy: nameOf(doc, ev.createdBy), createdAt: ev.createdAt,
   };
 }
-const EVENT_CREATE_KEYS = ['name', 'description', 'icon', 'color'];
+const EVENT_CREATE_KEYS = ['name', 'description', 'icon', 'color', 'templateEventId'];
 async function listEvents(ctx, req) {
   const wsId = requireId(query(req, 'workspaceId'), 'workspaceId');
   const { doc } = await store.loadWorkspace(ctx, wsId);
@@ -240,12 +246,18 @@ async function createEvent(ctx, req) {
   const { result } = await mutateGroup(ctx, wsId, (doc, member) => {
     requireWriter(member);
     const nowIso = ctx.nowIso();
+    // BT-009-22: an event template copies only its reusable SETUP (description, icon, colour) —
+    // never its participants, expenses, settlements or any financial record, and never
+    // silently recreates an invitation or access grant. The new event's own id, status and
+    // history all start completely fresh, exactly like any other new event.
+    const template = body.templateEventId !== undefined && body.templateEventId !== null ? findEvent(doc, requireId(body.templateEventId, 'templateEventId')) : null;
     const ev = {
       id: newId('gev'), name: fields.text(body.name, { field: 'Name', max: 80, required: true }),
-      description: fields.text(body.description, { field: 'Description', max: 500, multiline: true }),
-      icon: body.icon !== undefined && body.icon !== null ? fields.text(body.icon, { field: 'Icon', max: 40 }) : null,
-      color: body.color !== undefined && body.color !== null ? fields.text(body.color, { field: 'Colour', max: 20 }) : null,
-      status: 'active', createdAt: nowIso, createdBy: member.subject, history: [{ at: nowIso, by: member.subject, event: 'create' }],
+      description: body.description !== undefined ? fields.text(body.description, { field: 'Description', max: 500, multiline: true }) : (template ? template.description : ''),
+      icon: body.icon !== undefined ? (body.icon === null ? null : fields.text(body.icon, { field: 'Icon', max: 40 })) : (template ? template.icon : null),
+      color: body.color !== undefined ? (body.color === null ? null : fields.text(body.color, { field: 'Colour', max: 20 })) : (template ? template.color : null),
+      status: 'active', createdAt: nowIso, createdBy: member.subject,
+      history: [{ at: nowIso, by: member.subject, event: 'create', ...(template ? { fromTemplate: template.id } : {}) }],
     };
     doc.groupEvents = [...(doc.groupEvents || []), ev];
     if (!doc.defaultEventId) doc.defaultEventId = ev.id;
@@ -280,6 +292,64 @@ async function eventStatusAction(ctx, req) {
   });
   return { body: result };
 }
+
+// ---- saved split presets (BT-009-25) --------------------------------------------------------
+// A preset remembers WHO is typically in a recurring split and in what PROPORTION (Terry,
+// 2026-09-19: "saved split presets"), never a money amount — 'amounts' and 'fixed-remainder'
+// name specific amounts that only make sense for one particular expense, so they are not
+// preset-able; 'equal', 'shares' and 'percentages' are proportions that genuinely repeat across
+// different expense sizes ("the housemates always split 50/50", "Alice always covers 60% of the
+// car"). Applying a preset only pre-fills the Add expense dialog's own form fields (never writes
+// anything by itself); a person no longer in the workspace by the time it is used is simply left
+// out when applied, client-side — nothing here is a financial record, so nothing needs a
+// migration or a schema version bump.
+const PRESET_METHODS = groups.PRESET_METHODS;
+const PRESET_KEYS = ['name', 'method', 'lines'];
+// Lines keep only their ref, like every other split view (payers/shares) — the client already
+// resolves a ref to a display name from `data.participants`, the one place that mapping lives.
+function presetView(doc, member, p) {
+  return { id: p.id, name: p.name, method: p.method, lines: p.lines.map((l) => ({ ref: l.ref, value: l.value })), createdBy: nameOf(doc, p.createdBy), createdBySelf: p.createdBy === member.subject, createdAt: p.createdAt };
+}
+async function listSplitPresets(ctx, req) {
+  const wsId = requireId(query(req, 'workspaceId'), 'workspaceId');
+  const { doc, member } = await store.loadWorkspace(ctx, wsId);
+  return { body: { presets: (doc.groupSplitPresets || []).map((p) => presetView(doc, member, p)) } };
+}
+async function createSplitPreset(ctx, req) {
+  const wsId = requireId(query(req, 'workspaceId'), 'workspaceId');
+  const body = fields.onlyKeys(readBody(req), PRESET_KEYS);
+  const { result } = await mutateGroup(ctx, wsId, (doc, member) => {
+    requireWriter(member);
+    const check = groups.participantChecker(doc);
+    // A preset needs no total amount, so it is validated the same way a real split's lines are
+    // (method, refs, shape) against a placeholder total — 100 minor units divides evenly enough
+    // for 'equal'/'shares' to always normalize; 'percentages' is checked on its own units anyway
+    // and never touches the placeholder total at all.
+    const split = groups.normalizeSplit({ method: fields.oneOf(body.method, PRESET_METHODS, 'Split method'), lines: body.lines }, 100, reportingCurrency(doc), check);
+    const nowIso = ctx.nowIso();
+    const preset = { id: newId('gsp'), name: fields.text(body.name, { field: 'Name', max: 80, required: true }), method: split.method, lines: split.lines, createdBy: member.subject, createdAt: nowIso };
+    doc.groupSplitPresets = [...(doc.groupSplitPresets || []), preset];
+    audit.record(doc, { actor: member.subject, action: 'group.split-preset.create', targetType: 'group-split-preset', targetId: preset.id, at: nowIso });
+    return { preset: presetView(doc, member, preset) };
+  });
+  return { status: 201, body: result };
+}
+async function deleteSplitPreset(ctx, req) {
+  const wsId = requireId(query(req, 'workspaceId'), 'workspaceId');
+  const body = fields.onlyKeys(readBody(req), ['presetId']);
+  const id = requireId(body.presetId, 'presetId');
+  const { result } = await mutateGroup(ctx, wsId, (doc, member) => {
+    const p = (doc.groupSplitPresets || []).find((x) => x.id === id);
+    if (!p) throw notFound('Unknown split preset.');
+    // Its own creator, or a manager/owner — the same bar as changing someone else's expense.
+    if (p.createdBy !== member.subject && !isManager(member)) throw forbidden('Only the person who saved this split, or a manager or owner, can remove it.');
+    doc.groupSplitPresets = doc.groupSplitPresets.filter((x) => x.id !== id);
+    audit.record(doc, { actor: member.subject, action: 'group.split-preset.delete', targetType: 'group-split-preset', targetId: id, at: ctx.nowIso() });
+    return { removed: true };
+  });
+  return { body: result };
+}
+
 // Who may correct or void a shared expense: the group setting "changeExpenses" (Terry, 2026-09-14).
 // Viewers never may.
 const canChangeExpense = (doc, e, member) => writer(member)
@@ -368,6 +438,11 @@ function expenseMoney(doc, body, rec, member = null, mine = {}) {
   else {
     split = structuredClone(rec.split);
     if (split.method === 'amounts' && money.sum(split.lines.map((l) => l.value)) !== amountMinor) throw badRequest('The amount changed, so give the split amounts again.', 'split_amount_total');
+    if (split.method === 'fixed-remainder') {
+      const fixedTotal = money.sum(split.lines.filter((l) => l.value !== null).map((l) => l.value));
+      const hasRemainder = split.lines.some((l) => l.value === null);
+      if (fixedTotal > amountMinor || (!hasRemainder && fixedTotal !== amountMinor)) throw badRequest('The amount changed, so give the split amounts again.', 'split_amount_total');
+    }
   }
   const shares = groups.computeShares(amountMinor, split).shares.map(({ ref, amountMinor: a }) => ({ ref, amountMinor: a }));
   return { currency, amountMinor, payers, split, shares, original };
@@ -736,7 +811,9 @@ function expenseView(ctx, doc, member, e) {
     eventId: e.eventId || null,
     categoryId: e.categoryId || null, notes: e.notes || '',
     payers: e.payers.map((p) => ({ ref: p.ref, amount: dec(p.amountMinor), amountMinor: p.amountMinor })),
-    split: { method: e.split.method, lines: e.split.lines.map((l) => ({ ref: l.ref, value: e.split.method === 'amounts' ? dec(l.value) : l.value })) },
+    // 'fixed-remainder' lines are either a fixed minor amount (shown as decimal, like 'amounts')
+    // or null (shares the remainder) — never converted, since money.toDecimal has no null case.
+    split: { method: e.split.method, lines: e.split.lines.map((l) => ({ ref: l.ref, value: (e.split.method === 'amounts' || (e.split.method === 'fixed-remainder' && l.value !== null)) ? dec(l.value) : l.value })) },
     shares: e.shares.map((s, i) => ({ ref: s.ref, amount: dec(s.amountMinor), amountMinor: s.amountMinor, adjustmentMinor: adjustment(i) })),
     rounding: { residualMinor, residual: dec(residualMinor) },
     status: e.voidedAt ? 'void' : 'active', voidedAt: e.voidedAt || null, voidReason: e.voidReason || '', voidedBy: e.voidedBy ? nameOf(doc, e.voidedBy) : null,
@@ -856,9 +933,18 @@ async function exportReport(ctx, req) {
   const wsId = requireId(query(req, 'workspaceId'), 'workspaceId');
   const format = query(req, 'format') || 'json';
   const { doc } = await store.loadWorkspace(ctx, wsId);
-  const out = await sharedExport.render(doc, ctx.principal, format, ctx.nowIso());
+  // BT-009-23: an optional ?eventId= scopes the export to one event's own expenses, settlements
+  // and balances — the same authorized report `sharedExport` has always built, just filtered to
+  // one event first (never a second export format or a second code path).
+  const eventIdParam = query(req, 'eventId');
+  const scopedEvent = eventIdParam !== undefined ? findEvent(doc, requireId(eventIdParam, 'eventId')) : null;
+  const scopedDoc = scopedEvent
+    ? { ...doc, groupExpenses: (doc.groupExpenses || []).filter((e) => e.eventId === scopedEvent.id), groupSettlements: (doc.groupSettlements || []).filter((s) => s.eventId === scopedEvent.id) }
+    : doc;
+  const out = await sharedExport.render(scopedDoc, ctx.principal, format, ctx.nowIso());
   if (!out) throw badRequest(`Unsupported export format. Choose one of: ${sharedExport.FORMATS.join(', ')}.`, 'invalid_format');
-  return { body: { format, filename: out.filename, mime: out.mime, content: out.body, encoding: out.encoding } };
+  const filename = scopedEvent ? out.filename.replace(/^shared-expenses-/, `shared-expenses-${scopedEvent.name.replace(/[^a-z0-9]+/gi, '-').toLowerCase()}-`) : out.filename;
+  return { body: { format, filename, mime: out.mime, content: out.body, encoding: out.encoding } };
 }
 
 async function list(ctx, req) {
@@ -866,11 +952,23 @@ async function list(ctx, req) {
   if (action === 'history') return recordHistory(ctx, req);
   if (action === 'export') return exportReport(ctx, req);
   if (action === 'events') return listEvents(ctx, req);
+  if (action === 'split-presets') return listSplitPresets(ctx, req);
   if (action !== undefined && action !== 'balances') throw notFound();
   const wsId = requireId(query(req, 'workspaceId'), 'workspaceId');
   const { doc, member } = await store.loadWorkspace(ctx, wsId);
+  // BT-009-21: an optional ?eventId= scopes expenses/settlements/balances to ONE event — the event
+  // directory's own "view this event" action. Omitted entirely, the response is exactly what it
+  // has always been: every event combined (never a breaking change to the existing page).
+  // Participants, permissions and settings are workspace-wide either way — events are an
+  // ORGANIZATIONAL grouping, not a separate access boundary (Terry, 2026-09-19); the client is
+  // told this in words (`eventAccessNote`), never left to assume otherwise.
+  const eventIdParam = query(req, 'eventId');
+  const scopedEvent = eventIdParam !== undefined ? findEvent(doc, requireId(eventIdParam, 'eventId')) : null;
+  const scopedDoc = scopedEvent
+    ? { ...doc, groupExpenses: (doc.groupExpenses || []).filter((e) => e.eventId === scopedEvent.id), groupSettlements: (doc.groupSettlements || []).filter((s) => s.eventId === scopedEvent.id) }
+    : doc;
   const parts = groups.participants(doc, ctx.principal);
-  const balances = balancesView(doc, parts);
+  const balances = balancesView(scopedDoc, parts);
   if (action === 'balances') return { body: { currency: reportingCurrency(doc), balances } };
   return {
     body: {
@@ -879,8 +977,8 @@ async function list(ctx, req) {
       groupSettings: groupSettings.view(doc, (s) => nameOf(doc, s), member, isManager(member)),
       permissions: { role: member.role, canAdd: writer(member), canManage: isManager(member), selfRef: selfRef(member) },
       participants: parts,
-      expenses: [...(doc.groupExpenses || [])].sort(newestFirst).map((e) => expenseView(ctx, doc, member, e)),
-      settlements: [...(doc.groupSettlements || [])].sort(newestFirst).map((s) => settlementView(ctx, doc, member, s)),
+      expenses: [...(scopedDoc.groupExpenses || [])].sort(newestFirst).map((e) => expenseView(ctx, doc, member, e)),
+      settlements: [...(scopedDoc.groupSettlements || [])].sort(newestFirst).map((s) => settlementView(ctx, doc, member, s)),
       // The caller's own accounts for their part of the group, per currency; shown only to them, and
       // left out when there are none (like `myLedger` on a record).
       ...(() => { const mine = myLedgers(ctx, doc, member, entryIndex(doc, member.subject)); return mine.length ? { myLedgers: mine } : {}; })(),
@@ -888,11 +986,17 @@ async function list(ctx, req) {
       basis: groupSettings.get(doc, 'countReported')
         ? 'Balances count confirmed payments only. Suggested and direct payments also count reported payments as made, so nobody is asked to pay twice; suggestions count a reported payment only up to what is owed. Disputed payments are not counted.'
         : 'Balances count confirmed payments only. Reported payments are not counted until they are confirmed, in the suggested and direct payments too. Disputed payments are not counted.',
-      // BT-009-20 (the event foundation, additive only): the event directory and the current
-      // default. Expenses/settlements/balances above stay exactly the same — every event
-      // combined, precisely as before events existed — until per-event scoping (BT-009-21+)
-      // gives a caller a real reason to ask for just one.
+      // BT-009-20/21: the event directory and the current default; when scoped to one event,
+      // exactly which one, plus the honest access-scope disclosure (BT-009-21 — events are
+      // organizational, never a separate visibility boundary unless enforced on every backend
+      // path, and it is not: every workspace member with access to Shared expenses already sees
+      // every event's records combined by default, exactly as this same route always returned).
       events: (doc.groupEvents || []).map((e) => eventView(doc, e)), defaultEventId: doc.defaultEventId || null,
+      ...(scopedEvent ? { currentEvent: eventView(doc, scopedEvent) } : {}),
+      eventAccessNote: 'Events organize expenses and payments; they do not change who can see them. Everyone who can see Shared expenses in this workspace can see every event in it.',
+      // BT-009-25: saved split presets, embedded with the rest so the Add expense dialog needs no
+      // second round trip to offer them.
+      splitPresets: (doc.groupSplitPresets || []).map((p) => presetView(doc, member, p)),
     },
   };
 }
@@ -951,6 +1055,15 @@ async function patchExpense(ctx, req) {
     // closed is not enough for a correction, unlike a new settlement against it.
     assertEventWritable(eventOf(doc, e));
     checkRevision(e, body.revision);
+    // BT-009-24: moving an expense to a different event is a safe, explicit, explained move —
+    // never silent, never into/out of a non-active event (that is exactly what "closed"/
+    // "archived" mean: this event's own membership is frozen either way). Voiding an expense
+    // never counts as a move (its event never changes), so there is nothing to un-teach here.
+    let toEvent = null;
+    if (body.eventId !== undefined && body.eventId !== e.eventId) {
+      toEvent = findEvent(doc, requireId(body.eventId, 'eventId'));
+      if (toEvent.status !== 'active') throw conflict(`"${toEvent.name}" is ${toEvent.status} and cannot receive a moved expense. Reopen it first.`, `event_${toEvent.status}`);
+    }
     const reason = requireReason(body.reason, 'this correction');
     const nowIso = ctx.nowIso();
     const before = Object.fromEntries(TRACKED.map((k) => [k, structuredClone(e[k] === undefined ? null : e[k])]));
@@ -962,6 +1075,7 @@ async function patchExpense(ctx, req) {
       categoryId: body.categoryId !== undefined ? checkCategory(doc, body.categoryId, e.categoryId) : e.categoryId || null,
       notes: body.notes !== undefined ? fields.text(body.notes, { field: 'Notes', max: 2000, multiline: true }) : e.notes || '',
       payers: m.payers, split: m.split, shares: m.shares,
+      eventId: toEvent ? toEvent.id : e.eventId,
     };
     const changes = TRACKED.filter((k) => JSON.stringify(before[k]) !== JSON.stringify(next[k])).map((k) => ({ field: k, from: before[k], to: structuredClone(next[k]) }));
     if (!changes.length) return { expense: expenseView(ctx, doc, member, e) };
@@ -1211,7 +1325,7 @@ async function recordHistory(ctx, req) {
     if (v === null || v === undefined) return v;
     if (field === 'amountMinor') return dec(v);
     if ((field === 'payers' || field === 'shares') && Array.isArray(v)) return v.map((x) => ({ ref: x.ref, amount: dec(x.amountMinor) }));
-    if (field === 'split' && v && Array.isArray(v.lines)) return { method: v.method, lines: v.lines.map((l) => ({ ref: l.ref, value: v.method === 'amounts' ? dec(l.value) : l.value })) };
+    if (field === 'split' && v && Array.isArray(v.lines)) return { method: v.method, lines: v.lines.map((l) => ({ ref: l.ref, value: (v.method === 'amounts' || v.method === 'fixed-remainder') ? dec(l.value) : l.value })) };
     return v;
   };
   return {
@@ -1245,6 +1359,7 @@ async function settingsAction(ctx, req) {
 const ACTIONS = Object.freeze({
   void: voidRecord, settle: createSettlement, confirm: settlementChange('confirm'), dispute: settlementChange('dispute'), ledger: ledgerAction, settings: settingsAction,
   'create-event': createEvent, 'event-status': eventStatusAction,
+  'create-split-preset': createSplitPreset, 'delete-split-preset': deleteSplitPreset,
 });
 
 async function post(ctx, req) {

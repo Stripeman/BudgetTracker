@@ -198,4 +198,114 @@ describe("BT-013 secondary-page composition patterns: every real concept, every 
   test("every chart emphasis, including the two new ones, is genuinely used across the 15 concepts", () => {
     assert.equal(new Set(CONCEPTS.map((c) => c.chartEmphasis)).size, CHART_EMPHASES.length);
   });
+
+  // ---- Per-concept colour identity (review, 2026-09-19) ----------------------------------------
+  function hexToRgb(hex) { const n = parseInt(hex.slice(1), 16); return [(n >> 16) & 255, (n >> 8) & 255, n & 255]; }
+  function relLuminance([r, g, b]) {
+    const f = (c) => { const v = c / 255; return v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4); };
+    const [rl, gl, bl] = [f(r), f(g), f(b)];
+    return 0.2126 * rl + 0.7152 * gl + 0.0722 * bl;
+  }
+  function contrastRatio(hexA, hexB) {
+    const la = relLuminance(hexToRgb(hexA));
+    const lb = relLuminance(hexToRgb(hexB));
+    const [hi, lo] = la > lb ? [la, lb] : [lb, la];
+    return (hi + 0.05) / (lo + 0.05);
+  }
+
+  test("every concept declares its own accentLight/accentDark, each a genuinely distinct colour", () => {
+    for (const c of CONCEPTS) {
+      assert.match(c.accentLight, /^#[0-9a-f]{6}$/i, `${c.id} accentLight`);
+      assert.match(c.accentDark, /^#[0-9a-f]{6}$/i, `${c.id} accentDark`);
+    }
+    assert.equal(new Set(CONCEPTS.map((c) => c.accentLight.toLowerCase())).size, CONCEPTS.length, "every concept's light accent is unique");
+    assert.equal(new Set(CONCEPTS.map((c) => c.accentDark.toLowerCase())).size, CONCEPTS.length, "every concept's dark accent is unique");
+  });
+
+  test("every concept's accent pair meets >=3:1 non-text contrast against the real light surface (#ffffff) and dark surface (#141a24) respectively — the same bar this repository already holds hairline borders and focus rings to", () => {
+    for (const c of CONCEPTS) {
+      const lightRatio = contrastRatio(c.accentLight, "#ffffff");
+      const darkRatio = contrastRatio(c.accentDark, "#141a24");
+      assert.ok(lightRatio >= 3, `${c.id} light accent ${c.accentLight} contrast ${lightRatio.toFixed(2)} against #ffffff`);
+      assert.ok(darkRatio >= 3, `${c.id} dark accent ${c.accentDark} contrast ${darkRatio.toFixed(2)} against #141a24`);
+    }
+  });
+
+  test("a concept's own accent colour is applied ONLY to its own frame, as inline CSS custom properties, never a shared/global style", () => {
+    const a = CONCEPTS[0];
+    const b = CONCEPTS[1];
+    const frameA = renderConceptFrame(a, "dashboard", () => {}, { requiredPages: REQUIRED_PAGES });
+    const frameB = renderConceptFrame(b, "dashboard", () => {}, { requiredPages: REQUIRED_PAGES });
+    assert.equal(frameA.style.getPropertyValue("--g-accent-light"), a.accentLight);
+    assert.equal(frameA.style.getPropertyValue("--g-accent-dark"), a.accentDark);
+    assert.equal(frameB.style.getPropertyValue("--g-accent-light"), b.accentLight);
+    assert.notEqual(frameA.style.getPropertyValue("--g-accent-light"), frameB.style.getPropertyValue("--g-accent-light"));
+  });
+
+  // ---- Real interactive Settings controls (review, 2026-09-19) ----------------------------------
+  test("Settings is no longer a read-only label/badge list: a real control exists for every sample setting, and changing one visibly updates its own state without navigating away or calling an API", () => {
+    for (const pattern of SETTINGS_PATTERNS) {
+      const concept = CONCEPTS.find((c) => c.settingsPattern === pattern);
+      const frame = renderConceptFrame(concept, "settings", () => {}, { requiredPages: REQUIRED_PAGES });
+      const selects = [...frame.querySelectorAll("select")];
+      assert.ok(selects.length >= 4, `${pattern} renders a real control per sample setting (got ${selects.length})`);
+      const first = selects[0];
+      const before = first.value;
+      const other = [...first.querySelectorAll("option")].map((o) => o.value).find((v) => v !== before);
+      assert.ok(other, `${pattern} control has another option to switch to`);
+      first.value = other;
+      first.dispatchEvent({ type: "change", bubbles: true });
+      assert.equal(first.value, other, `${pattern} control genuinely changed`);
+      assert.match(frame.querySelector(".gframe__main").textContent, /Preview only/, `${pattern} is honest that nothing is saved`);
+    }
+  });
+
+  // ---- Shared-expense event directory/detail (review, 2026-09-19, reflecting the now-real BT-009-20
+  // model) ------------------------------------------------------------------------------------------
+  test("every one of the 3 shared patterns shows a real Events directory (name, status, count) reflecting BT-009-20's model", () => {
+    for (const pattern of SHARED_PATTERNS) {
+      const concept = CONCEPTS.find((c) => c.sharedPattern === pattern);
+      const frame = renderConceptFrame(concept, "shared", () => {}, { requiredPages: REQUIRED_PAGES });
+      const text = frame.querySelector(".gframe__main").textContent;
+      assert.match(text, /Events/, `${pattern} shows an Events section`);
+      assert.match(text, /General/, `${pattern} shows the default event by name`);
+      assert.match(text, /Museum day/, `${pattern} shows the second event by name`);
+      assert.match(text, /Closed/, `${pattern} shows a real lifecycle status`);
+    }
+  });
+
+  test("choosing one event in the directory narrows 'Recent shared expenses' to that event's own, and 'Show every event combined' (Viewing this event) returns to the full list", () => {
+    const concept = CONCEPTS.find((c) => c.sharedPattern === "balance-list");
+    const frame = renderConceptFrame(concept, "shared", () => {}, { requiredPages: REQUIRED_PAGES });
+    const before = frame.querySelector(".gframe__main").textContent;
+    assert.match(before, /Museum tickets/, "combined view shows every event's expenses");
+    assert.match(before, /Dinner at the harbour/);
+    const viewButtons = [...frame.querySelectorAll("button")].filter((b) => b.textContent === "View");
+    assert.ok(viewButtons.length >= 1, "at least one event offers a View button");
+    // Choose the closed "Museum day" event specifically (its own li contains that text).
+    const museumRow = [...frame.querySelectorAll("li")].find((li) => li.textContent.includes("Museum day"));
+    const museumView = [...museumRow.querySelectorAll("button")].find((b) => b.textContent === "View");
+    museumView.dispatchEvent({ type: "click", bubbles: true });
+    const after = frame.querySelector(".gframe__main").textContent;
+    assert.match(after, /Museum tickets/, "scoped view still shows the chosen event's own expense");
+    assert.doesNotMatch(after, /Dinner at the harbour/, "scoped view no longer shows the OTHER event's expense");
+    assert.match(after, /Showing only "Museum day"/, "a plain-language scoped banner is shown, matching the real page's own wording style");
+    const backButton = [...frame.querySelectorAll("button")].find((b) => b.textContent === "Viewing this event");
+    assert.ok(backButton, "the now-selected event shows a way back to combined");
+    backButton.dispatchEvent({ type: "click", bubbles: true });
+    const backTo = frame.querySelector(".gframe__main").textContent;
+    assert.match(backTo, /Dinner at the harbour/, "back to combined shows every event's expenses again");
+  });
+
+  // ---- The one silent no-op button (review, 2026-09-19) -----------------------------------------
+  test("story-flow's 'Add expense' button is no longer a silent no-op: pressing it calls onNavigate to switch the preview to Transactions", () => {
+    const concept = CONCEPTS.find((c) => c.dashboardPattern === "story-flow");
+    assert.ok(concept, "fixture sanity");
+    let navigatedTo = null;
+    const frame = renderConceptFrame(concept, "dashboard", (id) => { navigatedTo = id; }, { requiredPages: REQUIRED_PAGES });
+    const addExpense = [...frame.querySelectorAll("button")].find((b) => b.textContent === "Add expense");
+    assert.ok(addExpense, "the button still exists");
+    addExpense.dispatchEvent({ type: "click", bubbles: true });
+    assert.equal(navigatedTo, "transactions", "pressing it is a real action, not a silent no-op");
+  });
 });

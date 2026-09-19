@@ -4,10 +4,17 @@
   app/js/ui/gallery/compose.js. This is what makes 20 concepts genuinely differ structurally while
   sharing one component tree: no per-concept stylesheet exists or is needed.
 
-  Every colour comes from the existing design tokens (tokens.css); nothing here introduces a new
-  palette, and light/dark/every accent palette apply automatically because these rules only ever
-  reference --surface/--text/--border/--accent and friends.
+  Structural colour (surfaces, text, borders, danger) comes from the existing design tokens
+  (tokens.css); light/dark/every accent palette apply automatically because these rules only ever
+  reference --surface/--text/--border and friends. Each concept ALSO carries its own accent colour
+  identity (review, 2026-09-19: api/_shared/layouts.js accentLight/accentDark, contrast-verified
+  per concept in app/test/gallerypatterns.test.js), set as --g-accent-light/--g-accent-dark inline
+  on that concept's own .gframe only (app/js/ui/gallery/compose.js) and resolved to --g-accent below
+  by the current light/dark mode — never leaking outside that one frame, never touching the real
+  application's own --accent tokens or a real workspace's theme.
 */
+.gframe { --g-accent: var(--g-accent-light, var(--accent)); --g-accent-soft: color-mix(in srgb, var(--g-accent) 16%, transparent); }
+:root[data-mode="dark"] .gframe { --g-accent: var(--g-accent-dark, var(--accent)); }
 
 /* ---------------------------------------------------------------------------------------------- */
 /* Gallery page chrome */
@@ -34,7 +41,7 @@
 .gnav__items { display: flex; gap: var(--space-1); flex-wrap: wrap; }
 .gnav__item { display: inline-flex; align-items: center; gap: var(--space-1); border: 1px solid transparent; background: transparent; color: var(--text-muted); border-radius: var(--radius-sm); padding: var(--space-1) var(--space-2); font: inherit; cursor: pointer; }
 .gnav__item:hover { color: var(--text); border-color: var(--border); }
-.gnav__item--active { color: var(--text); background: var(--accent-soft); font-weight: var(--weight-medium); }
+.gnav__item--active { color: var(--text); background: var(--g-accent-soft, var(--accent-soft)); font-weight: var(--weight-medium); }
 .gnav__more { padding: var(--space-1) var(--space-2); }
 
 .gframe[data-nav="rail"] > .gnav { flex-direction: column; align-items: flex-start; width: 3.5rem; border-bottom: none; border-right: 1px solid var(--border); padding: var(--space-2); }
@@ -71,7 +78,7 @@
 .gframe[data-card="flat-bordered"] .gcard { border: 1px solid var(--border); box-shadow: none; }
 .gframe[data-card="soft-shadow"] .gcard { border: 1px solid transparent; box-shadow: var(--shadow-sm); }
 .gframe[data-card="outline-minimal"] .gcard { border: 1px solid var(--border); box-shadow: none; background: transparent; border-radius: var(--radius-sm); }
-.gframe[data-card="filled-tint"] .gcard { border: 1px solid transparent; background: var(--accent-soft); }
+.gframe[data-card="filled-tint"] .gcard { border: 1px solid transparent; background: var(--g-accent-soft, var(--accent-soft)); }
 .gframe[data-card="bordered-mono"] .gcard { border: 1px solid var(--border-strong); box-shadow: none; border-radius: 0; font-variant-numeric: tabular-nums; }
 .gframe[data-card="bordered-mono"] .gcard__title { text-transform: uppercase; letter-spacing: 0.04em; font-size: var(--text-sm); }
 
@@ -89,14 +96,14 @@
 .grow__date { flex: 0 0 auto; }
 
 .gmeter { height: 0.5rem; border-radius: var(--radius-pill); background: var(--surface-sunken); overflow: hidden; }
-.gmeter__fill { height: 100%; width: var(--pct, 0%); background: var(--accent); }
+.gmeter__fill { height: 100%; width: var(--pct, 0%); background: var(--g-accent, var(--accent)); }
 .genvelope { border: 1px solid var(--border); border-radius: var(--radius); padding: var(--space-3); display: flex; flex-direction: column; gap: var(--space-2); }
 .genvelope--over .gmeter__fill { background: var(--color-danger); }
 
 .gtimeline { list-style: none; margin: 0; padding: 0; border-left: 2px solid var(--border); }
 .gtimeline__item { padding: var(--space-2) 0 var(--space-2) var(--space-4); position: relative; }
 .gtimeline__item::before { content: ""; position: absolute; left: -0.35rem; top: 1.1rem; width: 0.6rem; height: 0.6rem; border-radius: 50%; background: var(--border-strong); }
-.gtimeline__item--future::before { background: var(--accent); }
+.gtimeline__item--future::before { background: var(--g-accent, var(--accent)); }
 
 .gsplit { display: grid; grid-template-columns: 1fr; gap: var(--space-4); }
 @media (min-width: 40rem) { .gsplit { grid-template-columns: 1fr 1fr; } }
@@ -115,13 +122,13 @@
    filled forecast area, reference 1/6's circular progress ring). Same rule as every other chart here:
    the SVG is aria-hidden or role="img" with a text label, and the real figure is always stated in
    text beside it (never colour or the arc alone). */
-.chart--area .chart__area-fill { fill: color-mix(in srgb, var(--accent) 22%, transparent); stroke: none; }
-.chart--area .chart__line--solid { stroke: var(--accent); }
+.chart--area .chart__area-fill { fill: color-mix(in srgb, var(--g-accent, var(--accent)) 22%, transparent); stroke: none; }
+.chart--area .chart__line--solid { stroke: var(--g-accent, var(--accent)); }
 
 .ggauge { display: inline-flex; align-items: center; justify-content: center; position: relative; width: max-content; }
 .ggauge__pct { position: absolute; font-size: var(--text-lg); font-weight: var(--weight-bold); }
 .gauge__track { stroke: var(--surface-sunken); }
-.gauge__fill { stroke: var(--accent); stroke-linecap: round; transition: none; }
+.gauge__fill { stroke: var(--g-accent, var(--accent)); stroke-linecap: round; transition: none; }
 
 /* ---------------------------------------------------------------------------------------------- */
 /* Typographic voice (Terry, 2026-09-18: "at least 15... deliberate typography, color, graphics,
@@ -154,7 +161,7 @@
 .gframe[data-voice="friendly-rounded"] .gmetric__value,
 .gframe[data-voice="friendly-rounded"] .gcard__value { font-family: ui-rounded, var(--font-sans); }
 
-.gframe[data-voice="bold-display"] .gpage__head h2 { font-weight: var(--weight-bold); font-size: var(--text-2xl); letter-spacing: -0.02em; border-left: 4px solid var(--accent); padding-left: var(--space-3); }
+.gframe[data-voice="bold-display"] .gpage__head h2 { font-weight: var(--weight-bold); font-size: var(--text-2xl); letter-spacing: -0.02em; border-left: 4px solid var(--g-accent, var(--accent)); padding-left: var(--space-3); }
 .gframe[data-voice="bold-display"] .gmetric__value,
 .gframe[data-voice="bold-display"] .gcard__value { font-weight: var(--weight-bold); font-size: var(--text-2xl); letter-spacing: -0.01em; }
 .gframe[data-voice="bold-display"] .gcard__title { font-weight: var(--weight-bold); }
@@ -181,5 +188,9 @@
 
 .gbarrow { display: grid; grid-template-columns: minmax(8rem, 12rem) 1fr auto; align-items: center; gap: var(--space-3); padding: var(--space-2) 0; }
 .gbarrow__track { height: 0.6rem; border-radius: var(--radius-pill); background: var(--surface-sunken); overflow: hidden; }
-.gbarrow__fill { height: 100%; width: var(--pct, 0%); background: var(--bar, var(--accent)); }
+.gbarrow__fill { height: 100%; width: var(--pct, 0%); background: var(--bar, var(--g-accent, var(--accent))); }
 .gmeter--inline { width: 6rem; display: inline-block; }
+
+/* The shared bar-chart primitive (components.css .chart__bar, also used by the real Usage page)
+   defaults to --accent; inside a concept's own frame it takes that concept's own accent instead. */
+.gframe .chart__bar { fill: var(--g-accent, var(--accent)); }

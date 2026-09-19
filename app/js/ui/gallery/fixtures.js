@@ -86,6 +86,9 @@ export const forecast = Object.freeze({
 
 // Shared expenses (BT-009's canonical shape, simplified for the Gallery): a household's shared
 // balances and its most recent expenses, matching scripts/dev/seed.mjs's Fictional Dinner Club.
+// `events` (added 2026-09-19, reflecting the now-real BT-009-20 event foundation shipped in the
+// application itself): every expense belongs to a named event with a real lifecycle status, exactly
+// like the production Shared expenses page's own Events card — never a Gallery-only invention.
 export const shared = Object.freeze({
   currency: "EUR",
   balances: [
@@ -93,10 +96,14 @@ export const shared = Object.freeze({
     { name: "Bob", net: "-15.00", self: false },
     { name: "Dana (contact)", net: "-20.00", self: false },
   ],
+  events: [
+    { id: "gev1", name: "General", status: "active", isDefault: true },
+    { id: "gev2", name: "Museum day", status: "closed", isDefault: false },
+  ],
   expenses: [
-    { id: "g1", description: "Dinner at the harbour", date: "2026-09-11", amount: "300.00", payer: "Alice" },
-    { id: "g2", description: "Taxi back", date: "2026-09-11", amount: "36.00", payer: "Bob" },
-    { id: "g3", description: "Museum tickets", date: "2026-09-13", amount: "100.00", payer: "Alice" },
+    { id: "g1", description: "Dinner at the harbour", date: "2026-09-11", amount: "300.00", payer: "Alice", eventId: "gev1" },
+    { id: "g2", description: "Taxi back", date: "2026-09-11", amount: "36.00", payer: "Bob", eventId: "gev1" },
+    { id: "g3", description: "Museum tickets", date: "2026-09-13", amount: "100.00", payer: "Alice", eventId: "gev2" },
   ],
 });
 

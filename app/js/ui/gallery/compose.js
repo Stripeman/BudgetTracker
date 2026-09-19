@@ -13,8 +13,8 @@
 // own navStyle/density/cardStyle — real structural differences (nav position, spacing, card
 // treatment), not hand-tuned per concept. See docs/REQUIREMENTS.md BT-013 for exactly which
 // concepts also received deeper, hand-tuned treatment beyond this shared template ("flagship").
-import { el, svgEl } from "../dom.js";
-import { money, categoryLabel, badge, button, amountText } from "../components.js";
+import { el, svgEl, mount } from "../dom.js";
+import { money, categoryLabel, badge, button, amountText, field, pickerSelect } from "../components.js";
 import { icon, withIcon } from "../icons.js";
 import { formatAmount } from "../../core/format.js";
 import * as fx from "./fixtures.js";
@@ -276,14 +276,19 @@ function heroSplitFocus(concept) {
   return [el("div", { class: "gsplit" }, [left, right])];
 }
 
-function heroStoryFlow() {
+// `onNavigate` is the SAME callback the frame's own nav items already use (renderConceptFrame):
+// pressing "Add expense" here switches the previewed page to Transactions, exactly what every real
+// BudgetTracker dashboard's own "Add expense" leads toward. Fixed from a silent no-op (review,
+// 2026-09-19): a button that does nothing is exactly the kind of dead control Terry's brief asked
+// this Gallery to never present, even in a preview.
+function heroStoryFlow(concept, onNavigate) {
   return [
     el("div", { class: "gstory" }, [
       el("p", { class: "gstory__lede", text: "Good news: you're on track this week." }),
       el("p", {}, ["You've spent ", amountText("192.35", "EUR", fx.prefs), " so far today across Groceries and Dining."]),
       el("p", {}, ["Coming up: Electricity (", amountText("-95.00", "EUR", fx.prefs), ") is due in 2 days."]),
       el("p", {}, ["Your net position is ", money(fx.netPosition.amount, fx.netPosition.currency, fx.prefs), "."]),
-      button("Add expense", () => {}, { variant: "primary" }),
+      button("Add expense", () => { if (typeof onNavigate === "function") onNavigate("transactions"); }, { variant: "primary" }),
     ]),
   ];
 }
@@ -311,9 +316,9 @@ const DASHBOARD_RENDERERS = {
   adaptive: heroAdaptive,
 };
 
-function renderDashboard(concept) {
+function renderDashboard(concept, onNavigate) {
   const fn = DASHBOARD_RENDERERS[concept.dashboardPattern] || heroMetricGrid;
-  return el("div", { class: "gpage gpage--dashboard" }, [pageTitle("dashboard"), ...fn(concept)]);
+  return el("div", { class: "gpage gpage--dashboard" }, [pageTitle("dashboard"), ...fn(concept, onNavigate)]);
 }
 
 // ---- the shared template for the other six required pages (real structural composition driven by
@@ -493,15 +498,41 @@ function renderAccounts(concept) {
 
 // ---- Shared expenses: three genuinely different compositions (closing the gap the review's own
 // "not done" note named — this and Trips were the last two required pages still sharing one
-// template across all 15 concepts). ------------------------------------------------------------
-function sharedBalanceList() {
+// template across all 15 concepts), plus (review, 2026-09-19) a real EVENT DIRECTORY reflecting the
+// now-real BT-009-20 model shipped in the application itself: named events with a real lifecycle
+// status, and choosing one narrows "Recent shared expenses" to that event's own — genuinely
+// interactive (a click re-renders this page's own container, `mount`, exactly like every other real
+// BudgetTracker page), never a live API call. Balances stay combined regardless of the scoped event:
+// this fixture has no full balance-computation engine behind it (unlike the real page, which does
+// recompute a scoped balance), and showing an invented number here would be dishonest — a plain
+// sentence says so, the same "illustrative" honesty the Trips page already holds itself to.
+function eventsDirectory(selectedEventId, onSelect) {
+  const rows = fx.shared.events.map((e) => {
+    const count = fx.shared.expenses.filter((g) => g.eventId === e.id).length;
+    const isCurrent = selectedEventId === e.id;
+    return el("li", { class: "grow" }, [
+      el("span", {}, [withIcon("tag", e.name), e.isDefault ? el("span", { class: "muted small" }, [" (default)"]) : null]),
+      badge(e.status === "active" ? "Active" : e.status === "closed" ? "Closed" : "Archived", e.status === "archived" ? "closed" : e.status === "closed" ? "warning" : ""),
+      el("span", { class: "muted small", text: `${count} expense${count === 1 ? "" : "s"}` }),
+      el("span", { class: "app__spacer" }),
+      isCurrent
+        ? button("Viewing this event", () => onSelect(null), { small: true, variant: "primary", attrs: { "aria-label": `Stop viewing ${e.name} — show every event combined` } })
+        : button("View", () => onSelect(e.id), { small: true, attrs: { "aria-label": `View only ${e.name}` } }),
+    ]);
+  });
+  return gcard("Events", "tag", [
+    el("p", { class: "field__help", text: "Events organize expenses; they do not change who can see them (illustrative — mirrors the real Shared expenses page's own Events card, BT-009-20/21)." }),
+    el("ul", { class: "stack" }, rows),
+  ], { full: true });
+}
+function sharedBalanceList(expenses) {
   return [
     gcard("Balances", "users", fx.shared.balances.map((b) => el("div", { class: "row" }, [el("span", { text: b.name }), el("span", { class: "app__spacer" }), amountText(b.net, fx.shared.currency, fx.prefs)]))),
-    gcard("Recent shared expenses", "receipt", el("ul", { class: "stack" }, fx.shared.expenses.map((g) => el("li", { class: "grow" }, [el("span", { class: "muted small", text: g.date }), el("span", { text: g.description }), el("span", { class: "muted small", text: `paid by ${g.payer}` }), el("span", { class: "app__spacer" }), amountText(`-${g.amount}`, fx.shared.currency, fx.prefs)]))), { full: true }),
+    gcard("Recent shared expenses", "receipt", expenses.length ? el("ul", { class: "stack" }, expenses.map((g) => el("li", { class: "grow" }, [el("span", { class: "muted small", text: g.date }), el("span", { text: g.description }), el("span", { class: "muted small", text: `paid by ${g.payer}` }), el("span", { class: "app__spacer" }), amountText(`-${g.amount}`, fx.shared.currency, fx.prefs)]))) : el("p", { class: "muted small", text: "No expenses in this event." }), { full: true }),
   ];
 }
-function sharedLedgerTable() {
-  const rows = fx.shared.expenses.map((g) => el("tr", {}, [
+function sharedLedgerTable(expenses) {
+  const rows = expenses.map((g) => el("tr", {}, [
     el("td", { text: g.date }), el("td", { text: g.description }), el("td", { text: g.payer }),
     el("td", { class: "num" }, [amountText(`-${g.amount}`, fx.shared.currency, fx.prefs)]),
   ]));
@@ -515,7 +546,7 @@ function sharedLedgerTable() {
     gcard("Shared expenses", "receipt", el("div", { class: "table-wrap" }, [table]), { full: true }),
   ];
 }
-function sharedSettlementFocus() {
+function sharedSettlementFocus(expenses) {
   const owes = fx.shared.balances.filter((b) => Number(b.net) < 0);
   const owed = fx.shared.balances.filter((b) => Number(b.net) > 0);
   const suggestions = owes.flatMap((from) => owed.map((to) => el("li", { class: "grow" }, [
@@ -524,13 +555,26 @@ function sharedSettlementFocus() {
   ])));
   return [
     gcard("Settle up", "scale", suggestions.length ? el("ul", { class: "stack" }, suggestions) : el("p", { class: "muted", text: "Everyone is settled up." }), { full: true }),
-    gcard("Recent shared expenses", "receipt", el("ul", { class: "stack" }, fx.shared.expenses.slice(0, 3).map((g) => el("li", { class: "grow" }, [el("span", { text: g.description }), el("span", { class: "app__spacer" }), amountText(`-${g.amount}`, fx.shared.currency, fx.prefs)])))),
+    gcard("Recent shared expenses", "receipt", expenses.length ? el("ul", { class: "stack" }, expenses.slice(0, 3).map((g) => el("li", { class: "grow" }, [el("span", { text: g.description }), el("span", { class: "app__spacer" }), amountText(`-${g.amount}`, fx.shared.currency, fx.prefs)]))) : el("p", { class: "muted small", text: "No expenses in this event." })),
   ];
 }
 const SHARED_RENDERERS = { "balance-list": sharedBalanceList, "ledger-table": sharedLedgerTable, "settlement-focus": sharedSettlementFocus };
 function renderShared(concept) {
-  const fn = SHARED_RENDERERS[concept.sharedPattern] || sharedBalanceList;
-  return el("div", { class: "gpage gpage--list" }, [pageTitle("shared"), ...fn()]);
+  const page = el("div", { class: "gpage gpage--list" });
+  let selectedEventId = null;
+  function paint() {
+    const fn = SHARED_RENDERERS[concept.sharedPattern] || sharedBalanceList;
+    const selectedEvent = selectedEventId ? fx.shared.events.find((e) => e.id === selectedEventId) : null;
+    const expenses = selectedEvent ? fx.shared.expenses.filter((g) => g.eventId === selectedEvent.id) : fx.shared.expenses;
+    mount(page,
+      pageTitle("shared"),
+      eventsDirectory(selectedEventId, (id) => { selectedEventId = id; paint(); }),
+      selectedEvent ? el("p", { class: "field__help", text: `Showing only "${selectedEvent.name}"'s own shared expenses. Balances above stay combined across every event in this illustrative preview.` }) : null,
+      ...fn(expenses),
+    );
+  }
+  paint();
+  return page;
 }
 
 // `withName` is left on for heroSplitFocus, where the surrounding gcard's own title is generic
@@ -569,25 +613,37 @@ function renderTrips(concept) {
   return el("div", { class: "gpage gpage--list" }, [pageTitle("trips"), el("p", { class: "field__help", text: TRIPS_NOTE }), ...fn()]);
 }
 
-function settingValueBadge(s) {
-  return badge(s.type === "boolean" ? (s.value ? "On" : "Off") : (((s.options || []).find((o) => o.value === s.value) || {}).label || String(s.value)));
+// REAL interactive controls (review, 2026-09-19: before this, Settings was a read-only label/badge
+// list — exactly the "no silent no-op controls" requirement this Gallery otherwise holds itself to).
+// Each call builds its own FRESH, request-scoped copy of the sample settings (never the shared
+// fixture array itself, and never a mutation visible to any other simultaneously-rendered frame —
+// a thumbnail, the main preview and a "Compare" pane never leak state into each other) and wires up
+// the exact same control the real production Workspace settings card uses for a boolean or choice
+// setting (`pickerSelect` inside `field`, app/js/ui/settingsform.js) — reusing the real mechanism,
+// never a lookalike. Changing a control here visibly updates this preview's own state and nothing
+// else: no API call is ever made, and "Preview only" is said beside every control so nobody mistakes
+// it for a real change to their workspace.
+function settingsControls() {
+  const local = fx.settingsSample.map((s) => ({ ...s }));
+  return local.map((s) => {
+    const options = s.type === "boolean" ? [{ value: "true", label: "On" }, { value: "false", label: "Off" }] : (s.options || []).map((o) => ({ value: String(o.value), label: o.label }));
+    const pick = pickerSelect(options, String(s.value), {}, {});
+    pick.addEventListener("change", () => {
+      s.value = s.type === "boolean" ? pick.value === "true" : ((s.options || []).find((o) => String(o.value) === pick.value) || { value: s.value }).value;
+    });
+    return { s, control: field(s.label, pick, { help: "Preview only — nothing here is saved." }) };
+  });
 }
 function settingsFlatList() {
-  return [gcard("Workspace settings (illustrative)", "user", el("ul", { class: "stack" }, fx.settingsSample.map((s) => el("li", { class: "grow" }, [
-    el("span", {}, [el("strong", { text: s.label })]),
-    el("span", { class: "app__spacer" }),
-    settingValueBadge(s),
-  ]))), { full: true })];
+  const rows = settingsControls();
+  return [gcard("Workspace settings (illustrative)", "user", el("div", { class: "stack" }, rows.map((r) => r.control)), { full: true })];
 }
 // Mirrors the REAL responsive two-column settings layout shipped in the application itself (item 5,
 // settingsform.js/components.css .settings-group__body) — reusing the exact same class names, so a
 // concept that chooses this pattern previews the production mechanism, not a lookalike.
 function settingsTwoColumnGrouped() {
-  const rows = fx.settingsSample.map((s) => el("div", { class: "setting" }, [
-    el("strong", { text: s.label }),
-    settingValueBadge(s),
-  ]));
-  return [gcard("Workspace settings (illustrative)", "user", el("div", { class: "settings-group__body" }, rows), { full: true })];
+  const rows = settingsControls();
+  return [gcard("Workspace settings (illustrative)", "user", el("div", { class: "settings-group__body" }, rows.map((r) => el("div", { class: "setting" }, [r.control]))), { full: true })];
 }
 const SETTINGS_RENDERERS = { "flat-list": settingsFlatList, "two-column-grouped": settingsTwoColumnGrouped };
 function renderSettings(concept) {
@@ -616,9 +672,13 @@ function renderNav(concept, activeId, onNavigate, requiredPages) {
  * nav item inside the preview (switching the previewed page; the Gallery page owns that state).
  */
 export function renderConceptFrame(concept, pageId, onNavigate, { requiredPages = Object.keys(PAGE_LABEL) } = {}) {
-  const page = (PAGE_RENDERERS[pageId] || renderDashboard)(concept);
+  const page = (PAGE_RENDERERS[pageId] || renderDashboard)(concept, onNavigate);
   return el("div", {
     class: "gframe", dataset: { nav: concept.navStyle, density: concept.density, card: concept.cardStyle, page: pageId, voice: concept.typeVoice, chart: concept.chartEmphasis },
+    // Each concept's own colour identity (review, 2026-09-19), scoped to this frame only via CSS
+    // custom properties never set outside it — see the accentLight/accentDark comment in
+    // api/_shared/layouts.js and the --g-accent rules in gallery.css.
+    vars: { "--g-accent-light": concept.accentLight || null, "--g-accent-dark": concept.accentDark || null },
     "aria-label": `${concept.name} preview, ${PAGE_LABEL[pageId] || pageId} page`,
   }, [
     renderNav(concept, pageId, onNavigate, requiredPages),

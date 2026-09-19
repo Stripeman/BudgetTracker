@@ -278,4 +278,30 @@ describe('BT-014 Part A: shared-expenses export (CSV/JSON)', () => {
     assert.equal(bad.status, 400);
     assert.equal(bad.body.error.code, 'invalid_format');
   });
+
+  test('BT-009-23: an optional ?eventId= scopes the export to one event\'s own expenses, never the workspace\'s other events', async () => {
+    const h = harness();
+    const f = await fixture(h);
+    const ski = ok(await h.call('group', 'POST', { as: 'alice', query: { ...f.q, action: 'create-event' }, body: { name: 'Ski trip' } }), 201).event;
+    const bbq = ok(await h.call('group', 'POST', { as: 'alice', query: { ...f.q, action: 'create-event' }, body: { name: 'Summer BBQ' } }), 201).event;
+    await ok(await h.call('group', 'POST', {
+      as: 'alice', query: f.q,
+      body: { description: 'Lift passes', amount: '80.00', eventId: ski.id, payers: [{ ref: f.refs.alice }], split: equal(f.refs.alice, f.refs.bob) },
+    }), 201);
+    await ok(await h.call('group', 'POST', {
+      as: 'alice', query: f.q,
+      body: { description: 'Burgers', amount: '20.00', eventId: bbq.id, payers: [{ ref: f.refs.alice }], split: equal(f.refs.alice, f.refs.bob) },
+    }), 201);
+
+    const scoped = ok(await h.call('group', 'GET', { as: 'alice', query: { ...f.q, action: 'export', format: 'json', eventId: ski.id } }));
+    const report = JSON.parse(scoped.content);
+    assert.deepEqual(report.expenses.map((e) => e.description), ['Lift passes'], 'only the Ski trip event\'s own expense — never Summer BBQ\'s');
+    assert.match(scoped.filename, /ski-trip/, 'the event\'s own name is reflected in the filename');
+
+    const combined = ok(await h.call('group', 'GET', { as: 'alice', query: { ...f.q, action: 'export', format: 'json' } }));
+    assert.equal(JSON.parse(combined.content).expenses.length, 2, 'omitted eventId still exports every event combined, unchanged');
+
+    const unknown = await h.call('group', 'GET', { as: 'alice', query: { ...f.q, action: 'export', format: 'json', eventId: 'gev_nosuch00000' } });
+    assert.equal(unknown.status, 404);
+  });
 });

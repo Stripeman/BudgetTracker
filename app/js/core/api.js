@@ -96,11 +96,19 @@ export function createApiClient({ fetchImpl = globalThis.fetch.bind(globalThis),
     updateBudget: (id, body) => request("budgets", { method: "PATCH", query: ws(id), body }),
     forecast: (id, params = {}) => request("forecast", { query: { ...ws(id), ...params } }),
     scenario: (id, body) => request("forecast", { method: "POST", query: { ...ws(id), action: "scenario" }, body }),
-    group: (id) => request("group", { query: ws(id) }),
+    group: (id, params = {}) => request("group", { query: { ...ws(id), ...params } }),
     groupHistory: (id, params) => request("group", { query: { ...ws(id), action: "history", ...params } }),
     createGroupExpense: (id, body, key) => request("group", { method: "POST", query: ws(id), body, idempotencyKey: key }),
     updateGroupExpense: (id, body) => request("group", { method: "PATCH", query: ws(id), body }),
     groupAction: (id, action, body, key) => request("group", { method: "POST", query: { ...ws(id), action }, body, idempotencyKey: key }),
+    // BT-009-20/21: the event directory, creating a named event, and its lifecycle transitions.
+    groupEvents: (id) => request("group", { query: { ...ws(id), action: "events" } }),
+    createGroupEvent: (id, body) => request("group", { method: "POST", query: { ...ws(id), action: "create-event" }, body }),
+    groupEventStatus: (id, body) => request("group", { method: "POST", query: { ...ws(id), action: "event-status" }, body }),
+    // BT-009-25: saved split presets — who is typically in a recurring split, and in what
+    // proportion.
+    createSplitPreset: (id, body) => request("group", { method: "POST", query: { ...ws(id), action: "create-split-preset" }, body }),
+    deleteSplitPreset: (id, body) => request("group", { method: "POST", query: { ...ws(id), action: "delete-split-preset" }, body }),
     categories: (id) => request("categories", { query: ws(id) }),
     icons: (id, catalogEtag) => request("icons", { query: id ? { ...ws(id), catalogEtag } : undefined }),
     updateTypeIcons: (id, typeIcons) => request("icons", { method: "PATCH", query: ws(id), body: { typeIcons } }),
@@ -138,7 +146,8 @@ export function createApiClient({ fetchImpl = globalThis.fetch.bind(globalThis),
     permanentDeleteExecute: (route, query, body) => request(route, { method: "POST", query: { ...query, action: "delete-permanent" }, body }),
     // The authorized Shared-expenses download offered before a deletion/disconnection that would
     // affect it (BT-014 Part A). Read-only; never itself deletes or disconnects anything.
-    sharedExport: (id, format) => request("group", { query: { ...ws(id), action: "export", format } }),
+    // BT-009-23: an optional eventId scopes the export to one event; omitted, every event combined.
+    sharedExport: (id, format, eventId) => request("group", { query: { ...ws(id), action: "export", format, ...(eventId ? { eventId } : {}) } }),
     // Site-admin workspace directory (BT-014-03): operational metadata only, never financial content.
     workspaceDirectory: () => request("analytics", { query: { action: "directory" } }),
     // Site-wide operational settings, site-admin only to change (BT-014-17 adds accountRequestsEnabled).

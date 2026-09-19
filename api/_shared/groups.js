@@ -21,7 +21,11 @@ const fields = require('./fields');
 const people = require('./people');
 const model = require('./workspace-model');
 
-const METHODS = Object.freeze(['equal', 'amounts', 'percentages', 'shares']);
+const METHODS = Object.freeze(['equal', 'amounts', 'percentages', 'shares', 'fixed-remainder']);
+// BT-009-25: the split methods a PROPORTION-only saved preset may use — never 'amounts' or
+// 'fixed-remainder', whose values name a specific money amount that does not generalize across
+// different expense sizes the way an equal split, a share count or a percentage does.
+const PRESET_METHODS = Object.freeze(['equal', 'shares', 'percentages']);
 const SETTLEMENT_STATES = Object.freeze(['reported', 'confirmed', 'disputed']);
 const MAX_LINES = 50;
 // Bounded like a bill (SEC-B3) so sums over many records stay exact.
@@ -53,11 +57,35 @@ function positiveAmount(text, currency, field) {
 }
 
 // ---- splits ----------------------------------------------------------------------------------
-// A stored split is { method, lines: [{ ref, value }] } where value is null (equal), a whole number
-// of shares, a canonical percentage string, or minor units (amounts).
+// A stored split is { method, lines: [{ ref, value }] } where value is null (equal, or a
+// 'fixed-remainder' line that shares the remainder), a whole number of shares, a canonical
+// percentage string, or minor units (amounts, or a 'fixed-remainder' line's own fixed amount).
 function computeShares(totalMinor, split) {
   if (split.method === 'amounts') {
     return { shares: split.lines.map((l) => ({ ref: l.ref, amountMinor: l.value, adjustmentMinor: 0 })), residualMinor: 0 };
+  }
+  // BT-009-25: "fixed allocations plus a split remainder" (Terry, 2026-09-19) — a line with a
+  // value is a FIXED amount (kept exactly, no rounding adjustment, same as 'amounts'); a line
+  // with no value shares whatever is LEFT, equally, using the exact same deterministic largest-
+  // remainder allocation (`money.allocate`) every other weighted method already uses, applied
+  // only to the remainder pool and only among the remainder lines.
+  if (split.method === 'fixed-remainder') {
+    const fixedTotal = money.sum(split.lines.filter((l) => l.value !== null).map((l) => l.value));
+    const remainderTotal = totalMinor - fixedTotal;
+    const remainderCount = split.lines.filter((l) => l.value === null).length;
+    const remainderParts = remainderCount ? money.allocate(remainderTotal, split.lines.filter((l) => l.value === null).map(() => 1)) : [];
+    const remainderFloor = remainderCount ? Math.floor(remainderTotal / remainderCount) : 0;
+    let ri = 0;
+    return {
+      shares: split.lines.map((l) => {
+        if (l.value !== null) return { ref: l.ref, amountMinor: l.value, adjustmentMinor: 0 };
+        const amountMinor = remainderParts[ri];
+        const adjustmentMinor = amountMinor - remainderFloor;
+        ri += 1;
+        return { ref: l.ref, amountMinor, adjustmentMinor };
+      }),
+      residualMinor: remainderTotal - remainderFloor * remainderCount,
+    };
   }
   const weights = split.lines.map((l) => (split.method === 'equal' ? 1 : split.method === 'shares' ? l.value : percentUnits(l.value)));
   const parts = money.allocate(totalMinor, weights);
@@ -80,6 +108,9 @@ function lineValue(method, value, currency, i) {
     return value;
   }
   if (method === 'percentages') return percentText(percentUnits(value, who));
+  // BT-009-25: a 'fixed-remainder' line either names its own fixed amount, or is left out
+  // entirely to share whatever is left over, equally, with every other line that also left it out.
+  if (method === 'fixed-remainder' && (value === undefined || value === null)) return null;
   return positiveAmount(value, currency, `${who} amount`);
 }
 
@@ -109,6 +140,15 @@ function normalizeSplit(input, totalMinor, currency, checkRef) {
       throw badRequest(`The amounts add up to ${money.toDecimal(sum, currency)} but the expense is ${money.toDecimal(totalMinor, currency)}.`, 'split_amount_total');
     }
   }
+  if (method === 'fixed-remainder') {
+    const fixedTotal = money.sum(lines.filter((l) => l.value !== null).map((l) => l.value));
+    if (fixedTotal > totalMinor) {
+      throw badRequest(`The fixed amounts add up to ${money.toDecimal(fixedTotal, currency)}, more than the expense's ${money.toDecimal(totalMinor, currency)}.`, 'split_amount_total');
+    }
+    if (!lines.some((l) => l.value === null) && fixedTotal !== totalMinor) {
+      throw badRequest(`With no one left to share the remainder, the fixed amounts must add up to exactly ${money.toDecimal(totalMinor, currency)}.`, 'split_amount_total');
+    }
+  }
   return { method, lines };
 }
 
@@ -133,6 +173,16 @@ function storedSplitBroken(split, totalMinor) {
     }
     return sum !== HUNDRED_PERCENT;
   }
+  if (split.method === 'fixed-remainder') {
+    const fixed = lines.filter((l) => l.value !== null);
+    const remainderCount = lines.length - fixed.length;
+    if (fixed.some((l) => !money.isMinor(l.value) || l.value <= 0 || l.value > MAX_GROUP_MINOR)) return true;
+    let fixedTotal;
+    try { fixedTotal = money.sum(fixed.map((l) => l.value)); } catch { return true; }
+    if (remainderCount === 0) return fixedTotal !== totalMinor;
+    return fixedTotal > totalMinor;
+  }
+  // 'amounts': every line names its own exact amount, summing to the total.
   if (lines.some((l) => !money.isMinor(l.value) || l.value <= 0 || l.value > MAX_GROUP_MINOR)) return true;
   try { return money.sum(lines.map((l) => l.value)) !== totalMinor; } catch { return true; }
 }
@@ -555,6 +605,20 @@ function invariantProblem(doc) {
     if (l.groupExpenseId !== undefined && l.groupExpenseId !== null && !expenseIds.has(l.groupExpenseId)) return 'transaction group link';
     if (l.groupSettlementId !== undefined && l.groupSettlementId !== null && !settlementIds.has(l.groupSettlementId)) return 'transaction group link';
   }
+  // BT-009-25: a saved split preset names a real method (never a money-shaped one — presets are
+  // proportions, reusable across different expense sizes) and real people; unlike a real split it
+  // is never checked against any particular total, so `storedSplitBroken` does not apply to it.
+  for (const p of doc.groupSplitPresets || []) {
+    if (!PRESET_METHODS.includes(p.method)) return 'split preset method';
+    if (!Array.isArray(p.lines) || !p.lines.length || unique(p.lines.map((l) => l.ref)).length !== p.lines.length) return 'split preset lines';
+    if (p.lines.some((l) => !refOk(l.ref))) return 'split preset lines';
+    if (p.method === 'shares' && p.lines.some((l) => !Number.isInteger(l.value) || l.value < 1 || l.value > MAX_SHARES)) return 'split preset lines';
+    if (p.method === 'percentages') {
+      let sum = 0;
+      for (const l of p.lines) { try { sum += percentUnits(l.value); } catch { return 'split preset lines'; } }
+      if (sum !== HUNDRED_PERCENT) return 'split preset lines';
+    }
+  }
   return null;
 }
 
@@ -589,7 +653,7 @@ function foreignWorkspaceIds(doc) {
 }
 
 module.exports = {
-  METHODS, SETTLEMENT_STATES, MAX_LINES, MAX_GROUP_MINOR, HUNDRED_PERCENT,
+  METHODS, PRESET_METHODS, SETTLEMENT_STATES, MAX_LINES, MAX_GROUP_MINOR, HUNDRED_PERCENT,
   percentUnits, percentText, positiveAmount, computeShares, normalizeSplit, normalizePayers, participantChecker,
   participants, recordRefs, sumByRef, balances, openCurrencies, desiredEntries, recordedOutside, invariantProblem, memberIds,
   foreignWorkspaceIds, canonicalRef, canonicalDoc,

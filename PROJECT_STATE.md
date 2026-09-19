@@ -3466,9 +3466,18 @@ insights) are recorded as independently buildable now, to be re-verified once ev
 receipts/attachment architecture, not the event foundation. BT-013 (Design Gallery) is marked
 **explicitly not accepted as complete**, quoting Terry directly, with the full replacement scope
 recorded as new **BT-013-06**.
+**Correction (2026-09-19, later in this same overall body of work):** `BT-013-06` was already a
+stable id, assigned to a distinct, already-completed earlier increment ("genuinely distinct
+secondary-page compositions and the missing Accounts/Merchants page" — see that checkpoint above and
+`docs/REQUIREMENTS.md`'s own BT-013-06 row), as were `BT-013-07` (Shared expenses/Trips patterns) and
+`BT-013-08` (typography/graphics, Checkpoint AH) — an id genuinely reused by mistake, not a second
+requirement deliberately sharing one id. The replacement-Gallery scope described here is renumbered
+to **BT-013-09** everywhere below and in `docs/REQUIREMENTS.md`; the original BT-013-06/07/08 rows
+are untouched and still refer to their own, already-completed work.
 
 **4. NOT started in code this checkpoint, disclosed honestly rather than rushed:** the event
-foundation (BT-009-20) itself and the replacement Design Gallery (BT-013-06) are both large,
+foundation (BT-009-20) itself and the replacement Design Gallery (BT-013-09, corrected from a
+mistakenly-reused BT-013-06 — see the correction note just above) are both large,
 multi-session architectural efforts — building either one in the remaining space of this same
 response, on top of an already-substantial financial-correction fix, would risk exactly what
 CLAUDE.md's working discipline (requirement → failing test → implementation → full suite, one
@@ -3572,17 +3581,178 @@ reviewed against all three lenses, including deliberately writing the backup-com
 FIRST (it failed before the raw-payload fix, confirmed the hazard was real, not theoretical) before
 writing the fix, per the requirement→failing-test→implementation discipline.
 
-**PR:** not yet opened at the time of this checkpoint entry.
+**PR: https://github.com/Stripeman/BudgetTracker/pull/34 — merged by Terry** (`8c524318a81a1d9373fcf9c5c80322a5c03865c5`),
+confirmed via `gh pr view` (`state: MERGED`). Local `main` fast-forwarded to match; no other open PRs.
 
-**Waiting on Terry:** (1) merge the PR this checkpoint becomes; (2) explicit confirmation or
-correction of the BT-009-20..26 dependency order (still open from Checkpoint AS); (3) whether the
-event lifecycle's permission defaults chosen here (any writer creates an event; only a manager or
-owner closes/archives/reopens one) match his intent, or should be a per-workspace setting instead
-(the existing group-settings pattern, e.g. `changeExpenses`, would be the natural place if so);
-(4) Production redeploy when ready (Preview is still at `1161d1cdaeb78c5fe1991a5426d7a54a2580ee97`,
-one commit behind this checkpoint's work until its own PR merges and Preview is redeployed again).
+## Checkpoint AU — Terry's new instruction: ONE feature branch, ONE final commit, ONE PR for all
+remaining authorized work; his event-permission defaults accepted as final; a full working
+checklist established (2026-09-19, same session, continuing directly from Checkpoint AT)
 
-**Exact next step:** open this checkpoint's PR; once merged, redeploy Preview; then begin BT-009-21
-(event-scoped participant access) paired with the first real frontend increment — an event
-directory/picker in the Shared Expenses UI — since a backend-only foundation with no way to ever
-see or choose a second event from the app itself has limited standalone value to Terry.
+**Verified before starting:** PR #34 merge confirmed as above. Preview redeployed via
+`scripts/deploy/deploy.ps1 -Environment preview` (full gate, `SUCCESS`) and independently
+re-confirmed via `GET /api/site-settings`'s public `app.commit` = `8c524318a81a1d9373fcf9c5c80322a5c03865c5`,
+exactly the merge commit. `main` synced locally; new work branches from it as
+`feature/shared-expenses-and-gallery-completion`.
+
+**Terry's new working instruction (verbatim intent, not paraphrased away):** one feature branch, one
+final commit (local WIP commits along the way are expected and will be squashed before the PR, never
+pushed as separate reviewable increments), one PR for ALL remaining authorized work — the expanded
+Shared Expenses requirements, the replacement Design Gallery, settings refinements, and everything
+else already recorded. His own accepted defaults, no longer merely this agent's proposal: **any
+authorized workspace writer may create an event; managers/owners close, archive and reopen them**,
+subject to the existing server-side permission checks (exactly what BT-009-20/21 already built —
+confirmed matching, not changed). Local recovery commits protect the work; only Terry's merge, a PR
+open/merge, or a Production deploy remain outside this agent's role.
+
+**Working checklist (updated as this progresses — not a promise of a fixed order, since Terry
+explicitly authorized adjusting routine sequencing):**
+- [x] BT-009-21 — event-scoped access-scope honesty (`eventAccessNote`, always accurate: events are
+  organizational, never a separate visibility boundary) + `?eventId=` scoped GET + full frontend
+  (event directory card, Add event, View/back-to-combined, manager-only Close/Archive/Reopen with
+  real confirm dialogs stating the true effect, "Add expense"/"Record a payment" joining the
+  currently-viewed event). Backend: `api/group/handler.js`. Frontend: `app/js/ui/views/group.js`,
+  `app/js/core/store.js` (new ambient `groupEventFilter`, chosen so every existing
+  `write(fn, REFRESH)` call site keeps working with zero per-call-site changes), `app/js/core/api.js`.
+  Evidence: `api/test/group-events.test.js` (+1 test), new `app/test/group-events-ui.test.js` (5
+  tests), new real-browser `scripts/dev/e2e/groupevents.mjs` (5/5 passed) — creating a named event,
+  switching to view it, an expense joining it, closing it (blocks a new expense, still allows
+  recording a payment), the server's own refusal wording shown in the dialog. Full regression at this
+  point: `npm --prefix api test` 680/680, `npm test` 535/535, `npm run e2e` 681/681, all exit 0.
+- [x] BT-009-25 (subset) — fixed-allocation-plus-remainder split method (`fixed-remainder`, mirrored
+  identically server/client via the same `money.allocate` deterministic largest-remainder algorithm)
+  and saved split presets (proportion-only: equal/shares/percentages — deliberately never a
+  money-shaped method, since a fixed figure does not generalize across expense sizes; backed
+  up/restored/integrity-checked via `backup.js`'s generic `COLLECTIONS` mechanism). Evidence:
+  `api/test/group-splits.test.js` (6), `app/test/group-splits-ui.test.js` (2),
+  `api/test/group-split-presets.test.js` (7), `app/test/group-split-presets-ui.test.js` (4),
+  real-browser `scripts/dev/e2e/groupsplits.mjs` (4/4 passed). **Explicitly deferred, reasoned in
+  `docs/REQUIREMENTS.md`'s BT-009-25 row, not silently dropped:** couples/families paying as a unit
+  (needs a new participant concept touching `canonicalRef`/balances/suggestions — too large to build
+  safely alongside everything else this pass), itemized tax/tip/discount/fee receipt allocation
+  (depends on the not-yet-built receipts/attachments storage architecture, BT-009-14's real
+  dependency), refunds linked to the original expense (needs its own designed-and-reviewed financial
+  model, not yet specified), shared income/prepaid contributions/deposits (a materially different
+  money-arrives flow that needs its own requirement discussion with Terry, not a same-pass reuse of
+  the expense/settlement model).
+- [x] BT-009-22 — event templates: `createEvent` accepts an optional `templateEventId`, copying only
+  description/icon/color (never participants, expenses, settlements, invitations or grants), still
+  overridable per-field. Evidence: `api/test/group-events.test.js` (+2 tests). No frontend "Use as
+  template" picker yet (API-only today, like BT-009-24 below) — recorded as a real, not silently
+  dropped, gap.
+- [x] BT-009-23 — per-event exports: `GET ?action=export` accepts an optional `eventId`, scoping
+  `sharedexport.js`'s report to that event's own expenses/settlements (filename includes the event's
+  name); unknown `eventId` is a plain 404; omitted, behaviour is unchanged from BT-014-06. Frontend:
+  the Events card offers "Export…" per event and "Export everything…" combined, reusing BT-014-06's
+  exact CSV/JSON/XLSX/PDF picker and `downloadFile()` helper. Evidence: `api/test/sharedexport.test.js`
+  (+1 test), `app/test/group-events-ui.test.js` (+1 test), real-browser verification in
+  `scripts/dev/e2e/groupevents.mjs` (a genuine click reaches "Downloaded.", independently re-fetched
+  via the API to confirm the scoped content and filename).
+- [x] BT-009-24 — safe cross-event data moves: reuses the EXISTING expense-correction amendment
+  pathway (`eventId` is just another trackable/audited field on `PATCH /api/group`) rather than a new
+  "move" feature; moving into a non-active event is refused with a clear 409 naming the event and its
+  status; moving OUT of a non-active event is already blocked by the existing `assertEventWritable`
+  check on the source event. Evidence: `api/test/group-events.test.js` (+3 tests: success into an
+  active event, refusal into a closed one, an expense that predates its own event's later closure
+  still cannot be moved). No frontend "Move to another event" control yet (API-only today) — recorded
+  as a real, not silently dropped, gap.
+- [x] BT-009-26 — EXPLICITLY DEFERRED, reasoned in `docs/REQUIREMENTS.md`'s BT-009-26 row: none of
+  offline-queue, external-import, or notification/reminder infrastructure exists anywhere else in the
+  app; each of the four items (offline writes, Splitwise import, payment reminders, group insights) is
+  itself a separately-sized increment, not a small addition to the now-complete event foundation.
+  docs/REQUIREMENTS.md updated accordingly; no code changed for this row.
+- [x] docs/REQUIREMENTS.md updated for BT-009-20 through BT-009-26 (status, evidence, and the BT-009
+  summary row) to reflect all of the above accurately.
+- [x] BT-013-09 (renumbered from a mistakenly-reused BT-013-06 — see the correction note above) —
+  the replacement Design Gallery's four genuinely missing pieces, fixed and verified: real
+  per-concept colour/contrast identity (`accentLight`/`accentDark` per concept in
+  `api/_shared/layouts.js`, each pair independently contrast-verified >=3:1 against the real light
+  and dark surfaces, applied ONLY inside that concept's own `.gframe` via `--g-accent`, never a real
+  workspace's theme); real interactive Settings controls (`pickerSelect`/`field`, the exact real
+  production mechanism, replacing the former read-only label/badge list — a control genuinely
+  changes value when used, with "Preview only" said plainly); a real Shared-expense Events directory
+  reflecting BT-009-20's now-real model (name/status/count per event; choosing one narrows "Recent
+  shared expenses" to that event's own, with a way back to combined — balances stay combined, honestly
+  disclosed, since this fixture has no full balance-computation engine behind it); and the one silent
+  no-op button fixed (`heroStoryFlow`'s "Add expense" now calls the existing `onNavigate` to switch
+  the preview to Transactions, a real action). Existing infrastructure (comparison, favourites/picks,
+  catalog status, matrix, desktop/tablet/mobile, light/dark, the already-substantial per-concept
+  structural variety across all 8 required pages from BT-013-02/06/07/08) already met the bulk of
+  Terry's "review and selection" requirements and is preserved, not rebuilt — these four were the
+  genuinely missing pieces identified by direct source investigation, not a guess. **Evidence:** 7 new
+  unit tests (`app/test/gallerypatterns.test.js`, 25/25 passing including the 18 pre-existing) and 8
+  new real-browser checks (`scripts/dev/e2e/gallery.mjs`, 141/141 passing, exit 0) proving each fix in
+  an actual rendered page. Full regression at this point: `npm test` 549/549, `npm --prefix api test`
+  699/699, `npm run validate` ok, all exit 0.
+- [x] BT-017 — regression-verified, no genuine gap found needing a fix: `docs/REQUIREMENTS.md`'s
+  existing row already accurately reflects "Partially built" (task-oriented collapsible sections,
+  personal-vs-workspace distinction, overlay dropdowns), with a fuller visual/spacing pass honestly
+  recorded as the one remaining open item — not silently upgraded to "done" without new work to back
+  it. Real-browser re-verification: `mysettings` (8/8), `settings` (part of the combined 56-check
+  run), `overlay` (part of the same run) all pass, exit 0 — no regression from the BT-009-2x/BT-013-09
+  work above.
+- [x] Bills merchant flow — regression-verified against existing real-browser coverage: `bills`
+  (37/37) and `transactions` (50/50, includes the Merchant-field command-picker/search/inline-create/
+  duplicate-handling/account-change-clear checks) both pass, exit 0. No gap found; nothing rebuilt.
+- [ ] Final: full regression (`npm test`, `npm --prefix api test`, `npm run validate`, `npm run e2e`),
+  secret scan, squash local WIP commits into ONE final commit, push, open the single PR, redeploy
+  Preview, one consolidated report to Terry.
+
+**Waiting on Terry:** nothing blocking right now — continuing through the checklist above. Any
+genuine decision point will be asked specifically, in place, without stopping unrelated work. The
+four BT-009-25 deferrals (couples/families as a unit, itemized receipt allocation, linked refunds,
+shared income/deposits) will eventually need Terry's confirmation of the intended model before being
+built, but that is not blocking the rest of this checklist.
+
+**Full regression as of this checkpoint:** `npm test` 549/549 exit 0; `npm --prefix api test`
+699/699 exit 0; `npm run validate` ok (24 routes); real-browser `npm run e2e` runs for `groupevents`
+(6/6), `groupsplits` (4/4), `accountrequests` (14/14), `shared` (16/16), `recheck` (39/39) and
+`gallery` (141/141) all exit 0 — the full all-scenarios `npm run e2e` has not been re-run in one pass
+since this checkpoint (each touched scenario was run individually and passed); a full-suite run is
+still owed before the final PR.
+
+**Terry's design selection reminder:** BT-013-09's four genuinely missing pieces are now fixed and
+verified (see the checklist item above); all 15 concepts across all 8 required pages remain
+reviewable exactly as before, now with real colour identity, real Settings controls, a real Events
+directory and no silent no-op controls. Terry's own selection of which concept(s) to keep is still
+his to make — nothing here activates any of them as a real, selectable workspace layout.
+
+**Final wrap-up, done this checkpoint:**
+- Repository refresh: `git fetch origin` confirmed `origin/main` is exactly at this branch's own
+  merge-base (`8c524318a81a1d9373fcf9c5c80322a5c03865c5`) — no upstream drift since branching, nothing
+  to reconcile.
+- One more full regression pass, all green: `npm test` 549/549 exit 0; `npm --prefix api test`
+  699/699 exit 0; `npm run validate` ok (24 routes) exit 0; the FULL `npm run e2e` (every scenario,
+  one pass, not sampled): **694 passed, 0 failed, 0 skipped, exit 0**.
+- README.md's e2e scenario enumeration corrected to list `groupevents`/`groupsplits` (new this pass)
+  and several already-registered-but-missing scenarios from earlier sessions.
+- A real, pre-existing requirement-id collision found and fixed: `BT-013-06` had already been a
+  stable id for a distinct, completed earlier increment when a later checkpoint reused it for the
+  "replacement Gallery" scope — renumbered to `BT-013-09` throughout, original rows untouched.
+- `docs/REQUIREMENTS.md` clarified that BT-009-21's scoped balances are genuinely recomputed per
+  event (not just filtered lists under an unchanged combined total).
+
+**Completed:** full-range `gitleaks git --log-opts="8c52431..HEAD"` scan across all 15 pre-squash
+commits — no leaks found. A local safety tag
+(`safety/pre-squash-shared-expenses-gallery-20260919-155549`) was made before squashing, per the
+"protect unfinished work with local recovery checkpoints" instruction. All 16 local WIP commits
+squashed via `git reset --soft 8c52431` into ONE final commit (`fa4e3b5`,
+`fa4e3b57955ebcfb28c9e5fa4bd1a159d953c25f`) — 26 files, +1941/-114 — main and PR #34's already-merged
+history untouched. Tests re-run against the squashed tree (`npm test` 549/549, `npm --prefix api
+test` 699/699, `npm run validate` ok, all exit 0) before pushing.
+
+**PR opened:** https://github.com/Stripeman/BudgetTracker/pull/35 (`feature/shared-expenses-and-gallery-completion` → `main`), MERGEABLE, both `foundation-tests` and `secret-scan` CI checks pass. Not
+merged — that remains Terry's own action.
+
+**Preview redeployed and independently verified:** `scripts/deploy/deploy.ps1 -Environment preview`
+ran the full gate (test/validate/build/secret-scan, all `ok`) and reported `SUCCESS`, sha
+`fa4e3b57955ebcfb28c9e5fa4bd1a159d953c25f`; independently re-confirmed via a direct, unauthenticated
+`GET https://polite-plant-03bb7570f-preview.eastus2.3.azurestaticapps.net/api/site-settings` — its
+public `app.commit` reads the same sha. Production was never touched.
+
+**Waiting on Terry:** (1) review and merge PR #35 when ready (never done by this agent); (2) his
+design selection among the 15 Gallery concepts, now that BT-013-09's four identified gaps are fixed
+and all 15 remain reviewable across all 8 required pages — his own selection was never a
+precondition of this pass and is not blocking; (3) eventual confirmation of the intended model for
+BT-009-25's four deferred items (couples/families as a unit, itemized receipt allocation, linked
+refunds, shared income/deposits) and whether/when to authorize BT-009-26 (offline/import/reminders/
+insights) as its own future increment.

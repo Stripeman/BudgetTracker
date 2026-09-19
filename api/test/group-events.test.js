@@ -80,6 +80,33 @@ describe('BT-009-20 events: lazy default, directory, and permission-gated lifecy
     assert.equal(badEvent.status, 404);
   });
 
+  test('BT-009-21: ?eventId= scopes expenses/settlements/balances to one event; omitted, the response is exactly the combined view it has always been; the access-scope note is always honest', async () => {
+    const h = harness();
+    const f = await fixture(h);
+    const ski = ok(await act(h, f, 'alice', 'create-event', { name: 'Ski trip' }), 201).event;
+    const bbq = ok(await act(h, f, 'alice', 'create-event', { name: 'Summer BBQ' }), 201).event;
+    await addExpense(h, f, 'alice', { description: 'Lift passes', amount: '80.00', eventId: ski.id, payers: [{ ref: f.refs.alice }], split: equal(f.refs.alice, f.refs.bob) });
+    await addExpense(h, f, 'alice', { description: 'Burgers', amount: '20.00', eventId: bbq.id, payers: [{ ref: f.refs.alice }], split: equal(f.refs.alice, f.refs.bob) });
+
+    const combined = await view(h, f);
+    assert.equal(combined.expenses.length, 2, 'omitted eventId: every event combined, unchanged');
+    assert.equal('currentEvent' in combined, false);
+    assert.match(combined.eventAccessNote, /do not change who can see them/);
+
+    const scoped = await G(h, f, 'alice', 'GET', { query: { eventId: ski.id } });
+    const scopedBody = ok(scoped);
+    assert.deepEqual(scopedBody.expenses.map((e) => e.description), ['Lift passes']);
+    assert.equal(scopedBody.currentEvent.id, ski.id);
+    assert.equal(scopedBody.currentEvent.name, 'Ski trip');
+    const scopedBalance = scopedBody.balances.find((b) => b.currency === 'EUR').rows.find((r) => r.ref === f.refs.bob);
+    assert.equal(scopedBalance.net, '-40.00', 'only the Ski trip expense counts toward this scoped balance (half of 80.00)');
+
+    // Carol has NO special per-event access — a plain member sees the event she can already see,
+    // never told it is somehow narrower than the workspace she is already a member of.
+    const unknown = await G(h, f, 'alice', 'GET', { query: { eventId: 'gev_nosuch00000' } });
+    assert.equal(unknown.status, 404);
+  });
+
   test('closing an event: only a manager/owner may; blocks new expenses and corrections, but not new/confirmed/disputed settlements or voiding a payment; never touches balances or history', async () => {
     const h = harness();
     const f = await fixture(h);
@@ -314,5 +341,96 @@ describe('BT-009-20 backup/restore/integrity', () => {
     assert.equal(p3.blockers.length, 0, 'create-new: no blockers');
     const exec3 = ok(await h.call('restore', 'POST', { as: 'alice', query: { action: 'execute' }, body: { workspaceId: f.ws.id, archiveId, mode: 'create-new', expectedEtag: p3.expectedEtag } }), 201);
     check((await h.storage.getJson(`workspaces/${exec3.workspace.id}/workspace.json`)).value, 'create-new');
+  });
+});
+
+describe('BT-009-24 safe cross-event moves: moving an expense to another event never breaks a settlement, participant history or ledger link', () => {
+  test('moving an expense to another ACTIVE event is a normal, amendment-tracked correction; balances, shares and history are all untouched by the move itself', async () => {
+    const h = harness();
+    const f = await fixture(h);
+    const ski = ok(await act(h, f, 'alice', 'create-event', { name: 'Ski trip' }), 201).event;
+    const bbq = ok(await act(h, f, 'alice', 'create-event', { name: 'Summer BBQ' }), 201).event;
+    const e = await addExpense(h, f, 'alice', { description: 'Lift passes', amount: '80.00', eventId: ski.id, payers: [{ ref: f.refs.alice }], split: equal(f.refs.alice, f.refs.bob) });
+    const balanceBefore = (await view(h, f)).balances.find((b) => b.currency === 'EUR').rows.find((r) => r.ref === f.refs.bob).net;
+
+    const moved = ok(await G(h, f, 'alice', 'PATCH', { body: { expenseId: e.id, revision: e.revision, reason: 'Wrong event', eventId: bbq.id } })).expense;
+    assert.equal(moved.eventId, bbq.id);
+    assert.equal(moved.amount, '80.00', 'the move alone never changes the amount, payers or shares');
+    assert.deepEqual(moved.shares.map((s) => s.amount), ['40.00', '40.00']);
+
+    const balanceAfter = (await view(h, f)).balances.find((b) => b.currency === 'EUR').rows.find((r) => r.ref === f.refs.bob).net;
+    assert.equal(balanceAfter, balanceBefore, 'the combined view\'s balance is unaffected by which event an expense sits in');
+
+    const scoped = await G(h, f, 'alice', 'GET', { query: { eventId: bbq.id } });
+    assert.equal(ok(scoped).expenses.some((x) => x.id === e.id), true, 'it now appears in the destination event\'s own scoped view');
+    const skiScoped = await G(h, f, 'alice', 'GET', { query: { eventId: ski.id } });
+    assert.equal(ok(skiScoped).expenses.some((x) => x.id === e.id), false, 'and no longer in the source event\'s');
+
+    const hist = ok(await G(h, f, 'alice', 'GET', { query: { action: 'history', expenseId: e.id } }));
+    const last = hist.amendments[hist.amendments.length - 1];
+    assert.ok(last.changes.some((c) => c.field === 'eventId'), 'the move itself is in the amendment trail, like any other tracked field');
+  });
+
+  test('moving INTO a closed or archived event is refused and explained; moving OUT of one is refused by the existing "reopen first" rule', async () => {
+    const h = harness();
+    const f = await fixture(h);
+    const ski = ok(await act(h, f, 'alice', 'create-event', { name: 'Ski trip' }), 201).event;
+    const closed = ok(await act(h, f, 'alice', 'create-event', { name: 'Closed event' }), 201).event;
+    const e = await addExpense(h, f, 'alice', { description: 'Lift passes', amount: '80.00', eventId: ski.id, payers: [{ ref: f.refs.alice }], split: equal(f.refs.alice, f.refs.bob) });
+    // Added while "Closed event" was still active, exactly like any real expense that predates its
+    // own event later being closed.
+    const e2 = await addExpense(h, f, 'alice', { description: 'In the closed event already', amount: '10.00', eventId: closed.id, payers: [{ ref: f.refs.alice }], split: equal(f.refs.alice, f.refs.bob) });
+    ok(await act(h, f, 'alice', 'event-status', { eventId: closed.id, status: 'closed' }));
+
+    const intoClosed = await G(h, f, 'alice', 'PATCH', { body: { expenseId: e.id, revision: e.revision, reason: 'try', eventId: closed.id } });
+    assert.equal(intoClosed.status, 409);
+    assert.equal(intoClosed.body.error.code, 'event_closed');
+    assert.match(intoClosed.body.error.message, /cannot receive a moved expense/);
+    const outOfClosed = await G(h, f, 'alice', 'PATCH', { body: { expenseId: e2.id, revision: e2.revision, reason: 'try', eventId: ski.id } });
+    assert.equal(outOfClosed.status, 409);
+    assert.equal(outOfClosed.body.error.code, 'event_closed', 'blocked by the existing "corrections need the event reopened" rule, before the destination is even checked');
+  });
+
+  test('an unknown destination event is refused with 404, exactly like an unknown eventId on creation', async () => {
+    const h = harness();
+    const f = await fixture(h);
+    const ski = ok(await act(h, f, 'alice', 'create-event', { name: 'Ski trip' }), 201).event;
+    const e = await addExpense(h, f, 'alice', { description: 'Lift passes', amount: '80.00', eventId: ski.id, payers: [{ ref: f.refs.alice }], split: equal(f.refs.alice, f.refs.bob) });
+    const res = await G(h, f, 'alice', 'PATCH', { body: { expenseId: e.id, revision: e.revision, reason: 'try', eventId: 'gev_nosuch00000' } });
+    assert.equal(res.status, 404);
+  });
+});
+
+describe('BT-009-22 event templates: copying reusable setup only, never financial records or access', () => {
+  test('a new event created from a template copies its description/icon/colour, never its participants, expenses, settlements, invitations or grants', async () => {
+    const h = harness();
+    const f = await fixture(h);
+    const original = ok(await act(h, f, 'alice', 'create-event', { name: 'Ski trip 2026', description: 'Annual chalet week', icon: 'suitcase', color: '#2563eb' }), 201).event;
+    await addExpense(h, f, 'alice', { description: 'Lift passes', amount: '80.00', eventId: original.id, payers: [{ ref: f.refs.alice }], split: equal(f.refs.alice, f.refs.bob) });
+
+    const fromTemplate = ok(await act(h, f, 'alice', 'create-event', { name: 'Ski trip 2027', templateEventId: original.id }), 201).event;
+    assert.equal(fromTemplate.description, 'Annual chalet week');
+    assert.equal(fromTemplate.icon, 'suitcase');
+    assert.equal(fromTemplate.color, '#2563eb');
+    // Genuinely a new, empty event — no financial records came along.
+    assert.equal(fromTemplate.expenseCount, 0);
+    assert.equal(fromTemplate.settlementCount, 0);
+    assert.notEqual(fromTemplate.id, original.id);
+
+    // Explicit fields in the request still win over the template (never silently overridden).
+    const overridden = ok(await act(h, f, 'alice', 'create-event', { name: 'Ski trip 2028', templateEventId: original.id, color: '#dc2626' }), 201).event;
+    assert.equal(overridden.description, 'Annual chalet week', 'still copied where not given explicitly');
+    assert.equal(overridden.color, '#dc2626', 'the explicit value wins');
+
+    // The workspace's membership/invitations/grants are completely untouched by any of this.
+    const members = ok(await h.call('members', 'GET', { as: 'alice', query: f.q })).members;
+    assert.equal(members.length, 3, 'still exactly Alice, Bob and Carol — no invitation or membership was silently recreated');
+  });
+
+  test('an unknown template event id is refused with 404', async () => {
+    const h = harness();
+    const f = await fixture(h);
+    const res = await act(h, f, 'alice', 'create-event', { name: 'x', templateEventId: 'gev_nosuch00000' });
+    assert.equal(res.status, 404);
   });
 });

@@ -29,6 +29,11 @@ export function initialState() {
     accounts: emptySlice(null), transactions: emptySlice(null), payees: emptySlice(null),
     categories: emptySlice(null), members: emptySlice(null), bills: emptySlice(null),
     budgets: emptySlice(null), forecast: emptySlice(null), icons: emptySlice(null), group: emptySlice(null), monthActivity: emptySlice(null), weekActivity: emptySlice(null),
+    // BT-009-21: which shared-expense event's own scoped view is currently open, or null for the
+    // combined (all-events) view — ambient like `selectedWorkspaceId`, so every existing
+    // `write(fn, REFRESH)` call site's plain `refreshGroup()` automatically re-fetches whichever
+    // scope the person is actually looking at, with no per-call-site change needed.
+    groupEventFilter: null,
   };
 }
 
@@ -91,7 +96,7 @@ export function createStore({ api }) {
       generation += 1;
       // Synchronous reset BEFORE any await, so nothing from the previous workspace can render.
       commit({
-        selectedWorkspaceId: id,
+        selectedWorkspaceId: id, groupEventFilter: null,
         accounts: emptySlice(id), transactions: emptySlice(id), payees: emptySlice(id), categories: emptySlice(id), members: emptySlice(id), bills: emptySlice(id),
         budgets: emptySlice(id), forecast: emptySlice(id), icons: emptySlice(id), group: emptySlice(id), monthActivity: emptySlice(id), weekActivity: emptySlice(id),
       });
@@ -122,7 +127,17 @@ export function createStore({ api }) {
     refreshBills: () => loadSlice("bills", (id) => api.bills(id)),
     refreshBudgets: () => loadSlice("budgets", (id) => api.budgets(id)),
     // Shared expenses and settlement (BT-009): expenses, payments and derived balances.
-    refreshGroup: () => loadSlice("group", (id) => api.group(id)),
+    // BT-009-21: reads the ambient `groupEventFilter` automatically, so every existing
+    // `write(fn, REFRESH)` call site's plain `refreshGroup()` (no args, unchanged) re-fetches
+    // whichever event's scoped view the person actually has open, or the combined view when none.
+    refreshGroup: () => loadSlice("group", (id) => api.group(id, state.groupEventFilter ? { eventId: state.groupEventFilter } : {})),
+    // Switches between the combined view (`null`) and one event's own scoped view; a real store
+    // action (not view-local state) so it survives exactly like `selectedWorkspaceId` does across
+    // every refresh this page or its dialogs trigger.
+    async setGroupEventFilter(eventId) {
+      commit({ groupEventFilter: eventId || null });
+      await actions.refreshGroup();
+    },
     // The last forecast parameters are kept, so a refresh after a write keeps the chosen horizon.
     refreshForecast: (params) => { if (params) lastForecast = params; return loadSlice("forecast", (id) => api.forecast(id, lastForecast)); },
 
@@ -162,7 +177,7 @@ export function createStore({ api }) {
           const next = openable.find((w) => w.id === preferred) || openable[0] || null;
           const nextId = next ? next.id : null;
           commit({
-            workspaces: list.workspaces, selectedWorkspaceId: nextId,
+            workspaces: list.workspaces, selectedWorkspaceId: nextId, groupEventFilter: null,
             accounts: emptySlice(nextId), transactions: emptySlice(nextId), payees: emptySlice(nextId), categories: emptySlice(nextId), members: emptySlice(nextId), bills: emptySlice(nextId),
             budgets: emptySlice(nextId), forecast: emptySlice(nextId), icons: emptySlice(nextId), group: emptySlice(nextId), monthActivity: emptySlice(nextId), weekActivity: emptySlice(nextId),
           });
@@ -192,7 +207,7 @@ export function createStore({ api }) {
           const next = openable.find((w) => w.id === preferred) || openable[0] || null;
           const nextId = next ? next.id : null;
           commit({
-            workspaces: list.workspaces, selectedWorkspaceId: nextId,
+            workspaces: list.workspaces, selectedWorkspaceId: nextId, groupEventFilter: null,
             accounts: emptySlice(nextId), transactions: emptySlice(nextId), payees: emptySlice(nextId), categories: emptySlice(nextId), members: emptySlice(nextId), bills: emptySlice(nextId),
             budgets: emptySlice(nextId), forecast: emptySlice(nextId), icons: emptySlice(nextId), group: emptySlice(nextId), monthActivity: emptySlice(nextId), weekActivity: emptySlice(nextId),
           });

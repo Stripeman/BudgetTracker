@@ -45,6 +45,21 @@
 //   transactionsPattern / billsPattern / budgetPattern / accountsPattern / settingsPattern
 //                      genuinely distinct secondary-page compositions (review, 2026-09-18) — see the
 //                      dedicated comment above their axis constants near the bottom of this file.
+//   accentLight / accentDark
+//                      each concept's own colour IDENTITY (review, 2026-09-19: before this, every
+//                      concept shared only the site's own theme tokens — explicitly documented as
+//                      deliberate in gallery.css's own former header comment, and a real gap against
+//                      Terry's "deliberate... color" requirement). A hex pair — one tuned for light
+//                      mode, one for dark — applied ONLY inside that concept's own `.gframe` (never
+//                      the surrounding application chrome, never a real workspace) as `--g-accent`,
+//                      read by app/js/ui/gallery/compose.js/gallery.css wherever a concept-specific
+//                      accent belongs (active nav, meters, chart lines/fills, the bold-display rule,
+//                      the filled-tint card background). Every one of the 15 pairs is independently
+//                      verified (app/test/gallerypatterns.test.js) at >=3:1 contrast against the
+//                      real light surface (#ffffff) and dark surface (#141a24) respectively — the
+//                      same WCAG non-text-contrast bar this repository already holds hairline
+//                      borders and focus rings to elsewhere. This is genuinely additive to, never a
+//                      replacement for, the palette/mode picker every concept still also honours.
 //
 // `fidelity: 'flagship'` marks the concepts hand-tuned beyond the shared responsive template with
 // bespoke content (see docs/REQUIREMENTS.md BT-013 for exactly which pages, per concept, and
@@ -86,6 +101,7 @@ const CONCEPTS = Object.freeze([
     accessibilityNotes: ['Dense tables need generous row height at 200% zoom; verified no overflow at 320px by reflowing to cards.', 'Sidebar order matches reading order for screen readers (nav before main).'],
     density: 'comfortable', navStyle: 'sidebar', dashboardPattern: 'table-first', cardStyle: 'flat-bordered', chartEmphasis: 'bars', typeVoice: 'technical-mono',
     transactionsPattern: 'dense-table', billsPattern: 'compact-table', budgetPattern: 'list-progress', accountsPattern: 'table', settingsPattern: 'two-column-grouped', sharedPattern: 'ledger-table', tripsPattern: 'list',
+    accentLight: '#183f8b', accentDark: '#5184ec',
     fidelity: 'flagship', recommended: true,
   }),
   c({
@@ -99,6 +115,7 @@ const CONCEPTS = Object.freeze([
     accessibilityNotes: ['Card borders and shadows never the only signal of separation (also spacing and headings).', 'Reduced motion collapses the card entrance transition to none.'],
     density: 'comfortable', navStyle: 'top', dashboardPattern: 'card-stack', cardStyle: 'soft-shadow', chartEmphasis: 'line', typeVoice: 'friendly-rounded',
     transactionsPattern: 'card-list', billsPattern: 'grouped-status', budgetPattern: 'envelope-grid', accountsPattern: 'card-grid', settingsPattern: 'flat-list', sharedPattern: 'balance-list', tripsPattern: 'card-grid',
+    accentLight: '#178279', accentDark: '#47ebdd',
     fidelity: 'flagship', recommended: true,
   }),
   c({
@@ -112,6 +129,7 @@ const CONCEPTS = Object.freeze([
     accessibilityNotes: ['Icon rail items keep full text labels for assistive technology even though they are visually hidden.', 'Ultra-compact spacing still keeps 44px hit targets via padding, not just the visible glyph.'],
     density: 'ultra-compact', navStyle: 'rail', dashboardPattern: 'command-console', cardStyle: 'outline-minimal', chartEmphasis: 'mixed', typeVoice: 'technical-mono',
     transactionsPattern: 'dense-table', billsPattern: 'kanban-columns', budgetPattern: 'bar-comparison', accountsPattern: 'table', settingsPattern: 'two-column-grouped', sharedPattern: 'settlement-focus', tripsPattern: 'list',
+    accentLight: '#8f3d14', accentDark: '#f07c42',
     fidelity: 'flagship', recommended: true,
   }),
   c({
@@ -125,6 +143,7 @@ const CONCEPTS = Object.freeze([
     accessibilityNotes: ['Single column removes any reading-order ambiguity.', 'Generous line-height and text size by default (this concept\'s own density is already the most spacious).'],
     density: 'spacious', navStyle: 'top', dashboardPattern: 'story-flow', cardStyle: 'soft-shadow', chartEmphasis: 'line', typeVoice: 'friendly-rounded',
     transactionsPattern: 'flat-list', billsPattern: 'timeline', budgetPattern: 'envelope-grid', accountsPattern: 'card-grid', settingsPattern: 'flat-list', sharedPattern: 'balance-list', tripsPattern: 'card-grid',
+    accentLight: '#1b7e4d', accentDark: '#55e79e',
     fidelity: 'flagship', recommended: true,
   }),
   c({
@@ -138,6 +157,7 @@ const CONCEPTS = Object.freeze([
     accessibilityNotes: ['Hairline borders verified at >=3:1 against surface in every palette/mode (same check as the login page\'s preview cards).', 'Table headers keep scope="col"/"row" regardless of density.'],
     density: 'compact', navStyle: 'rail', dashboardPattern: 'table-first', cardStyle: 'bordered-mono', chartEmphasis: 'bars', typeVoice: 'technical-mono',
     transactionsPattern: 'dense-table', billsPattern: 'compact-table', budgetPattern: 'list-progress', accountsPattern: 'table', settingsPattern: 'two-column-grouped', sharedPattern: 'ledger-table', tripsPattern: 'list',
+    accentLight: '#441e8f', accentDark: '#8c5ee8',
     fidelity: 'standard', recommended: false,
   }),
   c({
@@ -151,6 +171,7 @@ const CONCEPTS = Object.freeze([
     accessibilityNotes: ['Every chart pairs with the existing sr-only figure table pattern (from the Usage page); the line itself is never the only source of the numbers.', 'Line colour kept distinguishable from category colours already in use, never relying on hue alone (also different dash pattern per series).'],
     density: 'comfortable', navStyle: 'sidebar', dashboardPattern: 'chart-first', cardStyle: 'soft-shadow', chartEmphasis: 'area', typeVoice: 'editorial-serif',
     transactionsPattern: 'grouped-by-date', billsPattern: 'timeline', budgetPattern: 'bar-comparison', accountsPattern: 'grouped-by-type', settingsPattern: 'flat-list', sharedPattern: 'settlement-focus', tripsPattern: 'timeline',
+    accentLight: '#866913', accentDark: '#eabf3e',
     fidelity: 'flagship', recommended: true,
   }),
   c({
@@ -164,6 +185,7 @@ const CONCEPTS = Object.freeze([
     accessibilityNotes: ['Household member list never shows another member\'s private account information (structural composition only — the underlying authorization is unchanged by layout).', 'Cards reflow to one column at 320px with no truncation of names.'],
     density: 'spacious', navStyle: 'top', dashboardPattern: 'card-stack', cardStyle: 'soft-shadow', chartEmphasis: 'bars', typeVoice: 'friendly-rounded',
     transactionsPattern: 'card-list', billsPattern: 'grouped-status', budgetPattern: 'envelope-grid', accountsPattern: 'grouped-by-type', settingsPattern: 'flat-list', sharedPattern: 'balance-list', tripsPattern: 'card-grid',
+    accentLight: '#8f1e44', accentDark: '#e85e8c',
     fidelity: 'standard', recommended: false,
   }),
   c({
@@ -177,6 +199,7 @@ const CONCEPTS = Object.freeze([
     accessibilityNotes: ['Currency figures always paired with their code, never a bare symbol.', 'Split-panel layout uses a single DOM reading order (balances, then trip) so it matches visually at every width.'],
     density: 'comfortable', navStyle: 'top', dashboardPattern: 'split-focus', cardStyle: 'soft-shadow', chartEmphasis: 'bars', typeVoice: 'editorial-serif',
     transactionsPattern: 'grouped-by-date', billsPattern: 'timeline', budgetPattern: 'envelope-grid', accountsPattern: 'card-grid', settingsPattern: 'flat-list', sharedPattern: 'settlement-focus', tripsPattern: 'timeline',
+    accentLight: '#177082', accentDark: '#49cee9',
     fidelity: 'standard', recommended: true,
   }),
   c({
@@ -190,6 +213,7 @@ const CONCEPTS = Object.freeze([
     accessibilityNotes: ['Outline-only cards keep a visible focus ring that does not rely on the card\'s own border.', 'Heading hierarchy is the primary orientation cue and is kept strictly logical.'],
     density: 'spacious', navStyle: 'top', dashboardPattern: 'story-flow', cardStyle: 'outline-minimal', chartEmphasis: 'line', typeVoice: 'editorial-serif',
     transactionsPattern: 'flat-list', billsPattern: 'timeline', budgetPattern: 'list-progress', accountsPattern: 'card-grid', settingsPattern: 'flat-list', sharedPattern: 'balance-list', tripsPattern: 'list',
+    accentLight: '#3d4452', accentDark: '#a1a9ba',
     fidelity: 'standard', recommended: false,
   }),
   c({
@@ -203,6 +227,7 @@ const CONCEPTS = Object.freeze([
     accessibilityNotes: ['The filter rail is reachable by keyboard before the results in tab order when open, and is a labelled region either way.', 'Collapsing the rail to a drawer keeps focus management (opens with focus inside, closes returning focus to its toggle) — the same pattern as the command picker\'s panel.'],
     density: 'compact', navStyle: 'sidebar-right', dashboardPattern: 'table-first', cardStyle: 'outline-minimal', chartEmphasis: 'bars', typeVoice: 'technical-mono',
     transactionsPattern: 'filter-first', billsPattern: 'compact-table', budgetPattern: 'bar-comparison', accountsPattern: 'table', settingsPattern: 'two-column-grouped', sharedPattern: 'ledger-table', tripsPattern: 'list',
+    accentLight: '#6f2786', accentDark: '#c470e1',
     fidelity: 'flagship', recommended: true,
   }),
   c({
@@ -216,6 +241,7 @@ const CONCEPTS = Object.freeze([
     accessibilityNotes: ['Every progress meter keeps the existing figure-as-text rule; "on track" / "behind" stated in words, never colour alone.', 'No animated counters — reduced motion is respected identically to every other concept.'],
     density: 'spacious', navStyle: 'top', dashboardPattern: 'goal-progress', cardStyle: 'soft-shadow', chartEmphasis: 'donut', typeVoice: 'bold-display',
     transactionsPattern: 'flat-list', billsPattern: 'grouped-status', budgetPattern: 'bar-comparison', accountsPattern: 'card-grid', settingsPattern: 'flat-list', sharedPattern: 'settlement-focus', tripsPattern: 'card-grid',
+    accentLight: '#972070', accentDark: '#e967be',
     fidelity: 'standard', recommended: false,
   }),
   c({
@@ -229,6 +255,7 @@ const CONCEPTS = Object.freeze([
     accessibilityNotes: ['Every merchant row keeps its managed icon plus visible name (icon never the only identifier).', 'Feed is a real list (ul/li), ordered and readable by assistive technology in the same order as sighted users see it.'],
     density: 'comfortable', navStyle: 'sidebar', dashboardPattern: 'merchant-feed', cardStyle: 'flat-bordered', chartEmphasis: 'bars', typeVoice: 'bold-display',
     transactionsPattern: 'card-list', billsPattern: 'grouped-status', budgetPattern: 'envelope-grid', accountsPattern: 'grouped-by-type', settingsPattern: 'flat-list', sharedPattern: 'ledger-table', tripsPattern: 'card-grid',
+    accentLight: '#476f20', accentDark: '#94da4e',
     fidelity: 'standard', recommended: false,
   }),
   c({
@@ -242,6 +269,7 @@ const CONCEPTS = Object.freeze([
     accessibilityNotes: ['Cards are headed sections (aria-labelledby) in a stable, logical order — not a drag-and-drop layout (which would need far more accessibility work than this review scope covers).', 'Grid reflows to one column at 320px, in the same DOM order.'],
     density: 'comfortable', navStyle: 'top', dashboardPattern: 'metric-grid', cardStyle: 'soft-shadow', chartEmphasis: 'bars', typeVoice: 'bold-display',
     transactionsPattern: 'card-list', billsPattern: 'kanban-columns', budgetPattern: 'envelope-grid', accountsPattern: 'card-grid', settingsPattern: 'flat-list', sharedPattern: 'settlement-focus', tripsPattern: 'card-grid',
+    accentLight: '#798217', accentDark: '#ddeb47',
     fidelity: 'standard', recommended: false,
   }),
   c({
@@ -255,6 +283,7 @@ const CONCEPTS = Object.freeze([
     accessibilityNotes: ['Sidebar landmark (nav) precedes main in the DOM regardless of visual position.', 'Compact density keeps the same 44px interactive target sizes as every other density (padding compensates for smaller visible chrome).'],
     density: 'compact', navStyle: 'sidebar', dashboardPattern: 'metric-grid', cardStyle: 'outline-minimal', chartEmphasis: 'bars', typeVoice: 'technical-mono',
     transactionsPattern: 'dense-table', billsPattern: 'compact-table', budgetPattern: 'list-progress', accountsPattern: 'table', settingsPattern: 'two-column-grouped', sharedPattern: 'ledger-table', tripsPattern: 'list',
+    accentLight: '#1d722b', accentDark: '#4eda65',
     fidelity: 'flagship', recommended: true,
   }),
   c({
@@ -268,6 +297,7 @@ const CONCEPTS = Object.freeze([
     accessibilityNotes: ['The "more" control is a real, labelled, always-present link/button, never a swipe-only affordance.', 'Reduced navigation never reduces the number of landmarks below one nav + one main.'],
     density: 'spacious', navStyle: 'command', dashboardPattern: 'story-flow', cardStyle: 'soft-shadow', chartEmphasis: 'line', typeVoice: 'friendly-rounded',
     transactionsPattern: 'flat-list', billsPattern: 'timeline', budgetPattern: 'envelope-grid', accountsPattern: 'card-grid', settingsPattern: 'flat-list', sharedPattern: 'balance-list', tripsPattern: 'timeline',
+    accentLight: '#932e1a', accentDark: '#ec6a51',
     fidelity: 'standard', recommended: false,
   }),
 ]);
