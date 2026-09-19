@@ -3183,11 +3183,40 @@ Expenses and Design Gallery requirements" text, now asked for across THREE check
 this one) without arriving — flagged again, not dropped; (5) whether BT-009-15 should get its
 frontend UI next, before moving to a different BT-009 sub-item, or after.
 
-**Exact next step (superseded by Checkpoint AQ below):** absent redirection, build the frontend UI
+**Exact next step (superseded by Checkpoint AP below):** absent redirection, build the frontend UI
 for BT-009-15 next (a way to pick an existing contact when inviting someone on the Workspace page,
 and some indication that a member was once a contact) — finishing this sub-item end-to-end before
 starting a new one, consistent with not leaving a growing pile of backend-only increments — unless
 Terry redirects to a different BT-009 sub-item, the BT-016 decision, or something else first.
+
+## Checkpoint AP — PR #29 merged (with one further `PROJECT_STATE.md` append-order conflict,
+resolved the same way as before); Preview and Production both confirmed live at `3fcdc52`
+(2026-09-19, same session)
+
+**PR #29 (BT-009-15) hit one more conflict** after PR #28 merged first: `PROJECT_STATE.md` again
+(Checkpoint AN, on PR #28's branch, vs. this branch's own Checkpoint AO, both independently
+appended after the same base) — resolved exactly like the prior round: neither dropped, reordered
+chronologically (AM → AN → AO), verified with a fresh `npm test` (39/661/521, exit 0) and `npm run
+validate` (ok) before pushing. Merged by Terry shortly after.
+
+**Both environments confirmed live at `3fcdc52`** (the merge commit for PR #29, `main`'s current
+tip): Preview redeployed by this agent (`./scripts/deploy/deploy.ps1 -Environment preview`,
+receipt `result: SUCCESS`, every engine check `ok`); Production deployed by Terry himself, per the
+Checkpoint AK role boundary (this agent still cannot deploy Production or merge PRs). Both
+independently re-checked via the anonymous `GET /api/site-settings` endpoint — `commit` matches
+exactly on both — and anonymous `GET /api/me` → `401` on both (deny-by-default intact
+everywhere). Production is now fully caught up through PRs #23–#29: BT-018, BT-016, BT-017's
+personal-vs-workspace distinction, BT-014's private-contact and joined-contact permanent deletion,
+and BT-009-15's backend are all live.
+
+**Waiting on Terry:** unchanged from Checkpoint AO — (1) which BT-009 sub-item next (11, 13, 14, or
+continue finishing 15's frontend), or a redirect; (2) the BT-016 group/trip-vs-narrower-sharing
+decision; (3) the "expanded Shared Expenses and Design Gallery requirements" text, still never
+received across four checkpoints now (AM, AN, AO, this one).
+
+**Exact next step:** absent redirection, continue with BT-009-15's frontend UI (a way to pick an
+existing contact when creating an invitation on the Workspace page, and some indication that a
+member was once a contact), finishing this sub-item end-to-end before starting a new one.
 
 ## Checkpoint AQ — BT-009-15's frontend built, finishing that sub-item end to end (PR #31); BT-009-15
 is now fully done, no longer a backend-only increment (2026-09-19, same session)
