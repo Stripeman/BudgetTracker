@@ -3023,8 +3023,68 @@ decision from Checkpoint AI, still open; (4) which ONE of BT-009-11/13/14/15 to 
 wants a specific one prioritized rather than this agent choosing; (5) whether to spend a future
 checkpoint rewriting BT-011's stale top-level summary row (a documentation-only task, not urgent).
 
-**Exact next step:** absent further instruction, the next unit of work would be picking one
-concrete BT-009 sub-item (11, 13, 14 or 15) and building it fully (schema/backend/tests/frontend/
-e2e) as the next self-contained PR, continuing the same pattern established this session — unless
-Terry redirects priority, supplies the missing "expanded requirements" text, or asks for BT-011's
-documentation cleanup instead.
+**Exact next step (superseded by Checkpoint AN below):** absent further instruction, the next unit
+of work would be picking one concrete BT-009 sub-item (11, 13, 14 or 15) and building it fully
+(schema/backend/tests/frontend/e2e) as the next self-contained PR, continuing the same pattern
+established this session — unless Terry redirects priority, supplies the missing "expanded
+requirements" text, or asks for BT-011's documentation cleanup instead.
+
+## Checkpoint AN — PRs #23–#27 all merged into `main`; Preview redeployed and verified at `60c637c`;
+Production still one release behind, awaiting Terry (2026-09-19, same session, spanning the date
+change)
+
+**All five PRs from this session's continuation of Terry's batch are now merged into `main`,
+resolved through two rounds of real merge conflicts (not force-pushed or blindly resolved):**
+#23 (BT-018 "Add as bill"), #24 (BT-016 "Add person"), #25 (BT-017 personal-vs-workspace
+distinction), #26 (BT-014 private-contact deletion), #27 (this session's own checkpoint docs).
+
+**Conflicts hit and how they were resolved, each time re-verified with the full gate before
+pushing, never just accepted blindly:**
+  - Round 1: `scripts/dev/e2e/run.mjs` (PR #24 vs. newly-merged #23 — two branches each registering
+    their own new e2e scenario in the same `SCENARIOS` array/`ALIASES` object) and
+    `docs/REQUIREMENTS.md` (PR #25 vs. #23 — adjacent new rows). Both resolved by keeping both
+    sides' additions; re-verified with `npm test` and targeted `npm run e2e` runs after each fix
+    before pushing.
+  - Round 2 (after Terry merged #24 and #25 through the GitHub UI, each producing its own further
+    conflict against branches still based on the older `main`): PR #25 hit `docs/REQUIREMENTS.md`
+    again (its own placeholder-era BT-016 row, picked up from its first merge, now needed to be
+    replaced with #24's REAL, already-merged BT-016 row, not simply kept as a duplicate) — resolved
+    by keeping the real BT-016 content plus this branch's own BT-017 update plus BT-018. PR #27 hit
+    `PROJECT_STATE.md` twice: once a trivial "(superseded by Checkpoint AL/AM below)" cross-
+    reference mismatch, and once a genuine two-way conflict where BOTH sides had written a whole
+    NEW checkpoint (AL on #24's branch, AM on this branch, both independently appended after the
+    same base) — neither was a duplicate of the other, so both were kept, reordered
+    chronologically (AK → AL → AM, using a small Node script to reassemble the file's line ranges
+    cleanly rather than hand-editing merge-marker soup) rather than either being dropped.
+  - Terry then merged #24, #25, #26 in quick succession himself before this agent's next resolution
+    pass could fully catch up — confirmed post hoc (`gh pr view --json state`) rather than assumed;
+    #26 turned out to need no further conflict resolution at all once #24/#25 had already landed.
+
+**Preview redeployed and independently verified** (not merely trusted from the deploy script's own
+exit): `./scripts/deploy/deploy.ps1 -Environment preview` from the primary checkout directly (clean
+tree, already on `main`, matching `origin/main` exactly — no worktree needed this time). Receipt:
+`result: SUCCESS`, `sha: 60c637cfc5e026c36cedd8ac9160d928ba255c3b`, every engine check `ok`. Live
+re-check via the anonymous `GET /api/site-settings` endpoint: `commit` field matches exactly;
+anonymous `GET /api/me` → `401` (deny-by-default still enforced). `main` itself re-verified with a
+full `npm test` run immediately after the fast-forward pull: **39/657/521, exit 0** (657 API tests
+now includes BT-014's 5 new private-contact-deletion tests; 521 app tests includes BT-018's 7 and
+BT-016's 3).
+
+**Not done, and why:** Production deployment of `60c637c` — declined per the Checkpoint AK role
+boundary, unchanged this session; Terry has the exact command (`-AuthorizedProduction -Confirm
+'budget-tracker'`) to run it himself whenever he chooses. Production currently still serves the
+prior release (`521fd57`, from before this whole PR #23–#27 batch).
+
+**Waiting on Terry:** (1) run the Production deploy command above, if/when he wants `60c637c` in
+Production; (2) the BT-016 group/trip-vs-narrower-sharing decision from Checkpoint AI, still open;
+(3) which BT-009 sub-item (11/13/14/15) to build next, or a redirect; (4) the "expanded Shared
+Expenses and Design Gallery requirements" text, still never received across two full checkpoints
+now (AM and this one) — flagged again rather than dropped.
+
+**Exact next step:** absent redirection, begin BT-009-15 next (a contact who later joins takes over
+their shared-expense history) as the most self-contained of the four named sub-items — it touches
+one clear mechanism (linking an invitation to an existing contact, then re-pointing that contact's
+past expenses/shares/payments/balance to the new member on acceptance, audited, records never
+rewritten) rather than the broader multi-currency/receipts/offline basket the other three represent
+— unless Terry specifies a different one or supplies the missing "expanded requirements" text
+first.
