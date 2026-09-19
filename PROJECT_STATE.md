@@ -4111,11 +4111,62 @@ review remains self-review only this session (no independent reviewer subagent a
 explicitly recorded as outstanding, never labelled independent — due before this is considered for
 release, not necessarily before this PR is opened for Terry's own review.
 
+## Checkpoint AW — final wrap-up completed: repository refresh, full regression including the
+complete `npm run e2e` in one pass, secret scan, squash to one commit, push, PR #37 opened,
+Preview redeployed and independently verified (2026-09-19, same overall session)
+
+**Repository refresh:** `git fetch origin` found `origin/main` had advanced by one commit since
+this branch's base (PR #36, docs-only — `PROJECT_STATE.md`'s own PR #35 merge-verification record).
+Merged into this branch (`git merge origin/main`); the one resulting conflict was in
+`PROJECT_STATE.md` itself (both sides had appended to the same "Waiting on Terry" region) and was
+reconciled by hand — kept PR #36's factual "PR #35 merged by Terry" audit paragraph, dropped both
+sides' now-stale "Waiting on Terry" lists (superseded by the real, completed work recorded above),
+and kept every one of this session's own checkpoints unchanged.
+
+**Full regression, one more time on the merged tree:** `npm test` 593/593, `npm --prefix api test`
+746/746, `npm run validate` ok (24 routes), all exit 0. **The complete `npm run e2e` suite, every one
+of the 38 scenarios, in ONE pass** (the one remaining verification gap from every earlier checkpoint
+in this session, where new scenarios had only been run individually or in small batches): **754
+checks passed, 0 failed, 0 skipped, exit 0.**
+
+**Secret scan across the full branch:** `gitleaks git --log-opts="e841dc5..HEAD"` — 17 commits,
+~442 KB scanned, no leaks. A manual review of every changed file's path (`git diff --name-only`)
+found nothing but source, tests, docs and scripts — no `.env`, credentials, private exports or data
+files of any kind.
+
+**Squashed to one commit and pushed:** `git reset --soft` to `origin/main`'s tip (`2073a1f`,
+PR #36's merge commit) kept every real change staged; one final commit (`2d769d4`) was made
+directly on top of current `main` — 46 files changed. A final secret scan of the full squashed
+staged diff (434 KB) found nothing. Pushed as
+`feature/shared-expenses-completion-and-gallery-replacement`.
+
+**PR #37 opened**: https://github.com/Stripeman/BudgetTracker/pull/37 (this branch → `main`).
+MERGEABLE; both `secret-scan` and `foundation-tests` CI checks pass (confirmed via
+`gh pr view 37 --json state,mergeable,statusCheckRollup`, not merely reported). Not merged — that
+remains Terry's own action, per this instruction's explicit boundary.
+
+**Preview redeployed and independently verified:** `scripts/deploy/deploy.ps1 -Environment preview`
+ran the full gate (gitState, confirmation, azureResource, settings, test, validate, build,
+secretScan, upload, commitSetting, healthCheck — every one `ok`) and reported `SUCCESS`, sha
+`2d769d46c267e78b84e87ed9ee808c172b926a79` (matches the squashed commit exactly). Independently
+re-confirmed via a direct, unauthenticated `GET
+https://polite-plant-03bb7570f-preview.eastus2.3.azurestaticapps.net/api/site-settings` — its public
+`app.commit` reads the same sha. Production was never touched.
+
+**This closes every action item in Terry's operative instruction for this session**: BT-009-22/24
+frontend, all of BT-009-25, all of BT-009-26, the genuine BT-013-09 Gallery replacement, one
+consolidated branch/commit/PR, full regression including the complete e2e suite, a secret scan, and
+a Preview redeploy — all done; `main` was never merged or touched; Production was never touched;
+BT-007/BT-010 remain on hold, untouched.
+
 **Waiting on Terry, current as of this checkpoint** (supersedes every earlier "Waiting on Terry"
-note above, all of which this session's work has now addressed): (1) review of this session's single
-consolidated PR, once opened, covering BT-009-22/24 frontend, all of BT-009-25, all of BT-009-26 and
-the genuine BT-013-09 Gallery replacement; (2) his design selection among the 15 REDESIGNED Gallery
-concepts — never a precondition of finishing this PR, and still not blocking; (3) the one recorded
-ambiguity from `docs/BT-009-25-WORKED-EXAMPLES.md` §4 (shared-fund netting) — proceeded on the
-stated recommendation, confirmation or correction still welcome; (4) explicit authorization before
-any Production deployment or before resuming BT-007/BT-010 (both remain on hold).
+note above, all of which this session's work has now addressed): (1) review and merge of PR #37
+when ready (never done by this agent); (2) his design selection among the 15 REDESIGNED Gallery
+concepts — never a precondition of this PR, and still not blocking; (3) the one recorded ambiguity
+from `docs/BT-009-25-WORKED-EXAMPLES.md` §4 (shared-fund netting) — proceeded on the stated
+recommendation, confirmation or correction still welcome; (4) independent security/financial/
+accessibility review before this is considered for release (this session's own review was
+self-review only, explicitly recorded as such, never labelled independent); (5) explicit
+authorization before any Production deployment or before resuming BT-007/BT-010 (both remain on
+hold). PR #36 (docs-only, already merged into `main` before this session's PR #37 was opened) needs
+no further action — reported here for completeness, never a prerequisite.
