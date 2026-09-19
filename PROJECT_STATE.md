@@ -3749,10 +3749,21 @@ ran the full gate (test/validate/build/secret-scan, all `ok`) and reported `SUCC
 `GET https://polite-plant-03bb7570f-preview.eastus2.3.azurestaticapps.net/api/site-settings` — its
 public `app.commit` reads the same sha. Production was never touched.
 
-**Waiting on Terry:** (1) review and merge PR #35 when ready (never done by this agent); (2) his
-design selection among the 15 Gallery concepts, now that BT-013-09's four identified gaps are fixed
-and all 15 remain reviewable across all 8 required pages — his own selection was never a
-precondition of this pass and is not blocking; (3) eventual confirmation of the intended model for
-BT-009-25's four deferred items (couples/families as a unit, itemized receipt allocation, linked
-refunds, shared income/deposits) and whether/when to authorize BT-009-26 (offline/import/reminders/
-insights) as its own future increment.
+**PR #35 merged by Terry** (`e841dc5ae5b3b8cd1c7a3ed0843e1c861b44e54f`) — confirmed via `git fetch
+origin` and `gh pr view 35 --json state,mergedAt,mergeCommit` (`state: MERGED`, `mergedAt:
+2026-09-19T14:08:52Z`), not merely reported. Local `main` fast-forwarded to the same commit
+(`git fetch origin main:main`, a pure fast-forward — `git merge-base --is-ancestor main origin/main`
+confirmed safe before doing it). No other open PRs (`gh pr list --state open` empty). The merge
+commit's tree is identical to the branch tip's (`git diff fa4e3b5 e841dc5` shows only the small
+`PROJECT_STATE.md` follow-up commit's own content, confirming a clean, no-conflict merge). Preview
+remains deployed at `fa4e3b5` (the substantive commit, one docs-only commit behind `main`'s new tip)
+— a redeploy was not triggered for a docs-only difference with no application-behaviour change;
+worth a routine redeploy next time Preview is refreshed for other reasons, not urgent on its own.
+
+**Waiting on Terry:** (1) his design selection among the 15 Gallery concepts, now that BT-013-09's
+four identified gaps are fixed and all 15 remain reviewable across all 8 required pages — his own
+selection was never a precondition of this pass and is not blocking; (2) eventual confirmation of
+the intended model for BT-009-25's four deferred items (couples/families as a unit, itemized receipt
+allocation, linked refunds, shared income/deposits) and whether/when to authorize BT-009-26
+(offline/import/reminders/insights) as its own future increment; (3) explicit authorization before
+any Production deployment or before resuming BT-007/BT-010 (both remain on hold).
