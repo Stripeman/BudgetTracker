@@ -46,6 +46,13 @@ function buildReport(doc, principal) {
     payers: (e.payers || []).map((p) => ({ name: label(p.ref), amount: money.toDecimal(p.amountMinor, e.currency) })),
     splitMethod: e.split ? e.split.method : '',
     shares: (e.shares || []).map((s) => ({ name: label(s.ref), amount: money.toDecimal(s.amountMinor, e.currency) })),
+    // BT-009-13: a foreign-currency expense keeps what was actually entered — never only its
+    // converted reporting-currency figure — visible in every authorized export, same as the
+    // page itself (`api/group/handler.js`'s `expenseView`).
+    original: e.original ? {
+      amount: money.toDecimal(e.original.amountMinor, e.original.currency), currency: e.original.currency,
+      rate: e.original.rate, rateSource: e.original.rateSource, rateDate: e.original.rateDate,
+    } : null,
   }));
 
   const settlements = (doc.groupSettlements || []).map((s) => ({
@@ -101,8 +108,8 @@ function toCsv(report) {
   const sections = [];
   sections.push(csvSection('Participants', ['Name', 'Type', 'Active'],
     report.participants.map((p) => [p.name, p.type, p.active ? 'yes' : 'no'])));
-  sections.push(csvSection('Expenses', ['Date', 'Description', 'Currency', 'Amount', 'Status', 'Paid by', 'Split method'],
-    report.expenses.map((e) => [e.date, e.description, e.currency, e.amount, e.status, e.payers.map((p) => `${p.name} ${p.amount}`).join('; '), e.splitMethod])));
+  sections.push(csvSection('Expenses', ['Date', 'Description', 'Currency', 'Amount', 'Original amount', 'Original currency', 'Exchange rate', 'Status', 'Paid by', 'Split method'],
+    report.expenses.map((e) => [e.date, e.description, e.currency, e.amount, e.original ? e.original.amount : '', e.original ? e.original.currency : '', e.original ? e.original.rate : '', e.status, e.payers.map((p) => `${p.name} ${p.amount}`).join('; '), e.splitMethod])));
   sections.push(csvSection('Expense shares', ['Expense date', 'Expense description', 'Person', 'Share amount'],
     report.expenses.flatMap((e) => e.shares.map((s) => [e.date, e.description, s.name, s.amount]))));
   sections.push(csvSection('Settlements', ['Date', 'From', 'To', 'Currency', 'Amount', 'Status'],
@@ -146,8 +153,8 @@ async function toXlsx(report) {
   };
 
   sheet('Participants', ['Name', 'Type', 'Active'], report.participants.map((p) => [p.name, p.type, p.active ? 'yes' : 'no']));
-  sheet('Expenses', ['Date', 'Description', 'Currency', 'Amount', 'Status', 'Paid by', 'Split method'],
-    report.expenses.map((e) => [e.date, e.description, e.currency, e.amount, e.status, e.payers.map((p) => `${p.name} ${p.amount}`).join('; '), e.splitMethod]));
+  sheet('Expenses', ['Date', 'Description', 'Currency', 'Amount', 'Original amount', 'Original currency', 'Exchange rate', 'Status', 'Paid by', 'Split method'],
+    report.expenses.map((e) => [e.date, e.description, e.currency, e.amount, e.original ? e.original.amount : '', e.original ? e.original.currency : '', e.original ? e.original.rate : '', e.status, e.payers.map((p) => `${p.name} ${p.amount}`).join('; '), e.splitMethod]));
   sheet('Expense shares', ['Expense date', 'Expense description', 'Person', 'Share amount'],
     report.expenses.flatMap((e) => e.shares.map((s) => [e.date, e.description, s.name, s.amount])));
   sheet('Settlements', ['Date', 'From', 'To', 'Currency', 'Amount', 'Status'],
@@ -200,6 +207,7 @@ function toPdf(report) {
       for (const e of report.expenses) {
         h2(`${e.date} — ${e.description || '(no description)'}`);
         row(`${e.amount} ${e.currency} — ${e.status}`);
+        if (e.original) row(`Originally: ${e.original.amount} ${e.original.currency} at ${e.original.rate}`);
         row(`Paid by: ${e.payers.map((p) => `${p.name} ${p.amount}`).join(', ') || '—'}`);
         row(`Split (${e.splitMethod || '—'}): ${e.shares.map((s) => `${s.name} ${s.amount}`).join(', ') || '—'}`);
       }

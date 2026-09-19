@@ -15,7 +15,7 @@ import { sliceFor } from "../../core/store.js";
 import { newIdempotencyKey } from "../../core/api.js";
 import { evaluateAmount, isPlainAmount } from "../../core/calc.js";
 import { formatAmount, formatDate, todayIso } from "../../core/format.js";
-import { previewSplit, precisionOf, formatMinor, parseAmount } from "../../core/split.js";
+import { previewSplit, precisionOf, formatMinor, parseAmount, parseRate, convert } from "../../core/split.js";
 import { icon, withIcon } from "../icons.js";
 import { messageFor } from "../../core/errors.js";
 // Values in words exactly as the workspace settings card shows them (eefd115).
@@ -32,7 +32,15 @@ const VALUE_HINTS = { amounts: "0.00", percentages: "%", shares: "1" };
 const STATUS_LABELS = { reported: "Reported", confirmed: "Confirmed", disputed: "Disputed" };
 const EVENT_LABELS = { create: "Added", update: "Corrected", void: "Voided", reported: "Reported as paid", confirmed: "Confirmed as received", disputed: "Disputed",
   "confirmed-by-reporter": "Confirmed by the person who reported it", withdrawn: "Confirmation withdrawn", "confirmed-over-dispute": "Confirmed over a dispute", "reported-again": "Reported again after a dispute" };
-const FIELD_LABELS = { description: "Description", date: "Date", amountMinor: "Amount", categoryId: "Category", notes: "Notes", payers: "Paid by", split: "Split", shares: "Shares", status: "Status" };
+const FIELD_LABELS = { description: "Description", date: "Date", amountMinor: "Amount", categoryId: "Category", notes: "Notes", payers: "Paid by", split: "Split", shares: "Shares", status: "Status", original: "Original amount" };
+// A shared expense's own currency, when different from the workspace's reporting currency
+// (BT-009-13). Same list as accounts.js/landing.js's own currency pickers (not shared as one
+// module: each of those predates this one and duplicating a plain list of codes is not the kind
+// of shared calculation CLAUDE.md's "one canonical model per concept" is about — the canonical
+// model is `api/_shared/money.js`'s precision table, which every one of these lists is a subset
+// of for picker convenience only).
+const FOREIGN_CURRENCIES = ["USD", "EUR", "GBP", "CHF", "SEK", "NOK", "DKK", "PLN", "CZK", "HUF", "CAD", "AUD", "NZD", "JPY", "SGD", "HKD", "INR", "ZAR"];
+const RATE_SOURCE_LABELS = { manual: "Entered manually", "bank-posted": "From the bank statement", provider: "From a rate provider", agreed: "Agreed with the group" };
 
 const titled = (id, iconId, text) => el("h2", { class: "card__title", id }, [withIcon(iconId, text)]);
 const groupData = (state) => sliceFor(state, "group").data || null;
@@ -337,7 +345,12 @@ export function createView(ctx) {
             e.myLedger && !e.myLedger.accountUnavailable ? el("div", { class: "muted small", text: `Also on your account: ${e.myLedger.accountName}` }) : null,
           ].flat()),
           el("td", { "data-label": "Paid by", text: e.payers.map((p) => (e.payers.length > 1 ? `${nameOf(p.ref)} ${fmt(p.amount, e.currency)}` : nameOf(p.ref))).join(", ") }),
-          el("td", { "data-label": "Amount", class: "num" }, [amountText(e.amount, e.currency)]),
+          el("td", { "data-label": "Amount", class: "num" }, [
+            amountText(e.amount, e.currency),
+            // BT-009-13: the reporting-currency figure is what every calculation uses; the
+            // original currency, amount and rate are always shown alongside it, never hidden.
+            e.original ? el("div", { class: "muted small", text: `${e.original.amount} ${e.original.currency} at ${e.original.rate}` }) : null,
+          ]),
           el("td", { "data-label": "Your share", class: "num" }, [myShare ? amountText(myShare.amount, e.currency) : el("span", { class: "muted", text: "—" })]),
           el("td", { "data-label": "" }, [el("div", { class: "row-actions" }, [
             e.canEdit ? button("Edit", () => openGroupExpense(ctx, { expense: e }), { small: true, attrs: { "aria-label": `Edit ${e.description}` } }) : null,
@@ -480,7 +493,14 @@ export function openGroupExpense(ctx, { expense = null } = {}) {
   const data = groupData(state);
   if (!data) { announce("Shared expenses are still loading. Try again in a moment."); void ctx.store.actions.refreshGroup(); return null; }
   const editing = !!expense;
+  // The reporting currency: every payer amount, split amount, balance and settlement is always
+  // in THIS currency (BT-009-13), whatever currency the expense itself was actually paid in.
   const currency = editing ? expense.currency : data.currency;
+  const hasOriginal = editing && !!expense.original;
+  // The Amount field is always entered in the currency the expense actually was: fixed forever
+  // once recorded (an expense's own currency can never change, in either direction —
+  // `currency_locked`, api/group/handler.js) and chosen only when adding a new one.
+  const fixedEntryCurrency = hasOriginal ? expense.original.currency : currency;
   const me = data.permissions.selfRef;
   const fmt = fmtFor(state);
   const money = (minor) => fmt(formatMinor(minor, currency), currency);
@@ -492,8 +512,34 @@ export function openGroupExpense(ctx, { expense = null } = {}) {
   let last = null;
 
   const description = input({ maxlength: "120", autocomplete: "off", required: true, placeholder: "For example: Dinner at the harbour", value: editing ? expense.description : "" });
-  const amount = input({ inputmode: "decimal", autocomplete: "off", required: true, placeholder: "0.00 or 12.50+3.20", value: editing ? expense.amount : "" });
+  const amount = input({ inputmode: "decimal", autocomplete: "off", required: true, placeholder: "0.00 or 12.50+3.20", value: editing ? (hasOriginal ? expense.original.amount : expense.amount) : "" });
+  const amountLabel = el("label", { class: "field__label", text: "" });
   const amountHelp = el("p", { class: "field__help", "aria-live": "polite" });
+  const amountField = el("div", { class: "field" }, [amountLabel, amount, amountHelp]);
+  // A new expense may be entered in a currency other than the workspace's own (BT-009-13); an
+  // existing one's currency is fixed and only ever shown, never offered as a picker.
+  const currencyOptions = [{ value: currency, label: `${currency} (this workspace's currency)` }, ...FOREIGN_CURRENCIES.filter((c) => c !== currency).map((c) => ({ value: c, label: c }))];
+  const currencyPicker = editing ? null : pickerSelect(currencyOptions, currency, {}, { search: false });
+  const currencyFixedNote = hasOriginal
+    ? el("p", { class: "field__help", text: `Currency: ${fixedEntryCurrency} — fixed once recorded. Void this expense and add a new one to change its currency.` }) : null;
+  const entryCurrency = () => (currencyPicker ? currencyPicker.value : fixedEntryCurrency);
+  const isForeign = () => entryCurrency() !== currency;
+  // Exchange-rate details: only meaningful, and only shown, for a foreign-currency expense.
+  // Preserved exactly (never silently reused for a new rate) unless the amount is ALSO
+  // resubmitted — "changing rates later never changes a recorded expense" (Terry's split-costs
+  // check, 2026-09-14) is enforced on the server; the note below explains that here too.
+  const rate = input({ inputmode: "decimal", autocomplete: "off", placeholder: "e.g. 0.92", value: hasOriginal ? expense.original.rate : "" });
+  const rateHelp = el("p", { class: "field__help" });
+  const rateField = el("div", { class: "field" }, [el("label", { class: "field__label", for: rate.id || (rate.id = `${key}-rate`), text: "Exchange rate" }), rate, rateHelp]);
+  const rateSource = pickerSelect(Object.entries(RATE_SOURCE_LABELS).map(([value, text]) => ({ value, label: text })), hasOriginal ? expense.original.rateSource : "manual", {}, { search: false });
+  const rateDate = input({ type: "date", value: hasOriginal ? expense.original.rateDate : (editing ? expense.date : todayIso()) });
+  const reportingPreview = el("p", { class: "field__help", "aria-live": "polite" });
+  const rateOnlyNote = el("p", { class: "field__help", text: "Changing the rate or its date/source alone has no effect unless the amount above is also changed — a correction never silently revalues what was already recorded." });
+  const foreignFieldset = el("fieldset", { class: "plain-fieldset field--wide" }, [
+    el("legend", { class: "field__label", text: "Original amount and exchange rate" }),
+    rateField, field("Rate source", rateSource), field("Rate date", rateDate), reportingPreview,
+    editing ? rateOnlyNote : null,
+  ]);
   const date = input({ type: "date", value: editing ? expense.date : todayIso() });
   const categories = ((sliceFor(state, "categories").data || {}).categories || []).filter((c) => (!c.archived && c.type !== "income") || (editing && c.id === expense.categoryId));
   const category = pickerSelect([{ value: "", label: "No category" }].concat(categories.map((c) => ({ value: c.id, label: c.archived ? `${c.name} (archived)` : c.name }))), editing ? expense.categoryId || "" : "", {}, { badgeOf: categoryBadges(state) });
@@ -579,16 +625,56 @@ export function openGroupExpense(ctx, { expense = null } = {}) {
     const raw = amount.value.trim();
     if (!raw) return "";
     if (isPlainAmount(raw)) return raw;
-    return evaluateAmount(raw, precisionOf(currency)) || "";
+    return evaluateAmount(raw, precisionOf(entryCurrency())) || "";
+  }
+  const originalMinorNow = () => parseAmount(computedAmount(), entryCurrency());
+  // The reporting-currency figure resubmitting the amount and/or rate would need — but a
+  // correction that touches neither pins to the RECORD'S OWN stored amount rather than
+  // recomputing anything, so an unrelated change (description, category, notes…) can never
+  // silently convert an already-converted amount again (the exact regression this fixes).
+  const initialOriginalMinor = hasOriginal ? expense.original.amountMinor : (editing ? expense.amountMinor : null);
+  function moneyChanged() {
+    if (!editing) return true;
+    if (originalMinorNow() !== initialOriginalMinor) return true;
+    if (hasOriginal) {
+      if (rate.value.trim() !== expense.original.rate) return true;
+      if (rateSource.value !== expense.original.rateSource) return true;
+      if ((rateDate.value || null) !== (expense.original.rateDate || null)) return true;
+    }
+    return false;
+  }
+  function reportingMinorNow() {
+    if (!isForeign()) return originalMinorNow();
+    if (editing && !moneyChanged()) return expense.amountMinor;
+    const om = originalMinorNow();
+    const rt = rate.value.trim();
+    return om === null || om <= 0 || !rt ? null : convert(om, entryCurrency(), currency, rt);
   }
   function snapshot() {
+    const rm = reportingMinorNow();
     return {
-      amount: computedAmount(), currency, method: method.value,
+      amount: rm !== null ? formatMinor(rm, currency) : "", currency, method: method.value,
       payers: payerRows.filter((r) => r.box.checked).map((r) => ({ ref: r.p.ref, name: r.p.name, amount: r.amt.value })),
       lines: splitRows.filter((r) => r.box.checked).map((r) => ({ ref: r.p.ref, name: r.p.name, value: r.val.value })),
     };
   }
   function refresh() {
+    const foreign = isForeign();
+    amountLabel.textContent = `Amount (${entryCurrency()})`;
+    if (!amount.id) amount.id = `${key}-amount`;
+    amountLabel.setAttribute("for", amount.id);
+    foreignFieldset.hidden = !foreign;
+    rateHelp.textContent = `How many ${currency} one ${entryCurrency()} was worth, for example 0.92.`;
+    if (foreign) {
+      const om = originalMinorNow();
+      const rt = rate.value.trim();
+      if (om === null) reportingPreview.textContent = "";
+      else if (!rt) reportingPreview.textContent = `Give the exchange rate to convert from ${entryCurrency()} to ${currency}.`;
+      else {
+        const rm = editing && !moneyChanged() ? expense.amountMinor : convert(om, entryCurrency(), currency, rt);
+        reportingPreview.textContent = rm === null ? "Not a valid exchange rate." : `= ${money(rm)} in ${currency}, this workspace's currency.`;
+      }
+    } else reportingPreview.textContent = "";
     const m = method.value;
     const payersChosen = payerRows.filter((r) => r.box.checked);
     const several = payersChosen.length > 1;
@@ -600,8 +686,8 @@ export function openGroupExpense(ctx, { expense = null } = {}) {
       r.val.setAttribute("placeholder", VALUE_HINTS[m] || "");
     }
     const raw = amount.value.trim();
-    const calc = raw && !isPlainAmount(raw) ? evaluateAmount(raw, precisionOf(currency)) : null;
-    amountHelp.textContent = raw && !isPlainAmount(raw) ? (calc ? `= ${calc} ${currency}` : "Not a valid calculation") : "";
+    const calc = raw && !isPlainAmount(raw) ? evaluateAmount(raw, precisionOf(entryCurrency())) : null;
+    amountHelp.textContent = raw && !isPlainAmount(raw) ? (calc ? `= ${calc} ${entryCurrency()}` : "Not a valid calculation") : "";
     const pv = previewSplit(snapshot());
     last = pv;
     const shareOf = new Map(pv.shares.map((s) => [s.ref, s]));
@@ -627,16 +713,21 @@ export function openGroupExpense(ctx, { expense = null } = {}) {
     ledgerAccount.disabled = !ledgerBox.checked;
   }
   commitOnConfirm(method, () => refresh());
-  for (const node of [amount, ...payerRows.map((r) => r.amt), ...splitRows.map((r) => r.val)]) node.addEventListener("input", refresh);
+  if (currencyPicker) commitOnConfirm(currencyPicker, () => refresh());
+  commitOnConfirm(rateSource, () => refresh());
+  for (const node of [amount, rate, rateDate, ...payerRows.map((r) => r.amt), ...splitRows.map((r) => r.val)]) node.addEventListener("input", refresh);
   for (const node of [...payerRows.map((r) => r.box), ...splitRows.map((r) => r.box), ledgerBox]) node.addEventListener("change", refresh);
 
   const formId = `${key}-form`;
   const save = el("button", { type: "submit", class: "btn btn--primary", text: editing ? "Save correction" : "Save expense", form: formId });
   const form = el("form", { class: "form-grid", novalidate: true, id: formId }, [
     field("Description", description, { wide: true }),
-    el("div", { class: "field" }, [el("label", { class: "field__label", for: amount.id || (amount.id = `${key}-amount`), text: `Amount (${currency})` }), amount, amountHelp]),
+    currencyPicker ? field("Currency", currencyPicker, { help: "Choose a different currency only when this was actually paid in one — the amount below is then entered in that currency, with its own exchange rate." }) : null,
+    amountField,
+    currencyFixedNote,
     field("Date", date),
     field("Category", category),
+    foreignFieldset,
     el("fieldset", { class: "plain-fieldset field--wide" }, [el("legend", { class: "field__label", text: "Paid by" }), payerListEl, payersNote, addPerson ? el("div", { class: "stack" }, [addPerson, el("p", { class: "field__help", text: "Not a workspace member yet — records who took part, without giving them application access." })]) : null]),
     el("fieldset", { class: "plain-fieldset field--wide" }, [
       el("legend", { class: "field__label", text: "Shared by" }),
@@ -654,9 +745,15 @@ export function openGroupExpense(ctx, { expense = null } = {}) {
   const mark = (node) => { node.setAttribute("aria-invalid", "true"); node.setAttribute("aria-errormessage", modal.errorId); };
   async function submit() {
     modal.setError("");
-    for (const node of [description, amount, reason]) node.removeAttribute("aria-invalid");
+    for (const node of [description, amount, rate, reason]) node.removeAttribute("aria-invalid");
     refresh();
     if (!description.value.trim()) { mark(description); modal.setError("Describe the expense, for example “Dinner at the harbour”."); description.focus(); return; }
+    if (isForeign() && originalMinorNow() !== null && originalMinorNow() > 0 && !rate.value.trim()) {
+      mark(rate); modal.setError(`Give the exchange rate to convert from ${entryCurrency()} to ${currency}.`); rate.focus(); return;
+    }
+    if (isForeign() && rate.value.trim() && parseRate(rate.value.trim()) === null) {
+      mark(rate); modal.setError("Enter a valid exchange rate, greater than zero."); rate.focus(); return;
+    }
     if (!last.ok) {
       if (last.totalMinor === null) { mark(amount); amount.focus(); }
       modal.setError(last.errors[0]);
@@ -671,10 +768,24 @@ export function openGroupExpense(ctx, { expense = null } = {}) {
       return { ref: l.ref, value: formatMinor(parseAmount(l.value, currency), currency) };
     };
     const body = {
-      description: description.value.trim(), date: date.value, amount: formatMinor(last.totalMinor, currency), notes: notes.value,
+      description: description.value.trim(), date: date.value, notes: notes.value,
       payers: last.payers.length === 1 ? [{ ref: last.payers[0].ref }] : last.payers.map((p) => ({ ref: p.ref, amount: formatMinor(p.amountMinor, currency) })),
       split: { method: snap.method, lines: snap.lines.map(lineBody) },
     };
+    // BT-009-13 root fix: the amount (and, for a foreign expense, the rate/source/date) is only
+    // ever sent when it genuinely changed. A correction that touches none of them (description,
+    // category, notes…) never resubmits the amount at all, so the server keeps the record's own
+    // stored, already-converted figure exactly as it is — it can never be reinterpreted in the
+    // original currency and converted a second time.
+    if (!editing || moneyChanged()) {
+      body.amount = formatMinor(originalMinorNow(), entryCurrency());
+      if (isForeign()) {
+        if (!editing) body.currency = entryCurrency();
+        body.rate = rate.value.trim();
+        body.rateSource = rateSource.value;
+        if (rateDate.value) body.rateDate = rateDate.value;
+      }
+    }
     if (editing) body.categoryId = category.value || null;
     else if (category.value) body.categoryId = category.value;
     const withLedger = !editing && !ledgerField.hidden && ledgerBox.checked && ledgerAccount.value;
@@ -883,6 +994,9 @@ async function openHistory(ctx, type, rec) {
     if (fieldName === "categoryId") return cats.get(v) || "a category";
     if (fieldName === "payers" || fieldName === "shares") return v.map((x) => `${names.get(x.ref) || "someone"} ${x.amount}`).join(", ");
     if (fieldName === "split") return `${METHOD_LABELS[v.method] || v.method}: ${v.lines.map((l) => `${names.get(l.ref) || "someone"}${l.value === null || l.value === undefined ? "" : ` ${l.value}${v.method === "percentages" ? "%" : ""}`}`).join(", ")}`;
+    // BT-009-13: a history entry that changed `original` (a foreign-currency expense's own
+    // amount, rate, source or date) shows exactly what it was, not just "[object Object]".
+    if (fieldName === "original") return `${v.amount} ${v.currency} at ${v.rate} (${RATE_SOURCE_LABELS[v.rateSource] || v.rateSource}, ${v.rateDate})`;
     return String(v);
   };
   const body = el("div", { "aria-live": "polite" }, [el("p", { class: "muted", text: "Loading…" })]);

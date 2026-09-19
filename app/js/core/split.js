@@ -28,6 +28,41 @@ export function parseAmount(text, currency) {
   return Number.isSafeInteger(minor) ? minor : null;
 }
 
+// api/_shared/money.js's parseRate/convert, mirrored for the Add/correct shared-expense
+// dialog's own live preview of the reporting-currency equivalent while entering a foreign-
+// currency amount (BT-009-13). The server recomputes the real conversion and is authoritative;
+// this exists only so the payer/split fields (always in the reporting currency) can show a
+// preview total before the person saves. Same round-half-even BigInt algorithm as the server so
+// the preview and the saved result agree in every case exercised by the shared test cases.
+export function parseRate(text) {
+  const m = /^(\d{1,12})(?:\.(\d{1,12}))?$/.exec(String(text ?? "").trim());
+  if (!m) return null;
+  const frac = m[2] || "";
+  const num = BigInt(m[1] + frac);
+  if (num === 0n) return null;
+  return { num, scale: 10n ** BigInt(frac.length) };
+}
+function roundHalfEven(n, d) {
+  const negative = (n < 0n) !== (d < 0n);
+  const an = n < 0n ? -n : n;
+  const ad = d < 0n ? -d : d;
+  let q = an / ad;
+  const r = an % ad;
+  if (r * 2n > ad || (r * 2n === ad && q % 2n === 1n)) q += 1n;
+  return negative ? -q : q;
+}
+export function convert(minor, from, to, rateText) {
+  const rate = parseRate(rateText);
+  if (rate === null || !Number.isSafeInteger(minor)) return null;
+  const pf = precisionOf(from);
+  const pt = precisionOf(to);
+  let n = BigInt(minor) * rate.num;
+  let d = rate.scale;
+  if (pt > pf) n *= 10n ** BigInt(pt - pf); else d *= 10n ** BigInt(pf - pt);
+  const out = Number(roundHalfEven(n, d));
+  return Number.isSafeInteger(out) ? (out === 0 ? 0 : out) : null;
+}
+
 export function formatMinor(minor, currency) {
   const p = precisionOf(currency);
   const digits = String(Math.abs(minor)).padStart(p + 1, "0");

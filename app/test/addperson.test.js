@@ -17,6 +17,10 @@ afterEach(() => dom.teardown());
 const tick = () => new Promise((resolve) => setTimeout(resolve, 0));
 const buttonNamed = (root, text) => root.querySelectorAll("button").find((b) => b.textContent === text);
 const shareRow = (dialog, name) => dialog.querySelectorAll(".split-row").find((r) => r.querySelector("label") && r.querySelector("label").textContent.startsWith(name));
+// By legend text, not position: BT-009-13 added its own (initially hidden) fieldset ahead of
+// "Paid by"/"Shared by" for a foreign-currency expense's exchange-rate details, so the first
+// `.plain-fieldset`/second `<fieldset>` are no longer reliably "Paid by"/"Shared by".
+const fieldsetByLegend = (root, text) => root.querySelectorAll("fieldset").find((f) => f.querySelector("legend") && f.querySelector("legend").textContent === text);
 
 function fakeCtx({ canAdd = true } = {}) {
   const calls = { contacts: [] };
@@ -90,12 +94,11 @@ describe("BT-016 \"Add person\" from the shared-expense dialog", () => {
     // Nothing already typed in the expense dialog was lost.
     assert.equal(description.value, "Fictional picnic");
 
-    const paidRow = shareRow(dialog.querySelector(".plain-fieldset"), "Carol Fictional");
+    const paidRow = shareRow(fieldsetByLegend(dialog, "Paid by"), "Carol Fictional");
     assert.ok(paidRow, "Carol appears under Paid by");
     assert.equal(paidRow.querySelector('input[type="checkbox"]').checked, false, "not marked as having paid, by default");
 
-    const sharedFieldsets = dialog.querySelectorAll("fieldset");
-    const sharedFieldset = sharedFieldsets[1];
+    const sharedFieldset = fieldsetByLegend(dialog, "Shared by");
     const sharedRow = shareRow(sharedFieldset, "Carol Fictional");
     assert.ok(sharedRow, "Carol appears under Shared by");
     assert.equal(sharedRow.querySelector('input[type="checkbox"]').checked, true, "checked under Shared by — the reason to add someone here is that they took part");

@@ -61,6 +61,38 @@ describe('BT-014 Part A: shared-expenses export (CSV/JSON)', () => {
     assert.match(csvRes.content, /# Outstanding balances/);
   });
 
+  test('BT-009-13: a foreign-currency expense keeps its original amount, currency and rate visible in JSON, CSV and XLSX exports, alongside the converted reporting figure', async () => {
+    const h = harness();
+    const f = await fixture(h);
+    await ok(await h.call('group', 'POST', {
+      as: 'alice', query: f.q,
+      body: { description: 'Fictional souvenirs', amount: '50.00', currency: 'USD', rate: '0.90', date: '2026-09-10', payers: [{ ref: f.refs.alice, amount: '45.00' }], split: equal(f.refs.alice, f.refs.bob) },
+    }), 201);
+
+    const jsonRes = ok(await h.call('group', 'GET', { as: 'alice', query: { ...f.q, action: 'export', format: 'json' } }));
+    const report = JSON.parse(jsonRes.content);
+    const exp = report.expenses.find((e) => e.description === 'Fictional souvenirs');
+    assert.equal(exp.currency, 'EUR');
+    assert.equal(exp.amount, '45.00');
+    assert.deepEqual(exp.original, { amount: '50.00', currency: 'USD', rate: '0.90', rateSource: 'manual', rateDate: '2026-09-10' });
+
+    const csvRes = ok(await h.call('group', 'GET', { as: 'alice', query: { ...f.q, action: 'export', format: 'csv' } }));
+    assert.match(csvRes.content, /Original amount,Original currency,Exchange rate/);
+    assert.match(csvRes.content, /Fictional souvenirs,EUR,45\.00,50\.00,USD,0\.90/);
+
+    const ExcelJS_ = require('exceljs');
+    const xlsxRes = ok(await h.call('group', 'GET', { as: 'alice', query: { ...f.q, action: 'export', format: 'xlsx' } }));
+    const wb = new ExcelJS_.Workbook();
+    await wb.xlsx.load(Buffer.from(xlsxRes.content, 'base64'));
+    const expenses = wb.getWorksheet('Expenses');
+    let row = null;
+    expenses.eachRow((r, i) => { if (i > 1 && r.getCell(2).value === 'Fictional souvenirs') row = r; });
+    assert.ok(row, 'the foreign-currency expense appears in the Expenses sheet');
+    assert.equal(row.getCell(5).value, '50.00');
+    assert.equal(row.getCell(6).value, 'USD');
+    assert.equal(row.getCell(7).value, '0.90');
+  });
+
   test('a description starting with a formula character is neutralized in CSV, so Excel/Sheets never treat it as a formula (security review fix, 2026-09-17)', async () => {
     const h = harness();
     const f = await fixture(h);
@@ -139,7 +171,12 @@ describe('BT-014 Part A: shared-expenses export (CSV/JSON)', () => {
     assert.ok(expenseRow, 'the expense appears in the Expenses sheet');
     assert.equal(expenseRow.getCell(3).value, 'EUR');
     assert.equal(expenseRow.getCell(4).value, '90.00');
-    assert.equal(expenseRow.getCell(7).value, 'equal');
+    // BT-009-13: "Original amount"/"Original currency"/"Exchange rate" sit between Amount and
+    // Status, blank for a plain (non-foreign-currency) expense like this one.
+    assert.equal(expenseRow.getCell(5).value, '');
+    assert.equal(expenseRow.getCell(6).value, '');
+    assert.equal(expenseRow.getCell(7).value, '');
+    assert.equal(expenseRow.getCell(10).value, 'equal');
 
     const settlements = wb.getWorksheet('Settlements');
     let settleRow = null;
