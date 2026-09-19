@@ -3731,8 +3731,28 @@ his to make — nothing here activates any of them as a real, selectable workspa
 - `docs/REQUIREMENTS.md` clarified that BT-009-21's scoped balances are genuinely recomputed per
   event (not just filtered lists under an unchanged combined total).
 
-**Remaining before the PR opens:** secret scan of the full branch diff (not just each staged
-commit — already clean at every commit, but one more pass over everything together), then squash
-all local WIP commits into ONE final commit (never rewriting main or previously merged history),
-push, open the single PR, redeploy Preview via `deploy.ps1 -Environment preview`, and give Terry one
-consolidated report.
+**Completed:** full-range `gitleaks git --log-opts="8c52431..HEAD"` scan across all 15 pre-squash
+commits — no leaks found. A local safety tag
+(`safety/pre-squash-shared-expenses-gallery-20260919-155549`) was made before squashing, per the
+"protect unfinished work with local recovery checkpoints" instruction. All 16 local WIP commits
+squashed via `git reset --soft 8c52431` into ONE final commit (`fa4e3b5`,
+`fa4e3b57955ebcfb28c9e5fa4bd1a159d953c25f`) — 26 files, +1941/-114 — main and PR #34's already-merged
+history untouched. Tests re-run against the squashed tree (`npm test` 549/549, `npm --prefix api
+test` 699/699, `npm run validate` ok, all exit 0) before pushing.
+
+**PR opened:** https://github.com/Stripeman/BudgetTracker/pull/35 (`feature/shared-expenses-and-gallery-completion` → `main`), MERGEABLE, both `foundation-tests` and `secret-scan` CI checks pass. Not
+merged — that remains Terry's own action.
+
+**Preview redeployed and independently verified:** `scripts/deploy/deploy.ps1 -Environment preview`
+ran the full gate (test/validate/build/secret-scan, all `ok`) and reported `SUCCESS`, sha
+`fa4e3b57955ebcfb28c9e5fa4bd1a159d953c25f`; independently re-confirmed via a direct, unauthenticated
+`GET https://polite-plant-03bb7570f-preview.eastus2.3.azurestaticapps.net/api/site-settings` — its
+public `app.commit` reads the same sha. Production was never touched.
+
+**Waiting on Terry:** (1) review and merge PR #35 when ready (never done by this agent); (2) his
+design selection among the 15 Gallery concepts, now that BT-013-09's four identified gaps are fixed
+and all 15 remain reviewable across all 8 required pages — his own selection was never a
+precondition of this pass and is not blocking; (3) eventual confirmation of the intended model for
+BT-009-25's four deferred items (couples/families as a unit, itemized receipt allocation, linked
+refunds, shared income/deposits) and whether/when to authorize BT-009-26 (offline/import/reminders/
+insights) as its own future increment.
