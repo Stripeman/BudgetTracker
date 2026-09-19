@@ -248,9 +248,12 @@ describe('finding 3: changing the reporting currency never strands an open balan
     const gbp = await act(h, f, 'bob', 'settle', { from: f.refs.bob, to: f.refs.alice, amount: '1.00', currency: 'GBP' });
     assert.equal(gbp.status, 400);
     assert.equal(gbp.body.error.code, 'currency_not_supported');
-    // Now EUR is settled, a new EUR payment is refused too; expenses stay in the reporting currency.
+    // Now EUR is settled, a new EUR payment is refused too (settlements only ever use the current
+    // reporting currency or one with a genuinely open balance).
     assert.equal((await act(h, f, 'bob', 'settle', { from: f.refs.bob, to: f.refs.alice, amount: '1.00', currency: 'EUR' })).body.error.code, 'currency_not_supported');
-    assert.equal((await G(h, f, 'alice', 'POST', { body: { description: 'x', amount: '1.00', currency: 'EUR', payers: [{ ref: f.refs.alice }], split: equal(f.refs.alice) } })).body.error.code, 'currency_not_supported');
+    // BT-009-13: an EXPENSE may now be entered in any currency, converted with a rate — EUR is no
+    // longer refused outright, it just needs one, same as any other non-reporting currency would.
+    assert.equal((await G(h, f, 'alice', 'POST', { body: { description: 'x', amount: '1.00', currency: 'EUR', payers: [{ ref: f.refs.alice }], split: equal(f.refs.alice) } })).body.error.code, 'missing_rate');
     ok(await act(h, f, 'bob', 'settle', { from: f.refs.bob, to: f.refs.alice, amount: '1.00', currency: 'USD' }), 201);
   });
 });

@@ -4,9 +4,20 @@
 //                                           (with suggestions and the direct view) and the caller's rights
 //   GET  ?action=balances                   balances only
 //   GET  ?action=history&expenseId= | &settlementId=   who changed what, from what to what, when, why
-//   POST { description, date?, amount, currency?, categoryId?, notes?, payers, split, ledger? }
-//                                           add an expense (Idempotency-Key supported)
-//   PATCH { expenseId, revision, reason, description?, date?, amount?, categoryId?, notes?, payers?, split? }
+//   POST { description, date?, amount, currency?, rate?, rateSource?, rateDate?, categoryId?, notes?,
+//          payers, split, ledger? }        add an expense (Idempotency-Key supported). `currency`
+//                                           defaults to the group's reporting currency; a DIFFERENT
+//                                           currency needs `rate` too (BT-009-13: 1 unit of `currency`
+//                                           = `rate` units of the reporting currency) — the server
+//                                           converts and stores both: `amount`/`currency` become the
+//                                           converted reporting-currency figures every calculation
+//                                           already uses, and `original` (amount, currency, rate,
+//                                           source, date) is kept for good, exactly as entered.
+//   PATCH { expenseId, revision, reason, description?, date?, amount?, currency?, rate?, rateSource?,
+//           rateDate?, categoryId?, notes?, payers?, split? }  a foreign-currency expense's amount is
+//                                           changed by resubmitting it in its OWN original currency
+//                                           and rate, same as creating one; its currency itself can
+//                                           never change once recorded
 //   POST ?action=void    { expenseId | settlementId, revision, reason }
 //   POST ?action=settle  { from, to, amount, currency?, date?, method?, notes?, ledger? }  report a
 //                                           payment (Idempotency-Key supported)
@@ -63,11 +74,11 @@ const { readDocument } = require('../_shared/schema');
 
 // `confirmBackdated` accompanies `ledger` wherever both may appear: it answers the FA-1 warning (below)
 // when starting to record on an account would backdate confirmed cash the caller has not yet seen.
-const CREATE_KEYS = ['description', 'date', 'amount', 'currency', 'categoryId', 'notes', 'payers', 'split', 'ledger', 'confirmBackdated'];
-const PATCH_KEYS = ['expenseId', 'revision', 'reason', 'description', 'date', 'amount', 'categoryId', 'notes', 'payers', 'split'];
+const CREATE_KEYS = ['description', 'date', 'amount', 'currency', 'rate', 'rateSource', 'rateDate', 'categoryId', 'notes', 'payers', 'split', 'ledger', 'confirmBackdated'];
+const PATCH_KEYS = ['expenseId', 'revision', 'reason', 'description', 'date', 'amount', 'currency', 'rate', 'rateSource', 'rateDate', 'categoryId', 'notes', 'payers', 'split'];
 const SETTLE_KEYS = ['from', 'to', 'amount', 'currency', 'date', 'method', 'notes', 'ledger', 'confirmBackdated'];
 // Every correction keeps the before and after values of these fields.
-const TRACKED = ['description', 'date', 'amountMinor', 'categoryId', 'notes', 'payers', 'split', 'shares'];
+const TRACKED = ['description', 'date', 'amountMinor', 'original', 'categoryId', 'notes', 'payers', 'split', 'shares'];
 const LINK_KEY = Object.freeze({ expense: 'groupExpenseId', settlement: 'groupSettlementId' });
 
 const selfRef = (member) => `member:${member.id}`;
@@ -77,12 +88,38 @@ function requireWriter(member) {
   if (!writer(member)) throw forbidden('Viewers can see shared expenses but cannot add or change them.');
 }
 const reportingCurrency = (doc) => (doc.settings && doc.settings.reportingCurrency) || 'EUR';
-// New expenses are in the reporting currency only in this increment (multi-currency group totals are
-// pending, BT-009).
-function currencyOf(doc, value) {
-  const c = reportingCurrency(doc);
-  if (value !== undefined && value !== null && value !== c) throw badRequest(`Shared expenses in this workspace are in ${c}. Other currencies are not supported yet.`, 'currency_not_supported');
-  return c;
+// BT-009-13 (Terry's split-costs check, 2026-09-14): "an expense may be entered in a currency other
+// than the group's; it keeps the original amount and currency, the rate, its source and date, and
+// the converted amount in the group currency; shares, balances and settlement use the converted
+// amount with deterministic rounding; changing rates later never changes a recorded expense."
+// Every calculation everywhere else in this file, and the whole of groups.js's balance engine,
+// keeps operating on the expense's own `amountMinor`/`currency` exactly as before — those are
+// ALWAYS the converted, reporting-currency figures; `original` is purely additional, preserved
+// information, never read by any balance/share/settlement calculation. The server computes the
+// conversion itself (`money.convert`, already built and used for account-to-account transfers;
+// never the client's own arithmetic) so a mismatched rate can never silently corrupt a shared
+// balance the way trusting a client-supplied converted amount could.
+function expenseAmount(doc, body, field = 'Amount') {
+  const reporting = reportingCurrency(doc);
+  const requested = body.currency === undefined || body.currency === null ? reporting : body.currency;
+  if (requested === reporting) {
+    return { currency: reporting, amountMinor: groups.positiveAmount(body.amount, reporting, field), original: null };
+  }
+  money.precisionOf(requested); // throws badRequest('unsupported_currency') on an unknown code
+  if (body.rate === undefined || body.rate === null) throw badRequest(`Give the exchange rate to convert from ${requested} to ${reporting}.`, 'missing_rate');
+  const originalMinor = groups.positiveAmount(body.amount, requested, field);
+  const rate = money.parseRate(body.rate);
+  const amountMinor = money.convert(originalMinor, requested, reporting, rate.text);
+  if (amountMinor <= 0) throw badRequest(`${field} converts to zero in ${reporting} at that rate.`, 'invalid_amount');
+  if (amountMinor > groups.MAX_GROUP_MINOR) throw badRequest(`${field} is larger than a shared expense can be, once converted to ${reporting}.`, 'amount_too_large');
+  return {
+    currency: reporting, amountMinor,
+    original: {
+      amountMinor: originalMinor, currency: requested, rate: rate.text,
+      rateSource: fields.oneOf(body.rateSource, ['bank-posted', 'manual', 'provider', 'agreed'], 'Rate source', 'manual'),
+      rateDate: fields.date(body.rateDate, 'Rate date') || fields.date(body.date, 'Date') || null,
+    },
+  };
 }
 // A payment may also be in any currency that still has an open balance, so a balance left in an
 // earlier reporting currency can always be cleared (financial review finding 3).
@@ -176,9 +213,29 @@ async function ownDefaults(ctx) {
 // The amount, payers, split and resulting shares, from the request and (for a correction) the record.
 // A new expense without payers or a split takes the group's defaults for `member`.
 function expenseMoney(doc, body, rec, member = null, mine = {}) {
-  const currency = rec ? rec.currency : currencyOf(doc, body.currency);
+  // BT-009-13: currency/rate are only ever considered together with `amount` — resubmitting a rate
+  // alone changes nothing (the literal requirement: "changing rates later never changes a recorded
+  // expense"). Resubmitting the amount on an existing foreign-currency expense re-uses its own
+  // original currency and last rate unless a new one is explicitly given; its currency itself can
+  // never change once recorded (correct it by voiding and adding a new expense instead).
+  let currency, amountMinor, original;
+  if (!rec) {
+    ({ currency, amountMinor, original } = expenseAmount(doc, body));
+  } else if (body.amount === undefined) {
+    currency = rec.currency; amountMinor = rec.amountMinor; original = rec.original || null;
+  } else {
+    const impliedCurrency = rec.original ? rec.original.currency : rec.currency;
+    if (body.currency !== undefined && body.currency !== null && body.currency !== impliedCurrency) {
+      throw badRequest("A shared expense's own currency cannot be changed once recorded. Void it and add a new one instead.", 'currency_locked');
+    }
+    ({ currency, amountMinor, original } = expenseAmount(doc, {
+      ...body, currency: impliedCurrency,
+      rate: body.rate !== undefined ? body.rate : (rec.original ? rec.original.rate : undefined),
+      rateSource: body.rateSource !== undefined ? body.rateSource : (rec.original ? rec.original.rateSource : undefined),
+      rateDate: body.rateDate !== undefined ? body.rateDate : (rec.original ? rec.original.rateDate : undefined),
+    }));
+  }
   const check = groups.participantChecker(doc, rec ? new Set(groups.recordRefs({ groupExpenses: [rec] })) : new Set());
-  const amountMinor = !rec || body.amount !== undefined ? groups.positiveAmount(body.amount, currency, 'Amount') : rec.amountMinor;
   let payers;
   if (!rec || body.payers !== undefined) payers = groups.normalizePayers(body.payers === undefined ? defaultPayers(doc, member, mine) : body.payers, amountMinor, currency, check);
   else {
@@ -192,7 +249,7 @@ function expenseMoney(doc, body, rec, member = null, mine = {}) {
     if (split.method === 'amounts' && money.sum(split.lines.map((l) => l.value)) !== amountMinor) throw badRequest('The amount changed, so give the split amounts again.', 'split_amount_total');
   }
   const shares = groups.computeShares(amountMinor, split).shares.map(({ ref, amountMinor: a }) => ({ ref, amountMinor: a }));
-  return { currency, amountMinor, payers, split, shares };
+  return { currency, amountMinor, payers, split, shares, original };
 }
 
 // ---- the personal ledger ------------------------------------------------------------------------
@@ -544,8 +601,13 @@ function expenseView(ctx, doc, member, e) {
   const adjustment = (i) => (computed && computed.shares[i] && computed.shares[i].ref === e.shares[i].ref && computed.shares[i].amountMinor === e.shares[i].amountMinor ? computed.shares[i].adjustmentMinor : 0);
   const residualMinor = computed ? computed.residualMinor : 0;
   const changeable = canChangeExpense(doc, e, member) && !e.voidedAt;
+  // BT-009-13: the original entered amount/currency/rate, preserved exactly as recorded — refreshing
+  // rates elsewhere never touches this. `amount`/`amountMinor`/`currency` above stay the CONVERTED
+  // reporting-currency figures every share/balance/settlement calculation already uses; this is
+  // purely additional, descriptive information about where they came from.
+  const original = e.original ? { amount: money.toDecimal(e.original.amountMinor, e.original.currency), amountMinor: e.original.amountMinor, currency: e.original.currency, rate: e.original.rate, rateSource: e.original.rateSource, rateDate: e.original.rateDate } : null;
   const out = {
-    id: e.id, description: e.description, date: e.date, currency: e.currency, amount: dec(e.amountMinor), amountMinor: e.amountMinor,
+    id: e.id, description: e.description, date: e.date, currency: e.currency, amount: dec(e.amountMinor), amountMinor: e.amountMinor, original,
     categoryId: e.categoryId || null, notes: e.notes || '',
     payers: e.payers.map((p) => ({ ref: p.ref, amount: dec(p.amountMinor), amountMinor: p.amountMinor })),
     split: { method: e.split.method, lines: e.split.lines.map((l) => ({ ref: l.ref, value: e.split.method === 'amounts' ? dec(l.value) : l.value })) },
@@ -718,7 +780,7 @@ async function createExpense(ctx, req) {
     const m = expenseMoney(doc, body, null, member, mine);
     const rec = {
       id: newId('gex'), description: fields.text(body.description, { field: 'Description', max: 120, required: true }),
-      date: fields.date(body.date, 'Date') || nowIso.slice(0, 10), currency: m.currency, amountMinor: m.amountMinor,
+      date: fields.date(body.date, 'Date') || nowIso.slice(0, 10), currency: m.currency, amountMinor: m.amountMinor, original: m.original,
       categoryId: checkCategory(doc, body.categoryId), notes: fields.text(body.notes, { field: 'Notes', max: 2000, multiline: true }),
       payers: m.payers, split: m.split, shares: m.shares,
       createdBy: member.subject, createdAt: nowIso, revision: 1, voidedAt: null,
@@ -751,7 +813,7 @@ async function patchExpense(ctx, req) {
     const next = {
       description: body.description !== undefined ? fields.text(body.description, { field: 'Description', max: 120, required: true }) : e.description,
       date: body.date !== undefined ? fields.date(body.date, 'Date', { required: true }) : e.date,
-      amountMinor: m.amountMinor,
+      amountMinor: m.amountMinor, original: m.original,
       categoryId: body.categoryId !== undefined ? checkCategory(doc, body.categoryId, e.categoryId) : e.categoryId || null,
       notes: body.notes !== undefined ? fields.text(body.notes, { field: 'Notes', max: 2000, multiline: true }) : e.notes || '',
       payers: m.payers, split: m.split, shares: m.shares,
