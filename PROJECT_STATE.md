@@ -4170,3 +4170,16 @@ self-review only, explicitly recorded as such, never labelled independent); (5) 
 authorization before any Production deployment or before resuming BT-007/BT-010 (both remain on
 hold). PR #36 (docs-only, already merged into `main` before this session's PR #37 was opened) needs
 no further action — reported here for completeness, never a prerequisite.
+
+**PR #37 merged by Terry** (`4fac6c2cf5cb6f3abf62453eb5734d1023537e43`) — confirmed via `git fetch
+origin` and `gh pr view 37 --json state,mergedAt,mergeCommit` (`state: MERGED`, `mergedAt:
+2026-09-19T18:30:06Z`), not merely reported. Local `main` fast-forwarded to the same commit
+(`git fetch origin main:main`, a pure fast-forward — `git merge-base --is-ancestor main origin/main`
+confirmed safe before doing it). No other open PRs (`gh pr list --state open` empty). The merge
+commit's tree is identical to the branch tip's (`git diff 0bd479a 4fac6c2` empty, confirming a
+clean, no-conflict merge). Preview remains deployed at `2d769d4` (the substantive commit, one
+docs-only commit behind `main`'s new tip) — a redeploy was not triggered for a docs-only difference
+with no application-behaviour change; worth a routine redeploy next time Preview is refreshed for
+other reasons. This is a small, separate, docs-only bookkeeping commit on its own branch
+(`chore/project-state-pr37-merge-verified`), exactly like PR #36 before it — reported separately,
+never a prerequisite for anything, and never merged by this agent.
