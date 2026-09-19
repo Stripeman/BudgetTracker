@@ -3286,3 +3286,91 @@ group totals/settlement with rate tracking) is the most naturally-related next s
 session's shared-expenses work, but BT-009-14 (receipt photos) or the broader BT-009-11 basket are
 equally available — unless Terry specifies one, redirects to BT-016 or BT-011's documentation
 cleanup, or supplies the missing "expanded requirements" text first.
+
+## Checkpoint AR — Terry asked for four items "in one commit": BT-009-13 built, the BT-016 decision
+closed, the "expanded requirements" text search concluded, BT-011's stale row fixed (2026-09-19,
+same session)
+
+Terry's instruction named exactly four items and asked for them as one commit, a deliberate change
+from this session's usual one-PR-per-item rhythm. All four below are that one commit/PR.
+
+**1. BT-009-13 built (multi-currency shared expenses) — `api/group/handler.js`.** An expense may
+now be entered in a currency other than the workspace's reporting currency. New optional POST/PATCH
+body fields `rate`, `rateSource`, `rateDate` (plus `currency`, already accepted at creation, now
+also validated at correction time). Reused the existing, separately-tested `money.convert`/
+`money.parseRate` primitives from account-to-account transfers rather than needing BT-010 (still on
+hold) — this was the key unblock. New `expenseAmount(doc, body, field)` validates and converts a
+foreign-currency amount server-side, refusing `missing_rate` (a foreign currency with no rate),
+`unsupported_currency`, `invalid_amount` or `amount_too_large`. The stored record always keeps the
+workspace's reporting currency and the CONVERTED amount — shares, balances and settlement all use
+the converted amount, never the original — while a new `original` block
+(`{amount, amountMinor, currency, rate, rateSource, rateDate}`, `null` for a plain expense) preserves
+exactly what was entered, forever, per BT-001-05 (amendments, never silent rewrites). `rateSource`
+defaults to `"manual"` and `rateDate` to the expense date when not given. Currency is fixed at
+creation in both directions — neither a plain expense can be corrected into a foreign one nor the
+reverse (`currency_locked`); correcting only the amount reuses the last rate automatically;
+resubmitting only a new rate without resubmitting the amount is a deliberate no-op ("changing rates
+later never changes a recorded expense," Terry's BT-009-13 split-costs check, 2026-09-14). `original`
+is tracked in the amendment history like any other field.
+
+**Evidence:** new `api/test/group-multicurrency.test.js` (7 tests) — refusal cases; full conversion
+with original preserved and shares split on the converted amount; source/date defaults; a mixed
+plain-and-foreign balance combining correctly; correction reusing/overriding the rate; currency
+locked in both directions; the amendment trail recording the change. Two pre-existing tests
+(`api/test/group.test.js`, `api/test/group-review.test.js`) updated from the old "any non-reporting
+currency refused outright" expectation to the new, intentional `missing_rate` behavior — a deliberate
+requirement change, not a weakened test. **Full regression:** `npm --prefix api test` 668/668 exit 0;
+`npm run validate` ok (24 routes); full `npm run e2e` 670/670 exit 0.
+
+**Remaining BT-009-13 gaps, disclosed:** frontend (an amount-entry currency/rate field in the expense
+dialog) not built this round — backend-only, like BT-009-15 was before its own frontend increment;
+no dedicated real-browser e2e scenario yet (existing `contactjoins.mjs` scenario's own "remaining
+limitations" note about multi-currency being currency-agnostic-but-untested-across-currencies still
+applies, now doubly true); independent security/financial review not run by a separate reviewer
+subagent (self-review only).
+
+**2. BT-016's open group/trip-vs-narrower-sharing decision closed by adopting this session's own
+earlier recommendation as the default**, disclosed exactly that way — this is NOT a claim that Terry
+made an explicit verbal choice. Absent a contrary instruction, BudgetTracker continues reusing the
+existing `group`/`trip` workspace kinds for shared expenses rather than inventing a third, narrower
+sharing construct, because a workspace already carries membership, permissions and settlement
+correctly and a narrower construct would duplicate that machinery for no proven benefit. If Terry
+disagrees, this is a one-line reversal, not a structural change yet. `docs/REQUIREMENTS.md`'s BT-016
+row updated with this closure, worded as a default adopted absent a contrary instruction.
+
+**3. The "expanded Shared Expenses and Design Gallery requirements" text — searched for, confirmed
+absent.** Directly read the local, gitignored files sitting untouched in the working tree since
+session start: `docs/Claude-handoff.md` (read in full) and `docs/BudgetTracker-review.md` (checked).
+Both are the ALREADY-fully-processed original project handoff document (dated 2026-09-18, referencing
+commit `c4baed3c1465ef123544e2a78340d21864e4c7d9`) — not new content, and not the missing expanded
+requirements text asked about across six checkpoints now (AM through this one). Reporting this
+honestly rather than fabricating or assuming silence means "never mind": **the text still has not
+arrived; Terry needs to supply it directly (paste, attach, or point at a specific file/location) for
+this to move forward.**
+
+**4. BT-011's stale top-level documentation row fixed** in `docs/REQUIREMENTS.md` — the summary row
+had drifted from each sub-item's actual, individually-verified status; rewritten to match. Not
+urgent, exactly as Terry flagged it, done here only because it was bundled into this same commit by
+his instruction.
+
+**Branch/PR note:** this work was started on the now-already-merged `feature/contact-joins-frontend-
+BT-009-15` branch (PR #31); moved with `git stash` to a fresh branch cut from `origin/main`
+(`feature/group-multicurrency-BT-009-13`) before committing, per the discipline of never building
+new work on a stale, already-merged branch.
+
+**Preview/Production staleness, disclosed:** Preview and Production have NOT been redeployed since PR
+#31 merged — both are still serving whatever commit resulted from that merge and are missing nothing
+from this new work yet (it isn't merged either), but Terry should know Preview is due for a
+redeploy once this PR merges, and Production redeploy is Terry's action, never this agent's (hard
+role boundary, not a permission gap).
+
+**Waiting on Terry:** (1) merge this PR; (2) the missing "expanded Shared Expenses and Design Gallery
+requirements" text — please supply it directly, since it was confirmed NOT present in any local file
+checked; (3) explicit confirmation or reversal of the BT-016 default adopted here; (4) which BT-009
+sub-item next (11 or 14 remain), or a redirect; (5) Production redeploy once ready (Preview redeploy
+remains an available agent action after merge).
+
+**Exact next step:** after this PR merges, redeploy Preview to catch it up (this and PR #31's already
+-merged BT-009-15 frontend work), then continue down the backlog per Terry's next instruction — most
+likely BT-009-13's own frontend increment (an amount/currency/rate entry field in the expense
+dialog), BT-009-11 or BT-009-14, unless redirected.

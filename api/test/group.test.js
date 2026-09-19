@@ -94,8 +94,11 @@ describe('BT-009-02 splits through the API', () => {
     assert.match(res.body.error.message, /90%/);
     res = await G(h, f, 'alice', 'POST', { body: { ...base, split: { method: 'amounts', lines: [{ ref: f.refs.alice, value: '60.00' }, { ref: f.refs.bob, value: '30.00' }] } } });
     assert.equal(res.body.error.code, 'split_amount_total');
+    // BT-009-13: a different currency is now supported, but needs a rate — full positive-path
+    // coverage (conversion, storing `original`, balances combining across it) is in
+    // api/test/group-multicurrency.test.js.
     res = await G(h, f, 'alice', 'POST', { body: { ...base, currency: 'USD', split: equal(f.refs.alice) } });
-    assert.equal(res.body.error.code, 'currency_not_supported', 'only the reporting currency in this increment');
+    assert.equal(res.body.error.code, 'missing_rate', 'a different currency needs a rate to convert with');
     res = await G(h, f, 'alice', 'POST', { body: { ...base, amount: '0.00', payers: [{ ref: f.refs.alice }], split: equal(f.refs.alice) } });
     assert.equal(res.body.error.code, 'invalid_amount');
   });
