@@ -1,7 +1,8 @@
-// BT-013 Design Gallery — THE SHARED COMPOSITION ENGINE. Every one of the 20 layout concepts is
+// BT-013 Design Gallery — THE SHARED COMPOSITION ENGINE. Every one of the 15 layout concepts is
 // rendered by this ONE module: a concept manifest (api/_shared/layouts.js, served by
 // /api/design-gallery) selects a nav style, a density, a card style and — for the Dashboard only —
-// one of twelve distinct hero compositions; everything below reuses the REAL shared components
+// one of seventeen distinct hero compositions (five added BT-013-09, 2026-09-19, for the genuine
+// replacement concepts Terry required); everything below reuses the REAL shared components
 // (money, categoryLabel, icon/withIcon, badge, button from app/js/ui/components.js and icons.js)
 // against the ONE canonical fictional fixture set (./fixtures.js). Layout selection is presentation
 // only: nothing here computes a balance, checks a permission or calls an API — it renders numbers
@@ -301,6 +302,90 @@ function heroAdaptive(concept, { financialState = "urgent" } = {}) {
   return financialState === "urgent" ? [alertsCard, balancesCard] : [balancesCard, alertsCard];
 }
 
+// ---- five further, GENUINELY NEW hero compositions (BT-013-09, 2026-09-19: Terry rejected the
+// original 15 concepts outright and asked for substantially redesigned, distinct options — never
+// incremental adjustment of what he had already seen). Each is a real, different information
+// structure, built from the same shared fixtures/components as every other hero above, never a
+// recoloured copy of one of the twelve already here. ---------------------------------------------
+// A single headline figure plus a short, real, ordered list of what actually matters right now —
+// distinct from story-flow's prose paragraphs (no explicit list there) and from adaptive's
+// alerts-first reordering (this always leads with the headline number, never reorders).
+function heroBriefing(concept, onNavigate) {
+  const priorities = [
+    { icon: "alert", text: `Electricity (${formatAmount("95.00", "EUR")}) is due in 2 days.` },
+    { icon: "receipt", text: `You've spent ${formatAmount("192.35", "EUR")} today, mostly Groceries and Dining.` },
+    { icon: "scale", text: `Your net position is ${formatAmount(fx.netPosition.amount, fx.netPosition.currency)}.` },
+  ];
+  return [gcard("Today's briefing", "bell", [
+    el("p", { class: "gbriefing__headline" }, [money(fx.netPosition.amount, fx.netPosition.currency, fx.prefs)]),
+    el("p", { class: "muted small", text: "Net position across every account you can see" }),
+    el("ul", { class: "gbriefing__list" }, priorities.map((p) => el("li", { class: "iconlabel" }, [icon(p.icon), el("span", { text: p.text })]))),
+    button("Add expense", () => { if (typeof onNavigate === "function") onNavigate("transactions"); }, { variant: "primary" }),
+  ], { full: true })];
+}
+// One unified, urgency-sorted feed (alerts AND bills together, sorted Now/Soon/Later) — distinct
+// from command-console's four separate, fixed, equal-weight panels: here there is exactly one list,
+// and its own order is the whole point.
+function heroInbox() {
+  const items = [
+    ...fx.alerts.map((a) => ({ urgency: "now", icon: a.icon, text: a.text })),
+    ...fx.bills.map((b) => ({ urgency: b.status === "overdue" ? "now" : b.status === "due-soon" ? "soon" : "later", icon: b.icon, text: `${b.name} due ${b.dueDate}` })),
+  ];
+  const order = { now: 0, soon: 1, later: 2 };
+  const sorted = [...items].sort((a, b) => order[a.urgency] - order[b.urgency]);
+  const label = { now: "Now", soon: "Soon", later: "Later" };
+  const variant = { now: "danger", soon: "warning", later: "" };
+  return [gcard("Inbox", "bell", el("ul", { class: "ginbox" }, sorted.map((it) => el("li", { class: "ginbox__row" }, [badge(label[it.urgency], variant[it.urgency]), withIcon(it.icon, it.text)]))), { full: true })];
+}
+// Several compact radial gauges together (budget used, savings goal, loan payoff) — distinct from
+// goal-progress's two full-width detailed cards: this is denser, gauge-only, side by side.
+function heroRingCluster() {
+  const loanPct = Math.round((3520 / 15000) * 100);
+  const savingsPct = Math.round((8420 / 12000) * 100);
+  const spent = fx.budget.lines.reduce((s, l) => s + Number(l.spent), 0);
+  const planned = fx.budget.lines.reduce((s, l) => s + Number(l.planned), 0);
+  const budgetPct = Math.round((spent / planned) * 100);
+  const rings = [{ pct: budgetPct, label: "Budget used this month" }, { pct: savingsPct, label: "Savings goal reached" }, { pct: loanPct, label: "Loan paid off" }];
+  return [gcard("At a glance", "target", el("div", { class: "gringcluster" }, rings.map((r) => el("div", { class: "gringcluster__item" }, [radialGauge(r.pct, `${r.pct}% — ${r.label}`), el("p", { class: "small", text: r.label })]))), { full: true })];
+}
+// An asymmetric tile grid (one large tile, several smaller, one wide) — distinct from metric-grid's
+// uniform, equal-weight grid: real visual hierarchy via tile SIZE, not just card order.
+function heroMosaic(concept) {
+  const tiles = [
+    el("div", { class: "gmosaic__tile gmosaic__tile--big" }, [gcard("Net position", "scale", [
+      el("div", { class: "gcard__value" }, [money(fx.netPosition.amount, fx.netPosition.currency, fx.prefs)]),
+      el("p", { class: "muted small", text: "Across every account you can see" }),
+    ])]),
+    el("div", { class: "gmosaic__tile" }, [gcard("Budget", "target", [amountText("-758.69", "EUR", fx.prefs)])]),
+    el("div", { class: "gmosaic__tile" }, [gcard("Bills due", "calendar", [el("span", { text: "2 — 1 overdue" })])]),
+    el("div", { class: "gmosaic__tile" }, [gcard("Shared balance", "users", [amountText(fx.shared.balances[0].net, fx.shared.currency, fx.prefs)])]),
+    el("div", { class: "gmosaic__tile gmosaic__tile--wide" }, [gcard("Recent entries", "receipt", el("ul", { class: "stack" }, fx.transactions.slice(0, 3).map(txRow)))]),
+  ];
+  // Reference 1's "Financial health" ring, for the one concept whose chartEmphasis asks for a
+  // second, denser chart family alongside the plain figures (never a total computed independently —
+  // the same spent/planned figures already shown on Budget are only sized for the ring here).
+  if (concept && concept.chartEmphasis === "mixed") {
+    const spent = fx.budget.lines.reduce((s, l) => s + Number(l.spent), 0);
+    const planned = fx.budget.lines.reduce((s, l) => s + Number(l.planned), 0);
+    const pct = Math.round((spent / planned) * 100);
+    tiles.push(el("div", { class: "gmosaic__tile" }, [gcard("Budget used", "target", [radialGauge(pct, `${pct}% of this month's budget used`), el("p", { class: "muted small", text: `${spent.toFixed(2)} of ${planned.toFixed(2)} EUR planned` })])]));
+  }
+  return [el("div", { class: "gmosaic" }, tiles)];
+}
+// A horizontal strip of key figures above the real recent-entries table — distinct from table-first
+// alone (this adds a genuinely different, scannable KPI header) and from metric-grid (a strip, not a
+// wrapping grid; reuses heroTableFirst's own table beneath it, never a duplicated implementation).
+function heroLedgerStrip() {
+  const stats = [
+    ["Net position", money(fx.netPosition.amount, fx.netPosition.currency, fx.prefs)],
+    ["Budget left", amountText("131.31", "EUR", fx.prefs)],
+    ["Bills due", el("span", { text: "2" })],
+    ["Shared balance", amountText(fx.shared.balances[0].net, fx.shared.currency, fx.prefs)],
+  ];
+  const strip = el("div", { class: "gledgerstrip" }, stats.map(([label, value]) => el("div", { class: "gledgerstrip__item" }, [el("p", { class: "gledgerstrip__label", text: label }), el("div", { class: "gledgerstrip__value" }, [value])])));
+  return [el("div", { class: "gledgerstrip-wrap" }, [strip]), ...heroTableFirst()];
+}
+
 const DASHBOARD_RENDERERS = {
   "metric-grid": heroMetricGrid,
   "chart-first": heroChartFirst,
@@ -314,6 +399,11 @@ const DASHBOARD_RENDERERS = {
   "split-focus": heroSplitFocus,
   "story-flow": heroStoryFlow,
   adaptive: heroAdaptive,
+  briefing: heroBriefing,
+  inbox: heroInbox,
+  "ring-cluster": heroRingCluster,
+  mosaic: heroMosaic,
+  "ledger-strip": heroLedgerStrip,
 };
 
 function renderDashboard(concept, onNavigate) {

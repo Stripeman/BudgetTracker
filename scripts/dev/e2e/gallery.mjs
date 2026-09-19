@@ -103,13 +103,14 @@ export async function run(h, t) {
   // concepts here since Terry's 2026-09-17 cut), and assert no exception; this real-browser walk
   // instead proves the ones a person would
   // actually navigate render correctly with real layout/CSS, covering every distinct navStyle family
-  // (sidebar, top, rail, sidebar-right, command) at least once.
+  // (sidebar, top, rail, sidebar-right, command, tabs) at least once.
   const sample = [
     { id: "executive-ledger", nav: "sidebar" },
     { id: "financial-command-center", nav: "rail" },
     { id: "analyst-workspace", nav: "sidebar-right" },
     { id: "focus-mode", nav: "command" },
-    { id: "modern-banking", nav: "top" },
+    { id: "modern-banking", nav: "tabs" },
+    { id: "household-hub", nav: "top" },
   ];
   const pages = ["dashboard", "transactions", "bills", "budget", "accounts", "shared", "trips", "settings"];
   const PAGE_LABELS = { dashboard: "Dashboard", transactions: "Transactions", bills: "Bills", budget: "Budget", accounts: "Accounts / Merchants", shared: "Shared expenses", trips: "Trips", settings: "Settings" };
@@ -200,9 +201,18 @@ export async function run(h, t) {
   await dave.shot("compare");
   t.check("dave: no console errors/exceptions after Compare mode", { expected: [], actual: dave.problems() });
 
+  // Compare mode persists across concept switches until explicitly removed — leave it now, before
+  // any check below that queries `.gpreview-pane` expecting exactly ONE concept's own content
+  // (BT-013-09 found this the hard way: once a redesigned concept's own dashboard could add its own
+  // extra chart element, a still-active compare pane silently contaminated an unrelated concept's
+  // count of the same element). A "Preview this concept" click re-renders the whole grid (refreshing
+  // every card's own "Compare…"/"Remove from compare" label from the current compareId — the grid is
+  // never refreshed by the compare toggle alone), so it comes first here, not after.
+  await dave.click({ role: "button", text: "Preview this concept", scope: '[data-concept="executive-ledger"]' }); // typeVoice: technical-mono
+  await dave.click({ role: "button", text: "Remove from compare", scope: '[data-concept="modern-banking"]' });
+
   // ---- typography voice and the new chart primitives (Terry, 2026-09-18: "deliberate typography…
   // graphics, metrics" — reference 5's filled forecast area, reference 1/6's circular progress ring) -
-  await dave.click({ role: "button", text: "Preview this concept", scope: '[data-concept="executive-ledger"]' }); // typeVoice: technical-mono
   await dave.choose("Preview page", "Dashboard");
   const monoHeading = await dave.evaluate("(() => { const h = document.querySelector('.gpreview-pane .gpage__head h2'); return h ? getComputedStyle(h).fontFamily : null; })()");
   await dave.click({ role: "button", text: "Preview this concept", scope: '[data-concept="wealth-overview"]' }); // typeVoice: editorial-serif
@@ -229,14 +239,15 @@ export async function run(h, t) {
   t.note(`gauge labels: ${JSON.stringify(gauge.labels)}`);
   await dave.shot("goal-navigator-gauge");
 
-  // Financial Command Center: chartEmphasis 'mixed' adds a "Budget used" ring beside its bar forecast.
-  await dave.click({ role: "button", text: "Preview this concept", scope: '[data-concept="financial-command-center"]' });
+  // Everyday Banking (BT-013-09 redesign): chartEmphasis 'mixed' adds a "Budget used" ring to its
+  // mosaic dashboard, alongside its own regular figure tiles.
+  await dave.click({ role: "button", text: "Preview this concept", scope: '[data-concept="modern-banking"]' });
   await dave.choose("Preview page", "Dashboard");
-  const mixedConsole = await dave.evaluate("(() => { const m = document.querySelector('.gpreview-pane .gframe__main'); return { hasBudgetUsed: /Budget used/.test(m.textContent), hasGauge: !!m.querySelector('.chart--gauge'), hasBars: !!m.querySelector('.chart--bars') }; })()");
-  t.check("Financial Command Center's command-console Dashboard adds a 'Budget used' ring alongside its existing forecast bar chart", {
-    expected: { hasBudgetUsed: true, hasGauge: true, hasBars: true }, actual: mixedConsole,
+  const mixedMosaic = await dave.evaluate("(() => { const m = document.querySelector('.gpreview-pane .gframe__main'); return { hasBudgetUsed: /Budget used/.test(m.textContent), hasGauge: !!m.querySelector('.chart--gauge'), hasMosaic: !!m.querySelector('.gmosaic') }; })()");
+  t.check("Everyday Banking's mosaic Dashboard adds a 'Budget used' ring alongside its own regular tiles, since its chartEmphasis is 'mixed'", {
+    expected: { hasBudgetUsed: true, hasGauge: true, hasMosaic: true }, actual: mixedMosaic,
   });
-  await dave.shot("financial-command-center-mixed-charts");
+  await dave.shot("modern-banking-mixed-mosaic");
   t.check("dave: no console errors/exceptions after the typography/chart walk", { expected: [], actual: dave.problems() });
 
   // ---- desktop / tablet / mobile widths, no horizontal overflow at 320px -------------------------
@@ -300,12 +311,6 @@ export async function run(h, t) {
     expected: true, actual: /Layout theme/.test(workspaceText) && /Classic \(current\)/.test(workspaceText),
   });
   t.check("alice: no console errors/exceptions on Workspace settings", { expected: [], actual: alice.problems() });
-
-  // Compare mode (exercised above) is still active at this point (compareId persists across concept
-  // switches until explicitly removed) — leave it before the checks below, several of which click a
-  // button by its accessible name/text inside .gpreview-pane and would otherwise be genuinely
-  // ambiguous between the primary and the compare pane, both built from the same shared fixture.
-  await dave.click({ role: "button", text: "Remove from compare", scope: '[data-concept="modern-banking"]' });
 
   // ---- per-concept colour identity (review, 2026-09-19): two concepts' own --g-accent genuinely
   // differ, and it is scoped to each concept's own frame only (never a global/site style). ---------

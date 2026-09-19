@@ -109,6 +109,29 @@ export function createApiClient({ fetchImpl = globalThis.fetch.bind(globalThis),
     // proportion.
     createSplitPreset: (id, body) => request("group", { method: "POST", query: { ...ws(id), action: "create-split-preset" }, body }),
     deleteSplitPreset: (id, body) => request("group", { method: "POST", query: { ...ws(id), action: "delete-split-preset" }, body }),
+    // BT-009-25: settlement units (couples/families) — a display/suggestion-only grouping, never a
+    // financial record.
+    createSettlementUnit: (id, body) => request("group", { method: "POST", query: { ...ws(id), action: "create-unit" }, body }),
+    deleteSettlementUnit: (id, body) => request("group", { method: "POST", query: { ...ws(id), action: "delete-unit" }, body }),
+    // BT-009-25: linked refunds — the original expense is never edited; a refund is its own record.
+    createRefund: (id, body) => request("group", { method: "POST", query: { ...ws(id), action: "create-refund" }, body }),
+    voidRefund: (id, body) => request("group", { method: "POST", query: { ...ws(id), action: "void-refund" }, body }),
+    // BT-009-25: shared income/prepaid contributions/deposits — a fully separate report, never a
+    // real income/expense transaction and never netted against the ordinary Shared-expenses balance.
+    // BT-009-26: insights — derived read-only summaries, same authority as balances.
+    groupInsights: (id, eventId) => request("group", { query: { ...ws(id), action: "insights", ...(eventId ? { eventId } : {}) } }),
+    createContribution: (id, body) => request("group", { method: "POST", query: { ...ws(id), action: "create-contribution" }, body }),
+    applyContribution: (id, body) => request("group", { method: "POST", query: { ...ws(id), action: "apply-contribution" }, body }),
+    returnContribution: (id, body) => request("group", { method: "POST", query: { ...ws(id), action: "return-contribution" }, body }),
+    // BT-009-26: in-app payment reminders/requests — never an email/SMS/push (no delivery provider
+    // is configured); they move no money and never change a balance themselves.
+    createPaymentRequest: (id, body) => request("group", { method: "POST", query: { ...ws(id), action: "create-payment-request" }, body }),
+    dismissPaymentRequest: (id, body) => request("group", { method: "POST", query: { ...ws(id), action: "dismiss-payment-request" }, body }),
+    cancelPaymentRequest: (id, body) => request("group", { method: "POST", query: { ...ws(id), action: "cancel-payment-request" }, body }),
+    // BT-009-26: Splitwise import — a CSV export from Splitwise itself, never a live API/credential
+    // dependency. Preview never mutates anything; only confirm-import creates real records.
+    previewSplitwiseImport: (id, body) => request("group", { method: "POST", query: { ...ws(id), action: "preview-import" }, body }),
+    confirmSplitwiseImport: (id, body) => request("group", { method: "POST", query: { ...ws(id), action: "confirm-import" }, body }),
     categories: (id) => request("categories", { query: ws(id) }),
     icons: (id, catalogEtag) => request("icons", { query: id ? { ...ws(id), catalogEtag } : undefined }),
     updateTypeIcons: (id, typeIcons) => request("icons", { method: "PATCH", query: ws(id), body: { typeIcons } }),

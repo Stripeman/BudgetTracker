@@ -21,7 +21,12 @@ const fields = require('./fields');
 const people = require('./people');
 const model = require('./workspace-model');
 
-const METHODS = Object.freeze(['equal', 'amounts', 'percentages', 'shares', 'fixed-remainder']);
+// BT-009-25: 'itemized' is stored exactly like 'amounts' (each line names its own final, already-
+// reconciled amount) — the raw line-items/tax/tip/discount/fee that PRODUCED those amounts are kept
+// separately on the expense (`e.itemization`, computed once by `computeItemization` below and never
+// touched by `computeShares`/`storedSplitBroken` here), so every existing balance/export/backup code
+// path that already handles 'amounts' handles 'itemized' identically, with zero new blast radius.
+const METHODS = Object.freeze(['equal', 'amounts', 'percentages', 'shares', 'fixed-remainder', 'itemized']);
 // BT-009-25: the split methods a PROPORTION-only saved preset may use — never 'amounts' or
 // 'fixed-remainder', whose values name a specific money amount that does not generalize across
 // different expense sizes the way an equal split, a share count or a percentage does.
@@ -61,7 +66,7 @@ function positiveAmount(text, currency, field) {
 // 'fixed-remainder' line that shares the remainder), a whole number of shares, a canonical
 // percentage string, or minor units (amounts, or a 'fixed-remainder' line's own fixed amount).
 function computeShares(totalMinor, split) {
-  if (split.method === 'amounts') {
+  if (split.method === 'amounts' || split.method === 'itemized') {
     return { shares: split.lines.map((l) => ({ ref: l.ref, amountMinor: l.value, adjustmentMinor: 0 })), residualMinor: 0 };
   }
   // BT-009-25: "fixed allocations plus a split remainder" (Terry, 2026-09-19) — a line with a
@@ -134,7 +139,7 @@ function normalizeSplit(input, totalMinor, currency, checkRef) {
     const sum = lines.reduce((a, l) => a + percentUnits(l.value), 0);
     if (sum !== HUNDRED_PERCENT) throw badRequest(`The percentages add up to ${percentText(sum)}%. They must add up to exactly 100%.`, 'split_percent_total');
   }
-  if (method === 'amounts') {
+  if (method === 'amounts' || method === 'itemized') {
     const sum = money.sum(lines.map((l) => l.value));
     if (sum !== totalMinor) {
       throw badRequest(`The amounts add up to ${money.toDecimal(sum, currency)} but the expense is ${money.toDecimal(totalMinor, currency)}.`, 'split_amount_total');
@@ -150,6 +155,77 @@ function normalizeSplit(input, totalMinor, currency, checkRef) {
     }
   }
   return { method, lines };
+}
+
+// BT-009-25: itemized receipt allocation (docs/BT-009-25-WORKED-EXAMPLES.md §2's worked example).
+// `itemization = { lines: [{description, quantity, unitPriceMinor, refs: [ref,...]}], taxMinor,
+// tipMinor, discountMinor, feeMinor }`. Each line's own total (quantity × unitPriceMinor,
+// supporting a genuine quantity like "2x Pizza") is split EQUALLY among the people named in its
+// own `refs` (a "shared line") via the same deterministic largest-remainder `money.allocate`
+// mechanism every other weighted split method already uses. Tax/tip/fee (added) and discount
+// (subtracted) are then allocated to every participant who has at least one item line,
+// PROPORTIONALLY to their own item-line subtotal — same mechanism again, so the grand total always
+// reconciles EXACTLY to `totalMinor` (the expense's own amount). Returns decimal-string values (the
+// same shape client-typed 'amounts' values already have) so the result can be fed straight into the
+// existing `normalizeSplit`/`computeShares` 'itemized' handling with zero special-casing there.
+function computeItemization(itemization, totalMinor, currency, checkRef) {
+  if (!itemization || typeof itemization !== 'object' || Array.isArray(itemization)) throw badRequest('Itemization is not valid.', 'invalid_itemization');
+  fields.onlyKeys(itemization, ['lines', 'taxMinor', 'tipMinor', 'discountMinor', 'feeMinor']);
+  if (!Array.isArray(itemization.lines) || !itemization.lines.length) throw badRequest('Add at least one item line.', 'invalid_itemization');
+  if (itemization.lines.length > MAX_LINES) throw badRequest(`An itemized receipt can have at most ${MAX_LINES} lines.`, 'invalid_itemization');
+  const perPersonMinor = new Map();
+  const add = (ref, amt) => perPersonMinor.set(ref, (perPersonMinor.get(ref) || 0) + amt);
+  const storedLines = [];
+  let itemsSubtotal = 0;
+  itemization.lines.forEach((line, i) => {
+    if (!line || typeof line !== 'object' || Array.isArray(line)) throw badRequest(`Item line ${i + 1} is not valid.`, 'invalid_itemization');
+    fields.onlyKeys(line, ['description', 'quantity', 'unitPriceMinor', 'refs']);
+    const description = fields.text(line.description, { field: `Item ${i + 1}`, max: 120, required: true });
+    const quantity = Number(line.quantity);
+    if (!Number.isFinite(quantity) || quantity <= 0 || quantity > 10000) throw badRequest(`"${description}": quantity must be greater than zero.`, 'invalid_itemization');
+    if (!money.isMinor(line.unitPriceMinor) || line.unitPriceMinor <= 0) throw badRequest(`"${description}": unit price must be greater than zero.`, 'invalid_itemization');
+    const lineTotal = Math.round(quantity * line.unitPriceMinor);
+    if (lineTotal <= 0 || lineTotal > MAX_GROUP_MINOR) throw badRequest(`"${description}": the line total is not valid.`, 'invalid_itemization');
+    itemsSubtotal += lineTotal;
+    if (!Array.isArray(line.refs) || !line.refs.length) throw badRequest(`"${description}": choose who shares this line.`, 'invalid_itemization');
+    const refs = line.refs.map((r) => checkRef(r));
+    if (unique(refs).length !== refs.length) throw badRequest(`"${description}": the same person is named twice.`, 'invalid_itemization');
+    const parts = money.allocate(lineTotal, refs.map(() => 1));
+    refs.forEach((ref, j) => add(ref, parts[j]));
+    storedLines.push({ description, quantity, unitPriceMinor: line.unitPriceMinor, refs });
+  });
+  const fee = (key, field) => {
+    const v = itemization[key];
+    if (v === undefined || v === null || v === '') return 0;
+    if (!money.isMinor(v) || v < 0) throw badRequest(`${field} must be a non-negative amount.`, 'invalid_itemization');
+    return v;
+  };
+  const taxMinor = fee('taxMinor', 'Tax');
+  const tipMinor = fee('tipMinor', 'Tip');
+  const discountMinor = fee('discountMinor', 'Discount');
+  const feeMinor = fee('feeMinor', 'Fee');
+  const netExtra = taxMinor + tipMinor - discountMinor + feeMinor;
+  const refsWithItems = [...perPersonMinor.keys()];
+  if (netExtra !== 0) {
+    if (itemsSubtotal <= 0) throw badRequest('Tax, tip, discount or a fee needs at least one item line to allocate against.', 'invalid_itemization');
+    const weights = refsWithItems.map((ref) => perPersonMinor.get(ref));
+    const parts = money.allocate(Math.abs(netExtra), weights);
+    const sign = netExtra < 0 ? -1 : 1;
+    refsWithItems.forEach((ref, j) => add(ref, sign * parts[j]));
+  }
+  const grandTotal = itemsSubtotal + netExtra;
+  // "Show any unallocated remainder" — a clear, itemization-specific message, not the generic
+  // 'amounts' mismatch text, whenever the lines plus tax/tip/discount/fee do not equal the expense's
+  // own entered total (e.g., a line was forgotten, or the receipt total was mistyped).
+  if (grandTotal !== totalMinor) {
+    const diff = totalMinor - grandTotal;
+    throw badRequest(diff > 0
+      ? `${money.toDecimal(diff, currency)} of the ${money.toDecimal(totalMinor, currency)} total is not yet allocated to any item line, tax, tip, discount or fee.`
+      : `The item lines, tax, tip, discount and fee add up to ${money.toDecimal(grandTotal, currency)}, which is more than the expense's own ${money.toDecimal(totalMinor, currency)} total.`,
+      'itemization_unallocated');
+  }
+  const lines = refsWithItems.map((ref) => ({ ref, value: money.toDecimal(perPersonMinor.get(ref), currency) }));
+  return { lines, itemization: { lines: storedLines, taxMinor, tipMinor, discountMinor, feeMinor } };
 }
 
 // The same rules as normalizeSplit, applied to a STORED split (amounts already in minor units), for
@@ -272,6 +348,19 @@ function recordRefs(doc) {
     for (const s of e.shares || []) out.push(s.ref);
   }
   for (const s of doc.groupSettlements || []) out.push(s.from, s.to);
+  // BT-009-25: a linked refund's own allocation names real people too (its "explicitly reviewed
+  // adjustment" can, in principle, name someone the original expense's split did not) — treated
+  // exactly like an expense's own payers/shares for participant listing and restore/create-new
+  // member-reference blocking, never a silent exception to either.
+  for (const rf of doc.groupRefunds || []) for (const s of rf.shares || []) out.push(s.ref);
+  // BT-009-25: a shared-income/deposit contribution names a real contributor and holder — treated
+  // exactly like every other financial record's own references for participant listing and
+  // restore/create-new member-reference blocking.
+  for (const c of doc.groupContributions || []) out.push(c.contributor, c.holder);
+  // BT-009-26: an in-app payment reminder names who is owed and who is being reminded — treated the
+  // same way for participant listing and restore/create-new member-reference blocking, even though
+  // it moves no money itself.
+  for (const r of doc.groupPaymentRequests || []) out.push(r.from, r.to);
   return out;
 }
 
@@ -341,6 +430,51 @@ function suggest(rows, rank) {
     if (!d.left) debtors.shift();
   }
   return out;
+}
+
+// BT-009-25: settlement units (couples/families) are a DISPLAY/SUGGESTION-only grouping over
+// already-computed individual rows — never a second calculation of balance itself, and never a
+// thing that can hold money. Only active units are ever merged; a member in more than one active
+// unit is refused at create time (invariantProblem), so there is never an ambiguous double-merge.
+// A merged suggestion between two units (or a unit and an individual) still names a REAL person to
+// actually pay/receive (`viaRef`/`viaName`): whichever member of the unit has the larger-magnitude
+// individual basis, ties broken by participant order — deterministic, and always shown, never a
+// silently guessed destination. Reduces payment COUNT only; the underlying `rows` (and every other
+// output of `balances()`) are completely unaffected.
+function unitSuggest(rows, rank, units) {
+  const activeUnits = (units || []).filter((u) => u.active !== false);
+  const memberToUnit = new Map();
+  for (const u of activeUnits) for (const ref of u.memberRefs) if (!memberToUnit.has(ref)) memberToUnit.set(ref, u);
+  const merged = new Map(); // unit id or ref -> { ref, basisMinor, members: [{ref, basisMinor}] }
+  for (const r of rows) {
+    const u = memberToUnit.get(r.ref);
+    const key = u ? u.id : r.ref;
+    if (!merged.has(key)) merged.set(key, { ref: key, basisMinor: 0, unit: u || null, members: [] });
+    const m = merged.get(key);
+    m.basisMinor = money.sum([m.basisMinor, r.basisMinor]);
+    m.members.push({ ref: r.ref, basisMinor: r.basisMinor });
+  }
+  const mergedRows = [...merged.values()];
+  const viaOf = (key) => {
+    const m = merged.get(key);
+    if (!m || !m.unit) return { viaRef: key, viaName: null };
+    const chosen = [...m.members].sort((a, b) => Math.abs(b.basisMinor) - Math.abs(a.basisMinor) || rank(a.ref) - rank(b.ref))[0];
+    return { viaRef: chosen.ref, viaName: null };
+  };
+  const raw = suggest(mergedRows, (key) => { const m = merged.get(key); return m && m.unit ? Math.min(...m.members.map((x) => rank(x.ref))) : rank(key); });
+  return raw.map((s) => {
+    const fromUnit = merged.get(s.from).unit;
+    const toUnit = merged.get(s.to).unit;
+    const fromVia = viaOf(s.from);
+    const toVia = viaOf(s.to);
+    return {
+      from: fromUnit ? fromUnit.id : s.from, to: toUnit ? toUnit.id : s.to, amountMinor: s.amountMinor,
+      fromIsUnit: !!fromUnit, toIsUnit: !!toUnit,
+      fromName: fromUnit ? fromUnit.name : null, toName: toUnit ? toUnit.name : null,
+      // The real person who would actually pay/receive — always named, never hidden behind the unit.
+      fromRef: fromVia.viaRef, toRef: toVia.viaRef,
+    };
+  });
 }
 
 // Direct debts, not redistributed: for each expense, what each person paid for themselves is set
@@ -431,6 +565,32 @@ function balances(doc, order, { ensureCurrency = null, countReported = true } = 
       r.expenses.push({ expenseId: e.id, description: e.description, date: e.date, paidMinor: p, shareMinor: s, effectMinor: money.sum([p, -s]) });
     }
   }
+  // BT-009-25: a linked refund (docs/BT-009-25-WORKED-EXAMPLES.md §3) never edits the original
+  // expense — its own record stays exactly as recorded, forever. It reduces, ON READ, the true
+  // effective cost: the ORIGINAL PAYER(S)' "paid" (money genuinely came back — split proportionally
+  // to how much each originally paid, via the same `money.allocate` largest-remainder mechanism
+  // every other split already uses, so a multi-payer refund still reconciles exactly), and each
+  // refunded participant's "share" by their own allocated part. A CONFIRMED settlement already
+  // recorded is never touched by any of this — a resulting over/under-payment becomes a normal,
+  // new, open balance, resolved by a normal new settlement (proven by the worked example's own
+  // hand-computed, corrected zero-sum trace).
+  const expenseById = new Map((doc.groupExpenses || []).map((e) => [e.id, e]));
+  for (const rf of doc.groupRefunds || []) {
+    if (rf.voidedAt) continue;
+    const e = expenseById.get(rf.refundOf);
+    if (!e || e.voidedAt) continue;
+    const payerRefs = (e.payers || []).map((p) => p.ref);
+    const payerWeights = (e.payers || []).map((p) => p.amountMinor);
+    const payerParts = money.allocate(rf.amountMinor, payerWeights);
+    payerRefs.forEach((ref, i) => {
+      const row = rowOf(rf.currency, ref);
+      row.paidMinor = plus(row.paidMinor, -payerParts[i]);
+    });
+    for (const line of rf.shares) {
+      const row = rowOf(rf.currency, line.ref);
+      row.shareMinor = plus(row.shareMinor, -line.amountMinor);
+    }
+  }
   for (const s of doc.groupSettlements || []) {
     if (s.voidedAt) continue;
     const from = rowOf(s.currency, s.from);
@@ -462,7 +622,13 @@ function balances(doc, order, { ensureCurrency = null, countReported = true } = 
       left.set(s.to, money.sum([left.get(s.to), -x]));
     }
     for (const r of rows) r.basisMinor = left.get(r.ref);
-    out.push({ currency, rows, suggestions: suggest(rows, rank), direct: direct(doc, currency, rank, countReported, counted) });
+    out.push({
+      currency, rows, suggestions: suggest(rows, rank), direct: direct(doc, currency, rank, countReported, counted),
+      // BT-009-25: settlement units, a display/suggestion-only merge over the SAME rows above —
+      // omitted (empty array) when no active unit exists, so every existing consumer of `balances()`
+      // sees no change in shape unless units are actually in use.
+      unitSuggestions: (doc.groupSettlementUnits || []).some((u) => u.active !== false) ? unitSuggest(rows, rank, doc.groupSettlementUnits) : [],
+    });
   }
   return out;
 }
@@ -473,6 +639,57 @@ function balances(doc, order, { ensureCurrency = null, countReported = true } = 
 function openCurrencies(doc) {
   const refs = participants(doc, null).map((p) => p.ref);
   return balances(doc, refs).filter((b) => b.rows.some((r) => r.netMinor !== 0)).map((b) => b.currency);
+}
+
+// BT-009-26: "useful event spending, category, participant and settlement summaries derived from
+// canonical calculations, respecting permissions and currencies" (Terry, 2026-09-19). Every number
+// here is derived, on read, from the SAME records `balances()` already reads — never a second,
+// independent calculation of anything; permission gating is the caller's (the same authority as
+// balances/expenses already have — an insight is never shown to someone who could not already see
+// the records behind it). One table per currency, exactly like `balances()`, so a multi-currency
+// workspace's insights are never silently mixed into one meaningless total.
+function insights(doc, order, { ensureCurrency = null } = {}) {
+  doc = canonicalDoc(doc);
+  const tables = new Map();
+  const table = (currency) => {
+    if (!tables.has(currency)) tables.set(currency, { currency, totalSpentMinor: 0, expenseCount: 0, byCategory: new Map(), byParticipant: new Map(), settlements: { confirmedMinor: 0, pendingMinor: 0, disputedMinor: 0, confirmedCount: 0, pendingCount: 0, disputedCount: 0 } });
+    return tables.get(currency);
+  };
+  if (ensureCurrency) table(ensureCurrency);
+  const byParticipantRow = (t, ref) => { if (!t.byParticipant.has(ref)) t.byParticipant.set(ref, { ref, paidMinor: 0, shareMinor: 0 }); return t.byParticipant.get(ref); };
+  for (const e of doc.groupExpenses || []) {
+    if (e.voidedAt) continue;
+    const t = table(e.currency);
+    t.totalSpentMinor = money.sum([t.totalSpentMinor, e.amountMinor]);
+    t.expenseCount += 1;
+    const catKey = e.categoryId || '__none__';
+    if (!t.byCategory.has(catKey)) t.byCategory.set(catKey, { categoryId: e.categoryId || null, totalMinor: 0, count: 0 });
+    const cat = t.byCategory.get(catKey);
+    cat.totalMinor = money.sum([cat.totalMinor, e.amountMinor]);
+    cat.count += 1;
+    for (const p of e.payers || []) byParticipantRow(t, p.ref).paidMinor = money.sum([byParticipantRow(t, p.ref).paidMinor, p.amountMinor]);
+    for (const s of e.shares || []) byParticipantRow(t, s.ref).shareMinor = money.sum([byParticipantRow(t, s.ref).shareMinor, s.amountMinor]);
+  }
+  for (const s of doc.groupSettlements || []) {
+    if (s.voidedAt) continue;
+    const t = table(s.currency);
+    if (s.status === 'confirmed') { t.settlements.confirmedMinor = money.sum([t.settlements.confirmedMinor, s.amountMinor]); t.settlements.confirmedCount += 1; }
+    else if (s.status === 'reported') { t.settlements.pendingMinor = money.sum([t.settlements.pendingMinor, s.amountMinor]); t.settlements.pendingCount += 1; }
+    else if (s.status === 'disputed') { t.settlements.disputedMinor = money.sum([t.settlements.disputedMinor, s.amountMinor]); t.settlements.disputedCount += 1; }
+  }
+  const index = new Map(order.map((r, i) => [r, i]));
+  const rank = (ref) => (index.has(ref) ? index.get(ref) : order.length);
+  const out = [];
+  for (const currency of [...tables.keys()].sort()) {
+    const t = tables.get(currency);
+    out.push({
+      currency, totalSpentMinor: t.totalSpentMinor, expenseCount: t.expenseCount,
+      byCategory: [...t.byCategory.values()].sort((a, b) => b.totalMinor - a.totalMinor),
+      byParticipant: [...t.byParticipant.values()].sort((a, b) => rank(a.ref) - rank(b.ref)),
+      settlements: t.settlements,
+    });
+  }
+  return out;
 }
 
 // ---- personal ledger ---------------------------------------------------------------------------
@@ -548,6 +765,22 @@ function invariantProblem(doc) {
     } catch { return 'group expense shares'; }
     if (expected.some((s, i) => s.ref !== e.shares[i].ref || s.amountMinor !== e.shares[i].amountMinor)) return 'group expense shares';
     if (e.categoryId && !categories.has(e.categoryId)) return 'group expense category';
+    // BT-009-25: `e.itemization` is purely descriptive (the real, checked-above truth is
+    // `e.split`/`e.shares`, produced from it once at creation) — validated lightly for shape and
+    // real people, never re-derived or re-checked for reconciliation here.
+    if (e.split.method === 'itemized') {
+      const it = e.itemization;
+      if (!it || !Array.isArray(it.lines) || !it.lines.length) return 'group expense itemization';
+      for (const l of it.lines) {
+        if (!l || typeof l.description !== 'string' || !l.description) return 'group expense itemization';
+        if (!Number.isFinite(l.quantity) || l.quantity <= 0) return 'group expense itemization';
+        if (!money.isMinor(l.unitPriceMinor) || l.unitPriceMinor <= 0) return 'group expense itemization';
+        if (!Array.isArray(l.refs) || !l.refs.length || l.refs.some((r) => !refOk(r))) return 'group expense itemization';
+      }
+      for (const key of ['taxMinor', 'tipMinor', 'discountMinor', 'feeMinor']) {
+        if (!money.isMinor(it[key]) || it[key] < 0) return 'group expense itemization';
+      }
+    } else if (e.itemization !== undefined && e.itemization !== null) return 'group expense itemization';
   }
   for (const s of doc.groupSettlements || []) {
     if (!money.isCurrency(s.currency) || !money.isMinor(s.amountMinor) || s.amountMinor <= 0) return 'group settlement amounts';
@@ -605,6 +838,39 @@ function invariantProblem(doc) {
     if (l.groupExpenseId !== undefined && l.groupExpenseId !== null && !expenseIds.has(l.groupExpenseId)) return 'transaction group link';
     if (l.groupSettlementId !== undefined && l.groupSettlementId !== null && !settlementIds.has(l.groupSettlementId)) return 'transaction group link';
   }
+  // BT-009-25: a linked refund names a real expense — live, or set aside whole by a replace restore
+  // (nothing is ever deleted), same tolerance as a transaction's own group link just above. Refunds
+  // no more than that expense's own total (nor more than it, together with every other active
+  // refund against the same expense — checked only when the expense is still live, since a set-
+  // aside expense's own amount is no longer directly at hand to check against); its allocation
+  // (`split`/`shares`) is exactly the same shape/rounding discipline as a real expense's split —
+  // one canonical calculation, reused, never a second one invented for refunds.
+  {
+    const liveExpenseById = new Map((doc.groupExpenses || []).map((e) => [e.id, e]));
+    const refundedSoFar = new Map();
+    for (const rf of doc.groupRefunds || []) {
+      if (!money.isCurrency(rf.currency) || !money.isMinor(rf.amountMinor) || rf.amountMinor <= 0) return 'group refund amounts';
+      if (!expenseIds.has(rf.refundOf)) return 'group refund reference';
+      if (storedSplitBroken(rf.split, rf.amountMinor)) return 'group refund split';
+      let expected;
+      try {
+        if (rf.split.lines.length !== rf.shares.length) throw new Error('split');
+        expected = computeShares(rf.amountMinor, rf.split).shares;
+      } catch { return 'group refund shares'; }
+      if (expected.some((s, i) => s.ref !== rf.shares[i].ref || s.amountMinor !== rf.shares[i].amountMinor)) return 'group refund shares';
+      if (rf.shares.some((s) => !refOk(s.ref))) return 'group refund shares';
+      const e = liveExpenseById.get(rf.refundOf);
+      if (e) {
+        if (rf.currency !== e.currency) return 'group refund currency';
+        if (!rf.voidedAt) {
+          const before = refundedSoFar.get(rf.refundOf) || 0;
+          const after = before + rf.amountMinor;
+          if (after > e.amountMinor) return 'group refund total exceeds expense';
+          refundedSoFar.set(rf.refundOf, after);
+        }
+      }
+    }
+  }
   // BT-009-25: a saved split preset names a real method (never a money-shaped one — presets are
   // proportions, reusable across different expense sizes) and real people; unlike a real split it
   // is never checked against any particular total, so `storedSplitBroken` does not apply to it.
@@ -618,6 +884,45 @@ function invariantProblem(doc) {
       for (const l of p.lines) { try { sum += percentUnits(l.value); } catch { return 'split preset lines'; } }
       if (sum !== HUNDRED_PERCENT) return 'split preset lines';
     }
+  }
+  // BT-009-25: a settlement unit (couples/families) names >=2 distinct real participants; a member
+  // may belong to at most one ACTIVE unit at a time (an unambiguous merge — never two units both
+  // claiming the same person). An inactive (deleted) unit is kept for audit but excluded from this
+  // overlap check, exactly like an archived record elsewhere in this codebase.
+  {
+    const ids = (doc.groupSettlementUnits || []).map((u) => u.id);
+    if (unique(ids).length !== ids.length) return 'settlement unit ids';
+    const claimed = new Set();
+    for (const u of doc.groupSettlementUnits || []) {
+      if (typeof u.id !== 'string' || !u.id) return 'settlement unit ids';
+      if (!Array.isArray(u.memberRefs) || u.memberRefs.length < 2) return 'settlement unit members';
+      if (unique(u.memberRefs).length !== u.memberRefs.length) return 'settlement unit members';
+      if (u.memberRefs.some((ref) => !refOk(ref))) return 'settlement unit members';
+      if (u.active === false) continue;
+      for (const ref of u.memberRefs) {
+        if (claimed.has(ref)) return 'settlement unit overlap';
+        claimed.add(ref);
+      }
+    }
+  }
+  // BT-009-25: a shared-income/deposit contribution names two real people (never the same one
+  // twice) and never claims to have applied or returned more than it actually holds — the same
+  // "never more than what exists" discipline every other financial record here already has.
+  for (const c of doc.groupContributions || []) {
+    if (!money.isCurrency(c.currency) || !money.isMinor(c.amountMinor) || c.amountMinor <= 0) return 'group contribution amounts';
+    if (!refOk(c.contributor) || !refOk(c.holder) || c.contributor === c.holder) return 'group contribution people';
+    if (!money.isMinor(c.appliedMinor) || c.appliedMinor < 0) return 'group contribution applied';
+    if (!money.isMinor(c.returnedMinor) || c.returnedMinor < 0) return 'group contribution returned';
+    if (c.appliedMinor + c.returnedMinor > c.amountMinor) return 'group contribution total exceeds amount';
+  }
+  // BT-009-26: an in-app payment reminder names two different real people, a positive amount in a
+  // real currency, and a status from its own small lifecycle — it moves no money itself, so there
+  // is nothing to reconcile against a balance, just the same shape discipline as everything else.
+  const REQUEST_STATUSES = ['open', 'dismissed', 'cancelled'];
+  for (const r of doc.groupPaymentRequests || []) {
+    if (!refOk(r.from) || !refOk(r.to) || r.from === r.to) return 'group payment request people';
+    if (!money.isCurrency(r.currency) || !money.isMinor(r.amountMinor) || r.amountMinor <= 0) return 'group payment request amount';
+    if (!REQUEST_STATUSES.includes(r.status)) return 'group payment request status';
   }
   return null;
 }
@@ -654,7 +959,7 @@ function foreignWorkspaceIds(doc) {
 
 module.exports = {
   METHODS, PRESET_METHODS, SETTLEMENT_STATES, MAX_LINES, MAX_GROUP_MINOR, HUNDRED_PERCENT,
-  percentUnits, percentText, positiveAmount, computeShares, normalizeSplit, normalizePayers, participantChecker,
-  participants, recordRefs, sumByRef, balances, openCurrencies, desiredEntries, recordedOutside, invariantProblem, memberIds,
+  percentUnits, percentText, positiveAmount, computeShares, normalizeSplit, computeItemization, normalizePayers, participantChecker,
+  participants, recordRefs, sumByRef, balances, insights, openCurrencies, desiredEntries, recordedOutside, invariantProblem, memberIds,
   foreignWorkspaceIds, canonicalRef, canonicalDoc,
 };

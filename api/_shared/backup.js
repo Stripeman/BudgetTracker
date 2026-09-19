@@ -192,6 +192,10 @@ function manifestOf(doc, attachments) {
       ...(Array.isArray(doc.groupSettlements) ? { groupSettlements: doc.groupSettlements.length } : {}),
       ...(Array.isArray(doc.groupEvents) ? { groupEvents: doc.groupEvents.length } : {}),
       ...(Array.isArray(doc.groupSplitPresets) ? { groupSplitPresets: doc.groupSplitPresets.length } : {}),
+      ...(Array.isArray(doc.groupSettlementUnits) ? { groupSettlementUnits: doc.groupSettlementUnits.length } : {}),
+      ...(Array.isArray(doc.groupRefunds) ? { groupRefunds: doc.groupRefunds.length } : {}),
+      ...(Array.isArray(doc.groupContributions) ? { groupContributions: doc.groupContributions.length } : {}),
+      ...(Array.isArray(doc.groupPaymentRequests) ? { groupPaymentRequests: doc.groupPaymentRequests.length } : {}),
     },
     balances: [...balances(doc).entries()].map(([accountId, minor]) => ({ accountId, minor })),
   };
@@ -268,7 +272,7 @@ function scopeFor(doc, subject, role) {
   };
 }
 
-const COLLECTIONS = ['accounts', 'transactions', 'payees', 'categories', 'contacts', 'recurring', 'budgets', 'groupExpenses', 'groupSettlements', 'groupEvents', 'groupSplitPresets'];
+const COLLECTIONS = ['accounts', 'transactions', 'payees', 'categories', 'contacts', 'recurring', 'budgets', 'groupExpenses', 'groupSettlements', 'groupEvents', 'groupSplitPresets', 'groupSettlementUnits', 'groupRefunds', 'groupContributions', 'groupPaymentRequests'];
 // Directory records a replace never removes: records outside the caller's scope may refer to them,
 // and the directory is never pruned (security review SEC-B1 and SEC-R4 for contacts, BT-001-05).
 const KEEP_ON_REPLACE = new Set(['categories', 'payees', 'contacts']);
@@ -291,6 +295,18 @@ function inScope(doc, scope) {
     // Saved split presets (BT-009-25) are shared, proportion-only convenience data — same scope
     // as the events and expenses they help fill in, never a financial record on their own.
     groupSplitPresets: scope.shared ? (doc.groupSplitPresets || []) : [],
+    // Settlement units (BT-009-25: couples/families) are a display-only convenience over shared
+    // records — same scope as the split presets they sit beside, never a financial record.
+    groupSettlementUnits: scope.shared ? (doc.groupSettlementUnits || []) : [],
+    // Linked refunds (BT-009-25) are real financial records, tied to the shared expense they
+    // refund — same owner scope as groupExpenses/groupSettlements above.
+    groupRefunds: scope.shared ? (doc.groupRefunds || []) : [],
+    // Shared income/prepaid contributions/deposits (BT-009-25) are real financial records of their
+    // own (who contributed, who holds it) — same owner scope as everything else here.
+    groupContributions: scope.shared ? (doc.groupContributions || []) : [],
+    // In-app payment reminders (BT-009-26) move no money themselves but name real people — same
+    // owner scope as the rest of the shared-expenses collections beside them.
+    groupPaymentRequests: scope.shared ? (doc.groupPaymentRequests || []) : [],
   };
 }
 
@@ -420,6 +436,20 @@ function plan({ current, archived, mode, principal, member, nowIso, newWorkspace
       budgets: forgetOthers(arc.budgets),
       groupExpenses: forgetOthers(arc.groupExpenses.map(scrub)),
       groupSettlements: forgetOthers(arc.groupSettlements.map(scrub)),
+      // Linked refunds (BT-009-25) come along the same way, the same shape discipline as an
+      // expense's own record — and, since their shares now count toward `groups.recordRefs()`
+      // (memberIds) just like an expense's own payers/shares do, a refund naming another member
+      // blocks create-new outright, exactly like an expense naming one, rather than silently
+      // surviving with a "former member" reference.
+      groupRefunds: forgetOthers(arc.groupRefunds.map(scrub)),
+      // Contributions (BT-009-25) come along the same way; naming another member blocks create-new
+      // outright (their refs now count toward `groups.recordRefs()`), exactly like a refund or an
+      // expense naming one.
+      groupContributions: forgetOthers(arc.groupContributions.map(scrub)),
+      // In-app payment reminders (BT-009-26) come along the same way; naming another member blocks
+      // create-new outright (their refs now count toward `groups.recordRefs()`), exactly like a
+      // refund or a contribution naming one.
+      groupPaymentRequests: forgetOthers(arc.groupPaymentRequests.map(scrub)),
       // The events those expenses/payments belong to come along the same way (BT-009-20); `scrub`
       // already generically maps `createdBy`/`history[].by` (an event has no amendments or
       // ledgerLinks, so those branches simply do nothing for it). `defaultEventId` follows only
@@ -431,6 +461,11 @@ function plan({ current, archived, mode, principal, member, nowIso, newWorkspace
       // every field generically (not just the ones `scrub` names), so a preset line naming
       // another member is mapped to "Former member" exactly like an expense's own refs are.
       groupSplitPresets: forgetOthers(arc.groupSplitPresets.map(scrub)),
+      // Settlement units (BT-009-25) need >=2 REAL members to mean anything; one that would end up
+      // naming a former member (S4: nobody else's identity survives create-new) is dropped rather
+      // than kept half-formed — the underlying expenses/shares themselves are entirely unaffected
+      // either way, only the couple/family grouping convenience for that one unit is lost.
+      groupSettlementUnits: forgetOthers(arc.groupSettlementUnits.map(scrub)).filter((u) => !u.memberRefs.includes(FORMER_REF)),
       groupLedgers: (archived.groupLedgers || []).filter((l) => l.subject === principal.subject && keepAccounts.has(l.accountId)).map((l) => ({ ...l })),
       // The group's settings come along with the group; who changed them is mapped like everything else.
       // Per-person overrides of anyone else are left behind; they are keyed by member id (S4).
@@ -577,7 +612,7 @@ function plan({ current, archived, mode, principal, member, nowIso, newWorkspace
     : diffCounts(inScope(current, scopeNow), after);
   const summary = {
     mode,
-    scope: { accounts: arc.accounts.length, transactions: arc.transactions.length, payees: arc.payees.length, categories: arc.categories.length, contacts: arc.contacts.length, recurring: arc.recurring.length, budgets: arc.budgets.length, groupExpenses: arc.groupExpenses.length, groupSettlements: arc.groupSettlements.length, groupEvents: arc.groupEvents.length, groupSplitPresets: arc.groupSplitPresets.length },
+    scope: { accounts: arc.accounts.length, transactions: arc.transactions.length, payees: arc.payees.length, categories: arc.categories.length, contacts: arc.contacts.length, recurring: arc.recurring.length, budgets: arc.budgets.length, groupExpenses: arc.groupExpenses.length, groupSettlements: arc.groupSettlements.length, groupEvents: arc.groupEvents.length, groupSplitPresets: arc.groupSplitPresets.length, groupSettlementUnits: arc.groupSettlementUnits.length, groupRefunds: arc.groupRefunds.length, groupContributions: arc.groupContributions.length, groupPaymentRequests: arc.groupPaymentRequests.length },
     changes: diff,
     excluded,
     // Totals only over data that passed the integrity check: a broken amount cannot be summed.

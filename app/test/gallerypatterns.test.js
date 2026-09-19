@@ -186,13 +186,14 @@ describe("BT-013 secondary-page composition patterns: every real concept, every 
     }
   });
 
-  test("Financial Command Center's command-console dashboard adds a 'Budget used' ring alongside its forecast bar chart, since its chartEmphasis is 'mixed'", () => {
-    const mixed = CONCEPTS.find((c) => c.chartEmphasis === "mixed");
-    assert.ok(mixed, "fixture sanity");
-    const frame = renderConceptFrame(mixed, "dashboard", () => {}, { requiredPages: REQUIRED_PAGES });
-    assert.match(frame.querySelector(".gframe__main").textContent, /Budget used/);
-    assert.ok(frame.querySelector(".chart--gauge"), "renders the ring");
-    assert.ok(frame.querySelector(".chart--bars"), "keeps its existing forecast bar chart too");
+  test("a 'mixed' chartEmphasis concept's own dashboard adds a 'Budget used' ring alongside its own regular figures, for every concept that chooses 'mixed'", () => {
+    const mixedConcepts = CONCEPTS.filter((c) => c.chartEmphasis === "mixed");
+    assert.ok(mixedConcepts.length >= 2, "fixture sanity — BT-013-09 uses 'mixed' on more than one redesigned concept");
+    for (const mixed of mixedConcepts) {
+      const frame = renderConceptFrame(mixed, "dashboard", () => {}, { requiredPages: REQUIRED_PAGES });
+      assert.match(frame.querySelector(".gframe__main").textContent, /Budget used/, `${mixed.id} shows the ring's own label`);
+      assert.ok(frame.querySelector(".chart--gauge"), `${mixed.id} renders the ring`);
+    }
   });
 
   test("every chart emphasis, including the two new ones, is genuinely used across the 15 concepts", () => {

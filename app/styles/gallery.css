@@ -58,6 +58,14 @@
 
 .gframe[data-nav="command"] > .gnav { gap: var(--space-4); }
 
+/* A sixth nav style (BT-013-09, 2026-09-19): a rounded, segmented tab bar rather than a plain link
+   row — the active tab is shown by SHAPE (a raised pill) and a border in the concept's own accent,
+   never accent-coloured text (the same contrast-safety rule the other five nav styles already keep). */
+.gframe[data-nav="tabs"] > .gnav { padding: var(--space-2) var(--space-3); }
+.gframe[data-nav="tabs"] .gnav__items { display: inline-flex; background: var(--surface-sunken); border-radius: var(--radius-pill); padding: 0.25rem; gap: 0.125rem; }
+.gframe[data-nav="tabs"] .gnav__item { border-radius: var(--radius-pill); padding: var(--space-1) var(--space-3); }
+.gframe[data-nav="tabs"] .gnav__item--active { background: var(--bg); box-shadow: var(--shadow-sm); border-color: var(--g-accent, var(--accent)); }
+
 /* Density: spacing scale applied to the frame's own padding and card gaps only (never affects
    real interactive target sizes — every density keeps the same minimum control size). */
 .gframe[data-density="spacious"] .gframe__main { padding: var(--space-6); }
@@ -81,6 +89,13 @@
 .gframe[data-card="filled-tint"] .gcard { border: 1px solid transparent; background: var(--g-accent-soft, var(--accent-soft)); }
 .gframe[data-card="bordered-mono"] .gcard { border: 1px solid var(--border-strong); box-shadow: none; border-radius: 0; font-variant-numeric: tabular-nums; }
 .gframe[data-card="bordered-mono"] .gcard__title { text-transform: uppercase; letter-spacing: 0.04em; font-size: var(--text-sm); }
+/* Two further card treatments (BT-013-09, 2026-09-19: genuine replacement concepts) — a coloured
+   top ribbon, and an offset "stacked paper" panel behind the card. Both keep ordinary text colour
+   throughout (never accent-coloured text on an accent background), the same contrast-safety
+   discipline as every other card style here. */
+.gframe[data-card="ribbon"] .gcard { border: 1px solid var(--border); border-top: 3px solid var(--g-accent, var(--accent)); box-shadow: none; }
+.gframe[data-card="layered"] .gcard { position: relative; border: 1px solid var(--border); box-shadow: none; z-index: 1; }
+.gframe[data-card="layered"] .gcard::before { content: ""; position: absolute; inset: 0.4rem -0.4rem -0.4rem 0.4rem; background: var(--g-accent-soft, var(--accent-soft)); border-radius: var(--radius-lg); z-index: -1; }
 
 .gpage__head h2 { display: flex; align-items: center; gap: var(--space-2); margin: 0 0 var(--space-4); }
 .ggrid { display: grid; gap: var(--space-3); margin: 0; }
@@ -166,6 +181,14 @@
 .gframe[data-voice="bold-display"] .gcard__value { font-weight: var(--weight-bold); font-size: var(--text-2xl); letter-spacing: -0.01em; }
 .gframe[data-voice="bold-display"] .gcard__title { font-weight: var(--weight-bold); }
 
+/* A fifth voice (BT-013-09, 2026-09-19): tight, uppercase, condensed labels — a utilitarian,
+   operations-console feel distinct from technical-mono's monospaced figures. */
+.gframe[data-voice="condensed-utility"] .gpage__head h2,
+.gframe[data-voice="condensed-utility"] .gcard__title { text-transform: uppercase; letter-spacing: 0.08em; font-size: var(--text-sm); font-weight: var(--weight-medium); }
+.gframe[data-voice="condensed-utility"] .gmetric__label { text-transform: uppercase; letter-spacing: 0.06em; }
+.gframe[data-voice="condensed-utility"] .gmetric__value,
+.gframe[data-voice="condensed-utility"] .gcard__value { font-stretch: condensed; letter-spacing: -0.02em; font-variant-numeric: tabular-nums; }
+
 /* No horizontal page scrolling at any width: the frame and every child stay within their container. */
 .gframe, .gframe * { box-sizing: border-box; }
 .gframe__main { min-width: 0; }
@@ -194,3 +217,32 @@
 /* The shared bar-chart primitive (components.css .chart__bar, also used by the real Usage page)
    defaults to --accent; inside a concept's own frame it takes that concept's own accent instead. */
 .gframe .chart__bar { fill: var(--g-accent, var(--accent)); }
+
+/* ---------------------------------------------------------------------------------------------- */
+/* Five further, genuinely new Dashboard hero compositions (BT-013-09, 2026-09-19: the replacement
+   concepts Terry required — real new information structures, not a recoloured copy of one already
+   above). Everything else these renderers need (.gcard, .stack, badges, icons, money) is the same
+   shared vocabulary every other hero already uses. */
+.gbriefing__headline { font-size: var(--text-2xl); font-weight: var(--weight-bold); margin: 0; }
+.gbriefing__list { list-style: none; margin: var(--space-3) 0 0; padding: 0; display: flex; flex-direction: column; gap: var(--space-2); }
+
+.ginbox { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: var(--space-1); }
+.ginbox__row { display: flex; align-items: center; gap: var(--space-2); padding: var(--space-2) 0; border-bottom: 1px solid var(--border); }
+.ginbox__row:last-child { border-bottom: none; }
+
+.gringcluster { display: flex; flex-wrap: wrap; gap: var(--space-5); }
+.gringcluster__item { display: flex; flex-direction: column; align-items: center; gap: var(--space-2); text-align: center; max-width: 10rem; }
+
+.gmosaic { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: var(--space-3); grid-auto-rows: minmax(6rem, auto); }
+.gmosaic__tile { min-width: 0; }
+.gmosaic__tile .gcard { height: 100%; margin-bottom: 0; }
+.gmosaic__tile--big { grid-column: span 2; grid-row: span 2; }
+.gmosaic__tile--wide { grid-column: 1 / -1; }
+@media (max-width: 40rem) { .gmosaic { grid-template-columns: 1fr; } .gmosaic__tile--big, .gmosaic__tile--wide { grid-column: 1 / -1; } }
+
+.gledgerstrip-wrap { overflow-x: auto; margin-bottom: var(--space-4); }
+.gledgerstrip { display: flex; gap: var(--space-4); min-width: max-content; padding-bottom: var(--space-2); }
+.gledgerstrip__item { display: flex; flex-direction: column; gap: var(--space-1); padding-right: var(--space-4); border-right: 1px solid var(--border); }
+.gledgerstrip__item:last-child { border-right: none; }
+.gledgerstrip__label { margin: 0; font-size: var(--text-xs); color: var(--text-muted); }
+.gledgerstrip__value { font-size: var(--text-lg); font-weight: var(--weight-bold); }

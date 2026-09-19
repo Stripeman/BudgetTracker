@@ -13,9 +13,10 @@ import { stateView, button, field, input, pickerSelect, categoryBadges, iconBadg
 import { openModal } from "../modal.js";
 import { sliceFor } from "../../core/store.js";
 import { newIdempotencyKey } from "../../core/api.js";
+import * as offline from "../../core/offline.js";
 import { evaluateAmount, isPlainAmount } from "../../core/calc.js";
 import { formatAmount, formatDate, todayIso } from "../../core/format.js";
-import { previewSplit, precisionOf, formatMinor, parseAmount, parseRate, convert } from "../../core/split.js";
+import { previewSplit, previewItemization, precisionOf, formatMinor, parseAmount, parseRate, convert } from "../../core/split.js";
 import { icon, withIcon } from "../icons.js";
 import { messageFor } from "../../core/errors.js";
 import { downloadFile } from "../permanentdelete.js";
@@ -118,6 +119,39 @@ export function createView(ctx) {
   // next to the thing it is explaining.
   const eventsBox = el("div");
   const eventsCard = el("section", { class: "card", "aria-labelledby": "grp-events" }, [titled("grp-events", "tag", "Events"), eventsBox]);
+  // BT-009-25: settlement units (couples/families) — a display/suggestion-only grouping (never a
+  // second calculation of balance; never a thing that can hold money or gain access). Its own card,
+  // for the same reason Events has one: the honest "this only changes the Settle-up view" note
+  // belongs right beside the thing it explains.
+  const unitsBox = el("div");
+  const unitsCard = el("section", { class: "card", "aria-labelledby": "grp-units" }, [titled("grp-units", "users", "Households"), unitsBox]);
+  // BT-009-25: shared income / prepaid contributions / deposits — a fully separate report, never a
+  // real income/expense transaction and never netted against the Balances card above (see the long
+  // comment on api/group/handler.js's contributionView section for why).
+  const fundBox = el("div");
+  const fundCard = el("section", { class: "card", "aria-labelledby": "grp-fund" }, [titled("grp-fund", "coins", "Shared fund"), fundBox]);
+  // BT-009-26: in-app payment reminders — a nudge only, in-app, never an email/SMS/push (no
+  // delivery provider or credentials are configured for this workspace); it moves no money and
+  // never changes a balance itself — only an actual recorded payment does that.
+  const remindersBox = el("div");
+  const remindersCard = el("section", { class: "card", "aria-labelledby": "grp-reminders" }, [titled("grp-reminders", "bell", "Payment reminders"), remindersBox]);
+  // BT-009-26: insights — spending by category/participant, and a settlement summary, all derived
+  // from the exact same canonical records the rest of this page already reads (never a second,
+  // independent calculation). Fetched separately (its own read-only route) since it is a genuinely
+  // different shape from the main page load, refetched only when the workspace or the viewed event
+  // actually changes.
+  const insightsBox = el("div");
+  const insightsCard = el("section", { class: "card", "aria-labelledby": "grp-insights" }, [titled("grp-insights", "chart-pie", "Insights"), insightsBox]);
+  let insightsKey = null;
+  let insightsForData = null; // the exact `data` object last fetched for — a fresh object every real refresh
+  let insightsData = null;
+  // BT-009-26: offline entry — an explicit, per-device opt-in (`offline.js`); when on and adding a
+  // new expense/payment fails for a genuine connectivity reason, it is saved on this device and
+  // sent automatically once a sync succeeds. Never a second calculation or a mirror of this page's
+  // own data — only the queued requests themselves.
+  const offlineBox = el("div");
+  const offlineCard = el("section", { class: "card", "aria-labelledby": "grp-offline" }, [titled("grp-offline", "wifi", "Offline entry"), offlineBox]);
+  let offlineSyncedFor = null; // avoids re-attempting a sync every render once one has already run for this data
   // The group's settings (Terry, 2026-09-14), in the settings card shared with the workspace settings:
   // owners and managers change them, everyone else reads them and their history (decision 11).
   const settingsBox = el("div");
@@ -141,6 +175,11 @@ export function createView(ctx) {
     el("div", { class: "stack" }, [
       needs,
       eventsCard,
+      unitsCard,
+      fundCard,
+      remindersCard,
+      insightsCard,
+      offlineCard,
       // Full width: the balances table has seven columns (half width clipped the balance itself).
       el("section", { class: "card", "aria-labelledby": "grp-balances" }, [titled("grp-balances", "scale", "Balances"), balancesBox]),
       el("section", { class: "card", "aria-labelledby": "grp-settle" }, [titled("grp-settle", "users", "Settle up"), settleBox]),
@@ -151,6 +190,17 @@ export function createView(ctx) {
     ]),
   ]);
   void ctx.store.actions.refreshGroup();
+  // BT-009-26: the offline queue lives outside the store's own state on purpose (never mirrored
+  // into it — "minimal retained data"), so this page re-renders itself directly whenever it
+  // changes (opted in/out, something queued, discarded, sent or blocked), the same way it already
+  // reacts to every real state change.
+  const unsubscribeOffline = offline.onChange(() => update(ctx.store.getState()));
+  // "Sent automatically" (Terry, 2026-09-19) means exactly that — the browser's own connectivity
+  // signal triggers a sync attempt, never waiting on the person to notice, click something or
+  // navigate away and back. `renderOffline` also tries once per genuinely new page load as a
+  // fallback for a browser that never fires this event.
+  const onOnline = () => { const s = ctx.store.getState(); if (groupData(s)) void syncOffline(s.selectedWorkspaceId); };
+  if (typeof window !== "undefined" && window.addEventListener) window.addEventListener("online", onOnline);
 
   function update(state) {
     const slice = sliceFor(state, "group");
@@ -165,7 +215,9 @@ export function createView(ctx) {
     const scoped = data.currentEvent || null;
     mount(actions, ...(data.permissions.canAdd ? [
       button("Add expense", () => openGroupExpense(ctx, { eventId: scoped ? scoped.id : null }), { variant: "primary" }),
+      button("Itemize a receipt…", () => openItemizedExpenseModal(ctx, { eventId: scoped ? scoped.id : null }), {}),
       button("Record a payment", () => openRecordPayment(ctx, { eventId: scoped ? scoped.id : null })),
+      button("Import from Splitwise…", () => openSplitwiseImportModal(ctx, data)),
     ] : [el("p", { class: "muted small", text: "You can see this group's expenses but not add or change them." })]));
     intro.textContent = scoped
       ? `Showing only "${scoped.name}" (${(EVENT_STATUS_LABELS[scoped.status] || scoped.status).toLowerCase()}). A new expense or payment here is added to this event.`
@@ -186,6 +238,11 @@ export function createView(ctx) {
     ]) : null);
 
     renderEvents(data);
+    renderUnits(data, nameOf);
+    renderFund(data, nameOf, fmt);
+    renderReminders(data, nameOf, fmt, me);
+    loadInsights(state.selectedWorkspaceId, scoped ? scoped.id : null, data, nameOf, fmt);
+    renderOffline(state.selectedWorkspaceId, data, fmt, nameOf);
     const tables = shownTables(data);
     renderBalances(tables, data, fmt, nameOf);
     renderSettle(tables, data, fmt, nameOf, me);
@@ -330,6 +387,273 @@ export function createView(ctx) {
       ]),
     );
   }
+  // BT-009-25: the Households card — a plain list of settlement units, each with its members named
+  // (never hidden), and a way to add or remove one. Explicitly says what a household changes (only
+  // the Settle-up view) and what it never does (grant access, rewrite history, move liability).
+  function renderUnits(data, nameOf) {
+    const list = data.settlementUnits || [];
+    mount(unitsBox,
+      el("p", { class: "field__help", text: "Group a couple or family together so “Settle up” can suggest one payment instead of several. This never changes who paid what or who owes what, and never gives anyone access to anything." }),
+      list.length ? el("ul", { class: "stack" }, list.map((u) => el("li", { class: "grow" }, [
+        el("span", {}, [withIcon("users", u.name), el("span", { class: "muted small" }, [` — ${u.memberRefs.map((ref) => nameOf(ref)).join(", ")}`])]),
+        el("span", { class: "app__spacer" }),
+        data.permissions.canAdd ? button("Remove", () => void removeUnit(u), { small: true, variant: "danger", attrs: { "aria-label": `Remove household ${u.name}` } }) : null,
+      ]))) : el("p", { class: "muted small", text: "No households yet." }),
+      data.permissions.canAdd ? button("Add household…", () => openAddUnitModal(ctx, data), { small: true }) : null,
+    );
+  }
+  async function removeUnit(u) {
+    const out = await ctx.store.actions.write((ws) => ctx.api.deleteSettlementUnit(ws, { unitId: u.id }), ["group"]);
+    announce(out.ok ? `"${u.name}" removed.` : messageFor(out.error));
+  }
+
+  // BT-009-25: the Shared fund card. Deliberately says, in words, that this NEVER counts as income
+  // or spending and NEVER changes the Balances card above — the two are honestly separate reports
+  // (docs/BT-009-25-WORKED-EXAMPLES.md §4's own recorded design decision).
+  function renderFund(data, nameOf, fmt) {
+    const list = data.contributions || [];
+    mount(fundBox,
+      el("p", { class: "field__help", text: "Money contributed in advance, or a refundable deposit, held by one person on behalf of others. This never counts as income or spending, and never changes the Balances card above — check both to see your full position." }),
+      list.length ? el("div", { class: "table-wrap" }, [el("table", { class: "table table--cards" }, [
+        el("thead", {}, [el("tr", {}, ["Contributor", "Held by", "Kind", "Amount", "Applied", "Returned", "Still held", "Actions"].map((h) => el("th", { scope: "col", class: ["Amount", "Applied", "Returned", "Still held"].includes(h) ? "num" : "", text: h })))]),
+        el("tbody", {}, list.map((c) => el("tr", {}, [
+          el("td", { "data-label": "Contributor", text: nameOf(c.contributor) }),
+          el("td", { "data-label": "Held by", text: nameOf(c.holder) }),
+          el("td", { "data-label": "Kind", text: c.kind === "deposit" ? "Deposit" : "Contribution" }),
+          el("td", { "data-label": "Amount", class: "num" }, [amountText(c.amount, c.currency)]),
+          el("td", { "data-label": "Applied", class: "num" }, [amountText(c.applied, c.currency)]),
+          el("td", { "data-label": "Returned", class: "num" }, [amountText(c.returned, c.currency)]),
+          el("td", { "data-label": "Still held", class: "num" }, [amountText(c.held, c.currency)]),
+          el("td", { "data-label": "" }, [el("div", { class: "row-actions" }, [
+            data.permissions.canAdd && Number(c.heldMinor) > 0 ? button("Apply…", () => openContributionMoveModal(ctx, c, "apply", nameOf, fmt), { small: true, attrs: { "aria-label": `Apply part of ${nameOf(c.contributor)}'s ${c.kind}` } }) : null,
+            data.permissions.canAdd && Number(c.heldMinor) > 0 ? button("Return…", () => openContributionMoveModal(ctx, c, "return", nameOf, fmt), { small: true, attrs: { "aria-label": `Return part of ${nameOf(c.contributor)}'s ${c.kind}` } }) : null,
+          ])]),
+        ]))),
+      ])]) : el("p", { class: "muted small", text: "No contributions or deposits recorded yet." }),
+      data.permissions.canAdd ? button("Add contribution…", () => openAddContributionModal(ctx, data, nameOf), { small: true }) : null,
+    );
+  }
+  function openContributionMoveModal(ctx, c, action, nameOf, fmt) {
+    const amount = input({ inputmode: "decimal", autocomplete: "off", required: true, placeholder: "0.00", value: c.held });
+    const note = input({ maxlength: "200", autocomplete: "off" });
+    const verb = action === "apply" ? "Apply" : "Return";
+    const form = el("form", { class: "form-grid", novalidate: true, id: `contribution-${action}-form` }, [
+      el("p", { text: `${nameOf(c.contributor)}'s ${c.kind} currently has ${fmt(c.held, c.currency)} ${c.currency} still held by ${nameOf(c.holder)}.` }),
+      field("Amount", amount), field("Note (optional)", note, { wide: true }),
+    ]);
+    const save = el("button", { type: "submit", class: "btn btn--primary", text: verb, form: `contribution-${action}-form` });
+    const modal = openModal({ title: `${verb} ${nameOf(c.contributor)}'s ${c.kind}`, body: [form], actions: [button("Cancel", () => modal.close()), save] });
+    async function submit() {
+      modal.setError("");
+      const minor = parseAmount(amount.value.trim(), c.currency);
+      if (!minor || minor <= 0) { modal.setError("Enter an amount greater than zero."); amount.focus(); return; }
+      modal.setBusy(true);
+      const call = action === "apply" ? ctx.api.applyContribution : ctx.api.returnContribution;
+      const out = await ctx.store.actions.write((ws) => call(ws, { contributionId: c.id, amount: amount.value.trim(), note: note.value.trim() }), ["group"]);
+      modal.setBusy(false);
+      if (!out.ok) { modal.setError(out.error); return; }
+      announce(`${verb === "Apply" ? "Applied" : "Returned"} ${amount.value.trim()} ${c.currency}.`);
+      modal.close();
+    }
+    save.addEventListener("click", (e) => { e.preventDefault(); void submit(); });
+    form.addEventListener("submit", (e) => { e.preventDefault(); void submit(); });
+    return modal;
+  }
+  function openAddContributionModal(ctx, data, nameOf) {
+    const people = data.participants.filter((p) => p.active);
+    const contributor = pickerSelect(people.map((p) => ({ value: p.ref, label: nameOf(p.ref) })), data.permissions.selfRef, {}, { search: false });
+    const holder = pickerSelect(people.map((p) => ({ value: p.ref, label: nameOf(p.ref) })), data.permissions.selfRef, {}, { search: false });
+    const kind = pickerSelect([{ value: "contribution", label: "Contribution (advance payment into a shared fund)" }, { value: "deposit", label: "Deposit (refundable)" }], "contribution", {}, { search: false });
+    const amount = input({ inputmode: "decimal", autocomplete: "off", required: true, placeholder: "0.00" });
+    const date = input({ type: "date", value: todayIso() });
+    const notes = el("textarea", { class: "field__input", maxlength: "2000" });
+    const form = el("form", { class: "form-grid", novalidate: true, id: "add-contribution-form" }, [
+      field("Who contributed", contributor), field("Held by", holder), field("Kind", kind),
+      field("Amount", amount), field("Date", date), field("Notes (optional)", notes, { wide: true }),
+    ]);
+    const save = el("button", { type: "submit", class: "btn btn--primary", text: "Add contribution", form: "add-contribution-form" });
+    const modal = openModal({ title: "Add contribution", body: [form], actions: [button("Cancel", () => modal.close()), save] });
+    async function submit() {
+      modal.setError("");
+      const minor = parseAmount(amount.value.trim(), data.currency);
+      if (!minor || minor <= 0) { modal.setError("Enter an amount greater than zero."); amount.focus(); return; }
+      modal.setBusy(true);
+      const out = await ctx.store.actions.write((ws) => ctx.api.createContribution(ws, {
+        contributor: contributor.value, holder: holder.value, kind: kind.value, amount: amount.value.trim(), date: date.value, notes: notes.value.trim(),
+      }), ["group"]);
+      modal.setBusy(false);
+      if (!out.ok) { modal.setError(out.error); return; }
+      announce("Contribution added.");
+      modal.close();
+    }
+    save.addEventListener("click", (e) => { e.preventDefault(); void submit(); });
+    form.addEventListener("submit", (e) => { e.preventDefault(); void submit(); });
+    return modal;
+  }
+
+  // BT-009-26: the Payment reminders card — a plain in-app nudge, never an email/SMS/push (no
+  // delivery provider or credentials are configured for this workspace, said here in words rather
+  // than silently pretending one was sent). Sending or resolving one never moves money or changes a
+  // balance; only "Record payment" (already on this page) does that.
+  function renderReminders(data, nameOf, fmt, me) {
+    const list = [...(data.paymentRequests || [])].sort((a, b) => (a.status === "open") === (b.status === "open") ? String(b.createdAt).localeCompare(String(a.createdAt)) : a.status === "open" ? -1 : 1);
+    const rows = list.map((r) => {
+      const open = r.status === "open";
+      const canDismiss = open && r.from === me;
+      const canCancel = open && (r.createdBySelf || data.permissions.canManage);
+      return el("li", { class: "grow" }, [
+        el("span", {}, [
+          el("span", { text: `${nameOf(r.to)} asked ${nameOf(r.from)} to pay ${fmt(r.amount, r.currency)}` }),
+          r.note ? el("span", { class: "muted small" }, [` — ${r.note}`]) : null,
+        ]),
+        !open ? badge(r.status === "dismissed" ? "Seen" : "Cancelled", "closed") : null,
+        el("span", { class: "app__spacer" }),
+        canDismiss ? button("Mark as seen", () => void respondReminder(r, "dismiss"), { small: true, attrs: { "aria-label": `Mark reminder to pay ${fmt(r.amount, r.currency)} as seen` } }) : null,
+        canCancel ? button("Cancel", () => void respondReminder(r, "cancel"), { small: true, variant: "danger", attrs: { "aria-label": `Cancel the reminder to ${nameOf(r.from)}` } }) : null,
+      ]);
+    });
+    mount(remindersBox,
+      el("p", { class: "field__help", text: "An in-app nudge that money is owed. This is not an email, text or push notification — nothing is sent outside the app — and sending or resolving one never moves money or changes a balance; actually recording a payment happens above, in Settle up." }),
+      rows.length ? el("ul", { class: "stack" }, rows) : el("p", { class: "muted small", text: "No payment reminders yet." }),
+      data.permissions.canAdd ? button("Send a reminder…", () => openAddReminderModal(ctx, data, nameOf), { small: true }) : null,
+    );
+  }
+  async function respondReminder(r, action) {
+    const call = action === "dismiss" ? ctx.api.dismissPaymentRequest : ctx.api.cancelPaymentRequest;
+    const out = await ctx.store.actions.write((ws) => call(ws, { requestId: r.id }), ["group"]);
+    announce(out.ok ? (action === "dismiss" ? "Marked as seen." : "Reminder cancelled.") : messageFor(out.error));
+  }
+  function openAddReminderModal(ctx, data, nameOf) {
+    const me = data.permissions.selfRef;
+    const people = data.participants.filter((p) => p.active);
+    const toChoices = [{ value: me, label: "You" }, ...people.filter((p) => p.ref !== me).map((p) => ({ value: p.ref, label: nameOf(p.ref) }))];
+    const to = pickerSelect(toChoices, me, {}, { search: false });
+    const fromChoices = () => people.filter((p) => p.ref !== to.value).map((p) => ({ value: p.ref, label: nameOf(p.ref) }));
+    const from = pickerSelect(fromChoices(), (fromChoices()[0] || {}).value || "", {}, { search: false });
+    to.addEventListener("change", () => from.replaceChildren(...fromChoices().map((c) => el("option", { value: c.value, text: c.label }))));
+    const amount = input({ inputmode: "decimal", autocomplete: "off", required: true, placeholder: "0.00" });
+    const note = input({ maxlength: "500", autocomplete: "off" });
+    const form = el("form", { class: "form-grid", novalidate: true, id: "add-reminder-form" }, [
+      field("Who is owed", to), field("Who should pay", from), field("Amount", amount), field("Note (optional)", note, { wide: true }),
+    ]);
+    const save = el("button", { type: "submit", class: "btn btn--primary", text: "Send reminder", form: "add-reminder-form" });
+    const modal = openModal({ title: "Send a payment reminder", body: [form], actions: [button("Cancel", () => modal.close()), save] });
+    async function submit() {
+      modal.setError("");
+      const minor = parseAmount(amount.value.trim(), data.currency);
+      if (!minor || minor <= 0) { modal.setError("Enter an amount greater than zero."); amount.focus(); return; }
+      if (!from.value) { modal.setError("Choose who should pay."); return; }
+      modal.setBusy(true);
+      const out = await ctx.store.actions.write((ws) => ctx.api.createPaymentRequest(ws, { from: from.value, to: to.value, amount: amount.value.trim(), note: note.value.trim() }), ["group"]);
+      modal.setBusy(false);
+      if (!out.ok) { modal.setError(out.error); return; }
+      announce("Reminder sent, in-app only.");
+      modal.close();
+    }
+    save.addEventListener("click", (e) => { e.preventDefault(); void submit(); });
+    form.addEventListener("submit", (e) => { e.preventDefault(); void submit(); });
+    return modal;
+  }
+
+  // BT-009-26: the Offline entry card — the explicit device opt-in, the disclosure in words, and
+  // whatever is currently saved on this device waiting to be sent. A successful sync attempt is
+  // made at most once per genuinely new page load of data (never on every render), the same
+  // debounce discipline `loadInsights` below uses, for the same reason.
+  function renderOffline(wsId, data, fmt, nameOf) {
+    const toggle = el("input", { type: "checkbox", id: "grp-offline-toggle" });
+    toggle.checked = offline.isEnabled();
+    toggle.addEventListener("change", () => { offline.setEnabled(toggle.checked); announce(toggle.checked ? "Offline entry turned on for this device." : "Offline entry turned off for this device."); });
+    const pending = offline.queueFor(wsId);
+    const rows = pending.map((entry) => {
+      const desc = entry.kind === "expense" ? (entry.body.description || "Shared expense") : `Payment to ${nameOf(entry.body.to)}`;
+      const amount = entry.body.amount ? amountText(entry.body.amount, entry.body.currency || data.currency) : null;
+      const status = entry.blocked ? el("span", { class: "muted small", text: entry.lastError || "This could not be sent." }) : el("span", { class: "muted small", text: "Waiting to send…" });
+      return el("li", { class: "grow" }, [
+        el("span", {}, [el("span", { text: `${desc} ` }), status]),
+        el("span", { class: "app__spacer" }),
+        amount,
+        // `offline.discard`/`offline.unblock` notify this page's own subscription, which re-renders
+        // this card (and the rest of the page) right away — no manual re-render call needed here.
+        entry.blocked ? button("Try again", () => { offline.unblock(entry.id); void syncOffline(wsId); }, { small: true, attrs: { "aria-label": `Try sending ${desc} again` } }) : null,
+        button("Discard", () => offline.discard(entry.id), { small: true, variant: "danger", attrs: { "aria-label": `Discard ${desc}, saved on this device` } }),
+      ]);
+    });
+    mount(offlineBox,
+      el("div", { class: "field--inline" }, [toggle, el("label", { for: toggle.id, text: "Save new expenses and payments on this device when offline, and send them once back online" })]),
+      el("p", { class: "field__help", text: offline.DISCLOSURE }),
+      pending.length ? el("ul", { class: "stack" }, rows) : el("p", { class: "muted small", text: "Nothing is currently waiting to be sent." }),
+      pending.some((e) => !e.blocked) ? button("Send now", () => void syncOffline(wsId), { small: true }) : null,
+    );
+    if (offlineSyncedFor !== data && pending.some((e) => !e.blocked)) {
+      offlineSyncedFor = data;
+      void syncOffline(wsId);
+    } else {
+      offlineSyncedFor = data;
+    }
+  }
+  async function syncOffline(wsId) {
+    const { sent } = await offline.sync(ctx, wsId);
+    if (sent.length) { announce(`${sent.length} offline ${sent.length === 1 ? "entry" : "entries"} sent.`); await ctx.store.actions.refreshGroup(); }
+    else {
+      const state = ctx.store.getState();
+      const data = groupData(state);
+      if (!data) return;
+      const names = namesOf(data);
+      const me = data.permissions.selfRef;
+      renderOffline(wsId, data, fmtFor(state), (ref) => (ref === me ? "You" : names.get(ref) || "Someone"));
+    }
+  }
+
+  // BT-009-26: fetched only when the workspace or the viewed event actually changes (never on every
+  // render), and rendered from whatever the last successful fetch returned.
+  function loadInsights(wsId, eventId, data, nameOf, fmt) {
+    if (typeof ctx.api.groupInsights !== "function") return;
+    const key = `${wsId}|${eventId || ""}`;
+    // Refetch whenever the workspace/event changes OR the underlying group data itself is a genuinely
+    // new object (a real refresh — `store.js`'s `loadSlice` always produces a fresh `data` reference
+    // on every real fetch, never mutating the previous one in place) — never on an incidental
+    // re-render that reuses the same, already-current data.
+    if (key === insightsKey && data === insightsForData) { renderInsights(nameOf, fmt); return; }
+    insightsKey = key;
+    insightsForData = data;
+    mount(insightsBox, el("div", { class: "state", text: "Loading…" }));
+    ctx.api.groupInsights(wsId, eventId).then((res) => {
+      if (insightsKey !== key || insightsForData !== data) return; // a newer request has already superseded this one
+      insightsData = res.insights;
+      renderInsights(nameOf, fmt);
+    }, (err) => {
+      if (insightsKey !== key || insightsForData !== data) return;
+      mount(insightsBox, el("div", { class: "state state--error", role: "alert", text: messageFor(err) }));
+    });
+  }
+  function renderInsights(nameOf, fmt) {
+    if (!insightsData) return;
+    if (!insightsData.length || !insightsData.some((t) => t.expenseCount > 0)) {
+      mount(insightsBox, el("p", { class: "muted small", text: "No shared expenses yet — insights will appear once there are some." }));
+      return;
+    }
+    mount(insightsBox, ...insightsData.filter((t) => t.expenseCount > 0).flatMap((t) => {
+      const c = t.currency;
+      return [
+        insightsData.length > 1 ? el("h3", { class: "section-title", text: `In ${c}` }) : null,
+        el("ul", { class: "stack" }, [
+          metricRow("Total spent", amountText(t.totalSpent, c)),
+          metricRow("Expenses", el("span", { text: String(t.expenseCount) })),
+          metricRow("Confirmed payments", amountText(t.settlements.confirmed, c)),
+          t.settlements.pendingCount ? metricRow("Pending payments", amountText(t.settlements.pending, c)) : null,
+          t.settlements.disputedCount ? metricRow("Disputed payments", amountText(t.settlements.disputed, c)) : null,
+        ].filter(Boolean)),
+        el("h4", { class: "section-title", text: "By category" }),
+        el("ul", { class: "stack" }, t.byCategory.map((cat) => el("li", { class: "row" }, [el("span", { text: cat.name }), el("span", { class: "app__spacer" }), el("span", { class: "muted small", text: `${cat.count} expense${cat.count === 1 ? "" : "s"}` }), amountText(cat.total, c)]))),
+        el("h4", { class: "section-title", text: "By participant" }),
+        el("ul", { class: "stack" }, t.byParticipant.filter((p) => Number(p.paidMinor) || Number(p.shareMinor)).map((p) => el("li", { class: "row" }, [el("span", { text: nameOf(p.ref) }), el("span", { class: "app__spacer" }), el("span", { class: "muted small", text: `paid ${fmt(p.paid, c)} · share ${fmt(p.share, c)}` })]))),
+      ];
+    }));
+  }
+  function metricRow(label, valueNode) {
+    return el("li", { class: "row" }, [el("span", { text: label }), el("span", { class: "app__spacer" }), valueNode]);
+  }
+
   // BT-009-23: the same authorized PDF/CSV/XLSX/JSON export BT-014-06 already offers before a
   // deletion, reachable directly from Shared expenses too — scoped to one event when `eventId` is
   // given, every event combined otherwise. Downloading never changes anything, so no confirmation.
@@ -420,22 +744,39 @@ export function createView(ctx) {
   }
 
   // Suggested or direct payments for every currency shown; each is recorded in its own currency.
+  // BT-009-25: a third mode, "By household", merges any settlement units (couples/families) into
+  // one row for the suggestion — display/suggestion only, never a second calculation of balance
+  // (groups.js's own unitSuggest). Recording a payment from this view always uses the REAL person
+  // named to actually pay/receive (`fromRef`/`toRef`), never a unit — a unit itself can never be a
+  // settlement's `from`/`to`.
   function renderSettle(tables, data, fmt, nameOf, me) {
+    const hasUnits = tables.some((t) => (t.unitSuggestions || []).length);
     const toggle = (value, label) => el("button", { type: "button", class: "btn btn--small", "aria-pressed": mode === value ? "true" : "false", text: label, onClick: () => { mode = value; update(ctx.store.getState()); } });
-    const lists = tables.map((t) => [t, mode === "suggested" ? t.suggestions : t.direct]).filter(([, list]) => list.length);
+    const effectiveMode = mode === "units" && !hasUnits ? "suggested" : mode;
+    const lists = tables.map((t) => [t, effectiveMode === "suggested" ? t.suggestions : effectiveMode === "units" ? (t.unitSuggestions || []) : t.direct]).filter(([, list]) => list.length);
     const labelled = lists.length > 1 || lists.some(([t]) => t.currency !== data.currency);
+    const unitName = (s, side) => (side === "from" ? (s.fromIsUnit ? s.fromName : nameOf(s.from)) : (s.toIsUnit ? s.toName : nameOf(s.to)));
     mount(settleBox,
-      el("div", { class: "seg", role: "group", "aria-label": "How to settle" }, [toggle("suggested", "Fewest payments"), toggle("direct", "Keep who owes whom")]),
-      el("p", { class: "muted small", text: mode === "suggested" ? "The fewest payments that settle everyone." : "Each person pays back the people who paid for them, without passing debts along." }),
+      el("div", { class: "seg", role: "group", "aria-label": "How to settle" }, [toggle("suggested", "Fewest payments"), toggle("direct", "Keep who owes whom"), hasUnits ? toggle("units", "By household") : null]),
+      el("p", { class: "muted small", text: effectiveMode === "suggested" ? "The fewest payments that settle everyone." : effectiveMode === "units" ? "Households (couples/families) shown as one line where it saves a payment — recording still names the real person who actually pays or receives." : "Each person pays back the people who paid for them, without passing debts along." }),
       ...(lists.length ? lists.flatMap(([t, list]) => { const c = t.currency; return [
         labelled ? el("h3", { class: "section-title", text: `In ${c}` }) : null,
-        el("ul", { class: "stack" }, list.map((s) => el("li", { class: "row" }, [
-          s.from === me ? arrow("money-out") : s.to === me ? arrow("money-in") : null,
-          el("span", { text: `${nameOf(s.from)} ${s.from === me ? "pay" : "pays"} ${s.to === me ? "you" : nameOf(s.to)}` }),
-          el("span", { class: "app__spacer" }),
-          amountText(s.amount, c),
-          data.permissions.canAdd ? button("Record payment", () => openRecordPayment(ctx, { from: s.from, to: s.to, amount: s.amount, currency: c, eventId: data.currentEvent ? data.currentEvent.id : null }), { small: true, attrs: { "aria-label": `Record payment of ${fmt(s.amount, c)} from ${nameOf(s.from)} to ${nameOf(s.to)}` } }) : null,
-        ]))),
+        el("ul", { class: "stack" }, list.map((s) => {
+          const fromReal = effectiveMode === "units" ? s.fromRef : s.from;
+          const toReal = effectiveMode === "units" ? s.toRef : s.to;
+          // "You" whenever the REAL person underneath (never the household's own name) is the one
+          // looking — computed once, used identically in the visible text and the accessible name,
+          // so neither ever disagrees with the other about who is actually paying or receiving.
+          const fromLabel = fromReal === me ? "You" : unitName(s, "from");
+          const toLabel = toReal === me ? "you" : unitName(s, "to");
+          return el("li", { class: "row" }, [
+            fromReal === me ? arrow("money-out") : toReal === me ? arrow("money-in") : null,
+            el("span", { text: `${fromLabel} ${fromReal === me ? "pay" : "pays"} ${toLabel}` }),
+            el("span", { class: "app__spacer" }),
+            amountText(s.amount, c),
+            data.permissions.canAdd ? button("Record payment", () => openRecordPayment(ctx, { from: fromReal, to: toReal, amount: s.amount, currency: c, eventId: data.currentEvent ? data.currentEvent.id : null }), { small: true, attrs: { "aria-label": `Record payment of ${fmt(s.amount, c)} from ${fromLabel} to ${toLabel}` } }) : null,
+          ]);
+        })),
       ]; }) : [el("div", { class: "state", text: "Everyone is settled up." })]),
       el("p", { class: "card__meta", text: data.basis }),
     );
@@ -458,6 +799,7 @@ export function createView(ctx) {
           el("th", { scope: "row", "data-label": "Date", text: formatDate(e.date, dateFormat) }),
           el("td", { "data-label": "Expense" }, [
             el("span", { text: e.description }),
+            e.split && e.split.method === "itemized" ? [" ", badge("Itemized")] : null,
             void_ ? [" ", badge("Voided", "closed")] : null,
             void_ ? el("div", { class: "muted small", text: `Voided by ${e.voidedBy || "someone"}: ${e.voidReason}` }) : null,
             e.myLedger && !e.myLedger.accountUnavailable ? el("div", { class: "muted small", text: `Also on your account: ${e.myLedger.accountName}` }) : null,
@@ -468,10 +810,14 @@ export function createView(ctx) {
             // BT-009-13: the reporting-currency figure is what every calculation uses; the
             // original currency, amount and rate are always shown alongside it, never hidden.
             e.original ? el("div", { class: "muted small", text: `${e.original.amount} ${e.original.currency} at ${e.original.rate}` }) : null,
+            // BT-009-25: the original expense is never edited by a refund — this is purely
+            // descriptive, exactly like the original-currency note above.
+            e.refundedMinor > 0 ? el("div", { class: "muted small", text: `Refunded: ${fmt(e.refunded, e.currency)}` }) : null,
           ]),
           el("td", { "data-label": "Your share", class: "num" }, [myShare ? amountText(myShare.amount, e.currency) : el("span", { class: "muted", text: "—" })]),
           el("td", { "data-label": "" }, [el("div", { class: "row-actions" }, [
-            e.canEdit ? button("Edit", () => openGroupExpense(ctx, { expense: e }), { small: true, attrs: { "aria-label": `Edit ${e.description}` } }) : null,
+            e.canEdit ? button("Edit", () => (e.split && e.split.method === "itemized" ? openItemizedExpenseModal(ctx, { expense: e }) : openGroupExpense(ctx, { expense: e })), { small: true, attrs: { "aria-label": `Edit ${e.description}` } }) : null,
+            e.canRefund ? button("Refund…", () => openRefundModal(ctx, e, data, nameOf), { small: true, attrs: { "aria-label": `Refund ${e.description}` } }) : null,
             e.canVoid ? button("Void", () => openVoid(ctx, "expense", e), { small: true, variant: "danger", attrs: { "aria-label": `Void ${e.description}` } }) : null,
             // Anyone who pays or shares may record their part, once per currency (their own account only).
             !void_ && (paidByMe || myShare) && !e.myLedger && !(data.myLedgers || []).some((l) => l.currency === e.currency) && ledgerAccounts(state, e.currency).length && data.permissions.canAdd ? button("Record on my account", () => openLedgerChoice(ctx, "expense", e), { small: true, attrs: { "aria-label": `Record ${e.description} on my account` } }) : null,
@@ -520,8 +866,9 @@ export function createView(ctx) {
     ])]));
   }
 
-  // Leaving the page (the shell asked first) forgets the card's unsaved mark.
-  return { element, update, destroy: () => settingsForm.destroy() };
+  // Leaving the page (the shell asked first) forgets the card's unsaved mark, and never leaves a
+  // stale offline-queue listener from a page instance that no longer exists.
+  return { element, update, destroy: () => { settingsForm.destroy(); unsubscribeOffline(); if (typeof window !== "undefined" && window.removeEventListener) window.removeEventListener("online", onOnline); } };
 }
 
 const REFRESH = ["group", "accounts", "transactions"];
@@ -605,11 +952,25 @@ export function openAddPersonModal(ctx, { onCreated } = {}) {
 // BT-009-20/21: a small, focused create-only dialog for a new named event — any writer, matching
 // "Add expense" itself (server-enforced too: `requireWriter`). The first event ever created in a
 // workspace silently becomes its default; every one after that is just another choice.
+// BT-009-22: "Copy setup from" offers any existing event as a template — its description, icon and
+// colour are copied server-side (createEvent's templateEventId), NEVER its participants, expenses,
+// settlements, invitations or grants (proven by api/test/group-events.test.js). Choosing one fills
+// in the Description field visibly (still editable before saving) so what will be copied is exactly
+// what is shown, never a silent server-side default the person cannot see.
 export function openAddEventModal(ctx) {
+  const data = groupData(ctx.store.getState()) || { events: [] };
+  const templates = data.events || [];
   const name = input({ maxlength: "80", autocomplete: "off", required: true });
   const description = el("textarea", { class: "field__input", maxlength: "500" });
+  const templateOptions = [{ value: "", label: "None — start blank" }, ...templates.map((e) => ({ value: e.id, label: e.name }))];
+  const templatePicker = pickerSelect(templateOptions, "", {});
+  templatePicker.addEventListener("change", () => {
+    const t = templates.find((e) => e.id === templatePicker.value);
+    description.value = t ? (t.description || "") : "";
+  });
   const form = el("form", { class: "form-grid", novalidate: true, id: "add-event-form" }, [
     field("Name", name, { wide: true, help: "For example: a trip, a dinner series, or any group of expenses you want to track and settle together." }),
+    templates.length ? field("Copy setup from (optional)", templatePicker, { wide: true, help: "Copies its description, icon and colour only — never its expenses, payments, invitations or who can see it." }) : null,
     field("Description (optional)", description, { wide: true }),
   ]);
   const save = el("button", { type: "submit", class: "btn btn--primary", text: "Add event", form: "add-event-form" });
@@ -619,7 +980,9 @@ export function openAddEventModal(ctx) {
     modal.setError("");
     if (!name.value.trim()) { name.setAttribute("aria-invalid", "true"); modal.setError("Give this event a name."); name.focus(); return; }
     modal.setBusy(true);
-    const out = await ctx.store.actions.write((ws) => ctx.api.createGroupEvent(ws, { name: name.value.trim(), description: description.value.trim() }), ["group"]);
+    const body = { name: name.value.trim(), description: description.value.trim() };
+    if (templatePicker.value) body.templateEventId = templatePicker.value;
+    const out = await ctx.store.actions.write((ws) => ctx.api.createGroupEvent(ws, body), ["group"]);
     modal.setBusy(false);
     if (!out.ok) { modal.setError(out.error); return; }
     announce(`"${out.result.event.name}" added.`);
@@ -629,6 +992,161 @@ export function openAddEventModal(ctx) {
   }
   save.addEventListener("click", (e) => { e.preventDefault(); void submit(); });
   form.addEventListener("submit", (e) => { e.preventDefault(); void submit(); });
+  return modal;
+}
+
+// BT-009-25: a household names >=2 real, individually identifiable people by checkbox — never a
+// free-text group, so it can only ever name real participants the server also checks. Nothing here
+// creates a new person or expense; it only groups existing ones for the Settle-up view.
+export function openAddUnitModal(ctx, data) {
+  const name = input({ maxlength: "80", autocomplete: "off", required: true });
+  const already = new Set((data.settlementUnits || []).flatMap((u) => u.memberRefs));
+  const eligible = data.participants.filter((p) => p.active && !already.has(p.ref));
+  // The full real name plus "(you)" — the same convention every other people-picker in this dialog
+  // family uses (openGroupExpense's own `label`), never the page-level "You" shorthand, since this
+  // list can name several people at once and must stay unambiguous.
+  const label = (p) => `${p.name}${p.self ? " (you)" : ""}`;
+  const boxes = eligible.map((p) => { const box = el("input", { type: "checkbox", id: uid("unit-member") }); return { p, box }; });
+  const form = el("form", { class: "form-grid", novalidate: true, id: "add-unit-form" }, [
+    field("Name", name, { wide: true, help: "For example: “The Smiths” or “Alice and Bob”." }),
+    el("fieldset", { class: "plain-fieldset field--wide" }, [
+      el("legend", { class: "field__label", text: "Who is in this household? (at least two)" }),
+      eligible.length ? el("div", { class: "stack" }, boxes.map(({ p, box }) => el("div", { class: "field--inline" }, [box, el("label", { for: box.id, text: label(p) })]))) : el("p", { class: "muted small", text: "Everyone here is already in another household." }),
+    ]),
+  ]);
+  const save = el("button", { type: "submit", class: "btn btn--primary", text: "Add household", form: "add-unit-form" });
+  const cancel = button("Cancel", () => modal.close());
+  const modal = openModal({ title: "Add household", body: [form], actions: [cancel, save] });
+  async function submit() {
+    modal.setError("");
+    if (!name.value.trim()) { name.setAttribute("aria-invalid", "true"); modal.setError("Give this household a name."); name.focus(); return; }
+    const memberRefs = boxes.filter((b) => b.box.checked).map((b) => b.p.ref);
+    if (memberRefs.length < 2) { modal.setError("Choose at least two people."); return; }
+    modal.setBusy(true);
+    const out = await ctx.store.actions.write((ws) => ctx.api.createSettlementUnit(ws, { name: name.value.trim(), memberRefs }), ["group"]);
+    modal.setBusy(false);
+    if (!out.ok) { modal.setError(out.error); return; }
+    announce(`"${out.result.unit.name}" added.`);
+    modal.close();
+  }
+  save.addEventListener("click", (e) => { e.preventDefault(); void submit(); });
+  form.addEventListener("submit", (e) => { e.preventDefault(); void submit(); });
+  return modal;
+}
+
+// ---- Splitwise import (BT-009-26) -----------------------------------------------------------------
+// "Start with the specified Splitwise import, including mapping, validation, duplicate detection
+// and a non-mutating preview before confirmed import" (Terry, 2026-09-19). No Splitwise account or
+// credentials are used here — the CSV a person exports from Splitwise themselves is read entirely
+// client-side into text and sent for a read-only preview; nothing is created until "Import
+// selected" is pressed. Three steps, all inside one dialog's own body (never the modal's fixed
+// footer, so each step's own actions stay beside what they act on): choose a file, map each of
+// Splitwise's own named people to someone real here, then review and choose which rows to import.
+export function openSplitwiseImportModal(ctx, data) {
+  const label = (p) => `${p.name}${p.self ? " (you)" : ""}`;
+  const people = data.participants.filter((p) => p.active);
+  const nameOf = (ref) => { const p = people.find((x) => x.ref === ref); return p ? label(p) : "Someone"; };
+  const wsId = ctx.store.getState().selectedWorkspaceId;
+  const container = el("div");
+  let csvText = null;
+  let personColumns = [];
+  const mapping = {};
+  let lastSummary = null;
+  const modal = openModal({ title: "Import from Splitwise", body: [container], actions: [button("Cancel", () => modal.close())] });
+
+  function cleanMapping() { return Object.fromEntries(Object.entries(mapping).filter(([, v]) => v !== undefined)); }
+
+  function renderChoose() {
+    const fileInput = el("input", { type: "file", accept: ".csv,text/csv" });
+    const loading = el("p", { class: "muted small", hidden: true, text: "Reading the file…" });
+    fileInput.addEventListener("change", async () => {
+      const file = fileInput.files && fileInput.files[0];
+      if (!file) return;
+      modal.setError("");
+      loading.hidden = false;
+      try {
+        csvText = await file.text();
+        const out = await ctx.api.previewSplitwiseImport(wsId, { csv: csvText, mapping: {} });
+        personColumns = out.personColumns;
+        for (const col of personColumns) mapping[col] = undefined;
+        renderMapping();
+      } catch (err) {
+        loading.hidden = true;
+        modal.setError(err);
+      }
+    });
+    mount(container,
+      el("p", { class: "field__help", text: "Choose the CSV file Splitwise exports for a group (Splitwise → the group → Export → Download as CSV). Nothing is imported until you review and confirm it." }),
+      field("CSV file", fileInput, { wide: true }),
+      loading,
+    );
+  }
+
+  function renderMapping() {
+    const options = [{ value: "", label: "Choose who this is" }, { value: "__skip__", label: "Skip this person" }, ...people.map((p) => ({ value: p.ref, label: label(p) }))];
+    const pickers = personColumns.map((col) => {
+      const pick = pickerSelect(options, "", {}, { search: false });
+      pick.addEventListener("change", () => { mapping[col] = pick.value === "__skip__" ? null : (pick.value || undefined); });
+      return field(col, pick);
+    });
+    const next = button("Preview import…", () => void doPreview(), { variant: "primary" });
+    mount(container,
+      el("p", { class: "field__help", text: "Match each person Splitwise names to someone real in this group, or skip them if they take no part here." }),
+      el("div", { class: "form-grid" }, pickers),
+      el("div", { class: "row" }, [next]),
+    );
+  }
+
+  async function doPreview() {
+    modal.setError("");
+    modal.setBusy(true);
+    try {
+      const out = await ctx.api.previewSplitwiseImport(wsId, { csv: csvText, mapping: cleanMapping() });
+      lastSummary = out.summary;
+      renderReview(out.rows);
+    } catch (err) { modal.setError(err); } finally { modal.setBusy(false); }
+  }
+
+  function renderReview(rows) {
+    const real = rows.filter((r) => !r.skip);
+    const boxes = real.map((r) => {
+      const cb = el("input", { type: "checkbox" });
+      cb.checked = r.ok;
+      cb.disabled = !r.ok;
+      const desc = r.kind === "settlement" ? `Payment: ${nameOf(r.from)} → ${nameOf(r.to)}` : (r.raw && r.raw.description) || "";
+      const notes = [];
+      if (!r.ok) notes.push(r.message);
+      else if (r.duplicateOf) notes.push("Possibly already recorded — review before importing.");
+      if (r.roundingNote) notes.push(r.roundingNote);
+      return { r, cb, node: el("li", { class: "grow" }, [
+        el("label", { class: "row" }, [cb, el("span", { text: `${r.date} — ${desc}` })]),
+        el("span", { class: "app__spacer" }),
+        amountText(r.amount, r.currency),
+        notes.length ? el("span", { class: "muted small", text: notes.join(" ") }) : null,
+      ]) };
+    });
+    const back = button("Back", () => renderMapping());
+    const doImport = button("Import selected", () => void confirmImport(boxes), { variant: "primary" });
+    mount(container,
+      el("p", { class: "field__help", text: `${lastSummary.importable} of ${lastSummary.total} row${lastSummary.total === 1 ? "" : "s"} can be imported as shown; ${lastSummary.duplicates} look like something already recorded here; ${lastSummary.refused} need attention and cannot be imported yet.` }),
+      boxes.length ? el("ul", { class: "stack" }, boxes.map((b) => b.node)) : el("p", { class: "muted small", text: "Nothing to import." }),
+      el("div", { class: "row" }, [back, doImport]),
+    );
+  }
+
+  async function confirmImport(boxes) {
+    const rows = boxes.filter((b) => b.cb.checked).map((b) => b.r.index);
+    if (!rows.length) { modal.setError("Choose at least one row to import."); return; }
+    modal.setBusy(true);
+    const out = await ctx.store.actions.write((ws) => ctx.api.confirmSplitwiseImport(ws, { csv: csvText, mapping: cleanMapping(), rows }), ["group"]);
+    modal.setBusy(false);
+    if (!out.ok) { modal.setError(out.error); return; }
+    const { imported, skipped } = out.result;
+    announce(`Imported ${imported.length} record${imported.length === 1 ? "" : "s"} from Splitwise${skipped.length ? `; ${skipped.length} row${skipped.length === 1 ? "" : "s"} skipped` : ""}.`);
+    modal.close();
+  }
+
+  renderChoose();
   return modal;
 }
 
@@ -693,6 +1211,19 @@ export function openGroupExpense(ctx, { expense = null, eventId = null } = {}) {
   const category = pickerSelect([{ value: "", label: "No category" }].concat(categories.map((c) => ({ value: c.id, label: c.archived ? `${c.name} (archived)` : c.name }))), editing ? expense.categoryId || "" : "", {}, { badgeOf: categoryBadges(state) });
   const notes = el("textarea", { class: "field__input", maxlength: "2000", text: editing ? expense.notes : "" });
   const reason = input({ maxlength: "200", autocomplete: "off", placeholder: "Why is this being corrected?" });
+
+  // BT-009-24: moving an expense to another event is only ever offered into an ACTIVE one — the
+  // server refuses a closed/archived destination anyway (409), so a doomed choice is never even
+  // shown. Sent as just another field on the same correction/amendment, audited like any other
+  // field change (before/after event, who, when, why) — never a separate, unaudited "move" route.
+  const currentEvent = editing ? (data.events || []).find((e) => e.id === expense.eventId) : null;
+  const otherActiveEvents = editing ? (data.events || []).filter((e) => e.status === "active" && e.id !== expense.eventId) : [];
+  const moveEventPicker = editing && otherActiveEvents.length
+    ? pickerSelect(
+        [{ value: expense.eventId, label: currentEvent ? `Keep in "${currentEvent.name}"` : "Keep in its current event" }, ...otherActiveEvents.map((e) => ({ value: e.id, label: `Move to "${e.name}"` }))],
+        expense.eventId, {}, { search: false },
+      )
+    : null;
 
   // A new expense starts from the person's own defaults, otherwise the group's (setting b).
   const defaultPaidBy = personalDefault(state, "groupPaidBy") || groupValue(data, "paidBy", "me");
@@ -933,6 +1464,7 @@ export function openGroupExpense(ctx, { expense = null, eventId = null } = {}) {
     ]),
     editing ? null : ledgerField,
     el("details", { class: "more" }, [el("summary", { text: "Notes" }), field("Notes", notes, { wide: true })]),
+    moveEventPicker ? field("Event", moveEventPicker, { wide: true, help: "Moving it never changes a balance or forgives debt — only which event it is organized under." }) : null,
     editing ? field("Reason for this correction", reason, { wide: true, help: "Required. It is kept with the expense's history, with the values before and after." }) : null,
   ]);
   const modal = openModal({ title: editing ? "Correct shared expense" : "Add shared expense", body: [form], actions: [button("Cancel", () => modal.close()), save] });
@@ -991,6 +1523,9 @@ export function openGroupExpense(ctx, { expense = null, eventId = null } = {}) {
     // never silently the workspace's separate default — reassigning an existing expense to a
     // different event is not something this dialog does (that is BT-009-24's safe-move work).
     if (!editing && eventId) body.eventId = eventId;
+    // BT-009-24: only sent when it genuinely changed, exactly like every other correction field —
+    // "Keep in its current event" (the default selection) sends nothing.
+    if (editing && moveEventPicker && moveEventPicker.value !== expense.eventId) body.eventId = moveEventPicker.value;
     const withLedger = !editing && !ledgerField.hidden && ledgerBox.checked && ledgerAccount.value;
     if (withLedger) body.ledger = { accountId: ledgerAccount.value };
     modal.setBusy(true);
@@ -998,12 +1533,179 @@ export function openGroupExpense(ctx, { expense = null, eventId = null } = {}) {
       ? await ctx.store.actions.write((ws) => ctx.api.updateGroupExpense(ws, { expenseId: expense.id, revision: expense.revision, reason: reason.value.trim(), ...body }), REFRESH)
       : await writeConfirmingBackdate((confirmBackdated) => ctx.store.actions.write((ws) => ctx.api.createGroupExpense(ws, confirmBackdated ? { ...body, confirmBackdated: true } : body, key), withLedger || linked ? REFRESH : ["group"]));
     modal.setBusy(false);
-    if (!out.ok) { modal.setError(out.error); return; }
+    if (!out.ok) {
+      // BT-009-26: offline entry — only a NEW expense, only a genuine connectivity failure (never
+      // something the server actually looked at and refused), and only on a device that explicitly
+      // opted in. Kept with the exact same idempotency key it would have used online, so a sync
+      // later can never create it twice.
+      if (!editing && offline.isEnabled() && offline.shouldQueue(out.error)) {
+        offline.enqueue({ wsId: state.selectedWorkspaceId, kind: "expense", body, idempotencyKey: key });
+        announce("You're offline. This expense is saved on this device and will be sent once you're back online.");
+        modal.close();
+        return;
+      }
+      modal.setError(out.error); return;
+    }
     announce(editing ? "Correction saved. The earlier values stay in the history." : "Shared expense added.");
     modal.close();
   }
   save.addEventListener("click", (e) => { e.preventDefault(); void submit(); });
   form.addEventListener("submit", (e) => { e.preventDefault(); void submit(); });
+  return modal;
+}
+
+// ---- Itemized receipts (BT-009-25) ----------------------------------------------------------------
+// "Allocate individual lines to selected participants; support quantities, shared lines, tax, tip,
+// discounts and fees. Show any unallocated remainder and require the final allocation to reconcile
+// exactly to the receipt total" (Terry, 2026-09-19; worked example in
+// docs/BT-009-25-WORKED-EXAMPLES.md §2). A genuinely different entry point from the plain Add
+// expense dialog, since the input shape (line items, not one value per person) is fundamentally
+// different — never forced into the same five split methods' UI.
+export function openItemizedExpenseModal(ctx, { expense = null, eventId = null } = {}) {
+  const state = ctx.store.getState();
+  const data = groupData(state);
+  if (!data) { announce("Shared expenses are still loading. Try again in a moment."); void ctx.store.actions.refreshGroup(); return null; }
+  const editing = !!expense;
+  const currency = data.currency;
+  const people = data.participants.filter((p) => p.active);
+  const label = (p) => `${p.name}${p.self ? " (you)" : ""}`;
+  const key = newIdempotencyKey();
+
+  const description = input({ maxlength: "120", autocomplete: "off", required: true, placeholder: "For example: Grocery run", value: editing ? expense.description : "" });
+  const date = input({ type: "date", value: editing ? expense.date : todayIso() });
+  const categories = ((sliceFor(state, "categories").data || {}).categories || []).filter((c) => !c.archived && c.type !== "income");
+  const category = pickerSelect([{ value: "", label: "No category" }].concat(categories.map((c) => ({ value: c.id, label: c.name }))), editing ? expense.categoryId || "" : "", {}, { badgeOf: categoryBadges(state) });
+  const notes = el("textarea", { class: "field__input", maxlength: "2000", text: editing ? expense.notes : "" });
+  const reason = input({ maxlength: "200", autocomplete: "off", placeholder: "Why is this being corrected?" });
+  const total = input({ inputmode: "decimal", autocomplete: "off", required: true, placeholder: "0.00", value: editing ? expense.amount : "" });
+
+  // Paid by (kept simple: a single payer — the common case for a receipt; multiple payers are
+  // already fully supported by the plain Add expense dialog for whoever needs that).
+  const paidByDefault = people.find((p) => p.self) || people[0];
+  const paidBy = pickerSelect(people.map((p) => ({ value: p.ref, label: label(p) })), editing ? expense.payers[0].ref : (paidByDefault ? paidByDefault.ref : ""), {}, { search: false });
+
+  const feeRow = (labelText) => {
+    const box = input({ inputmode: "decimal", autocomplete: "off", placeholder: "0.00" });
+    return { box, node: field(labelText, box) };
+  };
+  const tax = feeRow("Tax");
+  const tip = feeRow("Tip");
+  const discount = feeRow("Discount");
+  const fee = feeRow("Other fee");
+  if (editing && expense.itemization) {
+    tax.box.value = expense.itemization.tax !== "0.00" ? expense.itemization.tax : "";
+    tip.box.value = expense.itemization.tip !== "0.00" ? expense.itemization.tip : "";
+    discount.box.value = expense.itemization.discount !== "0.00" ? expense.itemization.discount : "";
+    fee.box.value = expense.itemization.fee !== "0.00" ? expense.itemization.fee : "";
+  }
+
+  const linesBox = el("div", { class: "stack" });
+  const lineRows = [];
+  function makeLineRow(preset = {}) {
+    const desc = input({ maxlength: "120", autocomplete: "off", placeholder: "Item", value: preset.description || "" });
+    const qty = input({ inputmode: "decimal", autocomplete: "off", placeholder: "1", value: preset.quantity !== undefined ? String(preset.quantity) : "1" });
+    const price = input({ inputmode: "decimal", autocomplete: "off", placeholder: "0.00", value: preset.unitPrice || "" });
+    const checked = new Set(preset.refs || (paidByDefault ? [paidByDefault.ref] : []));
+    const boxes = people.map((p) => { const b = el("input", { type: "checkbox", id: uid("item-line-person") }); b.checked = checked.has(p.ref); return { p, b }; });
+    const remove = button("Remove line", () => { linesBox.removeChild(row.row); lineRows.splice(lineRows.indexOf(row), 1); refresh(); }, { small: true, variant: "danger" });
+    const row = {
+      desc, qty, price, boxes,
+      row: el("div", { class: "card item-line" }, [
+        el("div", { class: "form-grid" }, [field("Item description", desc, { wide: true }), field("Quantity", qty), field("Unit price", price)]),
+        el("div", { class: "row" }, [
+          el("span", { class: "field__label", text: "Shared by:" }),
+          ...boxes.map(({ p, b }) => el("span", { class: "field--inline" }, [b, el("label", { for: b.id, text: label(p) })])),
+        ]),
+        remove,
+      ]),
+    };
+    for (const node of [desc, qty, price]) node.addEventListener("input", refresh);
+    for (const { b } of boxes) b.addEventListener("change", refresh);
+    lineRows.push(row);
+    linesBox.appendChild(row.row);
+    refresh();
+  }
+
+  const preview = el("div", { class: "split-preview", "aria-live": "polite" });
+  const problems = el("ul", { class: "split-problems error-text", "aria-live": "polite" });
+  let last = null;
+  function refresh() {
+    const totalMinor = parseAmount(total.value.trim(), currency);
+    const itemLines = lineRows.map((r) => ({ description: r.desc.value.trim(), quantity: r.qty.value.trim(), unitPrice: r.price.value.trim(), refs: r.boxes.filter((x) => x.b.checked).map((x) => x.p.ref) }));
+    const pv = previewItemization(itemLines, { tax: tax.box.value, tip: tip.box.value, discount: discount.box.value, fee: fee.box.value }, totalMinor, currency);
+    last = { ...pv, totalMinor };
+    const lines = [];
+    if (totalMinor === null) lines.push("Enter the receipt total, more than zero.");
+    else if (pv.unallocatedMinor > 0) lines.push(`${formatMinor(pv.unallocatedMinor, currency)} ${currency} of the ${formatMinor(totalMinor, currency)} ${currency} total is not yet allocated to any item, tax, tip, discount or fee.`);
+    else if (pv.unallocatedMinor < 0) lines.push(`The items, tax, tip, discount and fee add up to ${formatMinor(pv.grandTotalMinor, currency)} ${currency}, more than the ${formatMinor(totalMinor, currency)} ${currency} total.`);
+    else if (pv.perPerson.size) lines.push(`Reconciles exactly to ${formatMinor(totalMinor, currency)} ${currency}.`);
+    mount(problems, ...[...pv.errors, ...lines].map((t) => el("li", { text: t })));
+    mount(preview, pv.perPerson.size ? el("ul", { class: "stack" }, [...pv.perPerson.entries()].map(([ref, minor]) => {
+      const p = people.find((x) => x.ref === ref);
+      return el("li", { class: "row" }, [el("span", { text: p ? label(p) : "Someone" }), el("span", { class: "app__spacer" }), amountText(formatMinor(minor, currency), currency)]);
+    })) : null);
+  }
+  total.addEventListener("input", refresh);
+  for (const f of [tax, tip, discount, fee]) f.box.addEventListener("input", refresh);
+  const addLine = button("Add item line", () => makeLineRow(), { small: true });
+
+  if (editing && expense.itemization) for (const l of expense.itemization.lines) makeLineRow({ description: l.description, quantity: l.quantity, unitPrice: l.unitPrice, refs: l.refs });
+  else makeLineRow();
+
+  const formId = `${editing ? "edit" : "add"}-itemized-form`;
+  const save = el("button", { type: "submit", class: "btn btn--primary", text: editing ? "Save correction" : "Save expense", form: formId });
+  const form = el("form", { class: "form-grid", novalidate: true, id: formId }, [
+    field("Description", description, { wide: true }),
+    field("Date", date), field("Category", category), field("Paid by", paidBy),
+    field("Receipt total", total),
+    el("fieldset", { class: "plain-fieldset field--wide" }, [el("legend", { class: "field__label", text: "Items" }), linesBox, addLine]),
+    el("div", { class: "form-grid itemized-fees" }, [tax.node, tip.node, discount.node, fee.node]),
+    preview, problems,
+    el("details", { class: "more" }, [el("summary", { text: "Notes" }), field("Notes", notes, { wide: true })]),
+    editing ? field("Reason for this correction", reason, { wide: true, help: "Required." }) : null,
+  ]);
+  const modal = openModal({ title: editing ? "Correct itemized receipt" : "Itemize a receipt", body: [form], actions: [button("Cancel", () => modal.close()), save] });
+  async function submit() {
+    modal.setError("");
+    if (!description.value.trim()) { modal.setError("Describe the expense."); description.focus(); return; }
+    if (editing && !reason.value.trim()) { modal.setError("Give a reason for this correction."); reason.focus(); return; }
+    if (!last || !last.ok) { modal.setError((last && (last.errors[0] || "The allocation does not reconcile exactly to the receipt total.")) || "Enter the receipt total."); return; }
+    const itemization = {
+      lines: lineRows.map((r) => ({ description: r.desc.value.trim(), quantity: Number(r.qty.value.trim()), unitPriceMinor: parseAmount(r.price.value.trim(), currency), refs: r.boxes.filter((x) => x.b.checked).map((x) => x.p.ref) })),
+      taxMinor: tax.box.value.trim() ? parseAmount(tax.box.value.trim(), currency) : 0,
+      tipMinor: tip.box.value.trim() ? parseAmount(tip.box.value.trim(), currency) : 0,
+      discountMinor: discount.box.value.trim() ? parseAmount(discount.box.value.trim(), currency) : 0,
+      feeMinor: fee.box.value.trim() ? parseAmount(fee.box.value.trim(), currency) : 0,
+    };
+    const body = {
+      description: description.value.trim(), date: date.value, notes: notes.value,
+      categoryId: category.value || null,
+      amount: formatMinor(last.totalMinor, currency),
+      payers: [{ ref: paidBy.value }],
+      itemization,
+    };
+    if (!editing && eventId) body.eventId = eventId;
+    modal.setBusy(true);
+    const out = editing
+      ? await ctx.store.actions.write((ws) => ctx.api.updateGroupExpense(ws, { expenseId: expense.id, revision: expense.revision, reason: reason.value.trim(), ...body }), REFRESH)
+      : await ctx.store.actions.write((ws) => ctx.api.createGroupExpense(ws, body, key), ["group"]);
+    modal.setBusy(false);
+    if (!out.ok) {
+      // BT-009-26: offline entry — see the identical guard in openGroupExpense's own submit.
+      if (!editing && offline.isEnabled() && offline.shouldQueue(out.error)) {
+        offline.enqueue({ wsId: state.selectedWorkspaceId, kind: "expense", body, idempotencyKey: key });
+        announce("You're offline. This expense is saved on this device and will be sent once you're back online.");
+        modal.close();
+        return;
+      }
+      modal.setError(out.error); return;
+    }
+    announce(editing ? "Correction saved." : "Itemized expense added.");
+    modal.close();
+  }
+  save.addEventListener("click", (e) => { e.preventDefault(); void submit(); });
+  form.addEventListener("submit", (e) => { e.preventDefault(); void submit(); });
+  refresh();
   return modal;
 }
 
@@ -1073,7 +1775,16 @@ export function openRecordPayment(ctx, { from = null, to = null, amount: preset 
     modal.setBusy(true);
     const out = await writeConfirmingBackdate((confirmBackdated) => ctx.store.actions.write((ws) => ctx.api.groupAction(ws, "settle", confirmBackdated ? { ...body, confirmBackdated: true } : body, key), withLedger || (linked && body.to === me) ? REFRESH : ["group"]));
     modal.setBusy(false);
-    if (!out.ok) { modal.setError(out.error); return; }
+    if (!out.ok) {
+      // BT-009-26: offline entry — see the identical guard in openGroupExpense's own submit.
+      if (offline.isEnabled() && offline.shouldQueue(out.error)) {
+        offline.enqueue({ wsId: state.selectedWorkspaceId, kind: "settlement", action: "settle", body, idempotencyKey: key });
+        announce("You're offline. This payment is saved on this device and will be sent once you're back online.");
+        modal.close();
+        return;
+      }
+      modal.setError(out.error); return;
+    }
     announce(body.to === me ? "Payment recorded and confirmed." : "Payment recorded. It counts once it is confirmed.");
     modal.close();
   }
@@ -1138,6 +1849,91 @@ function openDispute(ctx, s, nameOf) {
     announce("Payment disputed.");
     modal.close();
   }
+}
+
+// BT-009-25: a linked refund. The original expense is NEVER edited here — this creates a separate,
+// linked record. Defaults to the original expense's own split (method + people); "explicitly
+// reviewed adjustment" is just editing the same checkboxes/values before saving, exactly like
+// editing a real split, with the same live "does it reconcile" preview and problems list.
+function openRefundModal(ctx, e, data, nameOf) {
+  const remainingMinor = e.amountMinor - (e.refundedMinor || 0);
+  const amount = input({ inputmode: "decimal", autocomplete: "off", required: true, value: formatMinor(remainingMinor, e.currency) });
+  const reason = input({ maxlength: "200", autocomplete: "off", required: true, placeholder: "Why is this being refunded?" });
+  const method = pickerSelect(Object.entries(METHOD_LABELS).map(([value, text]) => ({ value, label: text })), e.split.method, {}, { search: false });
+  const onExpense = new Set([...e.payers.map((p) => p.ref), ...e.shares.map((s) => s.ref)]);
+  const people = data.participants.filter((p) => p.active || onExpense.has(p.ref));
+  const values = new Map(e.split.lines.map((l) => [l.ref, l.value === null || l.value === undefined ? "" : String(l.value)]));
+  const rows = people.map((p) => {
+    const box = el("input", { type: "checkbox", id: uid("refund-line"), class: "split-row__box" });
+    box.checked = values.has(p.ref);
+    const val = input({ inputmode: "decimal", autocomplete: "off", value: values.get(p.ref) || "" });
+    const out = el("span", { class: "num split-row__share" });
+    return { p, box, val, out, row: el("div", { class: "split-row" }, [box, el("label", { for: box.id, text: nameOf(p.ref) }), val, out]) };
+  });
+  const rowsEl = el("div", { class: "split-list" }, rows.map((r) => r.row));
+  const preview = el("div", { class: "split-preview", "aria-live": "polite" });
+  const problems = el("ul", { class: "split-problems error-text", "aria-live": "polite" });
+  let last = null;
+  function snapshot() {
+    return {
+      amount: amount.value.trim(), currency: e.currency, method: method.value,
+      payers: [{ ref: "single", name: "", amount: "" }],
+      lines: rows.filter((r) => r.box.checked).map((r) => ({ ref: r.p.ref, name: r.p.name, value: r.val.value })),
+    };
+  }
+  function refresh() {
+    const m = method.value;
+    for (const r of rows) {
+      r.val.hidden = m === "equal" || !r.box.checked;
+      r.val.setAttribute("aria-label", `${VALUE_LABELS[m] || "Value for"} ${r.p.name}`);
+      r.val.setAttribute("placeholder", VALUE_HINTS[m] || "");
+    }
+    const pv = previewSplit(snapshot());
+    last = pv;
+    const shareOf = new Map(pv.shares.map((s) => [s.ref, s]));
+    for (const r of rows) { const s = r.box.checked ? shareOf.get(r.p.ref) : null; r.out.textContent = s ? `${formatMinor(s.amountMinor, e.currency)} ${e.currency}` : ""; }
+    mount(preview, pv.shares.length ? el("p", { class: "field__help", text: `The shares add up to exactly ${formatMinor(pv.totalMinor, e.currency)} ${e.currency}.` }) : null);
+    mount(problems, ...pv.errors.map((t) => el("li", { text: t })));
+  }
+  commitOnConfirm(method, refresh);
+  amount.addEventListener("input", refresh);
+  for (const r of rows) { r.box.addEventListener("change", refresh); r.val.addEventListener("input", refresh); }
+  const form = el("form", { class: "form-grid", novalidate: true, id: "refund-form" }, [
+    field("Amount", amount, { help: `Up to ${formatMinor(remainingMinor, e.currency)} ${e.currency} remaining to refund on this expense.` }),
+    el("fieldset", { class: "plain-fieldset field--wide" }, [
+      el("legend", { class: "field__label", text: "Allocated to" }),
+      field("Split", method), rowsEl, preview, problems,
+    ]),
+    field("Reason", reason, { wide: true, help: "Required. Kept with the expense's history." }),
+  ]);
+  const save = el("button", { type: "submit", class: "btn btn--primary", text: "Record refund", form: "refund-form" });
+  const modal = openModal({ title: `Refund "${e.description}"`, body: [form], actions: [button("Cancel", () => modal.close()), save] });
+  refresh();
+  async function submit() {
+    modal.setError("");
+    if (!reason.value.trim()) { modal.setError("Give a reason for this refund."); reason.focus(); return; }
+    if (!last.ok) { modal.setError(last.errors[0]); return; }
+    const lineBody = (l) => {
+      if (method.value === "equal") return { ref: l.ref };
+      if (method.value === "shares") return { ref: l.ref, value: Number(String(l.value).trim()) };
+      if (method.value === "percentages") return { ref: l.ref, value: String(l.value).trim() };
+      if (method.value === "fixed-remainder" && String(l.value ?? "").trim() === "") return { ref: l.ref };
+      return { ref: l.ref, value: formatMinor(parseAmount(l.value, e.currency), e.currency) };
+    };
+    const snap = snapshot();
+    modal.setBusy(true);
+    const out = await ctx.store.actions.write((ws) => ctx.api.createRefund(ws, {
+      expenseId: e.id, amount: formatMinor(last.totalMinor, e.currency), reason: reason.value.trim(),
+      split: { method: method.value, lines: snap.lines.map(lineBody) },
+    }), REFRESH);
+    modal.setBusy(false);
+    if (!out.ok) { modal.setError(out.error); return; }
+    announce(`Refund of ${formatMinor(last.totalMinor, e.currency)} ${e.currency} recorded.`);
+    modal.close();
+  }
+  save.addEventListener("click", (ev) => { ev.preventDefault(); void submit(); });
+  form.addEventListener("submit", (ev) => { ev.preventDefault(); void submit(); });
+  return modal;
 }
 
 function openVoid(ctx, type, rec) {

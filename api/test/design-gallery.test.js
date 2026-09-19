@@ -118,7 +118,7 @@ describe('BT-013 design gallery: site-admin catalog management (approved/retired
     assert.equal(entry.tagline, 'Our detailed view for finance-savvy owners.');
     // The manifest's own built-in name/tagline are untouched — only the served, overridden view changed.
     const { CONCEPTS } = require('../_shared/layouts');
-    assert.equal(CONCEPTS.find((c) => c.id === 'executive-ledger').name, 'Executive Ledger');
+    assert.equal(CONCEPTS.find((c) => c.id === 'executive-ledger').name, 'Ledger Command');
   });
 
   test('retiring a concept needs a replacement or an explanatory note (a replacement path is never silent)', async () => {
