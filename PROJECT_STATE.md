@@ -4183,3 +4183,103 @@ with no application-behaviour change; worth a routine redeploy next time Preview
 other reasons. This is a small, separate, docs-only bookkeeping commit on its own branch
 (`chore/project-state-pr37-merge-verified`), exactly like PR #36 before it — reported separately,
 never a prerequisite for anything, and never merged by this agent.
+
+## Checkpoint AX — Terry's new requirements: manage types/colours/icons (BT-019) and debt-account
+bill linking/manual corrections (BT-020); backlog registered, one real increment shipped, the rest
+scoped with real architectural findings for the next session (2026-09-19, new branch)
+
+**Terry's instruction (verbatim scope, five numbered groups):** (1) manage category/account/
+merchant TYPES (name, colour, icon), user-facing type kept strictly separate from underlying
+accounting behaviour, unsafe accounting-class changes explained and blocked; (2) the "Category
+colours and icons" panel made collapsible consistently everywhere it appears; (3) link a recurring
+bill to the debt account it pays ("Pay from" / "Apply payment to"), reviewed allocation before
+saving, never double-counted against purchases already recorded as expenses; (4) manual, dated,
+audited interest/fee/payment/credit entries and an explicit balance-correction workflow on a debt
+account; (5) full integrity/verification (atomic linked writes, duplicate protection, server-side
+permissions on BOTH named accounts, backend+frontend together, no API-only "done"). Explicitly does
+not resume BT-007 or BT-010; must not regress existing behaviour.
+
+**Backlog registered** (`docs/REQUIREMENTS.md`, commit `07b4297`): BT-019 (parent) with BT-019-01
+(category types), BT-019-02 (account types — the load-bearing foundation for BT-020), BT-019-03
+(merchant types), BT-019-04 (the collapsible panel); BT-020 (parent) with BT-020-01 (bill-to-debt-
+account linking), BT-020-02 (the three payment/interest/fee accounting cases), BT-020-03 (manual
+interest/fee/payment/credit entries), BT-020-04 (balance correction workflow), BT-020-05 (integrity/
+verification bar). Terry's own wording is captured as the acceptance criteria for each, not
+paraphrased away.
+
+**BT-019-04 built and verified this checkpoint** (`d7cb601`, `50085be`) — see its own
+`docs/REQUIREMENTS.md` row for full evidence. The Workspace page's `ws-colours` card now uses the
+exact same shared `app/js/ui/settingsgroup.js` disclosure shell My Settings' own personal-override
+version already used (BT-017) — never a second mechanism invented. Starts open (a deliberate
+no-regression choice — this card was never collapsible here before); remembered per browser. 3 new
+frontend tests, real-browser `scripts/dev/e2e/workspacecolours.mjs` 7/7 exit 0, regression batch
+50/50 exit 0, full `npm test` 596/596, `npm --prefix api test` 746/746, `npm run validate` ok, all
+exit 0.
+
+**BT-019-01/02/03 and all of BT-020 are NOT yet built** — deliberately, not by oversight. Both are
+substantial, financially-sensitive, multi-file undertakings (account types touch the core ledger
+engine's balance-sign logic; debt-payment linking touches double-counting prevention on real money)
+that deserve the same "worked examples / architecture-first" discipline BT-009-25 used before
+writing code, not a rushed same-session attempt. **Real architectural groundwork was done and is
+recorded here so the next session starts informed, not from scratch:**
+- `api/_shared/ledger.js` ALREADY has exactly the underlying "accounting class" concept BT-019-02
+  asks to protect: `ACCOUNT_TYPES` (a fixed enum: checking/savings/cash/credit-card/loan/mortgage/
+  merchant-credit/investment/other-asset/other-liability), `LIABILITY_TYPES` (which of those are
+  liabilities), `CREDIT_TYPES`/`LOAN_TYPES` (further sub-behaviour), `NEVER_POSITIVE_OPENING`. This
+  means BT-019-02 is NOT "invent an accounting-class system" — it is "let a workspace define its own
+  named/coloured/iconed TYPE that maps to one of these already-existing, already-tested accounting
+  classes," a materially smaller and safer scope than it first appears. The unsafe-change-blocking
+  requirement means: once a real account uses a type, that type's own mapped accounting class must
+  become immutable (or require an explicit, narrow, audited migration path) — never silently
+  reinterpreted.
+- `TX_KINDS` already includes `'interest'`, `'fee'`, `'adjustment'`, `'transfer'`, `'payable'`/
+  `'repayment'` as canonical transaction kinds with their own OUTFLOW/INFLOW sign rules. This means
+  BT-020-03's "add an interest charge / a fee / record a payment or credit / correct the balance" and
+  BT-020-04's balance-correction workflow likely need NO new transaction-kind taxonomy at all — just
+  a UI surface (with a required reason, audited) that creates entries of these already-canonical
+  kinds, and a computed adjustment for the correction case (desired balance − current balance, shown
+  before confirming, exactly as Terry's own spec describes).
+- `api/recurring/handler.js` ALREADY supports `kind: 'transfer'` recurring bills with a real
+  `accountId` (source) AND `toAccountId` (destination) — TWO real accounts on one bill, exactly
+  BT-020-01's "Pay from" / "Apply payment to" shape. This is a major, favourable finding: the core
+  "link a bill to two accounts" mechanism may already exist as the general transfer-kind bill, never
+  built from scratch. What is genuinely missing, based on this reading alone (not yet verified by
+  writing a failing test against it, so treat this as a strong lead, not a confirmed gap list):
+  explicit "debt payment" framing/discoverability (so a person recognises this is the tool for a
+  card/loan payment, not just a generic "transfer"); the principal/interest/fee BREAKDOWN on one
+  occurrence (today's transfer bill likely moves one plain amount between two accounts, with no way
+  to say "$120 of this $150 is principal, $30 is unrecorded interest"); and the specific
+  double-counting guard against a card's own purchases already being recorded as ordinary expenses
+  (this needs verifying directly against `bills.js`/the occurrence-recording code, not assumed).
+- Categories already carry their own income/expense classification separately from any per-category
+  colour/icon (confirmed by BT-019-01's own wording matching existing behaviour); merchants/payees
+  currently have no "type" concept at all — BT-019-03 would be a genuinely new field there, the
+  smallest and least architecturally risky of the three type registries.
+
+**Recommended build order for the next session** (dependency-ordered, matching this session's own
+established "worked examples / smallest-safe-increment first" discipline): (1) BT-019-02 first
+(account types mapped to the existing `ledger.js` accounting classes) — the load-bearing foundation;
+verify the unsafe-change-blocking rule with real tests before anything else touches it. (2) BT-020-01
+next, built directly on the EXISTING transfer-kind recurring-bill mechanism just found — confirm
+exactly what it does and does not already do (read `bills.js`'s occurrence-recording path and write
+a failing test against today's behaviour BEFORE writing new code, per this repository's own
+"requirement → failing test → implementation" discipline) before assuming the gap list above is
+complete. (3) BT-020-02/03/04 together (the principal/interest breakdown and manual entries reuse
+the same canonical `TX_KINDS` either way). (4) BT-020-05 (integrity/verification) as the review pass
+across all of BT-020, plus BT-019-01 and BT-019-03 (category and merchant types), which are lower-
+risk and independent of the debt-payment work. Financial-accuracy review (self-review only this
+session so far; independent review still owed) is essential before any of BT-020 is considered
+release-ready, given its direct effect on real balances.
+
+**Full regression confirms zero regression from this checkpoint's own change:** `npm test` 596/596,
+`npm --prefix api test` 746/746, `npm run validate` ok (24 routes), all exit 0.
+
+**Local commits so far on `feature/BT-019-types-and-BT-020-debt-payments`** (branched from `main` at
+`189e9ed`, not yet pushed, not yet a PR): `07b4297` (backlog registration), `d7cb601` (BT-019-04),
+`50085be` (docs record of BT-019-04).
+
+**Exact next step:** BT-019-02 (account types), starting with a failing test against today's fixed
+`ACCOUNT_TYPES` enum in `api/_shared/ledger.js` to pin down exactly what must stay true, then design
+the workspace-scoped type-definition layer on top of it; then BT-020-01, starting by reading
+`api/recurring/handler.js`'s and `api/_shared/bills.js`'s existing transfer-kind occurrence-recording
+path directly (not assumed) to know precisely what BT-020 still needs to add.
