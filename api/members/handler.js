@@ -29,6 +29,12 @@ function view(doc, m, viewer, env) {
   const out = model.memberView(m, viewer);
   if (m.role !== 'owner' && (out.self || viewer.role === 'owner')) out.allowanceBytes = ledger.quotaLimit(env, m);
   if (m.role !== 'owner' && out.self) out.usedBytes = ledger.memberCharge(doc, m);
+  // BT-009-15: a member who was invited by linking to an existing workspace contact — shown to
+  // anyone who can already see this member (never a secret; it is the same relationship the
+  // shared-expense balances/history already combine), so people recognize someone they may have
+  // known first as a contact.
+  const fromContact = (doc.contacts || []).find((c) => c.joinedMemberId === m.id);
+  if (fromContact) out.joinedFromContactName = fromContact.name;
   return out;
 }
 

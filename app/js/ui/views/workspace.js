@@ -170,18 +170,41 @@ export function createView(ctx) {
     const email = input({ type: "email", placeholder: "person@example.com", autocomplete: "off" });
     // The dropdowns on this page are TaskTracker's command picker (BT-004-05).
     const roleSel = pickerSelect(ROLES.filter((r) => role === "owner" || r.value !== "owner"), "member", {}, { search: false });
+    // BT-009-15 (Terry's split-costs check, 2026-09-14): linking to an existing, not-already-joined
+    // workspace contact, so the new member's shared-expense history continues from the contact's
+    // once they accept — the contact record is kept, never rewritten (api/_shared/groups.js's
+    // canonicalRef combines the two only in derived balances/history). Loaded fresh each time this
+    // card renders, and again after sending an invitation, since a contact could join or be added
+    // elsewhere between visits. Optional: an invitation with nothing chosen here behaves exactly as
+    // before this feature existed.
+    let joinableContacts = [];
+    const NOT_LINKED = { value: "", label: "Not linked to a contact" };
+    const contactSel = pickerSelect([NOT_LINKED], "", {}, { search: false });
+    async function loadContactOptions() {
+      try {
+        const data = await api.request("contacts", { query: { workspaceId: wsId } });
+        joinableContacts = (data.shared || []).filter((c) => !c.archived && !c.joinedMemberId);
+        const wanted = contactSel.value;
+        contactSel.replaceChildren(...[NOT_LINKED, ...joinableContacts.map((c) => ({ value: c.id, label: c.name }))].map((o) => el("option", { value: o.value, text: o.label })));
+        contactSel.value = joinableContacts.some((c) => c.id === wanted) ? wanted : "";
+      } catch { /* the picker just stays at "Not linked" — linking is optional, never required */ }
+    }
+    await loadContactOptions();
     const result = el("div", { "aria-live": "polite" });
     const pending = el("div");
     const send = button("Create invitation", async () => {
       mount(result);
       try {
-        const out = await api.invite(wsId, { email: email.value, role: roleSel.value });
+        const out = await api.invite(wsId, { email: email.value, role: roleSel.value, ...(contactSel.value ? { contactId: contactSel.value } : {}) });
         const link = `${location.origin}/#/join?ws=${encodeURIComponent(wsId)}&token=${encodeURIComponent(out.token)}`;
         const linkField = input({ readonly: true, value: link });
+        const linkedName = contactSel.value ? (joinableContacts.find((c) => c.id === contactSel.value) || {}).name : null;
         mount(result,
           el("p", { class: "notice", text: out.accessPreview.summary }),
+          linkedName ? el("p", { class: "notice", text: `Once accepted, this continues ${linkedName}'s shared-expense history as the new member.` }) : null,
           field("Invitation link (shown once)", linkField, { help: "Share it only with that person. It works only for their Google account and expires in 7 days." }));
         linkField.select();
+        await loadContactOptions();
         await renderPending();
       } catch (err) { mount(result, el("p", { class: "error-text", role: "alert", text: messageFor(err) })); }
     }, { variant: "primary" });
@@ -189,16 +212,23 @@ export function createView(ctx) {
       try {
         const data = await api.invitations(wsId);
         if (!data.invitations.length) { mount(pending, el("p", { class: "muted small", text: "No pending invitations." })); return; }
+        const contactName = (id) => (joinableContacts.find((c) => c.id === id) || {}).name || null;
         mount(pending, el("ul", { class: "stack" }, data.invitations.map((i) => el("li", { class: "row" }, [
-          el("span", { text: i.email }), badge(ROLE_LABEL[i.role] || i.role), el("span", { class: "muted small", text: `until ${i.expiresAt.slice(0, 10)}` }),
+          el("span", { text: i.email }), badge(ROLE_LABEL[i.role] || i.role),
+          i.contactId ? badge(`linking to ${contactName(i.contactId) || "a contact"}`, "source") : null,
+          el("span", { class: "muted small", text: `until ${i.expiresAt.slice(0, 10)}` }),
           button("Cancel invitation", async () => {
-            try { await api.request("invitations", { method: "DELETE", query: { workspaceId: wsId }, body: { invitationId: i.id } }); announce("Invitation cancelled."); await renderPending(); }
+            try { await api.request("invitations", { method: "DELETE", query: { workspaceId: wsId }, body: { invitationId: i.id } }); announce("Invitation cancelled."); await loadContactOptions(); await renderPending(); }
             catch (err) { mount(result, el("p", { class: "error-text", role: "alert", text: messageFor(err) })); }
           }, { small: true, variant: "ghost" }),
         ]))));
       } catch (err) { mount(pending, el("p", { class: "error-text", role: "alert", text: messageFor(err) })); }
     }
-    mount(inviteBox, el("div", { class: "stack" }, [field("Email", email), field("Role", roleSel, { help: "No role can see members' private accounts." }), send, result, el("h3", { text: "Pending invitations" }), pending]));
+    mount(inviteBox, el("div", { class: "stack" }, [
+      field("Email", email), field("Role", roleSel, { help: "No role can see members' private accounts." }),
+      field("Link to an existing contact (optional)", contactSel, { help: "If this person already has a workspace contact, accepting continues that contact's shared-expense history as the new member." }),
+      send, result, el("h3", { text: "Pending invitations" }), pending,
+    ]));
     await renderPending();
   }
 
@@ -517,6 +547,9 @@ export function createView(ctx) {
       }), { small: true, variant: "danger" }) : null;
       return el("li", { class: "row" }, [
         el("strong", { text: m.name }), m.self ? badge("you") : null, m.email ? el("span", { class: "muted small", text: m.email }) : null,
+        // BT-009-15: a member who was previously a contact — their shared-expense history from
+        // before joining already continues into their own, combined balance; this just says so.
+        m.joinedFromContactName ? el("span", { class: "muted small", text: `(was contact: ${m.joinedFromContactName})` }) : null,
         // A visible label: two unlabelled dropdowns side by side read as one choice (preview check, 2026-09-14).
         el("span", { class: "app__spacer" }), usage, allowanceControl ? el("label", { class: "row small" }, [el("span", { class: "muted", text: "Storage" }), controlElement(allowanceControl)]) : null, controlElement(roleControl), remove,
       ]);

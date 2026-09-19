@@ -134,6 +134,10 @@ class Node {
     return !event.defaultPrevented;
   }
   focus() { this.ownerDocument.activeElement = this; }
+  // A no-op stub, like `focus()` above: real behaviour (selecting the field's text) is never
+  // observable through this double, but code that calls it (e.g. an invitation link field,
+  // selected for easy copying) must not throw here the way it never would in a real browser.
+  select() {}
   click() {
     if (this.disabled) return;
     if (this.localName === "input" && this.getAttribute("type") === "checkbox") {
