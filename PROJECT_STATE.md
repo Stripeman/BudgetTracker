@@ -3183,8 +3183,77 @@ Expenses and Design Gallery requirements" text, now asked for across THREE check
 this one) without arriving — flagged again, not dropped; (5) whether BT-009-15 should get its
 frontend UI next, before moving to a different BT-009 sub-item, or after.
 
-**Exact next step:** absent redirection, build the frontend UI for BT-009-15 next (a way to pick an
-existing contact when inviting someone on the Workspace page, and some indication that a member was
-once a contact) — finishing this sub-item end-to-end before starting a new one, consistent with not
-leaving a growing pile of backend-only increments — unless Terry redirects to a different BT-009
-sub-item, the BT-016 decision, or something else first.
+**Exact next step (superseded by Checkpoint AQ below):** absent redirection, build the frontend UI
+for BT-009-15 next (a way to pick an existing contact when inviting someone on the Workspace page,
+and some indication that a member was once a contact) — finishing this sub-item end-to-end before
+starting a new one, consistent with not leaving a growing pile of backend-only increments — unless
+Terry redirects to a different BT-009 sub-item, the BT-016 decision, or something else first.
+
+## Checkpoint AQ — BT-009-15's frontend built, finishing that sub-item end to end (PR #31); BT-009-15
+is now fully done, no longer a backend-only increment (2026-09-19, same session)
+
+**Built exactly what Checkpoint AO's "not yet done" flagged:** the "Invite someone" card
+(`app/js/ui/views/workspace.js`) gained a "Link to an existing contact (optional)" command picker
+(TaskTracker's shared picker, BT-004-05 — not a native select), offering only unarchived,
+not-yet-joined workspace contacts, loaded fresh on render and again after sending (a contact could
+join or be added elsewhere between visits). Sending with one chosen shows a plain-language notice
+("Once accepted, this continues X's shared-expense history as the new member") and marks that
+pending invitation's row with a "linking to X" badge. The Members list shows "(was contact: X)" for
+anyone who joined this way — `api/members/handler.js`'s `view()` gained `joinedFromContactName`, a
+reverse lookup over `doc.contacts` for whichever one has `joinedMemberId === m.id`, shown to
+everyone who can already see that member (never a secret — the combined balance already shows the
+same relationship to anyone who can see it).
+
+**Two real dom-double test-environment gaps found and fixed while writing the unit test** (not
+product bugs, and not this session's first time finding one — same pattern as the overlay.mjs
+scroll-measurement gap earlier): the dom double has no global `location` (the "Create invitation"
+flow reads `location.origin` to build the shareable link, exactly like every real browser always
+has) and no `<input>.select()` (called on that same link field, for easy copying). Both apparently
+went unexercised by any unit test before, since nothing had ever clicked "Create invitation" all
+the way through in this test environment. Fixed with a file-scoped `location` shim (this feature's
+own test file only, restored after) and a shared `select()` no-op stub added to
+`app/test/domdouble.js` itself (matching its existing `focus()` stub exactly) since a real
+`<input>.select()` is generic browser behaviour any future test could need, not specific to this
+feature.
+
+**Evidence:** new `app/test/invitecontact.test.js` (4 tests): the picker offers only Dana (not
+already-joined or archived contacts); choosing her and sending includes `contactId` in the request
+and shows the right notice; the pending-invitation list shows the "linking to Dana Contact" badge;
+a member with `joinedFromContactName` set shows the "(was contact: ...)" label. New dedicated
+real-browser scenario `scripts/dev/e2e/contactjoins.mjs` (5/5 passed, exit 0) — genuinely the
+fullest real-browser proof of any BT-009-15 work yet: opens the REAL command picker and reads its
+REAL rendered options (not a native `<select>`'s `.options`, which doesn't apply here — a real bug
+in the scenario's first draft, caught by running it, not guessed); creates a real invitation
+through the real UI; extracts the real token from the real displayed link (fixed a second real bug
+in the scenario itself — the query string sits after the `#` hash in this hash-routed app, so
+`new URL(link).searchParams` is always empty; fixed with `link.split("?")[1]`); Carol accepts
+through the real API (no dedicated "join" page UI exists in this app yet to click through — every
+other e2e fixture already accepts this same way); Carol pays a real EUR 20.00 taxi as herself after
+joining, on top of Dana's real EUR 60.00 dinner recorded before she joined; the real `/api/group`
+balance response shows ONE EUR 80.00 combined row, no separate contact row left; after a real page
+reload, the real Members list shows "(was contact: E2E Dana Contact)". **Full regression:** `npm
+test` 39/661/525 exit 0 (525 app tests, up from 521 — the 4 new frontend tests); full `npm run e2e`
+670/670 exit 0 (670, up from 665 — the 5 new scenario checks); `npm run validate` ok.
+
+**BT-009-15 is now genuinely finished end to end** — backend (Checkpoint AO) plus this frontend
+increment — no longer tracked as a backend-only gap. `docs/REQUIREMENTS.md`'s row updated
+accordingly, remaining limitations narrowed to: multi-currency continuation untested specifically
+(the mechanism is currency-agnostic by construction, just not proven across currencies by a test);
+independent security review still not run by a separate reviewer subagent (self-review only); no
+dedicated "join" page UI exists yet in this app at all (a pre-existing, unrelated gap, not
+introduced or worsened by this work).
+
+**PR: https://github.com/Stripeman/BudgetTracker/pull/31** (branch
+`feature/contact-joins-frontend-BT-009-15`), independent of PR #30 (the prior checkpoint doc) —
+either can merge without the other.
+
+**Waiting on Terry:** (1) merge PR #30 and PR #31; (2) which BT-009 sub-item next (11, 13 or 14),
+or a redirect; (3) the BT-016 group/trip-vs-narrower-sharing decision from Checkpoint AI, still
+open; (4) the "expanded Shared Expenses and Design Gallery requirements" text, now asked for across
+FIVE checkpoints (AM through this one) without arriving.
+
+**Exact next step:** absent redirection, pick the next BT-009 sub-item — BT-009-13 (multi-currency
+group totals/settlement with rate tracking) is the most naturally-related next step after this
+session's shared-expenses work, but BT-009-14 (receipt photos) or the broader BT-009-11 basket are
+equally available — unless Terry specifies one, redirects to BT-016 or BT-011's documentation
+cleanup, or supplies the missing "expanded requirements" text first.
