@@ -26,7 +26,12 @@ function requireRef(ref, { doc, user, visibility }) {
     const m = model.findMember(doc, id);
     if (!m || m.status !== 'active') throw badRequest('That member is not active in this workspace.', 'invalid_person');
   } else if (type === 'contact') {
-    const c = (doc.contacts || []).find((x) => x.id === id && !x.deletedAt);
+    // BT-009-15: a contact who has joined as a member cannot be newly chosen as "responsible"
+    // either — going forward that relationship is the member they are now. This only ever runs
+    // when a value is being explicitly (re)submitted (every caller checks `!== undefined` first),
+    // so a record that already names the contact and is not touching this field is never
+    // re-validated against it, exactly like every other field here.
+    const c = (doc.contacts || []).find((x) => x.id === id && !x.deletedAt && !x.joinedMemberId);
     if (!c) throw badRequest('That contact does not exist in this workspace.', 'invalid_person');
   } else {
     if (visibility !== 'private') throw badRequest('Private contacts can only be used on your private records. Use a shared contact instead.', 'private_contact_on_shared');

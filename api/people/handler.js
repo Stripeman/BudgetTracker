@@ -34,8 +34,11 @@ async function list(ctx, req) {
   for (const m of model.activeMembers(doc)) {
     options.push({ ref: `member:${m.id}`, label: m.name || 'Member', type: 'member', typeLabel: 'Member', self: m.subject === ctx.principal.subject });
   }
+  // BT-009-15: a contact who has joined as a member is not offered here either — the relationship
+  // for anything NEW is the member they are now, not the contact they were (their own member entry
+  // above already covers them); their past records keep naming the contact regardless (BT-001-05).
   for (const c of doc.contacts || []) {
-    if (!c.deletedAt) options.push({ ref: `contact:${c.id}`, label: c.name, type: 'contact', typeLabel: 'Contact', hint: c.kind === 'business' ? 'Business' : '' });
+    if (!c.deletedAt && !c.joinedMemberId) options.push({ ref: `contact:${c.id}`, label: c.name, type: 'contact', typeLabel: 'Contact', hint: c.kind === 'business' ? 'Business' : '' });
   }
   for (const c of user.contacts || []) {
     if (!c.deletedAt) options.push({ ref: `pcontact:${c.id}`, label: c.name, type: 'private-contact', typeLabel: 'Private contact', privateOnly: true });

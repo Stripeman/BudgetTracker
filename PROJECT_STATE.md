@@ -3088,3 +3088,103 @@ past expenses/shares/payments/balance to the new member on acceptance, audited, 
 rewritten) rather than the broader multi-currency/receipts/offline basket the other three represent
 — unless Terry specifies a different one or supplies the missing "expanded requirements" text
 first.
+
+## Checkpoint AO — BT-009-15 built (contact-joins-a-member shared-expense history takeover), on its
+own PR #29; a separate Checkpoint AN (PRs #23–#27 merged, Preview redeployed at `60c637c`) is
+still pending merge on PR #28 as this is written (2026-09-19, same session, spanning the date
+change) — read this AFTER AN once both are merged, whichever order that happens in
+
+**Chose BT-009-15 first**, of the four sub-items Terry named (11/13/14/15), as flagged in
+Checkpoint AN's own "exact next step": the most self-contained of the four (one clear mechanism —
+link an invitation to a contact, re-point their history to the new member on acceptance — rather
+than the broader multi-currency/receipts/offline basket the other three represent).
+
+**Built, per the requirement's exact words** ("inviting a shared contact to join links the
+invitation to that contact; on acceptance the new member's expenses, shares, payments and balance
+continue from the contact's, with the link recorded and audited... and the records themselves
+never rewritten; the contact is kept, marked as joined"):
+  - `POST /api/invitations` gains an optional `contactId`. Validated: must be an existing,
+    unarchived, not-already-joined, not-already-promised-to-another-pending-invitation workspace
+    contact. "Only a manager or owner may link" needed no separate check at all — `canWorkspace(doc,
+    ctx.principal, 'invite')` already restricts the WHOLE route to owners/managers
+    (`authz.js`'s `ROLE_CAPABILITIES`: member/viewer never get `'invite'`).
+  - On acceptance (`api/invitations/handler.js`'s `join()`), the linked contact gains
+    `joinedMemberId` (the new member's id), its own history entry (`{field: 'joined', from: null,
+    to: memberId}`) and a distinct `contact.joined` audit line — re-guarded at accept time too
+    (not just create time), in case anything changed in between. The contact record itself is
+    KEPT, never deleted or renamed by this.
+  - **The genuinely interesting part: how "continues from" was implemented without touching the
+    stored records.** New `groups.canonicalRef(doc, ref)`/`canonicalDoc(doc)`
+    (`api/_shared/groups.js`) map a joined contact's OLD `contact:<id>` ref onto the new
+    `member:<id>` ref, applied at the ONE choke point every calculation in that file reads
+    shared-expense records through (`recordRefs`, `participants`, `balances` — `direct()` is only
+    ever called from within `balances()` in this codebase, confirmed by grep, so it inherits the
+    already-canonicalized doc for free). `canonicalDoc` returns the SAME object, no copy at all,
+    whenever nothing has ever joined (the overwhelmingly common case) — cheap, and never a
+    mutation either way, matching how every other balance/suggestion/direct value in this file is
+    already derived-on-read, never stored. The RAW stored `doc.groupExpenses`/`groupSettlements`
+    are never touched by this — proven in the new test by reading the original expense record back
+    after the join and confirming it still literally names the contact, not the member.
+  - Going forward, the OLD contact ref can no longer be used on a NEW submission:
+    `participantChecker` (groups.js) and `people.requireRef` (api/_shared/people.js, used by
+    bills'/transactions' "responsible person" field) both refuse a joined contact's ref for new use
+    — while an EXISTING record that already names the contact is untouched (matching each
+    function's own pre-existing "don't invalidate what was already there" allowance:
+    `participantChecker`'s `keep` set, and `requireRef`'s callers only ever re-validating a field
+    that is actually being changed). The joined contact also stops being offered as a choosable
+    option anywhere: `groups.participants()` (the Shared-expenses picker) and the generic
+    `/api/people` route (used for "responsible person" on bills/transactions elsewhere in the app)
+    both skip it now.
+  - A joined contact can never be permanently deleted: `api/_shared/deletion.js`'s `contactImpact`
+    gained its own blocker for `joinedMemberId`, DISTINCT from (and firing even without) any actual
+    reference in `groupExpenses`/`groupSettlements` — covers a contact invited and accepted before
+    ever actually taking part in an expense as the contact, which the existing "referenced in
+    Shared-expenses history" blocker alone would have missed.
+
+**Evidence:** new `api/test/contact-joins-BT-009-15.test.js`, 4 tests through the real
+handlers/runtime, never mocked: (1) only an owner/manager can link, a member gets the same 403 as
+any invite attempt, no special bypass; (2) an unknown contactId 404s, an already-joined one 409s
+`contact_already_joined`, one already promised to a different pending invitation 409s
+`contact_already_invited`; (3) the full end-to-end story — Dana (contact) pays for and shares a
+60.00 dinner, then Eve accepts an invitation linked to Dana, then Eve (now a member) pays for a
+20.00 taxi under her OWN new ref — and the balances response shows ONE combined row (80.00 paid,
+40.00 shared) under the member ref with NO separate row left under the old contact ref, while the
+raw expense record for the dinner still literally names the contact; a new expense can no longer
+use the old contact ref (400 `invalid_person`); the joined contact is no longer offered as a
+participant anywhere; (4) a contact joined before ever appearing in any expense is still blocked
+from permanent deletion. **Full regression, run twice** (once before branching off, once again on
+the isolated feature branch): `npm test` 39/661/521 exit 0 both times; `npm run validate` ok; full
+`npm run e2e` 665/665 exit 0 (run once, on `main` before branching — proves the change doesn't
+regress any existing shared-expenses/invitations/contacts/people e2e flow); targeted `npm run e2e
+-- --only shared,recheck,accountrequests` 69/69 exit 0 (run again on the isolated branch, since
+those are the scenarios most likely to touch invitations/contacts/shared-expenses code paths).
+
+**Explicitly not done, disclosed rather than implied finished:** frontend UI — there is no way yet
+to pick a contact to link when creating an invitation in the app itself, and no indication on the
+Workspace or Shared-expenses pages that a member "was" a contact; this is backend-only, verified at
+the API/handler level, same as several earlier BT-014 increments this session. Multi-currency
+continuation (a contact's history in one currency, a member's activity added in a different one)
+is untested specifically, though `canonicalRef` itself is currency-agnostic (it operates on refs,
+not amounts, so there is no reason to expect it behaves differently per currency — just not proven
+by a dedicated test). Independent security review — originally called for by this requirement's own
+row — was not run by a separate reviewer subagent (none available this session); the specific
+property it asked about ("a contact grants no access until the person accepts") is unchanged by
+this work (a contact was never signed in before and remains not signed in after this either; only
+an ALREADY-authenticated member's own new activity is what gets canonicalized), and is exercised by
+the new tests, but that is self-review, not an independent pass.
+
+**PR: https://github.com/Stripeman/BudgetTracker/pull/29** (branch
+`feature/contact-joins-BT-009-15`), independent of PR #28 — either can merge without the other.
+
+**Waiting on Terry:** (1) merge PR #28 (Checkpoint AN docs) and PR #29 (this checkpoint's own
+work); (2) which BT-009 sub-item to build next (11, 13 or 14) or a redirect; (3) the BT-016
+group/trip-vs-narrower-sharing decision from Checkpoint AI, still open; (4) the "expanded Shared
+Expenses and Design Gallery requirements" text, now asked for across THREE checkpoints (AM, AN,
+this one) without arriving — flagged again, not dropped; (5) whether BT-009-15 should get its
+frontend UI next, before moving to a different BT-009 sub-item, or after.
+
+**Exact next step:** absent redirection, build the frontend UI for BT-009-15 next (a way to pick an
+existing contact when inviting someone on the Workspace page, and some indication that a member was
+once a contact) — finishing this sub-item end-to-end before starting a new one, consistent with not
+leaving a growing pile of backend-only increments — unless Terry redirects to a different BT-009
+sub-item, the BT-016 decision, or something else first.

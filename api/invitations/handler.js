@@ -31,7 +31,7 @@ const ROLE_SUMMARY = {
 };
 
 function invitationView(inv) {
-  return { id: inv.id, email: inv.email, role: inv.role, status: inv.status, createdAt: inv.createdAt, expiresAt: inv.expiresAt };
+  return { id: inv.id, email: inv.email, role: inv.role, status: inv.status, createdAt: inv.createdAt, expiresAt: inv.expiresAt, contactId: inv.contactId || null };
 }
 
 async function list(ctx, req) {
@@ -45,9 +45,15 @@ async function list(ctx, req) {
 
 async function create(ctx, req) {
   const wsId = requireId(query(req, 'workspaceId'), 'workspaceId');
-  const body = fields.onlyKeys(readBody(req), ['email', 'role']);
+  const body = fields.onlyKeys(readBody(req), ['email', 'role', 'contactId']);
   const email = fields.email(body.email, 'Email', { required: true });
   const role = fields.oneOf(body.role, ROLES, 'Role', 'member');
+  // BT-009-15 (Terry's split-costs check, 2026-09-14): linking an invitation to an existing
+  // workspace contact so that, on acceptance, the new member's history continues from the
+  // contact's. `canWorkspace(doc, ctx.principal, 'invite')` below already restricts the WHOLE of
+  // this route to owners and managers (authz.js's ROLE_CAPABILITIES: 'invite' is not granted to
+  // member/viewer) — exactly "only a manager or owner may link", with no separate check needed.
+  const contactId = fields.optionalId(body.contactId, 'contactId');
   const token = newToken();
   const { site: siteDoc } = await site.readSite(ctx.storage);
   const { result } = await store.mutateWorkspace(ctx, wsId, (doc, me) => {
@@ -56,11 +62,22 @@ async function create(ctx, req) {
     // An inviter can offer at most their own role; only an owner can invite an owner.
     if (!roleAtLeast(me.role, role)) throw forbidden('You cannot invite someone with a higher role than your own.');
     if (model.activeMembers(doc).some((m) => m.email === email)) throw conflict('That person is already a member.', 'already_member');
+    let contact = null;
+    if (contactId) {
+      contact = (doc.contacts || []).find((c) => c.id === contactId);
+      if (!contact || contact.deletedAt) throw notFound('Unknown contact.');
+      if (contact.joinedMemberId) throw conflict('That contact has already joined as a member.', 'contact_already_joined');
+      // A contact can be promised to only one pending invitation at a time, so accepting one can
+      // never leave a second, unrelated invitation ambiguously "linked" to the same contact.
+      if ((doc.invitations || []).some((i) => i.status === 'pending' && i.contactId === contactId)) {
+        throw conflict('That contact is already linked to a pending invitation.', 'contact_already_invited');
+      }
+    }
     const nowIso = ctx.nowIso();
     for (const inv of doc.invitations || []) {
       if (inv.status === 'pending' && inv.email === email) { inv.status = 'replaced'; inv.closedAt = nowIso; }
     }
-    const inv = { id: newId('inv'), email, role, tokenHash: sha256Hex(token), status: 'pending', createdAt: nowIso, createdBy: me.subject, expiresAt: new Date(ctx.now() + TTL_MS).toISOString() };
+    const inv = { id: newId('inv'), email, role, tokenHash: sha256Hex(token), status: 'pending', createdAt: nowIso, createdBy: me.subject, expiresAt: new Date(ctx.now() + TTL_MS).toISOString(), contactId: contact ? contact.id : null };
     doc.invitations = [...(doc.invitations || []), inv];
     audit.record(doc, { actor: me.subject, action: 'invitation.create', targetType: 'invitation', targetId: inv.id, at: nowIso });
     return { invitation: invitationView(inv), accessPreview: { role, summary: ROLE_SUMMARY[role], capabilities: ROLE_PRESETS[role] } };
@@ -185,6 +202,22 @@ async function join(ctx, wsId, body, setJoined, profileName = '') {
     inv.closedAt = nowIso;
     inv.acceptedBy = member.id;
     audit.record(doc, { actor: ctx.principal.subject, action: 'invitation.accept', targetType: 'member', targetId: member.id, at: nowIso });
+    // BT-009-15: the invitation was linked to a contact at creation time, so accepting it now
+    // takes over that contact's shared-expense history. The contact record itself is KEPT (never
+    // deleted or renamed) and its OWN past records keep their literal `contact:<id>` ref forever
+    // (BT-001-05: records are never rewritten) — only `groups.canonicalRef()` (api/_shared/
+    // groups.js), applied wherever balances/history are computed, treats this contact's ref and
+    // the new member's ref as the same person going forward. Guarded again here, not just at
+    // create time, in case something changed between the invitation being created and accepted
+    // (the contact archived or already linked elsewhere) — a stale link never silently succeeds.
+    if (inv.contactId) {
+      const contact = (doc.contacts || []).find((c) => c.id === inv.contactId);
+      if (contact && !contact.deletedAt && !contact.joinedMemberId) {
+        contact.joinedMemberId = member.id;
+        contact.history = [...(contact.history || []), { at: nowIso, by: ctx.principal.subject, changes: [{ field: 'joined', from: null, to: member.id }], reason: '' }];
+        audit.record(doc, { actor: ctx.principal.subject, action: 'contact.joined', targetType: 'contact', targetId: contact.id, at: nowIso });
+      }
+    }
     doc.revision = (doc.revision || 0) + 1;
     doc.updatedAt = nowIso;
     joined = { memberId: member.id, role: member.role };
