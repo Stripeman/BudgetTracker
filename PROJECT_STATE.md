@@ -5680,3 +5680,43 @@ consolidated PR for the whole `feature/design-gallery-acceptance-BT-013-14` bran
 independently verify the deployed commit, and present the completed gallery — this matrix, the fixes
 made, and the honest remaining-shared-structure disclosure — to Terry for his own acceptance decision,
 never a self-declared "done."
+
+## Checkpoint BN (2026-09-20): BT-013-14 finished per instructed scope — PR #44 opened and merged by Terry, deployed to Preview and independently verified
+
+Completed the remaining steps from Checkpoint BM's "exact next step" list, all within the single
+authorized branch/PR model Terry specified (no additional PRs, no bookkeeping-only PR):
+
+- Viewed the `gallerysettings.mjs` screenshots directly (both settingsPattern shapes, both new pages,
+  desktop light/dark, mobile light/dark) — confirmed genuinely distinct, real content per page, correct
+  nav highlighting, no overflow, clean dark mode, before treating the split as done.
+- Re-ran the full combined regression one more time before committing: `npm test` 623/623,
+  `npm --prefix api test` 779/779, `npm run validate` ok (27 routes), and
+  `npm run e2e -- --only gallery,gallerybatch2,gallerybatch3,gallerysummaries,gallerysettings`
+  **246/246, exit 0** — all clean.
+- Committed the checkpoint (`cfb2e0e`, `scripts/dev/e2e/gallerysettings.mjs` +
+  `scripts/dev/e2e/run.mjs` registration + PROJECT_STATE.md Checkpoint BM), secret-scanned clean.
+- Added the `docs/REQUIREMENTS.md` BT-013-14 row (`5c4cf3b`) documenting the corrected acceptance
+  standard, the settings split, the visual-audit methodology and result, and the tabs-nav fix.
+- Pushed the branch and opened exactly **one** consolidated PR (#44,
+  `feature/design-gallery-acceptance-BT-013-14` → `main`) covering all four checkpoint commits
+  (`79270d7`, `7c276c5`, `cfb2e0e`, `5c4cf3b`) plus the earlier merge of PR #43 into this branch's history.
+- **Terry merged PR #44 himself** (main now at `e1c1ae9`, `f4221fe..e1c1ae9`) — I did not merge it.
+- Deployed to Preview via the sole supported path, `scripts/deploy/deploy.ps1 -Environment preview`:
+  receipt `result: SUCCESS`, `sha: 5c4cf3b9962cbcba2a10959036c9f791c41c9f90`, all checks ok (target,
+  gitState, confirmation, azureResource, settings, test, validate, build, secretScan, upload,
+  commitSetting, healthCheck).
+- Independently verified the deployed commit (not just trusting the deploy receipt): `curl`'d
+  `https://polite-plant-03bb7570f-preview.eastus2.3.azurestaticapps.net/api/site-settings` directly —
+  returned `"environment":"preview"`, `"commit":"5c4cf3b9962cbcba2a10959036c9f791c41c9f90"`, matching
+  this branch's actual head.
+- No work was done on BT-007 or BT-010 this checkpoint; both remain on hold. `main` was never merged
+  by me; Production was never touched.
+
+**Current handoff:** this authorized scope (BT-013-14: My Settings/Workspace Settings split + full
+concept-by-page visual acceptance audit + the tabs-nav fix) is implementation-complete, tested,
+documented, merged (by Terry) and deployed to Preview with an independently verified commit. Per
+Terry's own explicit instruction, this is presented for **his own acceptance review** of the completed
+gallery (the Checkpoint BM matrix, the fixes made, the honest shared-structure disclosure) — not a
+self-declaration of sufficiency. **Waiting on Terry:** his visual acceptance decision on the Gallery as
+it now stands; whether any further refinement is wanted beyond what the audit found passing; whether/
+when to resume BT-007 or BT-010.
