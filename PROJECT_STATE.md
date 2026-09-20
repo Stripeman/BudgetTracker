@@ -5906,38 +5906,65 @@ Legend: ⬜ not started · 🟨 exists but not yet reference-matched to this con
 
 | Page | Executive Forecast (`ledgerfly-forecast`, navy) | Budget Workspace (`finexa-budget`, purple) | Financial Overview (`acru-overview`, green) |
 |---|---|---|---|
-| Dashboard (anchor) | ✅ BT-013-10 (`heroReferenceLedgerfly`) | 🟨 `ring-cluster` (shared pattern, not reference-led — Finexa's own anchor is its BUDGET page, per BT-013-10) | ✅ BT-013-10 (`heroReferenceAcru`) |
-| Budget (anchor for Finexa) | ✅ `reference-ledgerfly` (`budgetReferenceLedgerfly`) | ✅ BT-013-10 (`budgetReferenceFinexa`) | 🟨 `list-progress` (shared pattern) |
-| Transactions | ✅ `reference-ledgerfly` (`txnReferenceLedgerfly`) | 🟨 `card-list` (shared pattern) | 🟨 `dense-table` (shared pattern) |
-| Bills | ✅ `reference-ledgerfly` (`billsReferenceLedgerfly`) | 🟨 `kanban-columns` (shared pattern) | 🟨 `compact-table` (shared pattern) |
-| Accounts | ✅ `reference-ledgerfly` (`accountsReferenceLedgerfly`) | 🟨 `card-grid` (shared pattern) | 🟨 `table` (shared pattern) |
-| Merchants (NEW, split from Accounts per Terry's table) | ✅ `reference-ledgerfly` (`merchantsReferenceLedgerfly`, extraPages) | ⬜ not built | ⬜ not built |
-| Debt/loan detail (NEW) | ✅ `reference-ledgerfly` (`debtReferenceLedgerfly`, extraPages) | ⬜ not built | ⬜ not built |
-| Shared expenses directory | ✅ `reference-ledgerfly` (`sharedReferenceLedgerfly`, combined view) | 🟨 `settlement-focus` (shared pattern) | 🟨 `ledger-table` (shared pattern) |
-| Shared expenses detail (NEW distinction) | ✅ real per-event balances via `fx.splitBalances` | ⬜ not built | ⬜ not built |
-| Trips (illustrative, BT-010 hold) | ✅ `reference-ledgerfly` (`tripsReferenceLedgerfly`) | 🟨 `card-grid` (shared pattern) | 🟨 `list` (shared pattern) |
-| My Settings | 🟨 `flat-list` (shared pattern — deliberately left shared, BT-013-14 audit already passed it) | 🟨 `flat-list` (shared pattern) | 🟨 `two-column-grouped` (shared pattern) |
-| Workspace Settings | 🟨 `flat-list` (shared pattern — deliberately left shared, BT-013-14 audit already passed it) | 🟨 `flat-list` (shared pattern) | 🟨 `two-column-grouped` (shared pattern) |
+| Dashboard | ✅ BT-013-10 (`heroReferenceLedgerfly`) | ✅ BT-013-15 (`heroReferenceFinexa`; replaces the old shared `ring-cluster`, retired from `DASHBOARD_PATTERNS`) | ✅ BT-013-10 (`heroReferenceAcru`) |
+| Budget | ✅ `reference-ledgerfly` (`budgetReferenceLedgerfly`) | ✅ BT-013-10 (`budgetReferenceFinexa`, this concept's own original anchor) | ✅ `reference-acru` (`budgetReferenceAcru`) |
+| Transactions | ✅ `reference-ledgerfly` (`txnReferenceLedgerfly`) | ✅ `reference-finexa` (`txnReferenceFinexa`) | ✅ `reference-acru` (`txnReferenceAcru`) |
+| Bills | ✅ `reference-ledgerfly` (`billsReferenceLedgerfly`) | ✅ `reference-finexa` (`billsReferenceFinexa`) | ✅ `reference-acru` (`billsReferenceAcru`) |
+| Accounts | ✅ `reference-ledgerfly` (`accountsReferenceLedgerfly`) | ✅ `reference-finexa` (`accountsReferenceFinexa`) | ✅ `reference-acru` (`accountsReferenceAcru`) |
+| Merchants (NEW, split from Accounts per Terry's table) | ✅ `reference-ledgerfly` (`merchantsReferenceLedgerfly`, extraPages) | ✅ `reference-finexa` (`merchantsReferenceFinexa`, extraPages) | ✅ `reference-acru` (`merchantsReferenceAcru`, extraPages) |
+| Debt/loan detail (NEW) | ✅ `reference-ledgerfly` (`debtReferenceLedgerfly`, extraPages) | ✅ `reference-finexa` (`debtReferenceFinexa`, extraPages) | ✅ `reference-acru` (`debtReferenceAcru`, extraPages) |
+| Shared expenses directory | ✅ `reference-ledgerfly` (`sharedReferenceLedgerfly`, combined view) | ✅ `reference-finexa` (`sharedReferenceFinexa`, combined view) | ✅ `reference-acru` (`sharedReferenceAcru`, combined view) |
+| Shared expenses detail (NEW distinction) | ✅ real per-event balances via `fx.splitBalances` | ✅ real per-event balances via `fx.splitBalances` | ✅ real per-event balances via `fx.splitBalances` |
+| Trips (illustrative, BT-010 hold) | ✅ `reference-ledgerfly` (`tripsReferenceLedgerfly`) | ✅ `reference-finexa` (`tripsReferenceFinexa`) | ✅ `reference-acru` (`tripsReferenceAcru`) |
+| My Settings | 🟨 `flat-list` (shared — BT-013-14 audit already passed it) | 🟨 `flat-list` (shared — BT-013-14 audit already passed it) | 🟨 `two-column-grouped` (shared — BT-013-14 audit already passed it) |
+| Workspace Settings | 🟨 `flat-list` (shared — BT-013-14 audit already passed it) | 🟨 `flat-list` (shared — BT-013-14 audit already passed it) | 🟨 `two-column-grouped` (shared — BT-013-14 audit already passed it) |
 
-**Executive Forecast (navy) is now COMPLETE** — every required and extra page reference-matched,
-verified in real browsers (`scripts/dev/e2e/ledgerflypages.mjs`, 21/21, stable across 3 runs; combined
-gallery e2e batch 281/281). My/Workspace Settings deliberately stay on the shared `flat-list`/
-`two-column-grouped` pattern for all three concepts, per BT-013-14's own already-passed acceptance
-audit (Terry's page-purpose table itself asks for "organized sections... not artificial financial
-charts" there, which the existing real interactive controls already satisfy) — this is a disclosed,
-deliberate scope decision, not an oversight.
+**All three flagship designs are now COMPLETE — every required and extra page reference-matched to
+that design's own identity, in real browsers, for all three:**
 
-Every 🟨 already renders real, coordinated content (BT-013-13's summary rows, real fixtures) but through
-a pattern SHARED with other concepts, not yet carrying THIS concept's own reference identity the way
-its anchor page already does — this is exactly the gap Terry's message named. Every ⬜ does not exist
-in the Gallery at all yet. **Exact next step:** build these out concept-by-concept (Ledgerfly first,
-since its anchor and visual language are most established), each page getting its own
-`reference-ledgerfly`/`reference-finexa`/`reference-acru` bespoke pattern value (the same established
-exception `dashboardPattern`/`budgetPattern` already use for these three), reusing shared primitives
-(`gcard`, `metric`, meters/gauges, the existing chart functions) so the work is efficient without
-falling back to the shared axis system Terry rejected for these three concepts specifically. Merchants
-and Debt/loan detail are added as NEW pages exclusive to these three (a per-concept `extraPages` list,
-never touching the global `REQUIRED_PAGES` the other 12 concepts are tested against — preserving them
-unexpanded, per "pause its expansion"). Shared-expense DETAIL needs a small, honest fixture extension
-(explicit per-expense split shares) to compute real event-scoped participant balances, since the
-existing fixture deliberately avoids inventing that number today.
+- **Executive Forecast (navy)** — the KPI-strip-led identity from its own Dashboard anchor carried
+  through every page (`ledgerflyKpiStrip()` reused throughout). `scripts/dev/e2e/ledgerflypages.mjs`,
+  21/21, stable across 3+ runs.
+- **Budget Workspace (purple)** — the subhead+primary-action, two-column top, varied-chart-card-grid
+  identity from its own Budget anchor carried through every page, INCLUDING a genuinely new bespoke
+  Dashboard (`heroReferenceFinexa`) replacing the old shared `ring-cluster` hero.
+  `scripts/dev/e2e/finexapages.mjs`, 21/21, stable across 2+ runs.
+- **Financial Overview (green)** — the restrained-header, main+side-grid, segmented-bar-breakdown
+  identity from its own Dashboard anchor carried through every page (`acruHeader()` reused
+  throughout). `scripts/dev/e2e/acrupages.mjs`, 19/19 clean.
+
+Each of the three concepts' OWN internal design system is deliberately DIFFERENT from the other two
+(KPI strip vs. subhead+cards vs. header+grid) — satisfying "not become three recolours of one
+template" while each is internally coherent across its own required and extra pages. My/Workspace
+Settings deliberately stay on the shared `flat-list`/`two-column-grouped` pattern for all three
+concepts, per BT-013-14's own already-passed acceptance audit (Terry's page-purpose table itself asks
+for "organized sections... not artificial financial charts" there, which the existing real interactive
+controls already satisfy) — a disclosed, deliberate scope decision, not an oversight.
+
+**Real bugs found and fixed along the way (never merely assumed correct):**
+- A genuine, intermittent real-browser e2e race in the appearance cog (`gallerycog.mjs`, ~1-in-4-to-8
+  runs): clicking the nested preset picker's own toggle occasionally computed a stale bounding rect
+  and landed on unrelated card text, which the shared outside-press dismissal correctly treated as a
+  real outside press, closing the panel. Root-caused via temporary diagnostic instrumentation
+  (captured the exact stray DOM node hit, then removed the instrumentation); fixed by invoking that
+  one control's real click handler directly rather than via coordinate dispatch — 10/10 clean across
+  10 consecutive stress runs afterward.
+- A genuine labelling bug found by reviewing screenshots, not by any test: both Finexa's and ACRU's
+  shared-expenses "combined totals" card was titled with the currently selected EVENT's own name while
+  still showing every event's combined total inside it. Fixed to a constant, accurate title.
+- `scripts/dev/e2e/gallery.mjs`'s own hardcoded "acru-overview demonstrates the plain 'table'
+  accountsPattern" check went stale once ACRU got its own bespoke Accounts page; switched to
+  Executive Ledger, which still genuinely uses that shared pattern.
+
+**Evidence (combined):** `npm test` 633/633, `npm --prefix api test` 780/780, `npm run validate` ok (27
+routes); `npm run e2e -- --only gallery,gallerybatch2,gallerybatch3,gallerysummaries,gallerysettings,
+gallerycog,acruoverview,ledgerflyforecast,ledgerflypages,finexabudget,finexapages,acrupages`
+**329/329, exit 0**, stable across 2 consecutive full runs.
+
+**Not yet done for this scope (Terry's item 8, presenting evidence):** side-by-side reference-vs-
+implementation comparison images at comparable sizes; an explicit demonstration of >=2 colour schemes
+via the cog per design (the cog itself is built and verified generically in `gallerycog.mjs`, but not
+yet exercised specifically against all three flagship designs' own screenshots for the final
+presentation); a concise per-design adaptations/limitations write-up for the final PR description;
+opening the ONE consolidated PR for this whole branch; deploying to Preview and independently verifying
+the deployed commit; presenting the finished result to Terry for his own acceptance decision.
