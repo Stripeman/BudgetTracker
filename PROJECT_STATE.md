@@ -5680,3 +5680,182 @@ consolidated PR for the whole `feature/design-gallery-acceptance-BT-013-14` bran
 independently verify the deployed commit, and present the completed gallery — this matrix, the fixes
 made, and the honest remaining-shared-structure disclosure — to Terry for his own acceptance decision,
 never a self-declared "done."
+
+## Checkpoint BN (2026-09-20): BT-013-14 finished — PR #44 merged by Terry, deployed to Preview and independently verified twice
+
+PR #44 (`feature/design-gallery-acceptance-BT-013-14`) was merged by Terry (main `f4221fe..e1c1ae9`).
+Deployed to Preview via `scripts/deploy/deploy.ps1 -Environment preview` from the merged feature branch
+HEAD first (receipt `SUCCESS`, `sha: 5c4cf3b...`), then Terry asked to confirm main and Preview matched
+exactly — local `main` was fetched and fast-forwarded to `origin/main` (`e1c1ae9`), verified clean
+(`git status -sb` showed no drift), and Preview was redeployed from that exact commit: receipt
+`SUCCESS`, `sha: e1c1ae96dfc77efd1c742f3a4a788c9cb6fb531b`, all checks ok. Independently verified both
+times via `curl` on `/api/site-settings` directly against the live Preview URL (not just trusting the
+deploy tool's own receipt) — final result `"environment":"preview"`,
+`"commit":"e1c1ae96dfc77efd1c742f3a4a788c9cb6fb531b"`, matching main's HEAD exactly. Remained on `main`
+afterward per Terry's explicit instruction, never pushed to it myself. A small docs-only follow-up
+commit (`96907fa`, this same Checkpoint BN content) was pushed to the now-merged feature branch only —
+deliberately NOT opened as a new PR, since that would be exactly the "PR solely to document a merge"
+Terry ruled out; it stayed there as history, superseded functionally by this same entry being carried
+into `main`'s own PROJECT_STATE.md via the next authorized branch below (BT-013-15's own first commit).
+
+## BT-013-15 — three exceptional, complete, reference-matched flagship experiences (Terry, 2026-09-20; survives a session restart; verbatim)
+
+**Recorded before any implementation, per Terry's explicit instruction to record this now so it
+survives a restart, then proceed directly into it without asking whether to continue.** This
+supersedes BT-013-14's "shared structure is permitted, evaluate rendered results" standard for THESE
+THREE concepts specifically: Terry has now seen the audited BT-013-14 gallery and judged it still short
+of the standard for these three ("I see differences between concepts, but most do not resemble the
+overall composition and polish of my references... Borrowing individual elements... is not enough.").
+The rest of the 15-concept gallery (BT-013-10 through BT-013-14) is explicitly PRESERVED, not deleted,
+and its own further expansion is explicitly PAUSED (not abandoned) until these three meet the standard.
+Terry's message, preserved in full for continuity:
+
+> Objective: three exceptional, complete visual experiences
+>
+> The gallery still does not deliver the visual quality I requested. I see differences between
+> concepts, but most do not resemble the overall composition and polish of my references.
+>
+> Borrowing individual elements—a ring, colour, chart or navigation style—is not enough. I want each
+> page to visually explain the financial situation relevant to that page.
+>
+> For this increment, focus on THREE complete, coordinated designs modeled directly on the attached
+> screenshots. Preserve the other gallery work, but pause its expansion until these three meet the
+> standard.
+>
+> This prioritizes quality over the count of 15; it does not authorize deleting existing work.
+>
+> **1. Use the actual screenshots as visual specifications** — IMG_9166.png (Ledgerfly, navy
+> financial/forecast overview), IMG_9165.png (Finexa, purple budget workspace), IMG_9164.jpeg (ACRU,
+> green financial dashboard). Inspect the images themselves; use their overall composition, panel
+> proportions, hierarchy, typography, spacing, surface treatment and chart prominence as the guide. Use
+> BudgetTracker branding and appropriate original assets. Do not copy advertisements, card issuance, an
+> AI assistant or unsupported services. The background surrounding each reference's application window
+> is presentation framing, not part of the app.
+>
+> **Ledgerfly-inspired: financial clarity** — restrained sidebar navigation, a clean utility header, a
+> strong KPI strip, a dominant analytical chart and a narrower supporting column. Navy/indigo used
+> selectively to emphasize important figures and actions. Adapt business-specific metrics to relevant,
+> supported BudgetTracker information. Carry that analytical clarity through EVERY page, not just the
+> dashboard.
+>
+> **Finexa-inspired: polished budget planning** — rounded horizontal navigation, generous spacing,
+> refined purple/lavender accents, strong page titles and clear primary actions. Pair a prominent
+> comparison or trend with a useful summary panel. Coordinated category/account cards with meaningful
+> figures, progress and status. Must retain the reference's polished composition, not become the
+> existing budget list with purple borders.
+>
+> **ACRU-inspired: comprehensive money overview** — clean sidebar, large chart-and-summary region,
+> useful secondary column, coordinated lower grid of analysis panels. Green and complementary colours
+> used deliberately. Balance spending breakdowns, progress, account summaries and recent activity.
+> Replace unrelated banking/promotional content with useful BudgetTracker features while retaining the
+> visual richness.
+>
+> **2. Every page must answer its own question.** Design around the page's purpose before choosing its
+> widgets:
+> - Dashboard: where do I stand, what changed, what needs attention? — position, income/outflow
+>   trends, upcoming obligations, prioritized alerts.
+> - Transactions: where did money come from or go this period? — filter-aware totals and a meaningful
+>   trend/breakdown above an excellent searchable list; distinguish transfers from spending.
+> - Bills: what is due, when, how much must I fund? — payment timeline/calendar, overdue/upcoming
+>   totals, recurring commitments, clear payment actions.
+> - Budgets: what remains, where am I overspending? — planned-vs-actual, category progress, remaining
+>   amounts, clear warnings.
+> - Accounts: where is my money, what do I owe? — asset/liability grouping, balances, trends, activity;
+>   never equate credit limits with available cash.
+> - Debt/loan detail: what remains to repay, what changed the balance? — balance movement,
+>   principal/interest/fees, payment history, supported payoff info with explicit assumptions.
+> - Merchants: who am I spending with, how is that changing? — ranked spend, frequency, trends,
+>   merchant detail linked to bills/transactions.
+> - Shared-expense directory: which events are active, settled or need attention? — event cards/rows
+>   showing lifecycle, participants, spending, outstanding settlements.
+> - Shared-expense detail: who paid, who owes whom, what remains unresolved? — participant balances,
+>   expense breakdowns, clear settlement relationships, relevant actions.
+> - My Settings: what can I personalize? — organized sections, useful appearance previews, clear
+>   controls and save feedback, not artificial financial charts.
+> - Workspace Settings: what applies to this workspace and its members? — clearly organized
+>   permissions, defaults, membership, a separate destructive-actions area.
+>
+> Preserve all existing capabilities; summaries supplement detailed records, never hide/replace them.
+> Keep BT-007 and BT-010 on hold; do not implement held functionality merely to populate a gallery page;
+> unavailable capabilities must be explicitly labelled illustrative, never presented as operational.
+>
+> **3. Visual explanations, not decoration.** Each financial page needs: a clear title and relevant
+> date/filter context; a few meaningful headline figures; a dominant chart or visual summary where it
+> helps; supporting information explaining those figures; obvious actions and access to underlying
+> records. Do not give every panel identical size/emphasis — deliberately guide the eye. Do not repeat
+> the same summary strip and chart on every tab; use lines/areas for change over time, comparable bars
+> for planned/actual or category/merchant comparisons, progress indicators for real targets,
+> timelines/calendars for obligations, balance bars/clear relationships for settlements. Charts need
+> understandable units, dates, legends, values, useful hover/focus/tap detail and accessible
+> alternatives; clearly distinguish actual/planned/forecast. Do not copy ambiguous charts or
+> inconsistent numbers from the references — preserve visual quality while improving clarity and
+> accessibility.
+>
+> **4. Colour-scheme customization through a cog.** Each of the three design cards, and its full-size
+> preview, must have a clearly visible, accessible cog button opening that design's appearance
+> settings: coordinated preset colour schemes; custom primary/accent colours via the existing
+> colour-picker components where appropriate; immediate preview across navigation, charts, highlights
+> and other themed elements; light/dark preview with the existing moon/sun control; "Reset to design
+> defaults." Save customization separately for each design in Terry's personal gallery preferences —
+> changing one must never change another design, another user's preferences, or a live workspace.
+> Preserve readable contrast, category-colour meaning, warning/error semantics; validate unsuitable
+> combinations and explain the problem. Colour customization must preserve each design's distinct
+> layout/identity — these must not become three recolours of one template.
+>
+> **5. Coherent fictional data.** A realistic fictional workspace with enough history/variety
+> (accounts, income, expenses, recurring bills, debt, budgets, merchants, shared events); healthy,
+> overdue, over-budget, settled and outstanding examples. Same underlying demonstration data across all
+> three designs for fair comparison — totals/charts/lists/drilldowns must agree; filters must update
+> the relevant summaries; never blend currencies without an explicit conversion basis. Never commit
+> real financial information, private reference screenshots or personal identifiers to the public repo.
+>
+> **6. Usable, full-size experiences.** Real browser-rendered interfaces, never static mockup images.
+> Representative interactions must work in isolated demonstration state: navigation, filtering, chart
+> details, record/event selection, relevant forms, appearance customization. Clearly label anything
+> intentionally illustrative; no dead or misleading buttons. Let Terry open each concept as a full-size
+> experience, not just a small thumbnail surrounded by the current application's own navigation. Mobile
+> needs deliberate prioritization/rearrangement, not a compressed desktop dashboard or dozens of
+> unchanged stacked panels. Preserve keyboard access, readable contrast, comfortable touch targets,
+> meaningful labels and existing functionality; dropdowns/action menus must never shift surrounding
+> content.
+>
+> **7. Do not let existing templates limit the result.** Reuse financial logic, permissions, controls
+> and useful components; extend or replace presentation components where necessary. "I do not require
+> separately coded versions of everything. I require three visibly excellent, coherent experiences." A
+> shared renderer is an implementation choice, not proof of completion — neither a new renderer nor
+> passing tests establishes the visual brief has been met.
+>
+> **8. Present visual evidence.** For each concept: the reference beside the actual implemented
+> reference-matching page at comparable sizes; browser screenshots of every required page;
+> desktop/mobile and light/dark coverage; at least two colour schemes and the cog customization
+> demonstrated; a direct Preview entry point and clear navigation instructions; a concise account of
+> adaptations and remaining limitations. Inspect the rendered screenshots and fix weak composition,
+> awkward spacing, excessive text, empty-looking panels, clipped content and unclear charts before
+> presenting them. "My visual review determines acceptance. Do not mark the designs accepted merely
+> because automated tests pass."
+>
+> **9. Delivery and continuation.** Complete all required pages for these three designs before
+> returning to the remaining gallery concepts — do not stop after their anchor pages or ask again
+> whether secondary pages are included; they are. Maintain a concept-by-page checklist, requirements
+> and PROJECT_STATE.md. Continue through authorized work; ask only about genuinely new consequential
+> decisions. One feature branch, one consolidated PR for this increment, safe recovery checkpoints, no
+> separate bookkeeping PRs. Deploy and verify the candidate through the established Preview workflow.
+> This instruction does not authorize changing the active workspace layout, merging main or deploying
+> Production.
+>
+> The goal: when Terry opens each concept, he should recognize the quality of its reference, understand
+> the relevant financial situation at a glance, and want to explore the rest of the application.
+
+**Working plan (this checkpoint, before any code):** branch `feature/gallery-three-flagship-BT-013-15`
+created off `main` at `e1c1ae9`. The three concepts already exist as one bespoke anchor page each
+(`acru-overview`/Dashboard, `finexa-budget`/Budget, `ledgerfly-forecast`/Dashboard, from BT-013-10) —
+this increment must extend EACH to a fully coordinated, reference-matched experience across every
+required page (Dashboard, Transactions, Bills, Budget, Accounts, Merchants — new dedicated page per
+Terry's table, was folded into Accounts before — Shared directory, Shared detail, Trips (illustrative),
+My Settings, Workspace Settings, and a Debt/loan detail page — new), PLUS the cross-cutting full-size
+standalone preview mode and the per-design colour-customization cog, all before returning to the other
+12 concepts. Next step: inspect the three reference images directly, inspect current
+`app/js/ui/gallery/{compose,fixtures,layouts}.js` structure and the Gallery view/routing
+(`app/js/ui/views/gallery.js`) for what "full-size standalone preview" and "personal gallery
+preferences" already have vs. need building, then build a concept-by-page checklist as the working
+tracker.
