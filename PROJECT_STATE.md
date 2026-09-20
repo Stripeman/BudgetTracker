@@ -5859,3 +5859,77 @@ standalone preview mode and the per-design colour-customization cog, all before 
 (`app/js/ui/views/gallery.js`) for what "full-size standalone preview" and "personal gallery
 preferences" already have vs. need building, then build a concept-by-page checklist as the working
 tracker.
+
+## Checkpoint BP (2026-09-20): BT-013-15 cross-cutting infrastructure complete — cog + full-size preview; concept-by-page checklist opened
+
+Commit `6c7ea3d` on `feature/gallery-three-flagship-BT-013-15`. Built the TWO cross-cutting pieces
+Terry's items 4 and 6 require before any per-page redesign work, since all three flagship designs need
+both:
+
+- **Per-design colour cog (item 4):** new personal preference `galleryDesignColors`
+  (`api/preferences/handler.js`) — `{ [conceptId]: { light, dark, preset } }`, each colour validated
+  against its OWN mode's real surface only (never both), never a workspace setting, never visible to
+  another person (`api/test/colors.test.js`, alice/bob). Eight coordinated presets
+  (`app/js/ui/gallery/colorschemes.js`, seven reused from already-verified concept accents, one new,
+  all re-verified directly). The cog itself (`app/js/ui/gallery/appearancecog.js`): a new `cog` icon
+  (kept in sync client/server by the existing parity test), a floating panel with the preset picker
+  (reusing `createThemePicker`), two native colour inputs for exact custom hex, "Reset to design
+  defaults" — on every concept card and the full-size preview toolbar, live-painting the affected
+  `.gframe`'s CSS vars directly (no DOM rebuild, so the open panel is never closed out from under
+  whoever is using it).
+- **Full-size standalone preview (item 6):** a fixed, full-viewport takeover (`app/js/ui/views/gallery.js`
+  `openFullscreen`/`renderFullscreen`), portaled to the body, own toolbar (page/viewport pickers, the
+  cog, the existing day/night control), making the real app shell inert and locking background scroll
+  while open (same technique as `app/js/ui/modal.js`'s real dialog), restoring both and returning focus
+  to the opener on Escape/Exit.
+
+**A real bug found and fixed via real-browser e2e, not assumed:** the cog panel's own `focusout`-based
+auto-close did not compose reliably with its nested preset picker's own independent popup lifecycle — a
+genuine, intermittent close-before-the-pick-registers race, reproduced directly (`scripts/dev/e2e/
+gallerycog.mjs` failed 2 of ~7 raw runs before the fix, 5/5 clean after). Root cause: this DUPLICATED a
+job the app's shared popup-dismissal registry (`app/js/ui/popup.js`) already does correctly, including
+for a popup nested inside another (its `opened()`/`dismissOutside()` anchor-containment chain). Fixed by
+removing the redundant, conflicting focusout mechanism entirely rather than patching it further — the
+cog now closes only on Escape or a genuine outside press, exactly like every other picker in the app.
+
+**Evidence:** `npm test` 627/627, `npm --prefix api test` 780/780, `npm run validate` ok (27 routes);
+`npm run e2e -- --only gallery,gallerybatch2,gallerybatch3,gallerysummaries,gallerysettings,gallerycog`
+**256/256, exit 0** (new `gallerycog.mjs` 10/10, stress-run 5/5 clean after the popup fix, no regression
+to any prior gallery batch). Screenshots inspected directly (full-size dark-mode dashboard with the
+cog's own light/dark accent swatches; the card-level cog panel mid-edit, "Purple" preset applied and
+"Saved.") — both genuinely coherent, not merely structurally present.
+
+### Concept-by-page checklist for the three flagship designs (Terry's own required set, item 2's table)
+
+Legend: ⬜ not started · 🟨 exists but not yet reference-matched to this concept's own identity ·
+✅ built and verified this scope.
+
+| Page | Executive Forecast (`ledgerfly-forecast`, navy) | Budget Workspace (`finexa-budget`, purple) | Financial Overview (`acru-overview`, green) |
+|---|---|---|---|
+| Dashboard (anchor) | ✅ BT-013-10 (`heroReferenceLedgerfly`) | 🟨 `ring-cluster` (shared pattern, not reference-led — Finexa's own anchor is its BUDGET page, per BT-013-10) | ✅ BT-013-10 (`heroReferenceAcru`) |
+| Budget (anchor for Finexa) | 🟨 `list-progress` (shared pattern) | ✅ BT-013-10 (`budgetReferenceFinexa`) | 🟨 `list-progress` (shared pattern) |
+| Transactions | 🟨 `flat-list` (shared pattern) | 🟨 `card-list` (shared pattern) | 🟨 `dense-table` (shared pattern) |
+| Bills | 🟨 `timeline` (shared pattern) | 🟨 `kanban-columns` (shared pattern) | 🟨 `compact-table` (shared pattern) |
+| Accounts | 🟨 `card-grid` (shared pattern) | 🟨 `card-grid` (shared pattern) | 🟨 `table` (shared pattern) |
+| Merchants (NEW, split from Accounts per Terry's table) | ⬜ not built | ⬜ not built | ⬜ not built |
+| Debt/loan detail (NEW) | ⬜ not built | ⬜ not built | ⬜ not built |
+| Shared expenses directory | 🟨 `balance-list` (shared pattern) | 🟨 `settlement-focus` (shared pattern) | 🟨 `ledger-table` (shared pattern) |
+| Shared expenses detail (NEW distinction) | ⬜ not built | ⬜ not built | ⬜ not built |
+| Trips (illustrative, BT-010 hold) | 🟨 `list` (shared pattern) | 🟨 `card-grid` (shared pattern) | 🟨 `list` (shared pattern) |
+| My Settings | 🟨 `flat-list` (shared pattern) | 🟨 `flat-list` (shared pattern) | 🟨 `two-column-grouped` (shared pattern) |
+| Workspace Settings | 🟨 `flat-list` (shared pattern) | 🟨 `flat-list` (shared pattern) | 🟨 `two-column-grouped` (shared pattern) |
+
+Every 🟨 already renders real, coordinated content (BT-013-13's summary rows, real fixtures) but through
+a pattern SHARED with other concepts, not yet carrying THIS concept's own reference identity the way
+its anchor page already does — this is exactly the gap Terry's message named. Every ⬜ does not exist
+in the Gallery at all yet. **Exact next step:** build these out concept-by-concept (Ledgerfly first,
+since its anchor and visual language are most established), each page getting its own
+`reference-ledgerfly`/`reference-finexa`/`reference-acru` bespoke pattern value (the same established
+exception `dashboardPattern`/`budgetPattern` already use for these three), reusing shared primitives
+(`gcard`, `metric`, meters/gauges, the existing chart functions) so the work is efficient without
+falling back to the shared axis system Terry rejected for these three concepts specifically. Merchants
+and Debt/loan detail are added as NEW pages exclusive to these three (a per-concept `extraPages` list,
+never touching the global `REQUIRED_PAGES` the other 12 concepts are tested against — preserving them
+unexpanded, per "pause its expansion"). Shared-expense DETAIL needs a small, honest fixture extension
+(explicit per-expense split shares) to compute real event-scoped participant balances, since the
+existing fixture deliberately avoids inventing that number today.
