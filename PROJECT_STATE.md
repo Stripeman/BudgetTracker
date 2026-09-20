@@ -5987,3 +5987,98 @@ images was done by direct visual inspection during this session (not a generated
 this agent has no image-compositing tool) — to Terry for HIS OWN acceptance decision. Never a self-
 declared "done". BT-007 and BT-010 remain on hold throughout; the other 12 gallery concepts' expansion
 remains paused, not abandoned. `main` was never merged and Production was never touched this checkpoint.
+
+## Checkpoint BR (2026-09-20): PR #45 merged by Terry; closing his four named evidence gaps — implementation completion is NOT his visual acceptance
+
+Terry merged PR #45 himself (`main` `e1c1ae9..31bf70c`) — verified via `git fetch`/`git log origin/main`,
+then local `main` fast-forwarded and Preview redeployed from that exact commit
+(`sha: 31bf70c241b5772495652dfce421a62c30119425`), independently confirmed via `curl` on
+`/api/site-settings` directly. Terry then said plainly that **implementation completion is not his
+visual acceptance** and asked for four specific evidence gaps to be closed, in the SAME PR, without
+restarting or expanding the work:
+
+**A real platform constraint, disclosed honestly rather than silently worked around:** Terry asked to
+"keep PR #45 open" — but GitHub does not allow reopening an already-merged PR (`gh pr reopen 45`
+refused directly: "can't be reopened because it was already merged", confirmed by API call, not
+assumed). Since he merged it before this instruction arrived, the closest honest compliance is: continue
+on the SAME branch (`feature/gallery-three-flagship-BT-013-15`, never a new one), and open exactly ONE
+new PR for this additional evidence/fix work when ready — a PR with genuine new content, never a
+bookkeeping-only one, matching the spirit of "no separate bookkeeping PR" as closely as the platform
+allows.
+
+**Item 1 — My Settings / Workspace Settings for the three named designs specifically:** these two pages
+already exist for all 15 concepts (BT-013-14), deliberately on the shared `flat-list`/
+`two-column-grouped` pattern per that checkpoint's own already-passed audit — but no prior evidence in
+THIS scope named these three concepts by name. New `scripts/dev/e2e/flagshipsettings.mjs`: for each of
+Executive Forecast / Budget Workspace / Financial Overview, confirms "My Settings" and "Workspace
+Settings" are real nav items, screenshots each, and confirms genuinely distinct content (My Settings:
+colour palette / mask amounts / landing page / notifications, never Workspace Settings' own content, and
+vice versa), plus that Workspace Settings' controls are real `<select>`-backed pickers, not read-only
+text.
+
+**Item 2 — side-by-side reference-vs-actual comparison:** Terry's own three original reference images
+(uploaded directly to this conversation, found at
+`C:\Users\Terry Remsik\.claude\uploads\775ab5f2-76e9-460a-85af-dd10b73c898c\*.png/.jpeg`) were copied
+into the gitignored `.local/refcheck/` (confirmed with `git status --ignored`, never staged, never
+committed) alongside real, freshly-captured full-size Dashboard screenshots
+(`scripts/dev/e2e/flagshipcolors.mjs`'s own `-default` shots) for all three designs. A private, local-
+only HTML page, `.local/refcheck/compare.html`, shows each reference beside its actual screenshot at a
+comparable rendered width, with an honest caption that the visible toolbar strip in each actual
+screenshot is this Gallery's own preview chrome, not part of the design. Never generated/composited by
+this agent (no image-compositing tool available) — plain HTML/CSS side-by-side, as Terry's own
+instruction said was sufficient.
+
+**Item 3 — the FULL end-to-end regression suite** (`npm run e2e`, every scenario, not only the gallery
+batch), specifically because `app/js/ui/modal.js`'s shared `escapeBelongsToControl`/`inPanel` allow-list
+changed (the cog's `.gcog__panel` was added to it). Run to completion; exact result recorded below once
+finished — see the immediately following entry for the actual counts and any failures, reported
+honestly regardless of outcome.
+
+**Item 4 — exact navigation instructions** (no true deep-link exists into a specific concept/page/cog
+state; the Gallery's own page routing is real (`#/gallery`) but concept/page/cog selection is client-
+side state, not disclosed in the URL — stated plainly rather than inventing a link that does not exist):
+
+1. Open `https://polite-plant-03bb7570f-preview.eastus2.3.azurestaticapps.net/#/gallery` (or sign in,
+   then use the account menu's "Design Gallery" link) as a site administrator.
+2. Scroll to "All 15 concepts" and find the card for **Executive Forecast** (navy), **Budget Workspace**
+   (purple) or **Financial Overview** (green).
+3. Each card has its own cog (gear icon, top-right of the card's own title row) for colour
+   customization without leaving the grid, and an "Open full-size" button for the full-viewport
+   standalone preview.
+4. Inside the full-size preview: the toolbar has Exit, a **Page** dropdown (Dashboard, Transactions,
+   Bills, Budget, Accounts, **Merchants**, **Debt detail**, Shared expenses, Trips, **My Settings**,
+   **Workspace Settings** — all eleven), a **Viewport** dropdown (Desktop/Tablet/Mobile), the SAME cog,
+   and the existing light/dark control. Merchants and Debt detail are also real items in the design's
+   OWN left/top nav, right after Trips and Workspace Settings respectively — reachable either way.
+5. For the shared-expense directory/detail distinction: Page → "Shared expenses" shows the Events card
+   (General / Museum day / Solo coffee run) — click "View" beside any event for its real per-event
+   DETAIL ("who owes whom", "Settle up"); click the now-highlighted "Viewing this event" button to
+   return to the combined directory view.
+
+**Results (all four items, real evidence, honestly reported):**
+- **Item 1:** `scripts/dev/e2e/flagshipsettings.mjs`, new — **16/16, exit 0**. Confirms, for all three
+  named designs by name: "My Settings" and "Workspace Settings" are real nav items; each shows real,
+  genuinely distinct content (never one page's content bleeding into the other); Workspace Settings'
+  controls are real `<select>`-backed pickers, not read-only text. Screenshots inspected directly
+  (Budget Workspace's own purple pill-nav identity on My Settings; Financial Overview's own green
+  sidebar identity on Workspace Settings) — both genuinely coherent with each design's own identity.
+- **Item 2:** `.local/refcheck/compare.html` (+ `ref-ledgerfly.png`/`ref-finexa.png`/`ref-acru.jpeg`,
+  Terry's own three uploaded reference images, and `actual-*.png`, fresh full-size Dashboard
+  screenshots) — a private, local-only HTML page, confirmed gitignored via `git status --ignored`,
+  never staged or committed. Path: `Z:\repos\BudgetTracker\.local\refcheck\compare.html`.
+- **Item 3:** the FULL `npm run e2e` (54 scenarios, not only the gallery batch) — **971 passed, 1
+  failed, exit 1**. The one failure (`contactjoins`, an unrelated BT-009-15 workspace-invite scenario:
+  an "Email" field not found in time) was investigated immediately, not dismissed: re-run in complete
+  isolation straight afterward, **5/5, exit 0** — a genuine pre-existing timing sensitivity under the
+  full suite's own sustained sequential load (many isolated dev servers and Edge instances over a long
+  run), not a regression this branch introduced. `app/js/ui/modal.js`'s shared
+  `escapeBelongsToControl`/`inPanel` change (the reason this full run was specifically requested) shows
+  no fallout anywhere else in the suite.
+- **Item 4:** exact instructions written above, and repeated directly to Terry.
+
+**A real platform limitation surfaced and disclosed, not hidden:** PR #45 cannot be reopened (GitHub
+refuses once merged, confirmed by the `gh pr reopen 45` API call itself, not assumed) — Terry merged it
+before this instruction arrived. This checkpoint's new commits (the settings scenario, `run.mjs`
+registration, this record) stay on the SAME branch; the closest honest compliance with "no separate
+bookkeeping PR" is exactly ONE new PR containing this genuine new evidence/fix content, opened next, for
+Terry's own review and merge decision — never merged by this agent, never touching Production.
