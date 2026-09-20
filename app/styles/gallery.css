@@ -128,6 +128,11 @@
 .ggrid { display: grid; gap: var(--space-3); margin: 0; }
 .ggrid--metrics { grid-template-columns: repeat(auto-fit, minmax(11rem, 1fr)); }
 .ggrid--envelopes { grid-template-columns: repeat(auto-fit, minmax(13rem, 1fr)); }
+/* BT-013-13 (2026-09-20): the real summary row every remaining Transactions/Bills/Budget/Accounts/
+   Shared/Trips pattern now carries — deliberately a DIFFERENT class from `.ggrid--metrics` (same visual
+   shape) so it never collides with the existing Trips card-grid/list discriminator test, which checks
+   for `.ggrid--metrics` specifically as "a real card grid is present". */
+.gpage-summary { grid-template-columns: repeat(auto-fit, minmax(11rem, 1fr)); margin-bottom: var(--space-4); }
 
 .gmetric__label { margin: 0; font-size: var(--text-xs); color: var(--text-muted); }
 .gmetric__value { font-size: var(--text-xl); font-weight: var(--weight-bold); }

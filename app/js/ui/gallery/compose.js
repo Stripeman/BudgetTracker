@@ -336,7 +336,10 @@ function heroMerchantFeed() {
 }
 
 function heroEnvelopeGrid() {
-  return [gcard("Budget envelopes", "target", el("div", { class: "ggrid ggrid--envelopes" }, fx.budget.lines.map((l) => {
+  // BT-013-13 (2026-09-20): only reached as a Budget-page pattern today (no concept's own Dashboard
+  // uses 'envelope-grid' any more) — safe to add the same real summary row every other remaining
+  // Budget pattern now carries.
+  return [budgetSummaryRow(), gcard("Budget envelopes", "target", el("div", { class: "ggrid ggrid--envelopes" }, fx.budget.lines.map((l) => {
     const c = cat(l.category);
     const over = Number(l.available) < 0;
     const pct = Math.min(100, Math.round((Number(l.spent) / Number(l.planned)) * 100));
@@ -876,13 +879,26 @@ function pageTitle(pageId) {
 }
 
 // ---- Transactions: five genuinely different compositions (review, 2026-09-18) ---------------------
+// BT-013-13 (2026-09-20): a real summary row (entry count, total in, total out — all derived, never
+// invented) shared by every remaining Transactions pattern, so each concept's own ledger page opens
+// with real coordinated context instead of a bare list/table, matching the same standard the bespoke
+// pages already hold themselves to. Each pattern keeps its own genuinely different body beneath it.
+function txnSummaryRow() {
+  const income = fx.transactions.filter((t) => Number(t.amount) > 0).reduce((s, t) => s + Number(t.amount), 0);
+  const expense = fx.transactions.filter((t) => Number(t.amount) < 0).reduce((s, t) => s - Number(t.amount), 0);
+  return el("div", { class: "ggrid gpage-summary" }, [
+    metric("Entries", String(fx.transactions.length), null),
+    metric("Total in", amountText(income.toFixed(2), "EUR", fx.prefs), null),
+    metric("Total out", amountText((-expense).toFixed(2), "EUR", fx.prefs), null),
+  ]);
+}
 function txnFlatList() {
-  return [gcard("All entries", "receipt", el("ul", { class: "stack" }, fx.transactions.map(txRow)), { full: true })];
+  return [txnSummaryRow(), gcard("All entries", "receipt", el("ul", { class: "stack" }, fx.transactions.map(txRow)), { full: true })];
 }
 function txnGroupedByDate() {
   const byDate = new Map();
   for (const t of fx.transactions) { if (!byDate.has(t.date)) byDate.set(t.date, []); byDate.get(t.date).push(t); }
-  return [...byDate.entries()].map(([date, rows]) => gcard(date, "calendar", el("ul", { class: "stack" }, rows.map(txRow)), { full: true }));
+  return [txnSummaryRow(), ...[...byDate.entries()].map(([date, rows]) => gcard(date, "calendar", el("ul", { class: "stack" }, rows.map(txRow)), { full: true }))];
 }
 function txnDenseTable() {
   const rows = fx.transactions.map((t) => {
@@ -899,7 +915,7 @@ function txnDenseTable() {
     el("thead", {}, [el("tr", {}, ["Date", "Merchant", "Category", "Amount"].map((h) => el("th", { scope: "col", class: h === "Amount" ? "num" : "", text: h })))]),
     el("tbody", {}, rows),
   ]);
-  return [gcard("All entries", "receipt", el("div", { class: "table-wrap" }, [table]), { full: true })];
+  return [txnSummaryRow(), gcard("All entries", "receipt", el("div", { class: "table-wrap" }, [table]), { full: true })];
 }
 function txnCardList() {
   const cards = fx.transactions.map((t) => {
@@ -911,12 +927,12 @@ function txnCardList() {
       el("div", { class: "muted small" }, [t.date, c ? " · " : "", c ? categoryLabel(c.name, c.color, c.icon) : null]),
     ]);
   });
-  return [gcard("All entries", "receipt", el("div", { class: "ggrid ggrid--cards" }, cards), { full: true })];
+  return [txnSummaryRow(), gcard("All entries", "receipt", el("div", { class: "ggrid ggrid--cards" }, cards), { full: true })];
 }
 function txnFilterFirst() {
   const filters = gcard("Filters", "filter", el("ul", { class: "stack" }, ["Account: All", "Category: All", "Person: All", "Period: This month"].map((f) => el("li", { text: f }))));
   const list = gcard("Matching entries", "receipt", el("ul", { class: "stack" }, fx.transactions.map(txRow)));
-  return [el("div", { class: "gsplit" }, [filters, list])];
+  return [txnSummaryRow(), el("div", { class: "gsplit" }, [filters, list])];
 }
 // BT-013-11 (2026-09-20): a BESPOKE Transactions composition for `merchant-insights`, built closely
 // against a real reference image (`.local/refcheck/r03.png`, extracted from
@@ -972,20 +988,34 @@ function renderTransactions(concept) {
 }
 
 // ---- Bills: four genuinely different compositions --------------------------------------------------
+// BT-013-13 (2026-09-20): a real summary row (bills tracked, overdue/due-soon counts, total due —
+// never invented) shared by every remaining Bills pattern, coordinating each concept's own Bills page
+// with real context the same way its bespoke pages already do. Each pattern keeps its own body below.
+function billsSummaryRow() {
+  const overdue = fx.bills.filter((b) => b.status === "overdue").length;
+  const dueSoon = fx.bills.filter((b) => b.status === "due-soon").length;
+  const totalDue = fx.bills.filter((b) => b.kind !== "income").reduce((s, b) => s + Number(b.amount), 0);
+  return el("div", { class: "ggrid gpage-summary" }, [
+    metric("Bills tracked", String(fx.bills.length), null),
+    metric("Overdue", String(overdue), null),
+    metric("Due soon", String(dueSoon), null),
+    metric("Total due", amountText(totalDue.toFixed(2), "EUR", fx.prefs), null),
+  ]);
+}
 function billsGroupedStatus() {
   const groups = [["Overdue", "overdue"], ["Due soon", "due-soon"], ["Upcoming", "upcoming"]];
-  return groups.map(([label, status]) => {
+  return [billsSummaryRow(), ...groups.map(([label, status]) => {
     const rows = fx.bills.filter((b) => b.status === status);
     return rows.length ? gcard(label, "calendar", el("ul", { class: "stack" }, rows.map(billRow)), { full: true }) : null;
-  });
+  })];
 }
 function billsTimeline() {
   const events = [...fx.bills].sort((a, b) => (a.dueDate < b.dueDate ? -1 : 1));
-  return [gcard("All bills, in order", "clock", el("ol", { class: "gtimeline" }, events.map((b) => el("li", { class: ["gtimeline__item", b.status === "overdue" ? "gtimeline__item--past" : "gtimeline__item--future"] }, [el("span", { class: "gtimeline__date muted small", text: b.dueDate }), billRow(b)]))), { full: true })];
+  return [billsSummaryRow(), gcard("All bills, in order", "clock", el("ol", { class: "gtimeline" }, events.map((b) => el("li", { class: ["gtimeline__item", b.status === "overdue" ? "gtimeline__item--past" : "gtimeline__item--future"] }, [el("span", { class: "gtimeline__date muted small", text: b.dueDate }), billRow(b)]))), { full: true })];
 }
 function billsKanban() {
   const groups = [["Overdue", "overdue"], ["Due soon", "due-soon"], ["Upcoming", "upcoming"]];
-  return [el("div", { class: "gkanban" }, groups.map(([label, status]) => gcard(label, "calendar", el("ul", { class: "stack" }, fx.bills.filter((b) => b.status === status).map(billRow)))))];
+  return [billsSummaryRow(), el("div", { class: "gkanban" }, groups.map(([label, status]) => gcard(label, "calendar", el("ul", { class: "stack" }, fx.bills.filter((b) => b.status === status).map(billRow)))))];
 }
 function billsCompactTable() {
   const rows = fx.bills.map((b) => el("tr", {}, [
@@ -998,7 +1028,7 @@ function billsCompactTable() {
     el("thead", {}, [el("tr", {}, ["Bill", "Status", "Due", "Amount"].map((h) => el("th", { scope: "col", class: h === "Amount" ? "num" : "", text: h })))]),
     el("tbody", {}, rows),
   ]);
-  return [gcard("All bills", "calendar", el("div", { class: "table-wrap" }, [table]), { full: true })];
+  return [billsSummaryRow(), gcard("All bills", "calendar", el("div", { class: "table-wrap" }, [table]), { full: true })];
 }
 const BILLS_RENDERERS = { "grouped-status": billsGroupedStatus, timeline: billsTimeline, "kanban-columns": billsKanban, "compact-table": billsCompactTable };
 function renderBills(concept) {
@@ -1007,6 +1037,17 @@ function renderBills(concept) {
 }
 
 // ---- Budget: three genuinely different compositions --------------------------------------------------
+// BT-013-13 (2026-09-20): a real summary row (total planned/spent/available — never invented) shared
+// by every remaining Budget pattern, coordinating each concept's own Budget page with real context.
+function budgetSummaryRow() {
+  const planned = fx.budget.lines.reduce((s, l) => s + Number(l.planned), 0);
+  const spent = fx.budget.lines.reduce((s, l) => s + Number(l.spent), 0);
+  return el("div", { class: "ggrid gpage-summary" }, [
+    metric("Total planned", formatAmount(planned.toFixed(2), fx.budget.currency), null),
+    metric("Total spent", formatAmount(spent.toFixed(2), fx.budget.currency), null),
+    metric("Available", formatAmount((planned - spent).toFixed(2), fx.budget.currency), null),
+  ]);
+}
 function budgetBarComparison() {
   const rows = fx.budget.lines.map((l) => {
     const c = cat(l.category);
@@ -1017,7 +1058,7 @@ function budgetBarComparison() {
       el("span", { class: "muted small", text: `${l.spent} of ${l.planned}` }),
     ]);
   });
-  return [gcard("Planned vs spent, by category", "chart-line", el("div", { class: "stack" }, rows), { full: true })];
+  return [budgetSummaryRow(), gcard("Planned vs spent, by category", "chart-line", el("div", { class: "stack" }, rows), { full: true })];
 }
 function budgetListProgress() {
   const rows = fx.budget.lines.map((l) => {
@@ -1034,7 +1075,7 @@ function budgetListProgress() {
     el("thead", {}, [el("tr", {}, ["Category", "Progress", "Available"].map((h) => el("th", { scope: "col", class: h === "Available" ? "num" : "", text: h })))]),
     el("tbody", {}, rows),
   ]);
-  return [gcard("Budget lines", "target", el("div", { class: "table-wrap" }, [table]), { full: true })];
+  return [budgetSummaryRow(), gcard("Budget lines", "target", el("div", { class: "table-wrap" }, [table]), { full: true })];
 }
 // BT-013-10 (Terry, 2026-09-20): a BESPOKE Budget-page composition for `finexa-budget`, built closely
 // against the real Finexa reference image (`.local/refcheck/r02.png`, extracted from
@@ -1132,6 +1173,16 @@ function renderBudget(concept) {
 // Three genuinely different compositions, each pairing the account list with the managed merchant
 // directory, since real BudgetTracker keeps both on view together (app/js/ui/views/accounts.js and
 // payees.js are separate pages, but every concept's OWN Accounts view choice is asked to cover both). --
+// BT-013-13 (2026-09-20): a real summary row (account count, total balance — never invented) shared by
+// every Accounts pattern, coordinating each concept's own Accounts/Merchants page with real context.
+function accountsSummaryRow() {
+  const total = fx.accounts.reduce((s, a) => s + Number(a.balance), 0);
+  return el("div", { class: "ggrid gpage-summary" }, [
+    metric("Accounts", String(fx.accounts.length), null),
+    metric("Total balance", money(total.toFixed(2), "EUR", fx.prefs), null),
+    metric("Merchants tracked", String(fx.merchants.length), null),
+  ]);
+}
 function accountsCardGrid() {
   const cards = fx.accounts.map((a) => el("div", { class: "gminicard" }, [
     withIcon(a.icon, a.name),
@@ -1140,6 +1191,7 @@ function accountsCardGrid() {
   ]));
   const merchantChips = fx.merchants.map((m) => el("span", { class: "badge" }, [withIcon(m.icon, m.name)]));
   return [
+    accountsSummaryRow(),
     gcard("Accounts", "bank", el("div", { class: "ggrid ggrid--cards" }, cards), { full: true }),
     gcard("Merchants", "store", el("div", { class: "row" }, merchantChips), { full: true }),
   ];
@@ -1158,6 +1210,7 @@ function accountsTable() {
   const merchantRows = fx.merchants.map((m) => el("tr", {}, [el("td", {}, [withIcon(m.icon, m.name)])]));
   const merchantTable = el("table", { class: "table gtable-dense" }, [el("thead", {}, [el("tr", {}, [el("th", { scope: "col", text: "Merchant" })])]), el("tbody", {}, merchantRows)]);
   return [
+    accountsSummaryRow(),
     gcard("Accounts", "bank", el("div", { class: "table-wrap" }, [table]), { full: true }),
     gcard("Merchants", "store", el("div", { class: "table-wrap" }, [merchantTable]), { full: true }),
   ];
@@ -1168,7 +1221,7 @@ function accountsGroupedByType() {
   const typeLabel = { checking: "Checking", "credit-card": "Credit cards", savings: "Savings", loan: "Loans" };
   const groups = [...byType.entries()].map(([type, list]) => gcard(typeLabel[type] || type, "bank", list.map((a) => el("div", { class: "row" }, [withIcon(a.icon, a.name), el("span", { class: "app__spacer" }), money(a.balance, a.currency, fx.prefs)]))));
   const merchantChips = fx.merchants.map((m) => el("span", { class: "badge" }, [withIcon(m.icon, m.name)]));
-  return [...groups, gcard("Merchants", "store", el("div", { class: "row" }, merchantChips), { full: true })];
+  return [accountsSummaryRow(), ...groups, gcard("Merchants", "store", el("div", { class: "row" }, merchantChips), { full: true })];
 }
 const ACCOUNTS_RENDERERS = { "card-grid": accountsCardGrid, table: accountsTable, "grouped-by-type": accountsGroupedByType };
 function renderAccounts(concept) {
@@ -1205,8 +1258,20 @@ function eventsDirectory(selectedEventId, onSelect) {
     el("ul", { class: "stack" }, rows),
   ], { full: true });
 }
+// BT-013-13 (2026-09-20): a real summary row (members, expenses in this event, total this event —
+// respects whichever event is currently scoped, never a global figure pretending otherwise) shared by
+// every remaining Shared pattern, coordinating each concept's own Shared expenses page with context.
+function sharedSummaryRow(expenses) {
+  const total = expenses.reduce((s, g) => s + Number(g.amount), 0);
+  return el("div", { class: "ggrid gpage-summary" }, [
+    metric("Members", String(fx.shared.balances.length), null),
+    metric("Expenses", String(expenses.length), null),
+    metric("Total", amountText(total.toFixed(2), fx.shared.currency, fx.prefs), null),
+  ]);
+}
 function sharedBalanceList(expenses) {
   return [
+    sharedSummaryRow(expenses),
     gcard("Balances", "users", fx.shared.balances.map((b) => el("div", { class: "row" }, [el("span", { text: b.name }), el("span", { class: "app__spacer" }), amountText(b.net, fx.shared.currency, fx.prefs)]))),
     gcard("Recent shared expenses", "receipt", expenses.length ? el("ul", { class: "stack" }, expenses.map((g) => el("li", { class: "grow" }, [el("span", { class: "muted small", text: g.date }), el("span", { text: g.description }), el("span", { class: "muted small", text: `paid by ${g.payer}` }), el("span", { class: "app__spacer" }), amountText(`-${g.amount}`, fx.shared.currency, fx.prefs)]))) : el("p", { class: "muted small", text: "No expenses in this event." }), { full: true }),
   ];
@@ -1222,6 +1287,7 @@ function sharedLedgerTable(expenses) {
   ]);
   const balanceRow = fx.shared.balances.map((b) => el("span", { class: "badge" }, [`${b.name}: `, amountText(b.net, fx.shared.currency, fx.prefs)]));
   return [
+    sharedSummaryRow(expenses),
     gcard("Balances", "users", el("div", { class: "row" }, balanceRow)),
     gcard("Shared expenses", "receipt", el("div", { class: "table-wrap" }, [table]), { full: true }),
   ];
@@ -1234,6 +1300,7 @@ function sharedSettlementFocus(expenses) {
     amountText(String(Math.min(Math.abs(Number(from.net)), Number(to.net)).toFixed(2)), fx.shared.currency, fx.prefs),
   ])));
   return [
+    sharedSummaryRow(expenses),
     gcard("Settle up", "scale", suggestions.length ? el("ul", { class: "stack" }, suggestions) : el("p", { class: "muted", text: "Everyone is settled up." }), { full: true }),
     gcard("Recent shared expenses", "receipt", expenses.length ? el("ul", { class: "stack" }, expenses.slice(0, 3).map((g) => el("li", { class: "grow" }, [el("span", { text: g.description }), el("span", { class: "app__spacer" }), amountText(`-${g.amount}`, fx.shared.currency, fx.prefs)]))) : el("p", { class: "muted small", text: "No expenses in this event." })),
   ];
@@ -1307,18 +1374,29 @@ function tripCard(t, { withName = true } = {}) {
   ];
 }
 const TRIPS_NOTE = "Illustrative only: Trip planning (BT-010) is not yet a real BudgetTracker feature. This page previews how the layout concept would present it.";
+// BT-013-13 (2026-09-20): a real summary row (trip count, combined budget/spent — never invented)
+// shared by every Trips pattern, coordinating each concept's own Trips page with real context.
+function tripsSummaryRow() {
+  const budget = fx.trips.reduce((s, t) => s + Number(t.budget), 0);
+  const spent = fx.trips.reduce((s, t) => s + Number(t.spent), 0);
+  return el("div", { class: "ggrid gpage-summary" }, [
+    metric("Trips", String(fx.trips.length), null),
+    metric("Combined budget", formatAmount(budget.toFixed(2), fx.trips[0].currency), null),
+    metric("Combined spent", formatAmount(spent.toFixed(2), fx.trips[0].currency), null),
+  ]);
+}
 function tripsCardGrid() {
-  return [el("div", { class: "ggrid ggrid--metrics" }, fx.trips.map((t) => gcard(t.name, t.icon, tripCard(t, { withName: false }))))];
+  return [tripsSummaryRow(), el("div", { class: "ggrid ggrid--metrics" }, fx.trips.map((t) => gcard(t.name, t.icon, tripCard(t, { withName: false }))))];
 }
 function tripsList() {
-  return [gcard("Trips", "suitcase", el("ul", { class: "stack" }, fx.trips.map((t) => el("li", { class: "grow" }, [
+  return [tripsSummaryRow(), gcard("Trips", "suitcase", el("ul", { class: "stack" }, fx.trips.map((t) => el("li", { class: "grow" }, [
     withIcon(t.icon, t.name), el("span", { class: "muted small", text: t.dateRange }), el("span", { class: "app__spacer" }),
     el("span", { class: "small", text: `${t.spent} of ${t.budget} ${t.currency}` }),
   ]))), { full: true })];
 }
 function tripsTimeline() {
   const sorted = [...fx.trips].sort((a, b) => (a.dateRange < b.dateRange ? -1 : 1));
-  return [gcard("Trips, in order", "clock", el("ol", { class: "gtimeline" }, sorted.map((t) => el("li", { class: "gtimeline__item gtimeline__item--future" }, [
+  return [tripsSummaryRow(), gcard("Trips, in order", "clock", el("ol", { class: "gtimeline" }, sorted.map((t) => el("li", { class: "gtimeline__item gtimeline__item--future" }, [
     el("span", { class: "gtimeline__date muted small", text: t.dateRange }), withIcon(t.icon, t.name), el("span", { class: "muted small" }, [` — ${t.spent} of ${t.budget} ${t.currency}`]),
   ]))), { full: true })];
 }
