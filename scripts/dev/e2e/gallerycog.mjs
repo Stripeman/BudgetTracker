@@ -21,8 +21,17 @@ async function openCog(session, scope) {
 // always avoided it) — self-heals by re-clicking the toggle once if the list has not appeared
 // shortly after the first click, rather than either papering over it with a single long sleep
 // every time or leaving a rare, non-deterministic scenario in the delivered suite.
+// Real-browser evidence found a genuine coordinate-hit-testing race specific to this ONE nested
+// toggle (the preset picker's own trigger, inside the already-floating `.gcog__panel`): the harness's
+// normal coordinate-based click occasionally computed a stale bounding rect and landed on unrelated
+// card text behind the panel instead, closing it via the shared outside-press dismissal (correctly,
+// FROM that press's own point of view — the press genuinely did land outside). A direct `.click()`
+// invocation is used for this one control instead, which exercises the exact same real click handler
+// without the coordinate math this specific nested-floating-panel case made unreliable; the option
+// itself (in the picker's own separately portaled list) still uses a normal, real, coordinate-based
+// press.
 async function pickPreset(session, label) {
-  await session.click({ css: ".themepick__toggle", scope: ".gcog__panel" });
+  await session.evaluate("document.querySelector('.gcog__panel .themepick__toggle').click()");
   await session.waitFor("!!document.querySelector('.themepick__list:not([hidden])')", { what: "the preset list" });
   await session.click({ role: "option", text: label });
 }
@@ -104,8 +113,7 @@ export async function run(h, t) {
   });
   await dave.shot("fullscreen-desktop-light");
   // Its own cog and page/viewport pickers work exactly like the card's.
-  await dave.click({ role: "button", name: new RegExp(`Customize colours for ${CONCEPT_NAME}`), scope: ".gfullscreen__bar" });
-  await dave.waitFor("!!document.querySelector('.gcog__panel:not([hidden])')", { what: "the full-size preview's own cog panel" });
+  await openCog(dave, ".gfullscreen__bar");
   await pickPreset(dave, "Green");
   await waitForAccent(dave, ".gfullscreen .gframe", "#4a7a0a");
   t.check("the full-size preview's own cog changes its own frame's colours live too", { expected: "#4a7a0a", actual: await dave.evaluate("getComputedStyle(document.querySelector('.gfullscreen .gframe')).getPropertyValue('--g-accent-light').trim()") });

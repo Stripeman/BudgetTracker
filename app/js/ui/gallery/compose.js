@@ -580,6 +580,20 @@ function heroLedgerStrip() {
 // second parallel data model. The reference's own bank-card/promo area is replaced entirely with real
 // BudgetTracker content (accounts, upcoming bills) per Terry's explicit instruction; there is no
 // "Upgrade to Pro" or any promotional content anywhere in this composition.
+// BT-013-15 (2026-09-20): extracted so EVERY ACRU page can open with the SAME "restrained utility
+// header: search, notifications, an account avatar, one primary action" identity the Dashboard
+// already established (Terry's own "carry that... through every page" standard, applied to ACRU too).
+function acruHeader(actionLabel) {
+  const search = input({ type: "search", placeholder: "Quick search", "aria-label": "Quick search this workspace" });
+  return el("div", { class: "gacru-header" }, [
+    el("div", { class: "gacru-search" }, [search]),
+    el("div", { class: "gacru-header__actions" }, [
+      el("button", { type: "button", class: "gacru-iconbtn", "aria-label": "Notifications" }, [icon("bell")]),
+      el("div", { class: "gacru-avatar" }, [icon("user"), el("span", { class: "small", text: "Alice Fictional" })]),
+      actionLabel ? button(actionLabel, () => {}, { variant: "primary", small: true }) : null,
+    ]),
+  ]);
+}
 function heroReferenceAcru() {
   // Every figure below is DERIVED from the same canonical fixtures every other concept already
   // shares — never a separately invented number.
@@ -606,16 +620,7 @@ function heroReferenceAcru() {
   const spentTotal = fx.budget.lines.reduce((s, l) => s + Number(l.spent), 0);
   const healthPct = Math.max(0, Math.min(100, Math.round((spentTotal / plannedTotal) * 100)));
 
-  // ---- restrained utility header: search, notifications, an account avatar, one primary action ----
-  const search = input({ type: "search", placeholder: "Quick search", "aria-label": "Quick search this workspace" });
-  const header = el("div", { class: "gacru-header" }, [
-    el("div", { class: "gacru-search" }, [search]),
-    el("div", { class: "gacru-header__actions" }, [
-      el("button", { type: "button", class: "gacru-iconbtn", "aria-label": "Notifications" }, [icon("bell")]),
-      el("div", { class: "gacru-avatar" }, [icon("user"), el("span", { class: "small", text: "Alice Fictional" })]),
-      button("+ Add entry", () => {}, { variant: "primary", small: true }),
-    ]),
-  ]);
+  const header = acruHeader("+ Add entry");
 
   // ---- the hero: a large central chart anchoring the page, with income/expense/net beside it -------
   const heroCard = gcard("Balance overview", "chart-line", [
@@ -1119,7 +1124,49 @@ function txnReferenceFinexa() {
   ]);
   return [subhead, top, gcard("All entries", "receipt", el("div", { class: "table-wrap" }, [table]), { full: true })];
 }
-const TRANSACTIONS_RENDERERS = { "flat-list": txnFlatList, "grouped-by-date": txnGroupedByDate, "dense-table": txnDenseTable, "card-list": txnCardList, "filter-first": txnFilterFirst, "reference-monsy": txnReferenceMonsy, "reference-ledgerfly": txnReferenceLedgerfly, "reference-finexa": txnReferenceFinexa };
+// BT-013-15: for `acru-overview`, the SAME "restrained header, main+side grid, segmented-bar
+// breakdown" identity its own Dashboard already established — never Ledgerfly's KPI strip or
+// Finexa's subhead+cards recoloured.
+function acruSpendSegments() {
+  const spendByCat = new Map();
+  let totalSpend = 0;
+  for (const t of fx.transactions) {
+    if (Number(t.amount) >= 0 || !t.category) continue;
+    const v = -Number(t.amount);
+    spendByCat.set(t.category, (spendByCat.get(t.category) || 0) + v);
+    totalSpend += v;
+  }
+  return { segments: [...spendByCat.entries()].map(([id, v]) => ({ cat: cat(id), amount: v, pct: Math.round((v / totalSpend) * 100) })).sort((a, b) => b.amount - a.amount), totalSpend };
+}
+function acruSegmentCard(title) {
+  const { segments, totalSpend } = acruSpendSegments();
+  const segBar = el("div", { class: "gacru-segbar" }, segments.map((s) => el("span", { class: "gacru-segbar__seg", vars: { "--seg-pct": `${s.pct}%`, "--seg-color": s.cat.color } })));
+  const segLegend = el("ul", { class: "gacru-seglegend" }, segments.map((s) => el("li", {}, [categoryLabel(s.cat.name, s.cat.color, s.cat.icon), el("span", { class: "app__spacer" }), el("span", { class: "small", text: `${s.pct}%` })])));
+  return gcard(title, "chart-pie", [el("p", { class: "gacru-hero__figure gacru-hero__figure--small" }, [amountText((-totalSpend).toFixed(2), "EUR", fx.prefs)]), segBar, segLegend]);
+}
+function txnReferenceAcru() {
+  const header = acruHeader("+ Add entry");
+  const incomeTotal = fx.transactions.filter((t) => Number(t.amount) > 0).reduce((s, t) => s + Number(t.amount), 0);
+  const expenseTotal = fx.transactions.filter((t) => Number(t.amount) < 0).reduce((s, t) => s - Number(t.amount), 0);
+  const byDate = new Map();
+  for (const t of fx.transactions) byDate.set(t.date, (byDate.get(t.date) || 0) + Number(t.amount));
+  const chartPoints = [...byDate.entries()].sort(([a], [b]) => (a < b ? -1 : 1)).map(([date, value]) => ({ date, value }));
+  const heroCard = gcard("Transaction activity", "chart-line", [
+    el("div", { class: "gacru-hero__top" }, [el("div", {}, [el("p", { class: "gacru-hero__figure" }, [amountText((incomeTotal - expenseTotal).toFixed(2), "EUR", fx.prefs)]), el("p", { class: "muted small", text: "Net this period" })])]),
+    barChart(chartPoints, { width: 520, height: 140 }),
+    figureTable(chartPoints.map((p) => [p.date, formatAmount(p.value.toFixed(2), "EUR")]), "Daily net movement", ["Date", "Net"]),
+  ]);
+  const typeOf = (t) => (Number(t.amount) > 0 ? { label: "Income", variant: "shared" } : t.category ? { label: "Spending", variant: "" } : { label: "Transfer", variant: "warning" });
+  const rows = [...fx.transactions].sort((a, b) => (a.date > b.date ? -1 : 1)).map((t) => {
+    const m = t.payee ? merchant(t.payee) : null;
+    const type = typeOf(t);
+    return el("tr", {}, [el("td", { class: "muted small", text: t.date }), el("td", {}, [m ? withIcon(m.icon, m.name) : el("span", { text: t.label || "Transfer" })]), el("td", {}, [badge(type.label, type.variant)]), el("td", { class: "num" }, [amountText(t.amount, "EUR", fx.prefs)])]);
+  });
+  const table = el("table", { class: "table gtable-dense" }, [el("thead", {}, [el("tr", {}, ["Date", "Description", "Type", "Amount"].map((h) => el("th", { scope: "col", class: h === "Amount" ? "num" : "", text: h })))]), el("tbody", {}, rows)]);
+  const listCard = gcard("All entries", "receipt", el("div", { class: "table-wrap" }, [table]));
+  return [header, el("div", { class: "gacru-grid" }, [el("div", { class: "gacru-main" }, [heroCard, listCard]), el("div", { class: "gacru-side" }, [acruSegmentCard("Spending distribution")])])];
+}
+const TRANSACTIONS_RENDERERS = { "flat-list": txnFlatList, "grouped-by-date": txnGroupedByDate, "dense-table": txnDenseTable, "card-list": txnCardList, "filter-first": txnFilterFirst, "reference-monsy": txnReferenceMonsy, "reference-ledgerfly": txnReferenceLedgerfly, "reference-finexa": txnReferenceFinexa, "reference-acru": txnReferenceAcru };
 function renderTransactions(concept) {
   const fn = TRANSACTIONS_RENDERERS[concept.transactionsPattern] || txnFlatList;
   return el("div", { class: "gpage gpage--list" }, [pageTitle("transactions"), ...fn()]);
@@ -1219,7 +1266,28 @@ function billsReferenceFinexa() {
   const top = el("div", { class: "gfinexa-top" }, [timeline, summary]);
   return [subhead, top];
 }
-const BILLS_RENDERERS = { "grouped-status": billsGroupedStatus, timeline: billsTimeline, "kanban-columns": billsKanban, "compact-table": billsCompactTable, "reference-ledgerfly": billsReferenceLedgerfly, "reference-finexa": billsReferenceFinexa };
+function billsReferenceAcru() {
+  const header = acruHeader("+ Add bill");
+  const real = fx.bills.filter((b) => b.kind !== "income");
+  const overdue = real.filter((b) => b.status === "overdue");
+  const dueSoon = real.filter((b) => b.status === "due-soon");
+  const totalDue = real.reduce((s, b) => s + Number(b.amount), 0);
+  const timeline = gcard("Payment timeline", "calendar", [
+    el("div", { class: "gacru-hero__top" }, [el("div", {}, [el("p", { class: "gacru-hero__figure" }, [amountText((-totalDue).toFixed(2), "EUR", fx.prefs)]), el("p", { class: "muted small", text: "Total due, overdue + due soon + upcoming" })])]),
+    el("ol", { class: "gtimeline" }, [...fx.bills].sort((a, b) => (a.dueDate < b.dueDate ? -1 : 1)).map((b) => el("li", { class: ["gtimeline__item", b.status === "overdue" ? "gtimeline__item--past" : "gtimeline__item--future"] }, [
+      el("span", { class: "gtimeline__date muted small", text: b.dueDate }), withIcon(b.icon, b.name),
+      badge(BILL_STATUS_LABEL[b.status] || b.status, b.status === "overdue" ? "danger" : b.status === "due-soon" ? "warning" : ""),
+      el("span", { class: "app__spacer" }), amountText(b.kind === "income" ? b.amount : `-${b.amount}`, b.currency, fx.prefs),
+    ]))),
+  ]);
+  const attentionPct = Math.round(((overdue.length + dueSoon.length) / real.length) * 100);
+  const sideCard = gcard("Needs attention", "bell", [
+    el("div", { class: "gmeter", role: "img", "aria-label": `${attentionPct}% of bills need attention` }, [el("div", { class: "gmeter__fill", vars: { "--pct": `${attentionPct}%` } })]),
+    el("ul", { class: "stack" }, [...overdue, ...dueSoon].map((b) => el("li", { class: "grow" }, [withIcon(b.icon, b.name), el("span", { class: "app__spacer" }), amountText(`-${b.amount}`, b.currency, fx.prefs)]))),
+  ]);
+  return [header, el("div", { class: "gacru-grid" }, [el("div", { class: "gacru-main" }, [timeline]), el("div", { class: "gacru-side" }, [sideCard])])];
+}
+const BILLS_RENDERERS = { "grouped-status": billsGroupedStatus, timeline: billsTimeline, "kanban-columns": billsKanban, "compact-table": billsCompactTable, "reference-ledgerfly": billsReferenceLedgerfly, "reference-finexa": billsReferenceFinexa, "reference-acru": billsReferenceAcru };
 function renderBills(concept) {
   const fn = BILLS_RENDERERS[concept.billsPattern] || billsGroupedStatus;
   return el("div", { class: "gpage gpage--list" }, [pageTitle("bills"), ...fn()]);
@@ -1385,7 +1453,26 @@ function budgetReferenceLedgerfly() {
   const breakdown = gcard("Category detail", "chart-pie", el("ul", { class: "stack" }, rows), { full: true });
   return [kpiStrip, chart, breakdown];
 }
-const BUDGET_RENDERERS = { "envelope-grid": heroEnvelopeGrid, "bar-comparison": budgetBarComparison, "list-progress": budgetListProgress, "reference-finexa": budgetReferenceFinexa, "reference-ledgerfly": budgetReferenceLedgerfly };
+function budgetReferenceAcru() {
+  const header = acruHeader("+ Add budget line");
+  const plannedTotal = fx.budget.lines.reduce((s, l) => s + Number(l.planned), 0);
+  const spentTotal = fx.budget.lines.reduce((s, l) => s + Number(l.spent), 0);
+  const healthPct = Math.max(0, Math.min(100, Math.round((spentTotal / plannedTotal) * 100)));
+  const healthCard = gcard("Budget health", "target", [radialGauge(healthPct, `${healthPct}% of this month's planned budget already spent`), el("p", { class: "muted small", text: `${formatAmount(spentTotal.toFixed(2), "EUR")} of ${formatAmount(plannedTotal.toFixed(2), "EUR")} planned` })]);
+  const rows = fx.budget.lines.map((l) => {
+    const c = cat(l.category);
+    const over = Number(l.available) < 0;
+    const pct = Math.max(0, Math.min(100, Math.round((Number(l.spent) / Number(l.planned)) * 100)));
+    return el("li", { class: "gacru-progrow" }, [
+      categoryLabel(c.name, c.color, c.icon),
+      el("div", { class: "gmeter", role: "img", "aria-label": `${pct}% of ${c.name}'s budget used` }, [el("div", { class: "gmeter__fill", vars: { "--pct": `${pct}%` } })]),
+      over ? badge(`Over by ${formatAmount(Math.abs(Number(l.available)).toFixed(2), "EUR")}`, "danger") : el("span", { class: "muted small", text: `${formatAmount(l.spent, "EUR")} / ${formatAmount(l.planned, "EUR")}` }),
+    ]);
+  });
+  const progressCard = gcard("Budget progress", "chart-pie", el("ul", { class: "stack" }, rows));
+  return [header, el("div", { class: "gacru-lower" }, [healthCard, progressCard])];
+}
+const BUDGET_RENDERERS = { "envelope-grid": heroEnvelopeGrid, "bar-comparison": budgetBarComparison, "list-progress": budgetListProgress, "reference-finexa": budgetReferenceFinexa, "reference-ledgerfly": budgetReferenceLedgerfly, "reference-acru": budgetReferenceAcru };
 function renderBudget(concept) {
   const fn = BUDGET_RENDERERS[concept.budgetPattern] || heroEnvelopeGrid;
   return el("div", { class: "gpage gpage--list" }, [pageTitle("budget"), ...fn()]);
@@ -1508,7 +1595,39 @@ function merchantsReferenceFinexa() {
   const cards = ranked.map((r) => gcard(r.m.name, r.m.icon, [el("p", { class: "gfinexa-card__amount" }, [amountText((-r.spend).toFixed(2), "EUR", fx.prefs)])]));
   return [subhead, top, el("div", { class: "gfinexa-cards" }, cards)];
 }
-const ACCOUNTS_RENDERERS = { "card-grid": accountsCardGrid, table: accountsTable, "grouped-by-type": accountsGroupedByType, "reference-ledgerfly": accountsReferenceLedgerfly, "reference-finexa": accountsReferenceFinexa };
+function accountsReferenceAcru() {
+  const header = acruHeader("+ Add account");
+  const assets = fx.accounts.filter((a) => Number(a.balance) >= 0);
+  const liabilities = fx.accounts.filter((a) => Number(a.balance) < 0);
+  const heroCard = gcard("Net position", "chart-line", [
+    el("div", { class: "gacru-hero__top" }, [el("div", {}, [el("p", { class: "gacru-hero__figure" }, [money(fx.netPosition.amount, fx.netPosition.currency, fx.prefs)]), el("p", { class: "muted small", text: "Assets minus liabilities" })])]),
+    el("div", { class: "gacru-statrail" }, [
+      metric("Assets", money(assets.reduce((s, a) => s + Number(a.balance), 0).toFixed(2), "EUR", fx.prefs), `${assets.length} account${assets.length === 1 ? "" : "s"}`),
+      metric("Liabilities", amountText((-liabilities.reduce((s, a) => s + Math.abs(Number(a.balance)), 0)).toFixed(2), "EUR", fx.prefs), `${liabilities.length} account${liabilities.length === 1 ? "" : "s"}`),
+    ]),
+  ]);
+  const listCard = gcard("Every account", "bank", el("ul", { class: "stack" }, fx.accounts.map((a) => el("li", { class: "grow" }, [
+    withIcon(a.icon, a.name), el("span", { class: "app__spacer" }), money(a.balance, a.currency, fx.prefs),
+    a.type === "credit-card" ? el("span", { class: "muted small" }, [" (a credit limit is never counted as available cash)"]) : null,
+  ]))));
+  const activityCard = gcard("Recent activity", "receipt", el("ul", { class: "stack" }, fx.transactions.slice(0, 5).map(txRow)));
+  return [header, el("div", { class: "gacru-grid" }, [el("div", { class: "gacru-main" }, [heroCard, listCard]), el("div", { class: "gacru-side" }, [activityCard])])];
+}
+function merchantsReferenceAcru() {
+  const header = acruHeader(null);
+  const spendByMerchant = new Map();
+  const countByMerchant = new Map();
+  for (const t of fx.transactions) { if (Number(t.amount) >= 0 || !t.payee) continue; spendByMerchant.set(t.payee, (spendByMerchant.get(t.payee) || 0) + -Number(t.amount)); countByMerchant.set(t.payee, (countByMerchant.get(t.payee) || 0) + 1); }
+  const ranked = fx.merchants.map((m) => ({ m, spend: spendByMerchant.get(m.id) || 0, count: countByMerchant.get(m.id) || 0 })).sort((a, b) => b.spend - a.spend);
+  const totalSpend = ranked.reduce((s, r) => s + r.spend, 0);
+  const heroCard = gcard("Spend by merchant", "chart-pie", [
+    el("div", { class: "gacru-hero__top" }, [el("div", {}, [el("p", { class: "gacru-hero__figure" }, [amountText((-totalSpend).toFixed(2), "EUR", fx.prefs)]), el("p", { class: "muted small", text: "Across every merchant" })])]),
+    barChart(ranked.map((r) => ({ value: r.spend })), { width: 520, height: 140 }),
+  ]);
+  const listCard = gcard("Merchants, ranked by spend", "store", el("ul", { class: "stack" }, ranked.map((r) => el("li", { class: "grow" }, [withIcon(r.m.icon, r.m.name), el("span", { class: "muted small", text: `${r.count} ${r.count === 1 ? "entry" : "entries"}` }), el("span", { class: "app__spacer" }), amountText((-r.spend).toFixed(2), "EUR", fx.prefs)]))));
+  return [header, el("div", { class: "gacru-grid" }, [el("div", { class: "gacru-main" }, [heroCard, listCard]), el("div", { class: "gacru-side" }, [acruSegmentCard("Where it went")])])];
+}
+const ACCOUNTS_RENDERERS = { "card-grid": accountsCardGrid, table: accountsTable, "grouped-by-type": accountsGroupedByType, "reference-ledgerfly": accountsReferenceLedgerfly, "reference-finexa": accountsReferenceFinexa, "reference-acru": accountsReferenceAcru };
 function renderAccounts(concept) {
   const fn = ACCOUNTS_RENDERERS[concept.accountsPattern] || accountsCardGrid;
   const hasOwnMerchants = (concept.extraPages || []).includes("merchants");
@@ -1547,7 +1666,7 @@ function merchantsReferenceLedgerfly() {
   const list = gcard("Merchants, ranked by spend", "store", el("ul", { class: "stack" }, rows), { full: true });
   return [kpiStrip, chart, list];
 }
-const MERCHANTS_RENDERERS = { "reference-ledgerfly": merchantsReferenceLedgerfly, "reference-finexa": merchantsReferenceFinexa };
+const MERCHANTS_RENDERERS = { "reference-ledgerfly": merchantsReferenceLedgerfly, "reference-finexa": merchantsReferenceFinexa, "reference-acru": merchantsReferenceAcru };
 function renderMerchants(concept) {
   const fn = MERCHANTS_RENDERERS[concept.merchantsPattern];
   return el("div", { class: "gpage gpage--list" }, [pageTitle("merchants"), ...(fn ? fn() : [el("p", { class: "muted", text: "Merchants is not built for this concept yet." })])]);
@@ -1610,7 +1729,24 @@ function debtReferenceFinexa() {
   ]);
   return [subhead, top, gcard("Payment history (illustrative)", "calendar", el("div", { class: "table-wrap" }, [table]), { full: true })];
 }
-const DEBT_RENDERERS = { "reference-ledgerfly": debtReferenceLedgerfly, "reference-finexa": debtReferenceFinexa };
+function debtReferenceAcru() {
+  const header = acruHeader(null);
+  const loan = account("acc-loan");
+  const detail = fx.debtDetail["acc-loan"];
+  const balance = Math.abs(Number(loan.balance));
+  const original = Number(detail.originalBalance);
+  const paidOff = original - balance;
+  const pct = Math.max(0, Math.min(100, Math.round((paidOff / original) * 100)));
+  const heroCard = gcard(`${loan.name} — balance movement`, "chart-line", [
+    el("div", { class: "gacru-hero__top" }, [el("div", {}, [el("p", { class: "gacru-hero__figure" }, [money(loan.balance, loan.currency, fx.prefs)]), el("p", { class: "muted small", text: "Current balance" })])]),
+  ]);
+  const gaugeCard = gcard("Paid off", "target", [radialGauge(pct, `${pct}% of the original balance paid off`), el("p", { class: "muted small", text: `${formatAmount(paidOff.toFixed(2), loan.currency)} of ${formatAmount(original.toFixed(2), loan.currency)}, an illustrative anchor consistent with this Gallery's own debt-payoff concept` })]);
+  const rows = detail.payments.map((p) => el("tr", {}, [el("td", { text: p.date }), el("td", { class: "num" }, [money(p.amount, loan.currency, fx.prefs)]), el("td", { class: "num" }, [money(p.principal, loan.currency, fx.prefs)]), el("td", { class: "num" }, [money(p.interest, loan.currency, fx.prefs)])]));
+  const table = el("table", { class: "table gtable-dense" }, [el("thead", {}, [el("tr", {}, ["Date", "Payment", "Principal", "Interest"].map((h, i) => el("th", { scope: "col", class: i ? "num" : "", text: h })))]), el("tbody", {}, rows)]);
+  const historyCard = gcard("Payment history (illustrative)", "calendar", el("div", { class: "table-wrap" }, [table]));
+  return [header, el("div", { class: "gacru-grid" }, [el("div", { class: "gacru-main" }, [heroCard, historyCard]), el("div", { class: "gacru-side" }, [gaugeCard])])];
+}
+const DEBT_RENDERERS = { "reference-ledgerfly": debtReferenceLedgerfly, "reference-finexa": debtReferenceFinexa, "reference-acru": debtReferenceAcru };
 function renderDebt(concept) {
   const fn = DEBT_RENDERERS[concept.debtPattern];
   return el("div", { class: "gpage gpage--list" }, [pageTitle("debt"), ...(fn ? fn() : [el("p", { class: "muted", text: "Debt/loan detail is not built for this concept yet." })])]);
@@ -1772,7 +1908,10 @@ function sharedReferenceFinexa(expenses, selectedEvent) {
   const totalExpenses = fx.shared.expenses.reduce((s, g) => s + Number(g.amount), 0);
   const outstanding = fx.shared.balances.filter((b) => Number(b.net) < 0).reduce((s, b) => s - Number(b.net), 0);
   const subhead = finexaSubhead("Shared expenses", "Which events are active, settled or need attention.", "+ Add expense");
-  const summary = gcard(selectedEvent ? selectedEvent.name : "All events", "users", el("div", { class: "gfinexa-recurring__top" }, [
+  // Titled "All events" always (never the selected event's own name): every figure inside is the
+  // real COMBINED total across every event, regardless of which one is currently scoped below — a
+  // card titled with one event's name but showing every event's total would be genuinely misleading.
+  const summary = gcard("All events", "users", el("div", { class: "gfinexa-recurring__top" }, [
     metric("Events", String(fx.shared.events.length), `${fx.shared.events.filter((e) => e.status === "active").length} active`),
     metric("Total expenses", amountText((-totalExpenses).toFixed(2), fx.shared.currency, fx.prefs), null),
     metric("Outstanding", amountText((-outstanding).toFixed(2), fx.shared.currency, fx.prefs), null),
@@ -1795,8 +1934,38 @@ function sharedReferenceFinexa(expenses, selectedEvent) {
     gcard(`${selectedEvent.name} — expenses`, "receipt", el("ul", { class: "stack" }, expenses.map((g) => el("li", { class: "grow" }, [el("span", { class: "muted small", text: g.date }), el("span", { text: g.description }), el("span", { class: "app__spacer" }), amountText(`-${g.amount}`, fx.shared.currency, fx.prefs)])))),
   ];
 }
-const REAL_EVENT_SCOPED_PATTERNS = new Set(["reference-ledgerfly", "reference-finexa"]);
-const SHARED_RENDERERS = { "balance-list": sharedBalanceList, "ledger-table": sharedLedgerTable, "settlement-focus": sharedSettlementFocus, "reference-groupsplit": sharedReferenceGroupsplit, "reference-ledgerfly": sharedReferenceLedgerfly, "reference-finexa": sharedReferenceFinexa };
+function sharedReferenceAcru(expenses, selectedEvent) {
+  const header = acruHeader("+ Add expense");
+  const totalExpenses = fx.shared.expenses.reduce((s, g) => s + Number(g.amount), 0);
+  const outstanding = fx.shared.balances.filter((b) => Number(b.net) < 0).reduce((s, b) => s - Number(b.net), 0);
+  // Titled "Shared expenses" always (never the selected event's own name): every figure inside is
+  // the real COMBINED total across every event, regardless of which one is currently scoped below —
+  // a card titled with one event's name but showing every event's total would be genuinely
+  // misleading.
+  const heroCard = gcard("Shared expenses", "users", [
+    el("div", { class: "gacru-hero__top" }, [el("div", {}, [el("p", { class: "gacru-hero__figure" }, [amountText((-totalExpenses).toFixed(2), fx.shared.currency, fx.prefs)]), el("p", { class: "muted small", text: "Across every event" })])]),
+    el("div", { class: "gacru-statrail" }, [
+      metric("Events", String(fx.shared.events.length), `${fx.shared.events.filter((e) => e.status === "active").length} active`),
+      metric("Outstanding", amountText((-outstanding).toFixed(2), fx.shared.currency, fx.prefs), "Still to settle"),
+    ]),
+  ]);
+  if (!selectedEvent) {
+    const balancesCard = gcard("Balances", "scale", fx.shared.balances.map((b) => el("div", { class: "row" }, [el("span", { text: b.name }), el("span", { class: "app__spacer" }), amountText(b.net, fx.shared.currency, fx.prefs)])));
+    const listCard = gcard("Recent shared expenses", "receipt", el("ul", { class: "stack" }, expenses.map((g) => el("li", { class: "grow" }, [el("span", { class: "muted small", text: g.date }), el("span", { text: g.description }), el("span", { class: "muted small", text: `paid by ${g.payer}` }), el("span", { class: "app__spacer" }), amountText(`-${g.amount}`, fx.shared.currency, fx.prefs)]))));
+    return [header, el("div", { class: "gacru-grid" }, [el("div", { class: "gacru-main" }, [heroCard, listCard]), el("div", { class: "gacru-side" }, [balancesCard])])];
+  }
+  const balances = fx.splitBalances(expenses);
+  const owes = balances.filter((b) => Number(b.net) < 0);
+  const owed = balances.filter((b) => Number(b.net) > 0);
+  const settled = balances.every((b) => Math.abs(Number(b.net)) < 0.01);
+  const suggestions = owes.flatMap((from) => owed.map((to) => el("li", { class: "grow" }, [el("span", { text: `${from.name} → ${to.name}` }), el("span", { class: "app__spacer" }), amountText(String(Math.min(Math.abs(Number(from.net)), Number(to.net)).toFixed(2)), fx.shared.currency, fx.prefs)])));
+  const whoOwesCard = gcard(`${selectedEvent.name} — who owes whom`, "users", [badge(settled ? "Settled" : "Outstanding", settled ? "shared" : "warning"), el("ul", { class: "stack" }, balances.map((b) => el("li", { class: "grow" }, [el("span", { text: b.name }), el("span", { class: "app__spacer" }), amountText(b.net, fx.shared.currency, fx.prefs)])))]);
+  const settleCard = gcard("Settle up", "scale", suggestions.length ? el("ul", { class: "stack" }, suggestions) : el("p", { class: "muted small", text: "Everyone is settled up for this event." }));
+  const expensesCard = gcard(`${selectedEvent.name} — expenses`, "receipt", el("ul", { class: "stack" }, expenses.map((g) => el("li", { class: "grow" }, [el("span", { class: "muted small", text: g.date }), el("span", { text: g.description }), el("span", { class: "app__spacer" }), amountText(`-${g.amount}`, fx.shared.currency, fx.prefs)]))));
+  return [header, el("div", { class: "gacru-grid" }, [el("div", { class: "gacru-main" }, [heroCard, whoOwesCard, expensesCard]), el("div", { class: "gacru-side" }, [settleCard])])];
+}
+const REAL_EVENT_SCOPED_PATTERNS = new Set(["reference-ledgerfly", "reference-finexa", "reference-acru"]);
+const SHARED_RENDERERS = { "balance-list": sharedBalanceList, "ledger-table": sharedLedgerTable, "settlement-focus": sharedSettlementFocus, "reference-groupsplit": sharedReferenceGroupsplit, "reference-ledgerfly": sharedReferenceLedgerfly, "reference-finexa": sharedReferenceFinexa, "reference-acru": sharedReferenceAcru };
 function renderShared(concept) {
   const page = el("div", { class: "gpage gpage--list" });
   let selectedEventId = null;
@@ -1884,7 +2053,21 @@ function tripsReferenceFinexa() {
   const cards = fx.trips.map((t) => gcard(t.name, t.icon, tripCard(t, { withName: false })));
   return [subhead, summary, el("div", { class: "gfinexa-cards" }, cards)];
 }
-const TRIPS_RENDERERS = { "card-grid": tripsCardGrid, list: tripsList, timeline: tripsTimeline, "reference-ledgerfly": tripsReferenceLedgerfly, "reference-finexa": tripsReferenceFinexa };
+function tripsReferenceAcru() {
+  const header = acruHeader(null);
+  const budget = fx.trips.reduce((s, t) => s + Number(t.budget), 0);
+  const spent = fx.trips.reduce((s, t) => s + Number(t.spent), 0);
+  const heroCard = gcard("Trips (illustrative)", "suitcase", [
+    el("div", { class: "gacru-hero__top" }, [el("div", {}, [el("p", { class: "gacru-hero__figure" }, [amountText((budget - spent).toFixed(2), fx.trips[0].currency, fx.prefs)]), el("p", { class: "muted small", text: "Combined budget remaining" })])]),
+    el("div", { class: "gacru-statrail" }, [
+      metric("Trips", String(fx.trips.length), null),
+      metric("Combined spent", amountText((-spent).toFixed(2), fx.trips[0].currency, fx.prefs), null),
+    ]),
+  ]);
+  const listCard = gcard("Every trip", "suitcase", el("div", { class: "ggrid ggrid--metrics" }, fx.trips.map((t) => gcard(t.name, t.icon, tripCard(t, { withName: false })))));
+  return [header, heroCard, listCard];
+}
+const TRIPS_RENDERERS = { "card-grid": tripsCardGrid, list: tripsList, timeline: tripsTimeline, "reference-ledgerfly": tripsReferenceLedgerfly, "reference-finexa": tripsReferenceFinexa, "reference-acru": tripsReferenceAcru };
 function renderTrips(concept) {
   const fn = TRIPS_RENDERERS[concept.tripsPattern] || tripsCardGrid;
   return el("div", { class: "gpage gpage--list" }, [pageTitle("trips"), el("p", { class: "field__help", text: TRIPS_NOTE }), ...fn()]);

@@ -156,8 +156,10 @@ export async function run(h, t) {
   t.check("Wealth Overview's Bills page is one chronological timeline instead — same data, genuinely different structure", { expected: { kanban: false, timeline: true }, actual: timeline });
   await dave.shot("bills-timeline");
 
-  // Accounts/Merchants — the page the Gallery was entirely missing before this fix.
-  await dave.click({ role: "button", text: "Preview this concept", scope: '[data-concept="acru-overview"]' }); // accountsPattern: table
+  // Accounts/Merchants — the page the Gallery was entirely missing before this fix. Uses Executive
+  // Ledger (BT-013-15: acru-overview's own Accounts page is now its own bespoke reference-acru
+  // composition, no longer the plain shared 'table' pattern this check demonstrates).
+  await dave.click({ role: "button", text: "Preview this concept", scope: '[data-concept="executive-ledger"]' }); // accountsPattern: table
   await dave.choose("Preview page", "Accounts / Merchants");
   const accountsPage = await dave.evaluate("(() => { const m = document.querySelector('.gpreview-pane .gframe__main'); return { text: m.textContent, hasTable: !!m.querySelector('table.gtable-dense') }; })()");
   t.check("the new Accounts/Merchants page shows real account and merchant names, as a table for this concept", {

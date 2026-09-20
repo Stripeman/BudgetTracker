@@ -314,13 +314,16 @@ const CONCEPTS = Object.freeze([
     id: 'acru-overview', name: 'Financial Overview',
     tagline: 'A central cash-flow chart anchored by a coordinated sidebar, stat rail and account summary.',
     direction: 'BT-013-10 (Terry, 2026-09-20): a reference-led composition, not an axis recombination — closely follows the ACRU reference\'s whole page (`.local/refcheck/r01.png`, extracted from docs/BudgetTracker-references.html), never just one borrowed element. A clean sidebar with a clear active state; a restrained utility header (search, notifications, settings, an "Add entry" primary action); a large central cash-flow chart anchoring the page with income/expenses/net figures placed deliberately beside it; a coordinated right-hand column of real BudgetTracker content (accounts, upcoming bills) replacing the reference\'s bank-card/promo area entirely, per Terry\'s explicit substitution rule; lower panels for spending distribution, overall budget health and this month\'s budget progress. Rounded surfaces, soft shadows, generous spacing.',
-    distinct: 'A genuinely bespoke Dashboard renderer (`reference-acru`, app/js/ui/gallery/compose.js `heroReferenceAcru`) built to match one specific reference\'s composition, not assembled from the shared axis vocabulary — its own dedicated CSS (`.gacru-*`, app/styles/gallery.css), never a recolour of an existing hero pattern.',
+    distinct: 'A genuinely bespoke composition across every page (`reference-acru`, app/js/ui/gallery/compose.js), built to match the ACRU reference\'s own composition, not assembled from the shared axis vocabulary — its own dedicated CSS (`.gacru-*`, app/styles/gallery.css), never a recolour of another concept\'s pattern.',
     audience: 'Owners and managers who want one glance at cash flow, accounts and bills together, in a genuinely polished, reference-quality composition.',
     strengths: ['The hero chart, stat rail and right column read as one coordinated composition, not separate cards competing for attention.', 'Spending distribution, budget health and progress panels below give real depth without leaving the page.', 'Sidebar orientation keeps every section one click away.'],
     tradeoffs: ['The bespoke composition is deliberately NOT reusable by other concepts the way the shared axis patterns are — by design, since Terry\'s own instruction was that the existing template system must not dictate this design.', 'A new workspace with little transaction history has a flatter chart at first.'],
     accessibilityNotes: ['The hero chart pairs with the same sr-only figure-table rule every other chart in this Gallery already uses.', 'The spending-distribution segmented bar states each category and its percentage in real text beside the bar, never colour alone.', 'Sidebar order matches reading order for screen readers (nav before main), unchanged from the existing sidebar nav style.'],
     density: 'comfortable', navStyle: 'sidebar', dashboardPattern: 'reference-acru', cardStyle: 'soft-shadow', chartEmphasis: 'bars', typeVoice: 'technical-mono',
-    transactionsPattern: 'dense-table', billsPattern: 'compact-table', budgetPattern: 'list-progress', accountsPattern: 'table', settingsPattern: 'two-column-grouped', sharedPattern: 'ledger-table', tripsPattern: 'list',
+    // BT-013-15 (2026-09-20): every required and extra page now carries the SAME "restrained header,
+    // main+side grid, segmented-bar breakdown" identity — not the shared axis vocabulary.
+    transactionsPattern: 'reference-acru', billsPattern: 'reference-acru', budgetPattern: 'reference-acru', accountsPattern: 'reference-acru', settingsPattern: 'two-column-grouped', sharedPattern: 'reference-acru', tripsPattern: 'reference-acru',
+    extraPages: ['merchants', 'debt'], merchantsPattern: 'reference-acru', debtPattern: 'reference-acru',
     accentLight: '#4a7a0a', accentDark: '#a3e85a',
     fidelity: 'flagship', recommended: true,
   }),
@@ -393,17 +396,17 @@ const CATALOG_STATUSES = Object.freeze(['review', 'approved', 'retired']);
 //                        non-reusable pattern, same exception as above, for the one concept that
 //                        chooses it.)
 //   tripsPattern         'card-grid' | 'list' | 'timeline'
-const TRANSACTIONS_PATTERNS = Object.freeze(['flat-list', 'grouped-by-date', 'dense-table', 'card-list', 'filter-first', 'reference-monsy', 'reference-ledgerfly', 'reference-finexa']);
-const BILLS_PATTERNS = Object.freeze(['grouped-status', 'timeline', 'kanban-columns', 'compact-table', 'reference-ledgerfly', 'reference-finexa']);
-const BUDGET_PATTERNS = Object.freeze(['envelope-grid', 'bar-comparison', 'list-progress', 'reference-finexa', 'reference-ledgerfly']);
-const ACCOUNTS_PATTERNS = Object.freeze(['card-grid', 'table', 'grouped-by-type', 'reference-ledgerfly', 'reference-finexa']);
+const TRANSACTIONS_PATTERNS = Object.freeze(['flat-list', 'grouped-by-date', 'dense-table', 'card-list', 'filter-first', 'reference-monsy', 'reference-ledgerfly', 'reference-finexa', 'reference-acru']);
+const BILLS_PATTERNS = Object.freeze(['grouped-status', 'timeline', 'kanban-columns', 'compact-table', 'reference-ledgerfly', 'reference-finexa', 'reference-acru']);
+const BUDGET_PATTERNS = Object.freeze(['envelope-grid', 'bar-comparison', 'list-progress', 'reference-finexa', 'reference-ledgerfly', 'reference-acru']);
+const ACCOUNTS_PATTERNS = Object.freeze(['card-grid', 'table', 'grouped-by-type', 'reference-ledgerfly', 'reference-finexa', 'reference-acru']);
 const SETTINGS_PATTERNS = Object.freeze(['flat-list', 'two-column-grouped']);
-const SHARED_PATTERNS = Object.freeze(['balance-list', 'ledger-table', 'settlement-focus', 'reference-groupsplit', 'reference-ledgerfly', 'reference-finexa']);
-const TRIPS_PATTERNS = Object.freeze(['card-grid', 'list', 'timeline', 'reference-ledgerfly', 'reference-finexa']);
+const SHARED_PATTERNS = Object.freeze(['balance-list', 'ledger-table', 'settlement-focus', 'reference-groupsplit', 'reference-ledgerfly', 'reference-finexa', 'reference-acru']);
+const TRIPS_PATTERNS = Object.freeze(['card-grid', 'list', 'timeline', 'reference-ledgerfly', 'reference-finexa', 'reference-acru']);
 // BT-013-15: the two new extra-page axes, declared only by concepts that list the matching page in
 // their own `extraPages` (see the EXTRA_PAGES comment above) — never required of the other twelve.
-const MERCHANTS_PATTERNS = Object.freeze(['reference-ledgerfly', 'reference-finexa']);
-const DEBT_PATTERNS = Object.freeze(['reference-ledgerfly', 'reference-finexa']);
+const MERCHANTS_PATTERNS = Object.freeze(['reference-ledgerfly', 'reference-finexa', 'reference-acru']);
+const DEBT_PATTERNS = Object.freeze(['reference-ledgerfly', 'reference-finexa', 'reference-acru']);
 
 const findConcept = (id) => CONCEPTS.find((x) => x.id === id) || null;
 
