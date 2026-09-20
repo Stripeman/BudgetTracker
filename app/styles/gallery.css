@@ -439,3 +439,36 @@
 .gpayoff-row:last-child { border-bottom: none; }
 .gpayoff-gauges { display: flex; flex-wrap: wrap; justify-content: center; gap: var(--space-5); }
 .gpayoff-gauges__item { display: flex; flex-direction: column; align-items: center; gap: var(--space-2); }
+
+/* ---------------------------------------------------------------------------------------------- */
+/* BT-013-12 (2026-09-20): Terry approved BT-013-10/11's reference-led standard and asked for it
+   extended to the remaining nine concepts as ORIGINAL, professionally composed layouts — reusing the
+   composition/typography/spacing/chart/colour/navigation PRINCIPLES already established above across
+   multiple designs, while giving each concept its own distinct, deliberate identity, rather than one
+   new external reference image each. Polished IN PLACE where a concept was already the sole holder of
+   its own dashboard pattern (so the pattern id and every existing test stay valid); genuinely
+   SEPARATED where two concepts used to share one generic pattern (`travel-ledger` now has its own
+   `trip-focus`, `analyst-workspace` keeps `split-focus` alone). */
+
+/* executive-ledger ("Ledger Command"): the real ledger dominant, a slim attention/accounts rail beside it. */
+.glcmd-grid { display: grid; grid-template-columns: 1fr; gap: var(--space-4); align-items: start; }
+@media (min-width: 60rem) { .glcmd-grid { grid-template-columns: 2fr 1fr; } }
+.glcmd-main .gcard, .glcmd-side .gcard { margin-bottom: 0; }
+.glcmd-side { display: flex; flex-direction: column; gap: var(--space-3); }
+
+/* financial-command-center ("Ops Console"): a slim top KPI ribbon above the sectioned urgency feed. */
+.goc-ribbon { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--space-2); margin-bottom: var(--space-3); }
+.goc-ribbon .gmetric { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: var(--space-2); text-align: center; }
+
+/* calm-budget ("Morning Briefing"): a soft, warm gradient card frames the headline. */
+.gbriefing__wrap .gcard { background: linear-gradient(160deg, var(--g-accent-soft, var(--accent-soft)) 0%, var(--surface) 60%); }
+
+/* wealth-overview ("Net Worth Atlas"): a real Assets/Liabilities split beneath the trend chart. */
+.gwealth-split { display: grid; grid-template-columns: 1fr; gap: var(--space-3); }
+@media (min-width: 40rem) { .gwealth-split { grid-template-columns: 1fr 1fr; } }
+.gwealth-total { font-size: var(--text-xl); font-weight: var(--weight-bold); margin: 0 0 var(--space-2); }
+
+/* focus-mode ("One Thing Mode"): a single, large, centred focal card. */
+.gstory { max-width: 28rem; margin: 0 auto; text-align: center; align-items: center; }
+.gstory__icon { display: inline-flex; align-items: center; justify-content: center; width: 3rem; height: 3rem; border-radius: 50%; background: var(--g-accent-soft, var(--accent-soft)); color: var(--g-accent, var(--accent)); margin: 0 auto; }
+.gstory__net { font-weight: var(--weight-medium); }

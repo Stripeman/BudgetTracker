@@ -112,7 +112,12 @@ export function createView(ctx) {
   }
 
   function renderMatrix() {
-    mount(matrixBox, el("table", { class: "table", "aria-label": "Comparison matrix of all 15 concepts" }, [
+    // `gmatrix-table` (BT-013-12, 2026-09-20): a stable, unique marker class. Several concepts' own
+    // bespoke Dashboard content now legitimately includes other `table.table` elements inside each
+    // card's live preview thumbnail (rendered earlier in the DOM than this comparison matrix), so a
+    // bare `table.table` selector could match the wrong one — this class makes the real matrix table
+    // unambiguous regardless of what any single concept's own dashboard renders.
+    mount(matrixBox, el("table", { class: "table gmatrix-table", "aria-label": "Comparison matrix of all 15 concepts" }, [
       el("thead", {}, [el("tr", {}, ["Concept", "Audience", "Typography", "Charts", "Density", "Navigation", "Dashboard", "Transactions", "Bills", "Budget", "Accounts", "Settings", "Fidelity", "Recommended", "Status"].map((h) => el("th", { text: h })))]),
       el("tbody", {}, (data.concepts || []).map((c) => el("tr", {}, [
         el("td", { "data-label": "Concept" }, [el("strong", { text: c.name })]),

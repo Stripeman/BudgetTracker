@@ -72,9 +72,11 @@ describe("BT-013 the Design Gallery view", () => {
     assert.equal(cards.length, 20);
     // A live preview thumbnail (a real rendered frame, never a static image) inside every card.
     for (const c of cards) assert.ok(c.querySelector(".gframe"), "every concept card has a live thumbnail frame");
-    // The comparison matrix has one row per concept. (The lightweight test DOM double supports only
-    // single compound selectors, never a descendant combinator, so the table is found first.)
-    const matrixTable = view.element.querySelector("table.table");
+    // The comparison matrix has one row per concept. Selects the matrix table specifically via its own
+    // stable `gmatrix-table` marker class (BT-013-12) — several concepts' own bespoke dashboards now
+    // legitimately render other `table.table` elements inside their live preview thumbnails earlier in
+    // the DOM, so a bare `table.table` selector could match the wrong one.
+    const matrixTable = view.element.querySelector("table.gmatrix-table");
     const rows = matrixTable.querySelectorAll("tr");
     assert.equal(rows.length, 21, "1 header row + 20 concept rows");
   });

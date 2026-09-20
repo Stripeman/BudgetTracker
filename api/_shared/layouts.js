@@ -106,8 +106,8 @@ const CONCEPTS = Object.freeze([
   c({
     id: 'executive-ledger', name: 'Ledger Command',
     tagline: 'A running strip of the figures that matter, over the real transaction ledger.',
-    direction: 'A left sidebar for instant orientation, a horizontal strip of key figures at the top of the dashboard, and the real transaction table right beneath it — nothing important is ever more than a glance away.',
-    distinct: 'Ledger-strip dashboard: a genuinely new hero combining a scannable row of KPI figures with the real ledger table beneath it, never a bare table alone and never a grid of equal-weight cards.',
+    direction: 'A left sidebar for instant orientation, a horizontal strip of key figures at the top of the dashboard, and a genuine two-column layout beneath it: the real ledger dominant on the left, a slim "needs attention"/accounts rail on the right — nothing important is ever more than a glance away. BT-013-12 (2026-09-20): polished with real meta context on every KPI figure (not a bare number) and the coordinated two-column ledger layout, still a single-purpose composition built for this concept, not a recombination of unrelated templates.',
+    distinct: 'Ledger-strip dashboard: a genuinely new hero combining a scannable row of KPI figures with the real ledger table beneath it, never a bare table alone and never a grid of equal-weight cards. The KPI strip and the ledger/rail layout below are one coordinated composition, not two unrelated pieces.',
     audience: 'Owners and managers who want authority and completeness: every key figure at a glance, then the real ledger, before anything decorative.',
     strengths: ['The KPI strip answers "how am I doing" in one glance, before scrolling to the ledger.', 'Sidebar orientation means no second click to see what exists.', 'Scans fast for someone who already knows what they are looking for.'],
     tradeoffs: ['Busier first impression; not reassuring for someone anxious about money.', 'The KPI strip scrolls horizontally on narrow screens and needs a visible scroll affordance.'],
@@ -120,7 +120,7 @@ const CONCEPTS = Object.freeze([
   c({
     id: 'modern-banking', name: 'Everyday Banking',
     tagline: 'An asymmetric mosaic of what matters most, sized by importance.',
-    direction: 'A rounded, segmented tab bar and a mosaic dashboard: one large "your money" tile leads, with smaller tiles for budget, bills and shared balance around it, and recent activity spanning the width beneath.',
+    direction: 'A rounded, segmented tab bar and a mosaic dashboard: one large "your money" tile leads, with smaller tiles for budget, bills and shared balance around it, and recent activity spanning the width beneath. BT-013-12 (2026-09-20): the large tile now carries a real day-by-day net-movement sparkline, and every smaller tile\'s figure is derived from the same fixtures, not a hand-typed placeholder.',
     distinct: 'Mosaic dashboard: real visual hierarchy through TILE SIZE (one large, several smaller, one wide), the opposite structural idea from a uniform grid or a single hero panel — nothing here is equal-weight by accident.',
     audience: 'Everyday members who want their bank app\'s familiarity: the one figure that matters biggest, detail on request.',
     strengths: ['Tile size itself communicates priority — no reading required to know what matters most.', 'Scales gracefully to any number of accounts without the mosaic losing its shape.', 'Segmented tab bar is immediately familiar from mobile banking apps.'],
@@ -134,8 +134,8 @@ const CONCEPTS = Object.freeze([
   c({
     id: 'financial-command-center', name: 'Ops Console',
     tagline: 'One unified, urgency-sorted feed instead of four separate panels.',
-    direction: 'An icon-only rail, ultra-compact spacing and tightly tracked uppercase labels, with a single dashboard feed that sorts every alert and bill together by real urgency: Now, Soon, Later.',
-    distinct: 'Inbox dashboard: ONE unified, urgency-ordered list combining alerts and bills, replacing the earlier four-fixed-panel console — the order itself is the entire point, not a fixed layout of equal panels.',
+    direction: 'An icon-only rail, ultra-compact spacing and tightly tracked uppercase labels, with a single dashboard feed that sorts every alert and bill together by real urgency: Now, Soon, Later. BT-013-12 (2026-09-20): a slim top KPI ribbon (real Now/Soon/Later counts) now anchors the page, and the feed itself is grouped into real labelled sections instead of one flat list with inline badges.',
+    distinct: 'Inbox dashboard: ONE unified, urgency-ordered list combining alerts and bills, replacing the earlier four-fixed-panel console — the order itself is the entire point, not a fixed layout of equal panels. Now genuinely sectioned (Now/Soon/Later headers) rather than inline badges alone.',
     audience: 'Power users running several accounts, budgets and a shared-expense group who want the single most urgent thing first, always.',
     strengths: ['Nothing competes for attention with something more urgent above it — real triage, not four equally-loud panels.', 'Icon rail and condensed labels reclaim width for the feed itself.', 'Scales cleanly whether there are two urgent items or twelve.'],
     tradeoffs: ['Icon-only rail needs strong tooltips/labels for new users and screen-reader users.', 'Ultra-compact density is the wrong choice for anyone who prefers spacious layouts — never the default.'],
@@ -148,7 +148,7 @@ const CONCEPTS = Object.freeze([
   c({
     id: 'calm-budget', name: 'Morning Briefing',
     tagline: 'One headline figure, three plain sentences, and today\'s short list.',
-    direction: 'A single wide reading column and a genuine daily briefing: one large headline figure, a couple of plain-language sentences, and a short real list of what actually needs attention today.',
+    direction: 'A single wide reading column and a genuine daily briefing: one large headline figure, a couple of plain-language sentences, and a short real list of what actually needs attention today. BT-013-12 (2026-09-20): a soft, warm card treatment and a real date line now frame the briefing, keeping its own already-wired "Add expense" action unchanged.',
     distinct: 'Briefing dashboard: a real structured priorities list under one large headline figure — distinct from a prose-only narrative (nothing else here reads as a short story) and from any card grid.',
     audience: 'People who find budgeting stressful and want the single most important number first, then only what genuinely needs their attention today.',
     strengths: ['Lowest cognitive load of any concept — one number, then a short real list, nothing else competing.', 'Reads well on mobile without any layout change.', 'The priorities list is genuinely actionable, not just decorative prose.'],
@@ -162,7 +162,7 @@ const CONCEPTS = Object.freeze([
   c({
     id: 'precision-grid', name: 'Spreadsheet Mode',
     tagline: 'Compact tables, sharp alignment and rapid scanning.',
-    direction: 'An icon rail, compact density and a monospace-leaning table aesthetic: sharp borders, right-aligned figures, no rounded cards — the real transaction table itself is still the dashboard\'s hero.',
+    direction: 'An icon rail, compact density and a monospace-leaning table aesthetic: sharp borders, right-aligned figures, no rounded cards. BT-013-12 (2026-09-20): the dashboard\'s hero is now a real accounts x metrics data grid (balance and spend-this-period per account) — a genuine spreadsheet-style report, not just a bare transaction list — with the ledger beneath it.',
     distinct: 'Bordered-mono card style is unique to this concept: hairline borders, square corners, tabular figures — a deliberately unrounded, unshadowed visual language, kept exactly as sharp on every page, with tight condensed-utility labels throughout.',
     audience: 'Spreadsheet-minded users who want the fastest possible scanning of exact figures.',
     strengths: ['Fastest figure-to-figure scanning of any concept.', 'Alignment and monospaced numerals reduce misreading amounts.', 'Minimal chrome maximises rows visible.'],
@@ -176,7 +176,7 @@ const CONCEPTS = Object.freeze([
   c({
     id: 'wealth-overview', name: 'Net Worth Atlas',
     tagline: 'Polished net-worth, assets, liabilities and trend presentation.',
-    direction: 'A sidebar for orientation, an editorial serif voice, and a chart-first dashboard whose hero is a filled net-position trend area, with assets/liabilities broken out beneath it.',
+    direction: 'A sidebar for orientation, an editorial serif voice, and a chart-first dashboard whose hero is a filled net-position trend area, with a real Assets/Liabilities breakdown (BT-013-12, 2026-09-20: every real account, split by whether it adds to or subtracts from net worth) broken out beneath it.',
     distinct: 'Chart-first dashboard with the filled AREA chart emphasising the TREND over time, rather than a single point-in-time figure — the only concept whose hero panel is explicitly historical.',
     audience: 'Owners tracking net worth and long-term position across several accounts and a loan.',
     strengths: ['Trend is immediately visible, not just today\'s number.', 'Assets vs liabilities breakdown answers "what do I actually have" at a glance.', 'Sidebar keeps every section reachable while looking at the trend.'],
@@ -204,13 +204,13 @@ const CONCEPTS = Object.freeze([
   c({
     id: 'travel-ledger', name: 'Journey Ledger',
     tagline: 'Trips, multiple currencies, shared expenses and settlement emphasis.',
-    direction: 'A top-nav, editorial-voice layout with a split-focus dashboard: balances on one side, the active trip and shared-expense settlement on the other, so a trip in progress is never a click away.',
-    distinct: 'Split-focus dashboard pattern (shared with Filter Desk\'s different, filter-pane use of the same structural idea): two co-equal panels side by side rather than one hero plus a list.',
+    direction: 'A top-nav, editorial-voice layout whose dashboard leads with a dominant "Active trip" hero (real trip progress from the trip itself), with balances and shared-expense settlement suggestions paired beneath it, so a trip in progress is never a click away. BT-013-12 (2026-09-20): separated out of the old shared `split-focus` pattern into its own bespoke `trip-focus` composition — no longer sharing one generic panel structure with Filter Desk\'s unrelated filters-and-comparisons identity.',
+    distinct: 'A genuinely bespoke Dashboard renderer (`trip-focus`, `app/js/ui/gallery/compose.js` `heroTripFocus`) built specifically for this concept\'s own trip-and-settlement identity: a dominant trip hero, not two co-equal panels sharing a generic split-focus shape with an unrelated concept.',
     audience: 'Groups travelling together who split costs across currencies and need to see who owes whom without leaving the dashboard.',
     strengths: ['Trip and settlement context is always visible, not buried in a separate page.', 'Multi-currency figures shown with their original amount and rate, matching the app\'s existing invariant.', 'Natural home for the "fewest payments" settlement suggestions.'],
     tradeoffs: ['Less useful outside a group/trip workspace.', 'Two-panel split needs to stack cleanly on mobile (verified single-column at 390px).'],
     accessibilityNotes: ['Currency figures always paired with their code, never a bare symbol.', 'Split-panel layout uses a single DOM reading order (balances, then trip) so it matches visually at every width.'],
-    density: 'comfortable', navStyle: 'top', dashboardPattern: 'split-focus', cardStyle: 'ribbon', chartEmphasis: 'line', typeVoice: 'editorial-serif',
+    density: 'comfortable', navStyle: 'top', dashboardPattern: 'trip-focus', cardStyle: 'ribbon', chartEmphasis: 'line', typeVoice: 'editorial-serif',
     transactionsPattern: 'grouped-by-date', billsPattern: 'timeline', budgetPattern: 'envelope-grid', accountsPattern: 'card-grid', settingsPattern: 'flat-list', sharedPattern: 'settlement-focus', tripsPattern: 'timeline',
     accentLight: '#0a6a7a', accentDark: '#3dd6e8',
     fidelity: 'standard', recommended: false,
@@ -232,8 +232,8 @@ const CONCEPTS = Object.freeze([
   c({
     id: 'analyst-workspace', name: 'Filter Desk',
     tagline: 'Filters, comparisons, reporting and data-density emphasis.',
-    direction: 'A compact, condensed-label layout with a persistent right-hand filter/comparison rail beside a table-first dashboard, so filtering never navigates away from the data.',
-    distinct: 'The only concept with `sidebar-right`: a persistent secondary panel for filters/comparisons rather than navigation, paired with table-first density on the left and tight condensed-utility labels throughout.',
+    direction: 'A compact, condensed-label layout with a persistent right-hand filter rail beside a real category report table, so filtering never navigates away from the data. BT-013-12 (2026-09-20): now the sole holder of the `split-focus` pattern (Journey Ledger has its own bespoke composition) — the right panel is a real spent/planned/available report per category, not a plain balances list.',
+    distinct: 'The only concept with `sidebar-right`: a persistent secondary panel for filters rather than navigation, paired with a real dense category report and tight condensed-utility labels throughout.',
     audience: 'Analysts and detail-oriented owners who filter, compare periods and export rather than browse.',
     strengths: ['Filters stay visible while scanning results — no round trip to a separate filter page.', 'Table-first hero keeps real figures central.', 'Naturally extends to side-by-side period comparison.'],
     tradeoffs: ['Right-hand rail costs width on narrower desktop screens; collapses to a drawer under 1024px.', 'Not the friendliest first impression for a casual user.'],
@@ -306,7 +306,7 @@ const CONCEPTS = Object.freeze([
   c({
     id: 'focus-mode', name: 'One Thing Mode',
     tagline: 'Simplified daily financial actions with deeper details on demand.',
-    direction: 'An almost-nav-less top bar (one primary action, one "more" link) and a spacious story-flow dashboard reduced to the single most relevant thing right now — with every other section one click away, never removed.',
+    direction: 'An almost-nav-less top bar (one primary action, one "more" link) and a spacious dashboard reduced to a single, large, centred focal card — the single most relevant thing right now — with every other section one click away, never removed. BT-013-12 (2026-09-20): rebuilt as one deliberate centred card (not a top-aligned paragraph stack), keeping its already-wired "Add expense" action unchanged.',
     distinct: 'The most reduced navigation of any concept (command-adjacent minimalism without requiring keyboard command usage) — a deliberate "do the one thing" framing rather than an overview.',
     audience: 'Users who open the app to do one quick thing (add an expense, check "am I okay today") and do not want a dashboard to read.',
     strengths: ['Fastest path to the single most common action (Add expense).', 'Lowest chance of feeling overwhelmed on open.', 'Every section still fully reachable — nothing is actually removed, only de-emphasised.'],
@@ -333,7 +333,7 @@ const CONCEPT_IDS = Object.freeze(CONCEPTS.map((x) => x.id));
 // name or visual redesign.
 const NAV_STYLES = Object.freeze(['top', 'rail', 'sidebar', 'sidebar-right', 'command', 'tabs']);
 const DENSITIES = Object.freeze(['spacious', 'comfortable', 'compact', 'ultra-compact']);
-const DASHBOARD_PATTERNS = Object.freeze(['metric-grid', 'chart-first', 'table-first', 'timeline', 'card-stack', 'goal-progress', 'merchant-feed', 'envelope-grid', 'command-console', 'split-focus', 'story-flow', 'adaptive', 'briefing', 'inbox', 'ring-cluster', 'mosaic', 'ledger-strip', 'reference-acru', 'reference-ledgerfly', 'reference-debtpayoff']);
+const DASHBOARD_PATTERNS = Object.freeze(['metric-grid', 'chart-first', 'table-first', 'timeline', 'card-stack', 'goal-progress', 'merchant-feed', 'envelope-grid', 'command-console', 'split-focus', 'story-flow', 'adaptive', 'briefing', 'inbox', 'ring-cluster', 'mosaic', 'ledger-strip', 'reference-acru', 'reference-ledgerfly', 'reference-debtpayoff', 'trip-focus']);
 const CARD_STYLES = Object.freeze(['flat-bordered', 'soft-shadow', 'outline-minimal', 'filled-tint', 'bordered-mono', 'ribbon', 'layered']);
 const CHART_EMPHASES = Object.freeze(['bars', 'line', 'mixed', 'donut', 'area']);
 const TYPE_VOICES = Object.freeze(['technical-mono', 'editorial-serif', 'friendly-rounded', 'bold-display', 'condensed-utility']);
