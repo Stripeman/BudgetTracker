@@ -148,10 +148,13 @@ export function createView(ctx) {
     if (!liveHost) return;
     const concept = conceptById(liveId);
     if (!concept) { closeFullscreen(); return; }
-    // BT-013-15: includes the concept's OWN extra pages (Merchants, Debt/loan detail) too, so the
-    // full-size preview's own page picker can reach every page its in-frame nav already can.
-    const requiredPages = [...(data.requiredPages || []), ...(concept.extraPages || [])];
-    const pagePicker = pickerSelect(requiredPages.map((p) => ({ value: p, label: PAGE_LABEL[p] || p })), livePage, {});
+    const requiredPages = data.requiredPages || [];
+    // BT-013-15: the page PICKER's own options additionally include the concept's own extra pages
+    // (Merchants, Debt/loan detail) so it can reach every page the in-frame nav already can — kept as
+    // its own list, never passed to `renderConceptFrame` as `requiredPages`, which already merges in
+    // `concept.extraPages` itself; passing them here too would list every extra page twice in the nav.
+    const pagePickerOptions = [...requiredPages, ...(concept.extraPages || [])];
+    const pagePicker = pickerSelect(pagePickerOptions.map((p) => ({ value: p, label: PAGE_LABEL[p] || p })), livePage, {});
     pagePicker.addEventListener("change", () => { livePage = pagePicker.value; renderFullscreen(); });
     const viewportPicker = pickerSelect(VIEWPORTS.map((v) => ({ value: v.id, label: v.label })), liveViewport, {});
     viewportPicker.addEventListener("change", () => { liveViewport = viewportPicker.value; renderFullscreen(); });
