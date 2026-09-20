@@ -85,8 +85,8 @@ describe('BT-013 layout manifests', () => {
     assert.equal(CONCEPTS.filter((c) => c.recommended).length, 8);
   });
 
-  test('the required review pages, including Accounts/Merchants (review, 2026-09-18: previously missing from the Gallery entirely)', () => {
-    assert.deepEqual(REQUIRED_PAGES, ['dashboard', 'transactions', 'bills', 'budget', 'accounts', 'shared', 'trips', 'settings']);
+  test('the required review pages, including Accounts/Merchants (review, 2026-09-18) and the My Settings/Workspace Settings split (BT-013-14, 2026-09-20 — preserving the real app\'s own personal-vs-workspace distinction)', () => {
+    assert.deepEqual(REQUIRED_PAGES, ['dashboard', 'transactions', 'bills', 'budget', 'accounts', 'shared', 'trips', 'mysettings', 'worksettings']);
   });
 
   test('today\'s one real, selectable layout is "classic" and nothing else — none of the 15 concepts are live-selectable yet', () => {

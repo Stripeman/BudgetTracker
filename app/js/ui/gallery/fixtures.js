@@ -115,13 +115,25 @@ export const trips = Object.freeze([
   { id: "tr2", name: "Ski week", icon: "suitcase", dateRange: "12–19 Jan 2027", budget: "2200.00", spent: "0.00", currency: "EUR", participants: ["Alice", "Bob"] },
 ]);
 
-// A small representative slice of the real workspace settings shape (api/_shared/workspace-settings.js),
-// for the Settings page preview only — never a live settings call.
+// A small representative slice of the real WORKSPACE settings shape (api/_shared/workspace-settings.js),
+// for the Workspace Settings page preview only — never a live settings call.
 export const settingsSample = Object.freeze([
   { key: "sharedExpenses", label: "Use Shared expenses in this workspace", value: true, type: "boolean" },
   { key: "layoutId", label: "Layout theme", value: "classic", type: "choice", options: [{ value: "classic", label: "Classic (current)" }] },
   { key: "memberEditsOthers", label: "Which entries a member may correct on shared accounts", value: "own", type: "choice", options: [{ value: "own", label: "Only entries they added" }, { value: "any", label: "Any entry" }] },
   { key: "budgetPeriod", label: "Budget period for new budgets", value: "monthly", type: "choice", options: [{ value: "monthly", label: "Monthly" }, { value: "weekly", label: "Weekly" }] },
+]);
+
+// BT-013-14 (2026-09-20): a small representative slice of the real PERSONAL settings shape (My
+// Settings, app/js/ui/views/settings.js — profile & appearance, display & privacy, notifications) —
+// deliberately distinct content from `settingsSample` above (that page is workspace-scoped), for the
+// My Settings page preview only, never a live settings call. Preserves the same real distinction the
+// production app itself holds between "applies only to you" and "applies to everyone in a workspace".
+export const mySettingsSample = Object.freeze([
+  { key: "themePalette", label: "Colour palette", value: "midnight", type: "choice", options: [{ value: "midnight", label: "Midnight" }, { value: "forest", label: "Forest" }, { value: "rose", label: "Rose" }] },
+  { key: "maskAmounts", label: "Mask amounts by default", value: false, type: "boolean" },
+  { key: "defaultLandingPage", label: "Page to open first", value: "dashboard", type: "choice", options: [{ value: "dashboard", label: "Dashboard" }, { value: "transactions", label: "Transactions" }] },
+  { key: "emailAbout", label: "Email me about", value: "bills", type: "choice", options: [{ value: "nothing", label: "Nothing" }, { value: "bills", label: "Bills due soon" }, { value: "everything", label: "Everything" }] },
 ]);
 
 export const alerts = Object.freeze([

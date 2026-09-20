@@ -84,10 +84,26 @@ describe("BT-013 secondary-page composition patterns: every real concept, every 
     }
   });
 
-  test("a two-column-grouped settings concept reuses the REAL production settings grid class, not a lookalike", () => {
+  test("a two-column-grouped settings concept reuses the REAL production settings grid class, not a lookalike, on BOTH My Settings and Workspace Settings (BT-013-14)", () => {
     const concept = CONCEPTS.find((c) => c.settingsPattern === "two-column-grouped");
-    const frame = renderConceptFrame(concept, "settings", () => {}, { requiredPages: REQUIRED_PAGES });
-    assert.ok(frame.querySelector(".settings-group__body"), "reuses the exact class the real Workspace settings card's CSS grid targets");
+    const myFrame = renderConceptFrame(concept, "mysettings", () => {}, { requiredPages: REQUIRED_PAGES });
+    const workFrame = renderConceptFrame(concept, "worksettings", () => {}, { requiredPages: REQUIRED_PAGES });
+    assert.ok(myFrame.querySelector(".settings-group__body"), "My Settings reuses the exact class the real settings card's CSS grid targets");
+    assert.ok(workFrame.querySelector(".settings-group__body"), "Workspace Settings reuses the exact class the real settings card's CSS grid targets");
+  });
+
+  test("My Settings and Workspace Settings are genuinely separate pages with different, real content (BT-013-14) — never one page standing in for both", () => {
+    const concept = CONCEPTS[0];
+    const myFrame = renderConceptFrame(concept, "mysettings", () => {}, { requiredPages: REQUIRED_PAGES });
+    const workFrame = renderConceptFrame(concept, "worksettings", () => {}, { requiredPages: REQUIRED_PAGES });
+    const myText = myFrame.querySelector(".gframe__main").textContent;
+    const workText = workFrame.querySelector(".gframe__main").textContent;
+    assert.match(myText, /My settings/);
+    assert.match(myText, /Colour palette/, "My Settings shows real personal-scope content");
+    assert.doesNotMatch(myText, /Use Shared expenses in this workspace/, "My Settings never shows workspace-scoped content");
+    assert.match(workText, /Workspace settings/);
+    assert.match(workText, /Use Shared expenses in this workspace/, "Workspace Settings shows real workspace-scope content");
+    assert.doesNotMatch(workText, /Colour palette/, "Workspace Settings never shows personal-scope content");
   });
 
   test("Accounts/Merchants has its own nav item, correctly labelled", () => {
@@ -247,21 +263,24 @@ describe("BT-013 secondary-page composition patterns: every real concept, every 
     assert.notEqual(frameA.style.getPropertyValue("--g-accent-light"), frameB.style.getPropertyValue("--g-accent-light"));
   });
 
-  // ---- Real interactive Settings controls (review, 2026-09-19) ----------------------------------
-  test("Settings is no longer a read-only label/badge list: a real control exists for every sample setting, and changing one visibly updates its own state without navigating away or calling an API", () => {
+  // ---- Real interactive Settings controls (review, 2026-09-19; BT-013-14 2026-09-20: now checked on
+  // BOTH the real My Settings and Workspace Settings pages, never just one standing in for both) -----
+  test("My Settings and Workspace Settings are no longer a read-only label/badge list: a real control exists for every sample setting on both pages, and changing one visibly updates its own state without navigating away or calling an API", () => {
     for (const pattern of SETTINGS_PATTERNS) {
       const concept = CONCEPTS.find((c) => c.settingsPattern === pattern);
-      const frame = renderConceptFrame(concept, "settings", () => {}, { requiredPages: REQUIRED_PAGES });
-      const selects = [...frame.querySelectorAll("select")];
-      assert.ok(selects.length >= 4, `${pattern} renders a real control per sample setting (got ${selects.length})`);
-      const first = selects[0];
-      const before = first.value;
-      const other = [...first.querySelectorAll("option")].map((o) => o.value).find((v) => v !== before);
-      assert.ok(other, `${pattern} control has another option to switch to`);
-      first.value = other;
-      first.dispatchEvent({ type: "change", bubbles: true });
-      assert.equal(first.value, other, `${pattern} control genuinely changed`);
-      assert.match(frame.querySelector(".gframe__main").textContent, /Preview only/, `${pattern} is honest that nothing is saved`);
+      for (const pageId of ["mysettings", "worksettings"]) {
+        const frame = renderConceptFrame(concept, pageId, () => {}, { requiredPages: REQUIRED_PAGES });
+        const selects = [...frame.querySelectorAll("select")];
+        assert.ok(selects.length >= 4, `${pattern}/${pageId} renders a real control per sample setting (got ${selects.length})`);
+        const first = selects[0];
+        const before = first.value;
+        const other = [...first.querySelectorAll("option")].map((o) => o.value).find((v) => v !== before);
+        assert.ok(other, `${pattern}/${pageId} control has another option to switch to`);
+        first.value = other;
+        first.dispatchEvent({ type: "change", bubbles: true });
+        assert.equal(first.value, other, `${pattern}/${pageId} control genuinely changed`);
+        assert.match(frame.querySelector(".gframe__main").textContent, /Preview only/, `${pattern}/${pageId} is honest that nothing is saved`);
+      }
     }
   });
 

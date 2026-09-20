@@ -59,7 +59,7 @@ export async function run(h, t) {
   const asAnon = await fetch(`${h.base}/api/design-gallery`);
   t.check("anonymous: GET /api/design-gallery is refused", { expected: 401, actual: asAnon.status });
   const daveGet = await h.api("dave").ok("design-gallery");
-  t.check("dave (site admin): sees all 15 concepts and the 8 required pages (Accounts/Merchants added, review 2026-09-18)", { expected: { concepts: 15, pages: 8 }, actual: { concepts: daveGet.concepts.length, pages: daveGet.requiredPages.length } });
+  t.check("dave (site admin): sees all 15 concepts and the 9 required pages (Accounts/Merchants added, review 2026-09-18; My Settings/Workspace Settings split, BT-013-14 2026-09-20)", { expected: { concepts: 15, pages: 9 }, actual: { concepts: daveGet.concepts.length, pages: daveGet.requiredPages.length } });
   const alicePatch = await h.api("alice").request("design-gallery", { method: "PATCH", body: { picks: { selectedIds: ["executive-ledger"] } } });
   t.check("alice: PATCH /api/design-gallery (picks) is refused", { expected: 403, actual: alicePatch.status });
 
@@ -112,8 +112,10 @@ export async function run(h, t) {
     { id: "modern-banking", nav: "tabs" },
     { id: "household-hub", nav: "top" },
   ];
-  const pages = ["dashboard", "transactions", "bills", "budget", "accounts", "shared", "trips", "settings"];
-  const PAGE_LABELS = { dashboard: "Dashboard", transactions: "Transactions", bills: "Bills", budget: "Budget", accounts: "Accounts / Merchants", shared: "Shared expenses", trips: "Trips", settings: "Settings" };
+  // BT-013-14 (2026-09-20): "settings" split into "mysettings"/"worksettings" — two real required
+  // pages now, preserving the app's own personal-vs-workspace distinction, never one page for both.
+  const pages = ["dashboard", "transactions", "bills", "budget", "accounts", "shared", "trips", "mysettings", "worksettings"];
+  const PAGE_LABELS = { dashboard: "Dashboard", transactions: "Transactions", bills: "Bills", budget: "Budget", accounts: "Accounts / Merchants", shared: "Shared expenses", trips: "Trips", mysettings: "My Settings", worksettings: "Workspace Settings" };
   for (const { id, nav } of sample) {
     await dave.click({ role: "button", text: "Preview this concept", scope: `[data-concept="${id}"]` });
     for (const page of pages) {
@@ -122,11 +124,11 @@ export async function run(h, t) {
       t.check(`${id}/${page}: the preview frame's own navStyle matches the concept (${nav})`, { expected: nav, actual: frameNav });
       const hasContent = await dave.evaluate("(() => { const m = document.querySelector('.gpreview-pane .gframe__main'); return !!m && m.textContent.trim().length > 20; })()");
       t.check(`${id}/${page}: the page has real rendered content`, { expected: true, actual: hasContent });
-      // One full 7-page walk-through in screenshots, for the flagship concept most representative
-      // of the "table-first, sidebar" family (Terry's report quotes exact paths for all of these).
+      // One full walk-through in screenshots, for the flagship concept most representative of the
+      // "table-first, sidebar" family (Terry's report quotes exact paths for all of these).
       if (id === "executive-ledger") await dave.shot(`page-${page}`);
     }
-    t.check(`${id}: no console errors/exceptions after walking all 7 required pages`, { expected: [], actual: dave.problems() });
+    t.check(`${id}: no console errors/exceptions after walking all required pages`, { expected: [], actual: dave.problems() });
   }
   await dave.shot("preview-sample");
 
@@ -327,20 +329,23 @@ export async function run(h, t) {
   t.note(`Executive Ledger --g-accent: ${accentA}; Wealth Overview --g-accent: ${accentB}`);
   await dave.shot("accent-identity");
 
-  // ---- real interactive Settings controls (review, 2026-09-19): no longer a read-only badge list --
-  await dave.choose("Preview page", "Settings");
-  const beforeSetting = await dave.evaluate("(() => { const s = document.querySelector('.gpreview-pane select'); return s ? s.value : null; })()");
-  await dave.evaluate(`(() => {
-    const s = document.querySelector('.gpreview-pane select');
-    const other = [...s.options].map((o) => o.value).find((v) => v !== s.value);
-    s.value = other;
-    s.dispatchEvent(new Event('change', { bubbles: true }));
-  })()`);
-  const afterSetting = await dave.evaluate("(() => { const s = document.querySelector('.gpreview-pane select'); return s ? s.value : null; })()");
-  const settingsText = await dave.text(".gpreview-pane");
-  t.check("a Settings control in the real browser genuinely changes value when interacted with, and says plainly that nothing is saved", {
-    expected: { changed: true, saysPreviewOnly: true }, actual: { changed: !!beforeSetting && !!afterSetting && beforeSetting !== afterSetting, saysPreviewOnly: /Preview only/.test(settingsText) },
-  });
+  // ---- real interactive Settings controls (review, 2026-09-19; BT-013-14 2026-09-20: checked on BOTH
+  // the real My Settings and Workspace Settings pages, no longer a read-only badge list on either) ----
+  for (const label of ["My Settings", "Workspace Settings"]) {
+    await dave.choose("Preview page", label);
+    const beforeSetting = await dave.evaluate("(() => { const s = document.querySelector('.gpreview-pane select'); return s ? s.value : null; })()");
+    await dave.evaluate(`(() => {
+      const s = document.querySelector('.gpreview-pane select');
+      const other = [...s.options].map((o) => o.value).find((v) => v !== s.value);
+      s.value = other;
+      s.dispatchEvent(new Event('change', { bubbles: true }));
+    })()`);
+    const afterSetting = await dave.evaluate("(() => { const s = document.querySelector('.gpreview-pane select'); return s ? s.value : null; })()");
+    const settingsText = await dave.text(".gpreview-pane");
+    t.check(`a ${label} control in the real browser genuinely changes value when interacted with, and says plainly that nothing is saved`, {
+      expected: { changed: true, saysPreviewOnly: true }, actual: { changed: !!beforeSetting && !!afterSetting && beforeSetting !== afterSetting, saysPreviewOnly: /Preview only/.test(settingsText) },
+    });
+  }
   await dave.shot("settings-interactive");
 
   // ---- Shared-expense event directory/detail (review, 2026-09-19, reflecting the real BT-009-20

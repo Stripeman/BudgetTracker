@@ -88,7 +88,11 @@
 // one of the required coordinated views per concept; it was missing from the Gallery entirely
 // before this fix. 'trips' stays too — already built, and removing a working page would be an
 // unrelated regression, even though the brief itself does not separately name it.
-const REQUIRED_PAGES = Object.freeze(['dashboard', 'transactions', 'bills', 'budget', 'accounts', 'shared', 'trips', 'settings']);
+// BT-013-14 (2026-09-20): 'settings' split into 'mysettings' and 'worksettings', preserving the real
+// app's own distinction (My Settings applies only to the viewer; Workspace Settings applies to
+// everyone in the workspace, BT-017) — Terry named both explicitly as required pages, never one
+// combined page standing in for both.
+const REQUIRED_PAGES = Object.freeze(['dashboard', 'transactions', 'bills', 'budget', 'accounts', 'shared', 'trips', 'mysettings', 'worksettings']);
 
 // The one real, selectable layout today (workspace setting `layoutId`, BT-011-07/BT-013): today's
 // existing implicit application layout, kept exactly as it behaves now. Nothing in CONCEPTS below is
