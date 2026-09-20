@@ -853,6 +853,51 @@ function heroReferenceDebtpayoff() {
   return [hero, journey, paymentOrder, gauges];
 }
 
+// BT-013-15 (2026-09-20): a BESPOKE Dashboard for `finexa-budget`, carrying the SAME "polished pill
+// navigation, generous spacing, purple accents" identity already established on its own anchor page
+// (the Budget page, BT-013-10) — Terry's page-purpose question here is "where do I stand, what
+// changed, what needs attention": a net-position trend beside a needs-attention list, then a row of
+// varied-chart metric cards (the SAME "every card gets a genuinely different chart" idea the Budget
+// page already established), never a recolour of Ledgerfly's own KPI-strip structure.
+function heroReferenceFinexa() {
+  const plannedTotal = fx.budget.lines.reduce((s, l) => s + Number(l.planned), 0);
+  const spentTotal = fx.budget.lines.reduce((s, l) => s + Number(l.spent), 0);
+  const healthPct = Math.max(0, Math.min(100, Math.round((spentTotal / plannedTotal) * 100)));
+  const dueSoonOrOverdue = fx.bills.filter((b) => b.status !== "upcoming" && b.kind !== "income");
+  const billsTotal = fx.bills.filter((b) => b.kind !== "income").reduce((s, b) => s + Number(b.amount), 0);
+  const owed = fx.shared.balances.filter((b) => Number(b.net) > 0).reduce((s, b) => s + Number(b.net), 0);
+
+  const subhead = el("div", { class: "gfinexa-head" }, [
+    el("div", {}, [el("h3", { text: "Overview" }), el("p", { class: "muted small", text: "Where you stand today, at a glance." })]),
+    button("+ Add entry", () => {}, { variant: "primary", small: true }),
+  ]);
+  const series = [{ key: "expected", dash: "solid" }, { key: "cautious", dash: "dashed" }, { key: "hopeful", dash: "dotted" }];
+  const trendCard = gcard("Net position trend", "chart-line", [
+    multiLineChart(fx.forecast.points, series),
+    figureTable(fx.forecast.points.map((p) => [p.date, p.expected, p.cautious, p.hopeful]), "Net position trend, next 30 days", ["Date", "Expected", "Cautious", "Hopeful"]),
+    el("p", { class: "gchart__legend" }, [
+      el("span", { class: "gchart__key gchart__key--solid" }), "Expected  ",
+      el("span", { class: "gchart__key gchart__key--dashed" }), "Cautious  ",
+      el("span", { class: "gchart__key gchart__key--dotted" }), "Hopeful",
+    ]),
+  ]);
+  const alertsCard = gcard("Needs attention", "bell", dueSoonOrOverdue.length
+    ? el("ul", { class: "stack" }, dueSoonOrOverdue.map((b) => el("li", { class: "grow" }, [withIcon(b.icon, b.name), badge(BILL_STATUS_LABEL[b.status], b.status === "overdue" ? "danger" : "warning"), el("span", { class: "app__spacer" }), amountText(`-${b.amount}`, b.currency, fx.prefs)])))
+    : el("p", { class: "muted small", text: "Nothing needs attention right now." }));
+  const top = el("div", { class: "gfinexa-top" }, [trendCard, alertsCard]);
+
+  const cards = [
+    gcard("Spending this month", "chart-pie", [
+      el("p", { class: "gfinexa-card__amount" }, [amountText((-spentTotal).toFixed(2), "EUR", fx.prefs)]),
+      barChart(fx.budget.lines.map((l) => ({ value: l.spent })), { width: 200, height: 90 }),
+    ]),
+    gcard("Budget used", "target", [radialGauge(healthPct, `${healthPct}% of this month's budget used`, { size: 88 }), el("p", { class: "muted small", text: `${formatAmount(spentTotal.toFixed(2), "EUR")} of ${formatAmount(plannedTotal.toFixed(2), "EUR")}` })]),
+    gcard("Bills this month", "calendar", [pieDial(Math.round((dueSoonOrOverdue.length / Math.max(1, fx.bills.filter((b) => b.kind !== "income").length)) * 100), { size: 76 }), el("p", { class: "muted small", text: `${formatAmount(billsTotal.toFixed(2), "EUR")} total, ${dueSoonOrOverdue.length} need attention` })]),
+    gcard("Shared balance", "users", [el("p", { class: "gfinexa-card__amount" }, [amountText(owed.toFixed(2), fx.shared.currency, fx.prefs)]), el("p", { class: "muted small", text: "You are owed, across every event" })]),
+  ];
+  return [subhead, top, el("div", { class: "gfinexa-cards" }, cards)];
+}
+
 const DASHBOARD_RENDERERS = {
   "metric-grid": heroMetricGrid,
   "chart-first": heroChartFirst,
@@ -875,6 +920,7 @@ const DASHBOARD_RENDERERS = {
   "reference-acru": heroReferenceAcru,
   "reference-ledgerfly": heroReferenceLedgerfly,
   "reference-debtpayoff": heroReferenceDebtpayoff,
+  "reference-finexa": heroReferenceFinexa,
 };
 
 function renderDashboard(concept, onNavigate) {
@@ -1032,7 +1078,48 @@ function txnReferenceLedgerfly() {
   const listCard = gcard("All entries", "receipt", el("div", { class: "table-wrap" }, [table]), { full: true });
   return [kpiStrip, trendCard, listCard];
 }
-const TRANSACTIONS_RENDERERS = { "flat-list": txnFlatList, "grouped-by-date": txnGroupedByDate, "dense-table": txnDenseTable, "card-list": txnCardList, "filter-first": txnFilterFirst, "reference-monsy": txnReferenceMonsy, "reference-ledgerfly": txnReferenceLedgerfly };
+// BT-013-15: for `finexa-budget`, the SAME "subhead + primary action, two-column top, card grid"
+// identity its own Budget anchor already established — never Ledgerfly's KPI-strip shape recoloured.
+function finexaSubhead(title, subtitle, actionLabel) {
+  return el("div", { class: "gfinexa-head" }, [
+    el("div", {}, [el("h3", { text: title }), el("p", { class: "muted small", text: subtitle })]),
+    actionLabel ? button(actionLabel, () => {}, { variant: "primary", small: true }) : null,
+  ]);
+}
+function txnReferenceFinexa() {
+  const incomeTotal = fx.transactions.filter((t) => Number(t.amount) > 0).reduce((s, t) => s + Number(t.amount), 0);
+  const expenseTotal = fx.transactions.filter((t) => Number(t.amount) < 0).reduce((s, t) => s - Number(t.amount), 0);
+  const subhead = finexaSubhead("All transactions", "Every income, expense and transfer this period.", "+ Add expense");
+  const byDate = new Map();
+  for (const t of fx.transactions) byDate.set(t.date, (byDate.get(t.date) || 0) + Number(t.amount));
+  const chartPoints = [...byDate.entries()].sort(([a], [b]) => (a < b ? -1 : 1)).map(([date, value]) => ({ date, value }));
+  const trendCard = gcard("Daily net movement", "chart-line", [barChart(chartPoints, { width: 420, height: 130 }), figureTable(chartPoints.map((p) => [p.date, formatAmount(p.value.toFixed(2), "EUR")]), "Daily net movement", ["Date", "Net"])]);
+  const totals = gcard("This period", "chart-pie", el("div", { class: "gfinexa-recurring__top" }, [
+    metric("Total in", amountText(incomeTotal.toFixed(2), "EUR", fx.prefs), null),
+    metric("Total out", amountText((-expenseTotal).toFixed(2), "EUR", fx.prefs), null),
+    metric("Net", amountText((incomeTotal - expenseTotal).toFixed(2), "EUR", fx.prefs), null),
+  ]));
+  const top = el("div", { class: "gfinexa-top" }, [trendCard, totals]);
+  const typeOf = (t) => (Number(t.amount) > 0 ? { label: "Income", variant: "shared" } : t.category ? { label: "Spending", variant: "" } : { label: "Transfer", variant: "warning" });
+  const rows = [...fx.transactions].sort((a, b) => (a.date > b.date ? -1 : 1)).map((t) => {
+    const m = t.payee ? merchant(t.payee) : null;
+    const c = t.category ? cat(t.category) : null;
+    const type = typeOf(t);
+    return el("tr", {}, [
+      el("td", { class: "muted small", text: t.date }),
+      el("td", {}, [m ? withIcon(m.icon, m.name) : el("span", { text: t.label || "Transfer" })]),
+      el("td", {}, [c ? categoryLabel(c.name, c.color, c.icon) : el("span", { class: "muted small", text: "—" })]),
+      el("td", {}, [badge(type.label, type.variant)]),
+      el("td", { class: "num" }, [amountText(t.amount, "EUR", fx.prefs)]),
+    ]);
+  });
+  const table = el("table", { class: "table gtable-dense" }, [
+    el("thead", {}, [el("tr", {}, ["Date", "Description", "Category", "Type", "Amount"].map((h) => el("th", { scope: "col", class: h === "Amount" ? "num" : "", text: h })))]),
+    el("tbody", {}, rows),
+  ]);
+  return [subhead, top, gcard("All entries", "receipt", el("div", { class: "table-wrap" }, [table]), { full: true })];
+}
+const TRANSACTIONS_RENDERERS = { "flat-list": txnFlatList, "grouped-by-date": txnGroupedByDate, "dense-table": txnDenseTable, "card-list": txnCardList, "filter-first": txnFilterFirst, "reference-monsy": txnReferenceMonsy, "reference-ledgerfly": txnReferenceLedgerfly, "reference-finexa": txnReferenceFinexa };
 function renderTransactions(concept) {
   const fn = TRANSACTIONS_RENDERERS[concept.transactionsPattern] || txnFlatList;
   return el("div", { class: "gpage gpage--list" }, [pageTitle("transactions"), ...fn()]);
@@ -1110,7 +1197,29 @@ function billsReferenceLedgerfly() {
     : el("p", { class: "muted small", text: "Nothing needs attention right now." }), { full: true });
   return [kpiStrip, timeline, actions];
 }
-const BILLS_RENDERERS = { "grouped-status": billsGroupedStatus, timeline: billsTimeline, "kanban-columns": billsKanban, "compact-table": billsCompactTable, "reference-ledgerfly": billsReferenceLedgerfly };
+function billsReferenceFinexa() {
+  const real = fx.bills.filter((b) => b.kind !== "income");
+  const overdue = real.filter((b) => b.status === "overdue");
+  const dueSoon = real.filter((b) => b.status === "due-soon");
+  const sum = (list) => list.reduce((s, b) => s + Number(b.amount), 0);
+  const attentionPct = Math.round(((overdue.length + dueSoon.length) / real.length) * 100);
+  const subhead = finexaSubhead("Bills", "What is due, when, and how much you need to fund.", "+ Add bill");
+  const timeline = gcard("Payment timeline", "calendar", el("ol", { class: "gtimeline" }, [...fx.bills].sort((a, b) => (a.dueDate < b.dueDate ? -1 : 1)).map((b) => el("li", { class: ["gtimeline__item", b.status === "overdue" ? "gtimeline__item--past" : "gtimeline__item--future"] }, [
+    el("span", { class: "gtimeline__date muted small", text: b.dueDate }), withIcon(b.icon, b.name),
+    badge(BILL_STATUS_LABEL[b.status] || b.status, b.status === "overdue" ? "danger" : b.status === "due-soon" ? "warning" : ""),
+    el("span", { class: "app__spacer" }), amountText(b.kind === "income" ? b.amount : `-${b.amount}`, b.currency, fx.prefs),
+  ]))));
+  const summary = gcard("Needing attention", "bell", [
+    el("div", { class: "gmeter", role: "img", "aria-label": `${attentionPct}% of bills are due soon or overdue` }, [el("div", { class: "gmeter__fill", vars: { "--pct": `${attentionPct}%` } })]),
+    el("div", { class: "gfinexa-recurring__top" }, [
+      metric("Overdue", amountText((-sum(overdue)).toFixed(2), "EUR", fx.prefs), `${overdue.length} bill${overdue.length === 1 ? "" : "s"}`),
+      metric("Due soon", amountText((-sum(dueSoon)).toFixed(2), "EUR", fx.prefs), `${dueSoon.length} bill${dueSoon.length === 1 ? "" : "s"}`),
+    ]),
+  ]);
+  const top = el("div", { class: "gfinexa-top" }, [timeline, summary]);
+  return [subhead, top];
+}
+const BILLS_RENDERERS = { "grouped-status": billsGroupedStatus, timeline: billsTimeline, "kanban-columns": billsKanban, "compact-table": billsCompactTable, "reference-ledgerfly": billsReferenceLedgerfly, "reference-finexa": billsReferenceFinexa };
 function renderBills(concept) {
   const fn = BILLS_RENDERERS[concept.billsPattern] || billsGroupedStatus;
   return el("div", { class: "gpage gpage--list" }, [pageTitle("bills"), ...fn()]);
@@ -1362,7 +1471,44 @@ function accountsReferenceLedgerfly() {
   const activity = gcard("Recent activity", "receipt", el("ul", { class: "stack" }, fx.transactions.slice(0, 6).map(txRow)), { full: true });
   return [kpiStrip, groups, activity];
 }
-const ACCOUNTS_RENDERERS = { "card-grid": accountsCardGrid, table: accountsTable, "grouped-by-type": accountsGroupedByType, "reference-ledgerfly": accountsReferenceLedgerfly };
+function accountsReferenceFinexa() {
+  const assets = fx.accounts.filter((a) => Number(a.balance) >= 0);
+  const liabilities = fx.accounts.filter((a) => Number(a.balance) < 0);
+  const totalAssets = assets.reduce((s, a) => s + Number(a.balance), 0);
+  const totalLiabilities = liabilities.reduce((s, a) => s + Math.abs(Number(a.balance)), 0);
+  const subhead = finexaSubhead("Accounts", "Where your money is, and what you owe.", "+ Add account");
+  const netCard = gcard("Net position", "chart-pie", [
+    el("p", { class: "gfinexa-card__amount" }, [money(fx.netPosition.amount, fx.netPosition.currency, fx.prefs)]),
+    dualBarChart([{ planned: totalAssets, spent: totalLiabilities }], -1, { width: 260, height: 100 }),
+    el("p", { class: "gchart__legend" }, [el("span", { class: "gchart__key gfinexa-key--planned" }), "Assets  ", el("span", { class: "gchart__key gfinexa-key--spent" }), "Liabilities"]),
+  ]);
+  const summary = gcard("Accounts", "bank", el("div", { class: "gfinexa-recurring__top" }, [
+    metric("Assets", money(totalAssets.toFixed(2), "EUR", fx.prefs), `${assets.length} account${assets.length === 1 ? "" : "s"}`),
+    metric("Liabilities", amountText((-totalLiabilities).toFixed(2), "EUR", fx.prefs), `${liabilities.length} account${liabilities.length === 1 ? "" : "s"}`),
+  ]));
+  const top = el("div", { class: "gfinexa-top" }, [netCard, summary]);
+  const cards = fx.accounts.map((a) => gcard(a.name, a.icon, [
+    el("p", { class: "gfinexa-card__amount" }, [money(a.balance, a.currency, fx.prefs)]),
+    a.type === "credit-card" ? el("p", { class: "muted small", text: "A credit limit is never counted as available cash." }) : el("p", { class: "muted small", text: a.access === "shared" ? "Shared with workspace" : "Private · yours" }),
+  ]));
+  return [subhead, top, el("div", { class: "gfinexa-cards" }, cards)];
+}
+function merchantsReferenceFinexa() {
+  const spendByMerchant = new Map();
+  for (const t of fx.transactions) { if (Number(t.amount) >= 0 || !t.payee) continue; spendByMerchant.set(t.payee, (spendByMerchant.get(t.payee) || 0) + -Number(t.amount)); }
+  const ranked = fx.merchants.map((m) => ({ m, spend: spendByMerchant.get(m.id) || 0 })).sort((a, b) => b.spend - a.spend);
+  const totalSpend = ranked.reduce((s, r) => s + r.spend, 0);
+  const subhead = finexaSubhead("Merchants", "Who you're spending with, and how that is changing.", null);
+  const chart = gcard("Spend by merchant", "chart-pie", [barChart(ranked.map((r) => ({ value: r.spend })), { width: 420, height: 130 })]);
+  const summary = gcard("This period", "store", el("div", { class: "gfinexa-recurring__top" }, [
+    metric("Total spend", amountText((-totalSpend).toFixed(2), "EUR", fx.prefs), null),
+    metric("Top merchant", ranked[0] ? ranked[0].m.name : "—", null),
+  ]));
+  const top = el("div", { class: "gfinexa-top" }, [chart, summary]);
+  const cards = ranked.map((r) => gcard(r.m.name, r.m.icon, [el("p", { class: "gfinexa-card__amount" }, [amountText((-r.spend).toFixed(2), "EUR", fx.prefs)])]));
+  return [subhead, top, el("div", { class: "gfinexa-cards" }, cards)];
+}
+const ACCOUNTS_RENDERERS = { "card-grid": accountsCardGrid, table: accountsTable, "grouped-by-type": accountsGroupedByType, "reference-ledgerfly": accountsReferenceLedgerfly, "reference-finexa": accountsReferenceFinexa };
 function renderAccounts(concept) {
   const fn = ACCOUNTS_RENDERERS[concept.accountsPattern] || accountsCardGrid;
   const hasOwnMerchants = (concept.extraPages || []).includes("merchants");
@@ -1401,7 +1547,7 @@ function merchantsReferenceLedgerfly() {
   const list = gcard("Merchants, ranked by spend", "store", el("ul", { class: "stack" }, rows), { full: true });
   return [kpiStrip, chart, list];
 }
-const MERCHANTS_RENDERERS = { "reference-ledgerfly": merchantsReferenceLedgerfly };
+const MERCHANTS_RENDERERS = { "reference-ledgerfly": merchantsReferenceLedgerfly, "reference-finexa": merchantsReferenceFinexa };
 function renderMerchants(concept) {
   const fn = MERCHANTS_RENDERERS[concept.merchantsPattern];
   return el("div", { class: "gpage gpage--list" }, [pageTitle("merchants"), ...(fn ? fn() : [el("p", { class: "muted", text: "Merchants is not built for this concept yet." })])]);
@@ -1440,7 +1586,31 @@ function debtReferenceLedgerfly() {
   const history = gcard("Payment history (illustrative)", "calendar", el("div", { class: "table-wrap" }, [table]), { full: true });
   return [kpiStrip, progress, history];
 }
-const DEBT_RENDERERS = { "reference-ledgerfly": debtReferenceLedgerfly };
+function debtReferenceFinexa() {
+  const loan = account("acc-loan");
+  const detail = fx.debtDetail["acc-loan"];
+  const balance = Math.abs(Number(loan.balance));
+  const original = Number(detail.originalBalance);
+  const paidOff = original - balance;
+  const pct = Math.max(0, Math.min(100, Math.round((paidOff / original) * 100)));
+  const subhead = finexaSubhead(`${loan.name} — debt detail`, "Balance movement, principal/interest and payment history.", null);
+  const progressCard = gcard("Paid off", "target", [radialGauge(pct, `${pct}% of the original balance paid off`, { size: 96 }), el("p", { class: "muted small", text: `${formatAmount(paidOff.toFixed(2), loan.currency)} of ${formatAmount(original.toFixed(2), loan.currency)}` })]);
+  const summary = gcard("This loan", "loan", el("div", { class: "gfinexa-recurring__top" }, [
+    metric("Current balance", money(loan.balance, loan.currency, fx.prefs), null),
+    metric("APR (illustrative)", `${detail.apr}%`, "Assumed for this projection"),
+  ]));
+  const top = el("div", { class: "gfinexa-top" }, [progressCard, summary]);
+  const rows = detail.payments.map((p) => el("tr", {}, [
+    el("td", { text: p.date }), el("td", { class: "num" }, [money(p.amount, loan.currency, fx.prefs)]),
+    el("td", { class: "num" }, [money(p.principal, loan.currency, fx.prefs)]), el("td", { class: "num" }, [money(p.interest, loan.currency, fx.prefs)]),
+  ]));
+  const table = el("table", { class: "table gtable-dense" }, [
+    el("thead", {}, [el("tr", {}, ["Date", "Payment", "Principal", "Interest"].map((h, i) => el("th", { scope: "col", class: i ? "num" : "", text: h })))]),
+    el("tbody", {}, rows),
+  ]);
+  return [subhead, top, gcard("Payment history (illustrative)", "calendar", el("div", { class: "table-wrap" }, [table]), { full: true })];
+}
+const DEBT_RENDERERS = { "reference-ledgerfly": debtReferenceLedgerfly, "reference-finexa": debtReferenceFinexa };
 function renderDebt(concept) {
   const fn = DEBT_RENDERERS[concept.debtPattern];
   return el("div", { class: "gpage gpage--list" }, [pageTitle("debt"), ...(fn ? fn() : [el("p", { class: "muted", text: "Debt/loan detail is not built for this concept yet." })])]);
@@ -1598,8 +1768,35 @@ function sharedReferenceLedgerfly(expenses, selectedEvent) {
     gcard(`${selectedEvent.name} — expenses`, "receipt", el("ul", { class: "stack" }, expenses.map((g) => el("li", { class: "grow" }, [el("span", { class: "muted small", text: g.date }), el("span", { text: g.description }), el("span", { class: "muted small", text: `paid by ${g.payer}, split ${g.splitAmong.length} way${g.splitAmong.length === 1 ? "" : "s"}` }), el("span", { class: "app__spacer" }), amountText(`-${g.amount}`, fx.shared.currency, fx.prefs)]))), { full: true }),
   ];
 }
-const REAL_EVENT_SCOPED_PATTERNS = new Set(["reference-ledgerfly"]);
-const SHARED_RENDERERS = { "balance-list": sharedBalanceList, "ledger-table": sharedLedgerTable, "settlement-focus": sharedSettlementFocus, "reference-groupsplit": sharedReferenceGroupsplit, "reference-ledgerfly": sharedReferenceLedgerfly };
+function sharedReferenceFinexa(expenses, selectedEvent) {
+  const totalExpenses = fx.shared.expenses.reduce((s, g) => s + Number(g.amount), 0);
+  const outstanding = fx.shared.balances.filter((b) => Number(b.net) < 0).reduce((s, b) => s - Number(b.net), 0);
+  const subhead = finexaSubhead("Shared expenses", "Which events are active, settled or need attention.", "+ Add expense");
+  const summary = gcard(selectedEvent ? selectedEvent.name : "All events", "users", el("div", { class: "gfinexa-recurring__top" }, [
+    metric("Events", String(fx.shared.events.length), `${fx.shared.events.filter((e) => e.status === "active").length} active`),
+    metric("Total expenses", amountText((-totalExpenses).toFixed(2), fx.shared.currency, fx.prefs), null),
+    metric("Outstanding", amountText((-outstanding).toFixed(2), fx.shared.currency, fx.prefs), null),
+  ]));
+  if (!selectedEvent) {
+    const balances = gcard("Balances", "scale", fx.shared.balances.map((b) => el("div", { class: "row" }, [el("span", { text: b.name }), el("span", { class: "app__spacer" }), amountText(b.net, fx.shared.currency, fx.prefs)])));
+    const top = el("div", { class: "gfinexa-top" }, [summary, balances]);
+    return [subhead, top, gcard("Recent shared expenses", "receipt", el("ul", { class: "stack" }, expenses.map((g) => el("li", { class: "grow" }, [el("span", { class: "muted small", text: g.date }), el("span", { text: g.description }), el("span", { class: "muted small", text: `paid by ${g.payer}` }), el("span", { class: "app__spacer" }), amountText(`-${g.amount}`, fx.shared.currency, fx.prefs)]))), { full: true })];
+  }
+  const balances = fx.splitBalances(expenses);
+  const owes = balances.filter((b) => Number(b.net) < 0);
+  const owed = balances.filter((b) => Number(b.net) > 0);
+  const settled = balances.every((b) => Math.abs(Number(b.net)) < 0.01);
+  const suggestions = owes.flatMap((from) => owed.map((to) => el("li", { class: "grow" }, [el("span", { text: `${from.name} → ${to.name}` }), el("span", { class: "app__spacer" }), amountText(String(Math.min(Math.abs(Number(from.net)), Number(to.net)).toFixed(2)), fx.shared.currency, fx.prefs)])));
+  const whoOwes = gcard(`${selectedEvent.name} — who owes whom`, "users", [badge(settled ? "Settled" : "Outstanding", settled ? "shared" : "warning"), el("ul", { class: "stack" }, balances.map((b) => el("li", { class: "grow" }, [el("span", { text: b.name }), el("span", { class: "app__spacer" }), amountText(b.net, fx.shared.currency, fx.prefs)])))]);
+  const top = el("div", { class: "gfinexa-top" }, [whoOwes, summary]);
+  return [
+    subhead, top,
+    gcard("Settle up", "scale", suggestions.length ? el("ul", { class: "stack" }, suggestions) : el("p", { class: "muted small", text: "Everyone is settled up for this event." })),
+    gcard(`${selectedEvent.name} — expenses`, "receipt", el("ul", { class: "stack" }, expenses.map((g) => el("li", { class: "grow" }, [el("span", { class: "muted small", text: g.date }), el("span", { text: g.description }), el("span", { class: "app__spacer" }), amountText(`-${g.amount}`, fx.shared.currency, fx.prefs)])))),
+  ];
+}
+const REAL_EVENT_SCOPED_PATTERNS = new Set(["reference-ledgerfly", "reference-finexa"]);
+const SHARED_RENDERERS = { "balance-list": sharedBalanceList, "ledger-table": sharedLedgerTable, "settlement-focus": sharedSettlementFocus, "reference-groupsplit": sharedReferenceGroupsplit, "reference-ledgerfly": sharedReferenceLedgerfly, "reference-finexa": sharedReferenceFinexa };
 function renderShared(concept) {
   const page = el("div", { class: "gpage gpage--list" });
   let selectedEventId = null;
@@ -1675,7 +1872,19 @@ function tripsReferenceLedgerfly() {
   ]);
   return [kpiStrip, gcard("Trips", "suitcase", el("div", { class: "ggrid ggrid--metrics" }, fx.trips.map((t) => gcard(t.name, t.icon, tripCard(t, { withName: false })))), { full: true })];
 }
-const TRIPS_RENDERERS = { "card-grid": tripsCardGrid, list: tripsList, timeline: tripsTimeline, "reference-ledgerfly": tripsReferenceLedgerfly };
+function tripsReferenceFinexa() {
+  const budget = fx.trips.reduce((s, t) => s + Number(t.budget), 0);
+  const spent = fx.trips.reduce((s, t) => s + Number(t.spent), 0);
+  const subhead = finexaSubhead("Trips", "Illustrative only — trip planning is not yet a real BudgetTracker feature.", null);
+  const summary = gcard("This year", "suitcase", el("div", { class: "gfinexa-recurring__top" }, [
+    metric("Trips", String(fx.trips.length), null),
+    metric("Combined budget", money(budget.toFixed(2), fx.trips[0].currency, fx.prefs), null),
+    metric("Combined spent", amountText((-spent).toFixed(2), fx.trips[0].currency, fx.prefs), null),
+  ]));
+  const cards = fx.trips.map((t) => gcard(t.name, t.icon, tripCard(t, { withName: false })));
+  return [subhead, summary, el("div", { class: "gfinexa-cards" }, cards)];
+}
+const TRIPS_RENDERERS = { "card-grid": tripsCardGrid, list: tripsList, timeline: tripsTimeline, "reference-ledgerfly": tripsReferenceLedgerfly, "reference-finexa": tripsReferenceFinexa };
 function renderTrips(concept) {
   const fn = TRIPS_RENDERERS[concept.tripsPattern] || tripsCardGrid;
   return el("div", { class: "gpage gpage--list" }, [pageTitle("trips"), el("p", { class: "field__help", text: TRIPS_NOTE }), ...fn()]);
