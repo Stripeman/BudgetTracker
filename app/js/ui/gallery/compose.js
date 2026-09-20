@@ -645,6 +645,84 @@ function heroReferenceLedgerfly() {
   ];
 }
 
+// BT-013-11 (2026-09-20): a BESPOKE Dashboard composition for `goal-navigator`, built closely against
+// a real debt-payoff app's own "Payoff Plan" screen (`.local/refcheck/r06.png`, extracted from
+// docs/BudgetTracker-references.html) — replacing the earlier generic `goal-progress` template with
+// one built for this exact page. A "payments until debt-free" hero stat with a projected freedom
+// date, a two-node journey visual, a real payment-order list, and two circular payoff-percentage
+// gauges (radialGauge — the same primitive `goal-progress` already used, keeping this concept the sole
+// `chartEmphasis: 'donut'` holder, per api/test/layouts.test.js's own exact check). Every number is
+// either real (both debts' own current balances, from `fx.accounts`) or a clearly disclosed
+// illustrative assumption (an "original balance" anchor for each debt's own % paid off, and a steady
+// monthly payment used only to project the payoff date) — never presented as a guarantee.
+function addMonthsLabel(dateStr, months) {
+  const d = new Date(`${dateStr}T00:00:00`);
+  d.setMonth(d.getMonth() + months);
+  return d.toLocaleDateString(undefined, { month: "long", year: "numeric" });
+}
+function heroReferenceDebtpayoff() {
+  const loan = account("acc-loan");
+  const card = account("acc-card");
+  const loanBalance = Math.abs(Number(loan.balance));
+  const cardBalance = Math.abs(Number(card.balance));
+  // Illustrative "original balance" anchors, disclosed plainly — never presented as measured fact.
+  const loanOriginal = 15000;
+  const cardOriginal = 1200;
+  const loanPct = Math.max(0, Math.min(100, Math.round(((loanOriginal - loanBalance) / loanOriginal) * 100)));
+  const cardPct = Math.max(0, Math.min(100, Math.round(((cardOriginal - cardBalance) / cardOriginal) * 100)));
+  const combinedBalance = loanBalance + cardBalance;
+  const assumedMonthlyPayment = 200;
+  const paymentsLeft = Math.ceil(combinedBalance / assumedMonthlyPayment);
+  const latest = [...fx.transactions].sort((a, b) => (a.date > b.date ? -1 : 1))[0];
+  const freedomLabel = addMonthsLabel(latest.date, paymentsLeft);
+
+  const hero = gcard("Payoff plan", "target", [
+    el("div", { class: "gpayoff-hero" }, [
+      el("div", {}, [
+        el("p", { class: "gpayoff-hero__figure" }, [el("span", { text: String(paymentsLeft) }), " payments until debt-free"]),
+        el("p", { class: "muted small", text: `Assumes a steady ${formatAmount(assumedMonthlyPayment.toFixed(2), fx.netPosition.currency)}/month payment across both debts (illustrative).` }),
+      ]),
+      el("div", { class: "gpayoff-hero__freedom" }, [
+        el("p", { class: "muted small", text: "Freedom day" }),
+        el("p", { class: "gpayoff-hero__freedomdate", text: freedomLabel }),
+      ]),
+    ]),
+    el("div", { class: "gpayoff-stats" }, [
+      metric("Payments left", String(paymentsLeft), null),
+      metric("Freedom day", freedomLabel, null),
+      metric("Debts", "2", null),
+      metric("Total balance", money(combinedBalance.toFixed(2), fx.netPosition.currency, fx.prefs), null),
+    ]),
+  ], { full: true });
+
+  const journey = gcard("Your journey to freedom", "chart-line", [
+    el("div", { class: "gpayoff-journey" }, [
+      el("div", { class: "gpayoff-journey__node gpayoff-journey__node--start" }, [el("span", { class: "gpayoff-journey__dot", "aria-hidden": "true" }), el("p", { class: "small", text: "Today" })]),
+      el("div", { class: "gpayoff-journey__node" }, [el("span", { class: "gpayoff-journey__dot", "aria-hidden": "true" }), el("p", { class: "small" }, [withIcon(card.icon, card.name)]), el("p", { class: "muted small", text: "Cleared first" })]),
+      el("div", { class: "gpayoff-journey__node gpayoff-journey__node--end" }, [el("span", { class: "gpayoff-journey__dot gpayoff-journey__dot--flag", "aria-hidden": "true" }, [icon("target")]), el("p", { class: "small", text: "Freedom!" }), el("p", { class: "muted small", text: freedomLabel })]),
+    ]),
+  ], { full: true });
+
+  const rows = [
+    { a: card, pct: cardPct, balance: cardBalance },
+    { a: loan, pct: loanPct, balance: loanBalance },
+  ];
+  const paymentOrder = gcard("Payment order", "calendar", el("ul", { class: "stack" }, rows.map((r) => el("li", { class: "gpayoff-row" }, [
+    withIcon(r.a.icon, r.a.name),
+    el("div", { class: "gmeter", role: "img", "aria-label": `${r.pct}% of ${r.a.name}'s balance paid off` }, [el("div", { class: "gmeter__fill", vars: { "--pct": `${r.pct}%` } })]),
+    el("span", { class: "muted small", text: `${r.pct}% paid — ${formatAmount(r.balance.toFixed(2), r.a.currency)} left` }),
+  ]))), { full: true });
+
+  const gauges = gcard("Payoff progress", "target", [
+    el("div", { class: "gpayoff-gauges" }, [
+      el("div", { class: "gpayoff-gauges__item" }, [radialGauge(loanPct, `${loanPct}% of ${loan.name}'s balance paid off`), el("p", { class: "small", text: loan.name })]),
+      el("div", { class: "gpayoff-gauges__item" }, [radialGauge(cardPct, `${cardPct}% of ${card.name}'s balance paid off`), el("p", { class: "small", text: card.name })]),
+    ]),
+  ], { full: true });
+
+  return [hero, journey, paymentOrder, gauges];
+}
+
 const DASHBOARD_RENDERERS = {
   "metric-grid": heroMetricGrid,
   "chart-first": heroChartFirst,
@@ -665,6 +743,7 @@ const DASHBOARD_RENDERERS = {
   "ledger-strip": heroLedgerStrip,
   "reference-acru": heroReferenceAcru,
   "reference-ledgerfly": heroReferenceLedgerfly,
+  "reference-debtpayoff": heroReferenceDebtpayoff,
 };
 
 function renderDashboard(concept, onNavigate) {
@@ -721,7 +800,54 @@ function txnFilterFirst() {
   const list = gcard("Matching entries", "receipt", el("ul", { class: "stack" }, fx.transactions.map(txRow)));
   return [el("div", { class: "gsplit" }, [filters, list])];
 }
-const TRANSACTIONS_RENDERERS = { "flat-list": txnFlatList, "grouped-by-date": txnGroupedByDate, "dense-table": txnDenseTable, "card-list": txnCardList, "filter-first": txnFilterFirst };
+// BT-013-11 (2026-09-20): a BESPOKE Transactions composition for `merchant-insights`, built closely
+// against a real reference image (`.local/refcheck/r03.png`, extracted from
+// docs/BudgetTracker-references.html) — a calm, complete ledger page, not one borrowed element.
+// Deliberately NOT assembled from the shared transactionsPattern vocabulary above: a bold heading row
+// with a real period label and three always-visible entry actions, and a clean table whose every row
+// states a real, plain-language TYPE (Income/Expense/Transfer) as visible text beside its amount —
+// never colour alone. Reuses shared PRIMITIVES (money, amountText, categoryLabel, withIcon, button)
+// and the real canonical fixtures, never a second parallel data model.
+function txnReferenceMonsy() {
+  const latest = [...fx.transactions].sort((a, b) => (a.date > b.date ? -1 : 1))[0];
+  const periodLabel = new Date(`${latest.date}T00:00:00`).toLocaleDateString(undefined, { month: "long", year: "numeric" });
+  const typeOf = (t) => (Number(t.amount) > 0 ? { label: "Income", cls: "income" } : t.category ? { label: "Expense", cls: "expense" } : { label: "Transfer", cls: "transfer" });
+
+  const head = el("div", { class: "gmonsy-head" }, [
+    el("div", {}, [
+      el("h3", { class: "gmonsy-head__title", text: "All entries" }),
+      el("p", { class: "muted small", text: "View every income, expense and transfer in one place." }),
+    ]),
+    el("p", { class: "gmonsy-period", text: periodLabel }),
+  ]);
+  const actions = el("div", { class: "gmonsy-actions" }, [
+    el("span", { class: "gmonsy-actionbtn gmonsy-actionbtn--income" }, [button("+ Add income", () => {}, { small: true })]),
+    el("span", { class: "gmonsy-actionbtn gmonsy-actionbtn--expense" }, [button("+ Add expense", () => {}, { small: true })]),
+    el("span", { class: "gmonsy-actionbtn gmonsy-actionbtn--saving" }, [button("+ Add saving", () => {}, { small: true })]),
+  ]);
+
+  const rows = fx.transactions.map((t) => {
+    const m = t.payee ? merchant(t.payee) : null;
+    const c = t.category ? cat(t.category) : null;
+    const a = account(t.account);
+    const type = typeOf(t);
+    return el("tr", {}, [
+      el("td", { text: t.date }),
+      el("td", {}, [el("span", { class: `badge gmonsy-type gmonsy-type--${type.cls}`, text: type.label })]),
+      el("td", {}, [m ? withIcon(m.icon, m.name) : el("span", { text: t.label || "Transfer" }), c ? el("div", { class: "muted small" }, [categoryLabel(c.name, c.color, c.icon)]) : null]),
+      el("td", { class: "muted small", text: a.name }),
+      el("td", { class: "num" }, [amountText(t.amount, "EUR", fx.prefs)]),
+    ]);
+  });
+  const table = el("table", { class: "table gtable-dense" }, [
+    el("thead", {}, [el("tr", {}, ["Date", "Type", "Description", "Account", "Amount"].map((h) => el("th", { scope: "col", class: h === "Amount" ? "num" : "", text: h })))]),
+    el("tbody", {}, rows),
+  ]);
+
+  return [head, actions, gcard("All entries", "receipt", el("div", { class: "table-wrap" }, [table]), { full: true })];
+}
+
+const TRANSACTIONS_RENDERERS = { "flat-list": txnFlatList, "grouped-by-date": txnGroupedByDate, "dense-table": txnDenseTable, "card-list": txnCardList, "filter-first": txnFilterFirst, "reference-monsy": txnReferenceMonsy };
 function renderTransactions(concept) {
   const fn = TRANSACTIONS_RENDERERS[concept.transactionsPattern] || txnFlatList;
   return el("div", { class: "gpage gpage--list" }, [pageTitle("transactions"), ...fn()]);
@@ -994,7 +1120,42 @@ function sharedSettlementFocus(expenses) {
     gcard("Recent shared expenses", "receipt", expenses.length ? el("ul", { class: "stack" }, expenses.slice(0, 3).map((g) => el("li", { class: "grow" }, [el("span", { text: g.description }), el("span", { class: "app__spacer" }), amountText(`-${g.amount}`, fx.shared.currency, fx.prefs)]))) : el("p", { class: "muted small", text: "No expenses in this event." })),
   ];
 }
-const SHARED_RENDERERS = { "balance-list": sharedBalanceList, "ledger-table": sharedLedgerTable, "settlement-focus": sharedSettlementFocus };
+// BT-013-11 (2026-09-20): a BESPOKE Shared-expenses composition for `household-hub`, built closely
+// against a real reference UI kit's own group-expense screens (`.local/refcheck/r04.png`, extracted
+// from docs/BudgetTracker-references.html) — a bold total-bill figure, member avatars ordered by who
+// is owed, and a real expense list styled as individual cards, not one borrowed element. Deliberately
+// NOT assembled from the shared sharedPattern vocabulary above; reuses shared PRIMITIVES (amountText,
+// figureTable-style honesty) and the real canonical `fx.shared` fixture, never an invented balance.
+// `expenses` is passed in by `renderShared`'s own event-scoping state machine — this renderer honours
+// whichever event is currently selected exactly like every other sharedPattern already does.
+function initialsOf(name) {
+  const clean = name.replace(/\(.*?\)/g, "").trim();
+  return clean.split(/\s+/).map((w) => w[0]).slice(0, 2).join("").toUpperCase() || "?";
+}
+function sharedReferenceGroupsplit(expenses) {
+  const total = expenses.reduce((s, g) => s + Number(g.amount), 0);
+  const ordered = [...fx.shared.balances].sort((a, b) => Number(b.net) - Number(a.net));
+  const avatarRow = el("div", { class: "ggroupsplit-avatars" }, ordered.map((b) => el("div", { class: "ggroupsplit-avatar" }, [
+    el("span", { class: "ggroupsplit-avatar__initials", "aria-hidden": "true", text: initialsOf(b.name) }),
+    el("span", { class: "small", text: b.name }),
+    amountText(b.net, fx.shared.currency, fx.prefs),
+  ])));
+  const totalCard = gcard("Group total", "users", [
+    el("p", { class: "ggroupsplit-total" }, [amountText(`-${total.toFixed(2)}`, fx.shared.currency, fx.prefs)]),
+    el("p", { class: "muted small", text: `${expenses.length} expense${expenses.length === 1 ? "" : "s"} in this event` }),
+    avatarRow,
+  ], { full: true });
+  const cards = expenses.map((g) => el("div", { class: "ggroupsplit-card" }, [
+    el("div", { class: "ggroupsplit-card__top" }, [
+      el("strong", { text: g.description }),
+      amountText(`-${g.amount}`, fx.shared.currency, fx.prefs),
+    ]),
+    el("p", { class: "muted small", text: `${g.date} · Paid by ${g.payer}` }),
+  ]));
+  const listCard = gcard("Expenses", "receipt", cards.length ? el("div", { class: "ggroupsplit-list" }, cards) : el("p", { class: "muted small", text: "No expenses in this event." }), { full: true });
+  return [totalCard, listCard];
+}
+const SHARED_RENDERERS = { "balance-list": sharedBalanceList, "ledger-table": sharedLedgerTable, "settlement-focus": sharedSettlementFocus, "reference-groupsplit": sharedReferenceGroupsplit };
 function renderShared(concept) {
   const page = el("div", { class: "gpage gpage--list" });
   let selectedEventId = null;

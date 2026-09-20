@@ -174,12 +174,16 @@ describe("BT-013 secondary-page composition patterns: every real concept, every 
     }
   });
 
-  test("Goal Navigator's goal-progress dashboard renders the new circular gauge (reference 1/6), with the real percentage in its accessible label", () => {
+  // BT-013-11 (2026-09-20): Goal Navigator's dashboard is now the bespoke, reference-led
+  // `reference-debtpayoff` composition (heroReferenceDebtpayoff), not the generic `goal-progress`
+  // template — this test's own name is kept accurate below; its assertions are unchanged (the
+  // concept must still be the sole `chartEmphasis: 'donut'` holder and render exactly 2 real gauges).
+  test("Goal Navigator's dashboard renders the new circular gauge (reference 1/6), with the real percentage in its accessible label", () => {
     const donut = CONCEPTS.find((c) => c.chartEmphasis === "donut");
     assert.ok(donut, "fixture sanity");
     const frame = renderConceptFrame(donut, "dashboard", () => {}, { requiredPages: REQUIRED_PAGES });
     const gauges = [...frame.querySelectorAll(".chart--gauge")];
-    assert.equal(gauges.length, 2, "one gauge per goal card (loan payoff, savings goal)");
+    assert.equal(gauges.length, 2, "one gauge per debt (loan payoff, card payoff)");
     for (const g of gauges) {
       assert.equal(g.getAttribute("role"), "img");
       assert.match(g.getAttribute("aria-label"), /%/, "the gauge's accessible label states the real percentage");

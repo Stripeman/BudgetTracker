@@ -46,8 +46,15 @@
 
 .gframe[data-nav="rail"] > .gnav { flex-direction: column; align-items: flex-start; width: 3.5rem; border-bottom: none; border-right: 1px solid var(--border); padding: var(--space-2); }
 .gframe[data-nav="rail"] .gnav__items { flex-direction: column; }
-.gframe[data-nav="rail"] .gnav__item span:not(.icon) { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
-.gframe[data-nav="rail"] .gnav__brand span { display: none; }
+/* BT-013-11 (2026-09-20, found by real-browser evidence while building the batch-2 reference-led
+   upgrades — a rail-nav concept had never actually been screenshotted before this): the selector below
+   used to be `.gnav__item span:not(.icon)`, a DESCENDANT selector that also matched `withIcon()`'s own
+   outer `.iconlabel` wrapper span (which itself is `span:not(.icon)`, since only the inner SVG carries
+   the `.icon` class) — clipping that wrapper to 1x1px hid its child icon too, not just its text,
+   leaving the whole rail nav looking like an empty collapsed strip. Scoped to a DIRECT child of
+   `.iconlabel` instead, so only the real text span is hidden and the icon itself stays visible. */
+.gframe[data-nav="rail"] .gnav__item .iconlabel > span:not(.icon) { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+.gframe[data-nav="rail"] .gnav__brand .iconlabel > span:not(.icon) { display: none; }
 
 .gframe[data-nav="sidebar"] > .gnav,
 .gframe[data-nav="sidebar-right"] > .gnav { flex-direction: column; align-items: stretch; width: 12rem; border-bottom: none; border-right: 1px solid var(--border); padding: var(--space-3); }
@@ -72,8 +79,8 @@
     overflow-x: auto; align-items: center;
   }
   .gframe[data-nav="rail"] .gnav__items, .gframe[data-nav="sidebar"] .gnav__items, .gframe[data-nav="sidebar-right"] .gnav__items { flex-direction: row; }
-  .gframe[data-nav="rail"] .gnav__item span:not(.icon) { position: static; width: auto; height: auto; overflow: visible; clip: auto; white-space: normal; }
-  .gframe[data-nav="rail"] .gnav__brand span { display: inline; }
+  .gframe[data-nav="rail"] .gnav__item .iconlabel > span:not(.icon) { position: static; width: auto; height: auto; overflow: visible; clip: auto; white-space: normal; }
+  .gframe[data-nav="rail"] .gnav__brand .iconlabel > span:not(.icon) { display: inline; }
 }
 
 .gframe[data-nav="command"] > .gnav { gap: var(--space-4); }
@@ -386,3 +393,49 @@
 .gframe[data-concept="ledgerfly-forecast"] > .gnav .gnav__brand,
 .gframe[data-concept="ledgerfly-forecast"] .gnav__item { color: #c7cdf0; }
 .gframe[data-concept="ledgerfly-forecast"] .gnav__item--active { background: rgba(255, 255, 255, 0.14); color: #fff; }
+
+/* ---------------------------------------------------------------------------------------------- */
+/* BT-013-11 (2026-09-20): expanding the same reference-led standard, now approved by Terry, to three
+   of the remaining 12 concepts. Each upgrades ONE existing concept's weakest, most generic page to a
+   bespoke composition built closely against a real reference image, while keeping that concept's own
+   established identity (id, name, dashboard) intact — a lighter-weight variant of the BT-013-10
+   approach, appropriate now that the STANDARD itself (not the whole concept set) is what is expanding. */
+
+/* `merchant-insights`'s Transactions page (compose.js txnReferenceMonsy, `.local/refcheck/r03.png`) */
+.gmonsy-head { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--space-3); flex-wrap: wrap; margin-bottom: var(--space-3); }
+.gmonsy-head__title { font-size: var(--text-xl); font-weight: var(--weight-bold); margin: 0; }
+.gmonsy-period { padding: var(--space-1) var(--space-3); border: 1px solid var(--border); border-radius: var(--radius-pill); background: var(--surface-sunken); margin: 0; }
+.gmonsy-actions { display: flex; flex-wrap: wrap; gap: var(--space-2); margin-bottom: var(--space-4); }
+.gmonsy-actionbtn .btn { border-radius: var(--radius-pill); background: transparent; }
+.gmonsy-actionbtn--income .btn { border-color: var(--g-accent, var(--accent)); color: var(--g-accent, var(--accent)); }
+.gmonsy-actionbtn--expense .btn { border-color: var(--color-danger); color: var(--color-danger-text); }
+.gmonsy-actionbtn--saving .btn { border-color: var(--border-strong); color: var(--text); }
+.gmonsy-type { border-radius: var(--radius-pill); font-weight: var(--weight-medium); }
+.gmonsy-type--income { border-color: var(--g-accent, var(--accent)); color: var(--g-accent, var(--accent)); }
+.gmonsy-type--expense { border-color: var(--color-danger); color: var(--color-danger-text); }
+.gmonsy-type--transfer { border-color: var(--border-strong); }
+
+/* `household-hub`'s Shared expenses page (compose.js sharedReferenceGroupsplit, `.local/refcheck/r04.png`) */
+.ggroupsplit-total { font-size: var(--text-2xl); font-weight: var(--weight-bold); margin: 0; }
+.ggroupsplit-avatars { display: flex; flex-wrap: wrap; gap: var(--space-3); margin-top: var(--space-3); }
+.ggroupsplit-avatar { display: flex; flex-direction: column; align-items: center; gap: var(--space-1); padding: var(--space-2) var(--space-3); background: var(--surface-sunken); border-radius: var(--radius-lg); min-width: 6rem; text-align: center; }
+.ggroupsplit-avatar__initials { display: inline-flex; align-items: center; justify-content: center; width: 2.25rem; height: 2.25rem; border-radius: 50%; background: var(--g-accent-soft, var(--accent-soft)); color: var(--text); font-weight: var(--weight-bold); }
+.ggroupsplit-list { display: grid; grid-template-columns: repeat(auto-fit, minmax(14rem, 1fr)); gap: var(--space-3); }
+.ggroupsplit-card { border: 1px solid var(--border); border-radius: var(--radius-lg); padding: var(--space-3); box-shadow: var(--shadow-sm); }
+.ggroupsplit-card__top { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); font-weight: var(--weight-medium); }
+
+/* `goal-navigator`'s Dashboard (compose.js heroReferenceDebtpayoff, `.local/refcheck/r06.png`) */
+.gpayoff-hero { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--space-4); flex-wrap: wrap; margin-bottom: var(--space-3); }
+.gpayoff-hero__figure { font-size: var(--text-xl); font-weight: var(--weight-bold); margin: 0; }
+.gpayoff-hero__freedom { text-align: right; }
+.gpayoff-hero__freedomdate { font-size: var(--text-xl); font-weight: var(--weight-bold); margin: 0; color: var(--g-accent, var(--accent)); }
+.gpayoff-stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(9rem, 1fr)); gap: var(--space-3); }
+.gpayoff-journey { position: relative; display: flex; align-items: flex-start; justify-content: space-between; gap: var(--space-2); padding-top: var(--space-2); }
+.gpayoff-journey::before { content: ""; position: absolute; top: calc(var(--space-2) + 0.5rem); left: 8%; right: 8%; height: 2px; background: var(--border-strong); z-index: 0; }
+.gpayoff-journey__node { position: relative; z-index: 1; display: flex; flex-direction: column; align-items: center; gap: var(--space-1); text-align: center; flex: 1; }
+.gpayoff-journey__dot { display: inline-block; width: 1rem; height: 1rem; border-radius: 50%; background: var(--surface); border: 2px solid var(--border-strong); }
+.gpayoff-journey__dot--flag { display: inline-flex; align-items: center; justify-content: center; width: 1.75rem; height: 1.75rem; border-radius: 50%; background: var(--g-accent, var(--accent)); color: #fff; border: none; }
+.gpayoff-row { display: grid; grid-template-columns: minmax(9rem, 12rem) 1fr auto; align-items: center; gap: var(--space-3); padding: var(--space-2) 0; border-bottom: 1px solid var(--border); }
+.gpayoff-row:last-child { border-bottom: none; }
+.gpayoff-gauges { display: flex; flex-wrap: wrap; justify-content: center; gap: var(--space-5); }
+.gpayoff-gauges__item { display: flex; flex-direction: column; align-items: center; gap: var(--space-2); }

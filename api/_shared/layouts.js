@@ -26,14 +26,16 @@
 //                      'metric-grid' | 'chart-first' | 'table-first' | 'timeline' | 'card-stack' |
 //                      'goal-progress' | 'merchant-feed' | 'envelope-grid' | 'command-console' |
 //                      'split-focus' | 'story-flow' | 'adaptive'.
-//                      BT-013-10 (Terry, 2026-09-20) adds 'reference-acru' and 'reference-ledgerfly':
-//                      unlike every pattern above, these are deliberately bespoke to a single concept
-//                      each (`acru-overview`, `ledgerfly-forecast`) rather than a reusable shared shape
-//                      — built closely against one specific real reference image, per Terry's explicit
-//                      instruction not to let the shared axis system dictate a reference-led design.
-//                      They stay in this same axis slot (so the existing "every concept renders every
-//                      required page" test still exercises them through the ordinary composition
-//                      engine) without pretending to be reusable.
+//                      BT-013-10 (Terry, 2026-09-20) adds 'reference-acru' and 'reference-ledgerfly';
+//                      BT-013-11 (2026-09-20, expanding the same standard to the remaining 12 concepts
+//                      once Terry approved the first three) adds 'reference-debtpayoff': unlike every
+//                      pattern above, these are deliberately bespoke to a single concept each
+//                      (`acru-overview`, `ledgerfly-forecast`, `goal-navigator`) rather than a reusable
+//                      shared shape — built closely against one specific real reference image, per
+//                      Terry's explicit instruction not to let the shared axis system dictate a
+//                      reference-led design. They stay in this same axis slot (so the existing "every
+//                      concept renders every required page" test still exercises them through the
+//                      ordinary composition engine) without pretending to be reusable.
 //   cardStyle         'flat-bordered' | 'soft-shadow' | 'outline-minimal' | 'filled-tint' | 'bordered-mono'
 //   chartEmphasis     which shared accessible chart primitive leads: 'bars' | 'line' | 'mixed' | 'donut' |
 //                      'area' ('donut'/'area' added with typeVoice below: a real circular-gauge and a
@@ -188,16 +190,16 @@ const CONCEPTS = Object.freeze([
   c({
     id: 'household-hub', name: 'Family Circle',
     tagline: 'Shared household planning, responsibilities and bills.',
-    direction: 'A spacious top-nav layout with ribbon-accented cards whose dashboard leads with a stack of "what the household needs" cards: shared bills due, who paid what, and the shared balance.',
-    distinct: 'Card-stack dashboard, but household-scoped (shared bills, shared balance, members) rather than personal accounts, with each card carrying its own coloured top ribbon for quick visual grouping.',
+    direction: 'A spacious top-nav layout with ribbon-accented cards whose dashboard leads with a stack of "what the household needs" cards: shared bills due, who paid what, and the shared balance. BT-013-11 (2026-09-20): its Shared expenses page is now a bespoke, reference-led composition — closely following a real reference UI kit\'s own group-expense screens (`.local/refcheck/r04.png`), not the shared axis vocabulary: a bold total-bill figure, coloured member avatars ordered by who is owed, and a real expense list styled as individual receipt cards rather than a plain table row.',
+    distinct: 'Card-stack dashboard, but household-scoped (shared bills, shared balance, members) rather than personal accounts, with each card carrying its own coloured top ribbon for quick visual grouping. Its Shared expenses page (`sharedPattern: \'reference-groupsplit\'`, `app/js/ui/gallery/compose.js` `sharedReferenceGroupsplit`) is a second, independently bespoke composition, with its own dedicated `.ggroupsplit-*` CSS.',
     audience: 'Households, couples and roommates who split bills and want shared context, not personal net worth.',
-    strengths: ['Puts shared responsibility front and centre for multi-person workspaces.', 'Ribbon accents make it easy to visually group "shared" cards at a glance.', 'Spacious top-nav is approachable for less financially fluent household members.'],
+    strengths: ['Puts shared responsibility front and centre for multi-person workspaces.', 'Ribbon accents make it easy to visually group "shared" cards at a glance.', 'Spacious top-nav is approachable for less financially fluent household members.', 'The Shared expenses page makes "who is owed and who owes" the very first thing seen, before any individual expense.'],
     tradeoffs: ['Less useful for a single-person personal workspace (not its audience).', 'Needs Shared expenses turned on to show its strongest card.'],
-    accessibilityNotes: ['Household member list never shows another member\'s private account information (structural composition only — the underlying authorization is unchanged by layout).', 'Cards reflow to one column at 320px with no truncation of names.'],
+    accessibilityNotes: ['Household member list never shows another member\'s private account information (structural composition only — the underlying authorization is unchanged by layout).', 'Cards reflow to one column at 320px with no truncation of names.', 'Every member avatar on the Shared expenses page pairs with their real visible name, never an avatar alone.'],
     density: 'spacious', navStyle: 'top', dashboardPattern: 'card-stack', cardStyle: 'ribbon', chartEmphasis: 'bars', typeVoice: 'friendly-rounded',
-    transactionsPattern: 'card-list', billsPattern: 'grouped-status', budgetPattern: 'envelope-grid', accountsPattern: 'grouped-by-type', settingsPattern: 'flat-list', sharedPattern: 'balance-list', tripsPattern: 'card-grid',
+    transactionsPattern: 'card-list', billsPattern: 'grouped-status', budgetPattern: 'envelope-grid', accountsPattern: 'grouped-by-type', settingsPattern: 'flat-list', sharedPattern: 'reference-groupsplit', tripsPattern: 'card-grid',
     accentLight: '#7a0a2d', accentDark: '#e8477a',
-    fidelity: 'standard', recommended: false,
+    fidelity: 'flagship', recommended: false,
   }),
   c({
     id: 'travel-ledger', name: 'Journey Ledger',
@@ -244,13 +246,13 @@ const CONCEPTS = Object.freeze([
   c({
     id: 'goal-navigator', name: 'Milestone Path',
     tagline: 'Savings goals, debt payoff and progress milestones.',
-    direction: 'A spacious top-nav layout in a bold display voice whose dashboard hero is progress: debt payoff and savings trajectory shown as milestones reached and remaining, ahead of raw balances.',
-    distinct: 'Goal-progress dashboard pattern: the hero answers "am I on track", not "what is my balance" — a motivational framing distinct from every balance-first, table-first or ring-cluster concept.',
-    audience: 'People actively paying down debt or saving toward something specific, who want to see progress, not just numbers.',
-    strengths: ['Progress framing is motivating and answers a different, real question than a balance sheet.', 'Debt and savings share one visual language of milestones.', 'Naturally extends to the forecast\'s "what-if" scenarios (pay more, pay less) already built.'],
-    tradeoffs: ['Less useful for someone with no active goal or debt — degrades gracefully to a plain balance view when neither exists.', 'Milestone framing can feel gamified in a way some users dislike; kept plain-text and figure-first, never a badge/points system.'],
-    accessibilityNotes: ['Every progress meter keeps the existing figure-as-text rule; "on track" / "behind" stated in words, never colour alone.', 'No animated counters — reduced motion is respected identically to every other concept.'],
-    density: 'spacious', navStyle: 'top', dashboardPattern: 'goal-progress', cardStyle: 'ribbon', chartEmphasis: 'donut', typeVoice: 'bold-display',
+    direction: 'BT-013-11 (2026-09-20): now a bespoke, reference-led Dashboard — closely following a real debt-payoff app\'s own "Payoff Plan" screen (`.local/refcheck/r06.png`), not the shared axis vocabulary: a bold "payments until debt-free" hero stat with a projected freedom date, a real per-debt payment-order list with progress bars, and two circular payoff-percentage gauges — replacing the earlier generic goal-progress template with one built for this exact page.',
+    distinct: 'A genuinely bespoke Dashboard renderer (`reference-debtpayoff`, `app/js/ui/gallery/compose.js` `heroReferenceDebtpayoff`) built to match one specific reference\'s composition, not assembled from the shared axis vocabulary — its own dedicated `.gpayoff-*` CSS, never a recolour of goal-progress\'s two full-width cards. The hero answers "when am I debt-free", not "what is my balance" — a motivational framing distinct from every balance-first, table-first or ring-cluster concept.',
+    audience: 'People actively paying down debt who want to see a real projected payoff date and payment order, not just today\'s balances.',
+    strengths: ['A single "payments until debt-free" figure and date answer the one question this concept exists for, before any other detail.', 'The payment-order list shows every real debt account\'s own progress, not a single number standing in for all of them.', 'Naturally extends to the forecast\'s "what-if" scenarios (pay more, pay less) already built.'],
+    tradeoffs: ['Less useful for someone with no active debt — degrades to a plain balance view when none exists.', 'The projected payoff date assumes a steady monthly payment, disclosed plainly as an illustrative assumption rather than a guarantee.'],
+    accessibilityNotes: ['Every progress meter and gauge keeps the existing figure-as-text rule; the real percentage and amount are always stated in words, never colour or the arc alone.', 'No animated counters — reduced motion is respected identically to every other concept.'],
+    density: 'spacious', navStyle: 'top', dashboardPattern: 'reference-debtpayoff', cardStyle: 'ribbon', chartEmphasis: 'donut', typeVoice: 'bold-display',
     transactionsPattern: 'flat-list', billsPattern: 'grouped-status', budgetPattern: 'bar-comparison', accountsPattern: 'card-grid', settingsPattern: 'flat-list', sharedPattern: 'settlement-focus', tripsPattern: 'card-grid',
     accentLight: '#8a2d0a', accentDark: '#e87a3d',
     fidelity: 'flagship', recommended: true,
@@ -258,16 +260,16 @@ const CONCEPTS = Object.freeze([
   c({
     id: 'merchant-insights', name: 'Spend Radar',
     tagline: 'Merchant activity, patterns, subscriptions and spending history.',
-    direction: 'A sidebar layout whose dashboard hero is a feed of merchant activity: recent and recurring merchants, subscription-type bills, and spend trend per merchant.',
-    distinct: 'Merchant-feed dashboard pattern: the only concept whose hero organises by WHO money went to, rather than by account, category or date.',
-    audience: 'Users who want to notice forgotten subscriptions and recurring merchants and understand spending patterns per merchant.',
-    strengths: ['Surfaces recurring/subscription merchants where they are easy to miss elsewhere.', 'Uses the existing managed-merchant directory and its icons directly, never free text.', 'Natural home to notice a merchant whose spending is rising.'],
+    direction: 'A sidebar layout whose dashboard hero is a feed of merchant activity: recent and recurring merchants, subscription-type bills, and spend trend per merchant. BT-013-11 (2026-09-20): its Transactions page is now a bespoke, reference-led composition — a calm, complete ledger closely following a real reference screenshot\'s whole page (`.local/refcheck/r03.png`), not the shared axis vocabulary: a plain vertical sidebar, a big "All entries" heading with a real period label, three always-visible entry actions, and a clean row-per-entry table with a colour-coded, plain-language type pill (Income/Expense/Transfer) beside every amount.',
+    distinct: 'Merchant-feed dashboard pattern: the only concept whose hero organises by WHO money went to, rather than by account, category or date. Its Transactions page (`transactionsPattern: \'reference-monsy\'`, `app/js/ui/gallery/compose.js` `txnReferenceMonsy`) is a second, independently bespoke composition, with its own dedicated `.gmonsy-*` CSS.',
+    audience: 'Users who want to notice forgotten subscriptions and recurring merchants and understand spending patterns per merchant — and, on the Transactions page, anyone who wants the calmest, most complete single ledger view of every entry.',
+    strengths: ['Surfaces recurring/subscription merchants where they are easy to miss elsewhere.', 'Uses the existing managed-merchant directory and its icons directly, never free text.', 'Natural home to notice a merchant whose spending is rising.', 'The Transactions page states a plain-language type for every entry, not just a signed amount.'],
     tradeoffs: ['Less useful for a workspace with few distinct merchants.', 'Needs merchants to be well-maintained (closed/reopened correctly) to stay accurate — inherits the existing merchant lifecycle rules unchanged.'],
-    accessibilityNotes: ['Every merchant row keeps its managed icon plus visible name (icon never the only identifier).', 'Feed is a real list (ul/li), ordered and readable by assistive technology in the same order as sighted users see it.'],
+    accessibilityNotes: ['Every merchant row keeps its managed icon plus visible name (icon never the only identifier).', 'Feed is a real list (ul/li), ordered and readable by assistive technology in the same order as sighted users see it.', 'Every type pill on the Transactions page is real text, never colour alone.'],
     density: 'comfortable', navStyle: 'rail', dashboardPattern: 'merchant-feed', cardStyle: 'flat-bordered', chartEmphasis: 'bars', typeVoice: 'condensed-utility',
-    transactionsPattern: 'card-list', billsPattern: 'grouped-status', budgetPattern: 'envelope-grid', accountsPattern: 'grouped-by-type', settingsPattern: 'flat-list', sharedPattern: 'ledger-table', tripsPattern: 'card-grid',
+    transactionsPattern: 'reference-monsy', billsPattern: 'grouped-status', budgetPattern: 'envelope-grid', accountsPattern: 'grouped-by-type', settingsPattern: 'flat-list', sharedPattern: 'ledger-table', tripsPattern: 'card-grid',
     accentLight: '#2d6a1a', accentDark: '#7ae83d',
-    fidelity: 'standard', recommended: false,
+    fidelity: 'flagship', recommended: false,
   }),
   c({
     id: 'finexa-budget', name: 'Budget Workspace',
@@ -331,7 +333,7 @@ const CONCEPT_IDS = Object.freeze(CONCEPTS.map((x) => x.id));
 // name or visual redesign.
 const NAV_STYLES = Object.freeze(['top', 'rail', 'sidebar', 'sidebar-right', 'command', 'tabs']);
 const DENSITIES = Object.freeze(['spacious', 'comfortable', 'compact', 'ultra-compact']);
-const DASHBOARD_PATTERNS = Object.freeze(['metric-grid', 'chart-first', 'table-first', 'timeline', 'card-stack', 'goal-progress', 'merchant-feed', 'envelope-grid', 'command-console', 'split-focus', 'story-flow', 'adaptive', 'briefing', 'inbox', 'ring-cluster', 'mosaic', 'ledger-strip', 'reference-acru', 'reference-ledgerfly']);
+const DASHBOARD_PATTERNS = Object.freeze(['metric-grid', 'chart-first', 'table-first', 'timeline', 'card-stack', 'goal-progress', 'merchant-feed', 'envelope-grid', 'command-console', 'split-focus', 'story-flow', 'adaptive', 'briefing', 'inbox', 'ring-cluster', 'mosaic', 'ledger-strip', 'reference-acru', 'reference-ledgerfly', 'reference-debtpayoff']);
 const CARD_STYLES = Object.freeze(['flat-bordered', 'soft-shadow', 'outline-minimal', 'filled-tint', 'bordered-mono', 'ribbon', 'layered']);
 const CHART_EMPHASES = Object.freeze(['bars', 'line', 'mixed', 'donut', 'area']);
 const TYPE_VOICES = Object.freeze(['technical-mono', 'editorial-serif', 'friendly-rounded', 'bold-display', 'condensed-utility']);
@@ -343,7 +345,12 @@ const CATALOG_STATUSES = Object.freeze(['review', 'approved', 'retired']);
 // in actual information hierarchy or structure). Read by app/js/ui/gallery/compose.js exactly like
 // dashboardPattern is: each names one of several genuinely different renderer functions, never a
 // palette swap of the same one.
-//   transactionsPattern  'flat-list' | 'grouped-by-date' | 'dense-table' | 'card-list' | 'filter-first'
+//   transactionsPattern  'flat-list' | 'grouped-by-date' | 'dense-table' | 'card-list' | 'filter-first' |
+//                        'reference-monsy' (BT-013-11, 2026-09-20: a third deliberately bespoke,
+//                        non-reusable pattern — the same exception already established for
+//                        dashboardPattern's 'reference-acru'/'reference-ledgerfly' and budgetPattern's
+//                        'reference-finexa' — built closely against a real reference image, for the one
+//                        concept that chooses it.)
 //   billsPattern         'grouped-status' | 'timeline' | 'kanban-columns' | 'compact-table'
 //   budgetPattern        'envelope-grid' | 'bar-comparison' | 'list-progress' | 'reference-finexa'
 //                        (BT-013-10, 2026-09-20: 'reference-finexa' is a second deliberately bespoke,
@@ -358,14 +365,17 @@ const CATALOG_STATUSES = Object.freeze(['review', 'approved', 'retired']);
 //                        two-column settings layout shipped in the application itself, item 5)
 //   sharedPattern        'balance-list' | 'ledger-table' | 'settlement-focus' (closes the gap named
 //                        in this session's own "not done" note: Shared expenses and Trips were the
-//                        last two required pages still sharing one template across all 15 concepts)
+//                        last two required pages still sharing one template across all 15 concepts) |
+//                        'reference-groupsplit' (BT-013-11, 2026-09-20: a fourth deliberately bespoke,
+//                        non-reusable pattern, same exception as above, for the one concept that
+//                        chooses it.)
 //   tripsPattern         'card-grid' | 'list' | 'timeline'
-const TRANSACTIONS_PATTERNS = Object.freeze(['flat-list', 'grouped-by-date', 'dense-table', 'card-list', 'filter-first']);
+const TRANSACTIONS_PATTERNS = Object.freeze(['flat-list', 'grouped-by-date', 'dense-table', 'card-list', 'filter-first', 'reference-monsy']);
 const BILLS_PATTERNS = Object.freeze(['grouped-status', 'timeline', 'kanban-columns', 'compact-table']);
 const BUDGET_PATTERNS = Object.freeze(['envelope-grid', 'bar-comparison', 'list-progress', 'reference-finexa']);
 const ACCOUNTS_PATTERNS = Object.freeze(['card-grid', 'table', 'grouped-by-type']);
 const SETTINGS_PATTERNS = Object.freeze(['flat-list', 'two-column-grouped']);
-const SHARED_PATTERNS = Object.freeze(['balance-list', 'ledger-table', 'settlement-focus']);
+const SHARED_PATTERNS = Object.freeze(['balance-list', 'ledger-table', 'settlement-focus', 'reference-groupsplit']);
 const TRIPS_PATTERNS = Object.freeze(['card-grid', 'list', 'timeline']);
 
 const findConcept = (id) => CONCEPTS.find((x) => x.id === id) || null;
