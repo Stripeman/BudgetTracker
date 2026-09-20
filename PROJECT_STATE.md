@@ -5473,3 +5473,72 @@ Preview through `scripts/deploy/deploy.ps1 -Environment preview`; independently 
 commit via `/api/site-settings`; then present Terry the full 15-concept comparison (screenshots plus a
 plain description of the meaningful differences among them) as explicitly requested, together with the
 honest partial-completeness status above — never claiming untested or unfinished scope as done.
+
+**Done, this same checkpoint:** committed as `67b6726`, pushed, **PR #42** opened, deployed to Preview
+(sha `67b6726`, independently verified), and the full 15-concept comparison presented to Terry with the
+honest PARTIAL-relative-to-"every page bespoke" status. Terry replied "Merged" — verified via `gh pr
+view 42` (`state: MERGED`, merge commit `3179f5e`) and synced local `main` to it (fast-forward,
+`dfdd94f..3179f5e`).
+
+**Waiting on Terry:** whether to continue into the much larger remaining scope — fully bespoke (non-
+shared-pattern) treatment of every OTHER required page (Transactions/Bills/Budget/Accounts/Settings/
+Shared/Trips, excluding each concept's own already-bespoke anchor) for all 15 concepts, up to roughly
+105 more page compositions — or whether the Gallery's current state (one genuinely bespoke, reference-
+quality anchor page per concept, real structurally-distinct secondary pages via the existing pattern
+system) is sufficient for now and other priorities should resume. This is a genuinely large scope
+decision, not a "which batch next" question already answered by his own "continue without asking"
+instruction (which covered finishing the nine dashboards, now done) — flagged rather than assumed either
+way.
+
+## Checkpoint BK — BT-013-13: real summary rows on every remaining secondary page (2026-09-20) — Terry
+repeated his BT-013-12 instruction verbatim, read as re-authorization to proceed into the larger "finish
+the coordinated required pages" scope, not a request to redo the nine dashboards already done
+
+**Strategy decided before writing code:** the full "individually bespoke per page for all 15 concepts"
+bar is ~105 more page compositions — not realistically completable this checkpoint. Chose a scalable,
+bounded alternative instead: ONE real, derived summary-row helper per page FAMILY (Transactions/Bills/
+Budget/Accounts/Shared/Trips — 6 helpers total), prepended to every existing pattern in that family, so
+every concept's OTHER required pages open with real coordinated context (not a bare list/table) without
+needing ~90 separate bespoke builds. The underlying pattern STRUCTURE stays the already-reviewed
+(2026-09-18) shared system; each concept still differs by its own nav/density/card/typographic-voice/
+accent identity, applied uniformly by the composition engine regardless of which pattern a page uses.
+
+**What was built:** `txnSummaryRow`, `billsSummaryRow`, `budgetSummaryRow`, `accountsSummaryRow`,
+`sharedSummaryRow(expenses)`, `tripsSummaryRow` (`app/js/ui/gallery/compose.js`) — every figure derived
+from the same canonical fixtures every bespoke page already uses. Wired into all 5 Transactions
+patterns, all 4 Bills, all 3 Budget (including `heroEnvelopeGrid` — checked first that no concept's own
+Dashboard still uses it, so enriching it only affects the Budget page), all 3 Accounts, 3 of 4 Shared
+(the bespoke `reference-groupsplit` already has its own total), and all 3 Trips patterns. Settings left
+untouched (already real interactive controls, 2026-09-19 review — not a bare list this checkpoint needed
+to fix).
+
+**A real bug found and fixed while wiring this up:** the summary rows initially reused the existing
+`.ggrid--metrics` class — which collided with the ONE existing test/e2e pair that uses that exact class
+as a discriminator ("a card-grid Trips concept renders `.ggrid--metrics`; list/timeline do not"), since
+`tripsList`'s own new summary row would then ALSO match it, breaking the "list does NOT render a card
+grid" assertion. Caught by running the suite immediately after adding the rows, not assumed safe. Fixed
+by giving summary rows their own dedicated `.gpage-summary` class (`app/styles/gallery.css`), leaving the
+real discriminator's own meaning untouched.
+
+**Evidence:** new real-browser scenario `scripts/dev/e2e/gallerysummaries.mjs`, 19/19 checks exit 0 —
+one representative concept per page family, desktop light/dark (screenshotted, looked at directly —
+Ops Console's Bills page and Journey Ledger's Shared page both show real coordinated summary rows
+matching each concept's own visual identity) and mobile (no horizontal overflow) for all six. Combined
+real-browser run covering this plus every prior gallery batch: `npm run e2e -- --only
+gallery,gallerybatch2,gallerybatch3,gallerysummaries,acruoverview,finexabudget,ledgerflyforecast` —
+**232/232, exit 0**. Full regression: `npm test` **622/622**, `npm --prefix api test` **779/779**, `npm
+run validate` **ok (27 routes)**, all exit 0.
+
+**Honest status (not glossed over):** every one of the 15 concepts' secondary pages now shows real
+derived context, but the page STRUCTURE for a shared pattern is still shared across every concept using
+it — genuinely differentiated by structure and by each concept's own visual identity, not by an
+individually bespoke, non-reusable build per concept per page (only each concept's own ONE anchor page
+has that). Recorded as PARTIAL in `docs/REQUIREMENTS.md` BT-013-13, same honesty discipline as every
+prior gallery checkpoint.
+
+**Exact next step:** create `feature/design-gallery-summaries-BT-013-13` off current `main`; stage
+exactly this checkpoint's files; re-verify gitignore for any reference material (none used this
+checkpoint — no new images needed); `node scripts/scan-staged.cjs`; commit; push; open a PR; deploy to
+Preview; independently verify; present the honest status to Terry (individually-bespoke-per-page for all
+15 remains the largest further increment, flagged rather than assumed) without asking which batch next,
+per his own standing instruction.
