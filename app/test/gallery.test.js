@@ -41,7 +41,10 @@ function fixtureConcepts() {
   }));
 }
 
-const FIXTURE = { concepts: fixtureConcepts(), requiredPages: ["dashboard", "transactions", "bills", "budget", "shared", "trips", "settings"], realLayoutOptions: [{ value: "classic", label: "Classic (current)" }], realDefaultLayoutId: "classic", picks: { selectedIds: [], note: "", updatedAt: null, updatedBy: null } };
+// BT-013-14 (2026-09-20): "settings" split into "mysettings"/"worksettings" here too, matching the
+// real REQUIRED_PAGES shape (api/_shared/layouts.js) — this fixture is self-contained and independent
+// of the real manifest, but kept honestly in sync with its shape rather than left to drift.
+const FIXTURE = { concepts: fixtureConcepts(), requiredPages: ["dashboard", "transactions", "bills", "budget", "shared", "trips", "mysettings", "worksettings"], realLayoutOptions: [{ value: "classic", label: "Classic (current)" }], realDefaultLayoutId: "classic", picks: { selectedIds: [], note: "", updatedAt: null, updatedBy: null } };
 
 function fakeTheme() {
   let mode = "light"; let themeId = "midnight";
@@ -119,7 +122,7 @@ describe("BT-013 the Design Gallery view", () => {
 });
 
 describe("BT-013 the composition engine: every concept renders every required page without throwing", () => {
-  test("all 20 concepts x all 7 required pages render a non-empty frame with the expected nav item count", () => {
+  test("all 20 concepts x all 8 required pages render a non-empty frame with the expected nav item count", () => {
     for (const concept of FIXTURE.concepts) {
       for (const pageId of FIXTURE.requiredPages) {
         const frame = renderConceptFrame(concept, pageId, () => {}, { requiredPages: FIXTURE.requiredPages });

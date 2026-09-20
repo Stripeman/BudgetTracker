@@ -20,8 +20,12 @@ import { icon, withIcon } from "../icons.js";
 import { formatAmount } from "../../core/format.js";
 import * as fx from "./fixtures.js";
 
-const PAGE_LABEL = { dashboard: "Dashboard", transactions: "Transactions", bills: "Bills", budget: "Budget", accounts: "Accounts / Merchants", shared: "Shared expenses", trips: "Trips", settings: "Settings" };
-const PAGE_ICON = { dashboard: "chart-pie", transactions: "receipt", bills: "calendar", budget: "target", accounts: "bank", shared: "users", trips: "suitcase", settings: "user" };
+// BT-013-14 (2026-09-20): 'settings' split into 'mysettings' and 'worksettings' — the Gallery's single
+// combined "Settings" page never reflected the real app's own distinction (My Settings: applies only to
+// you; Workspace Settings: applies to everyone in the workspace, BT-017) — Terry named both explicitly
+// as required pages. Two real pages now, never one page pretending to be both.
+const PAGE_LABEL = { dashboard: "Dashboard", transactions: "Transactions", bills: "Bills", budget: "Budget", accounts: "Accounts / Merchants", shared: "Shared expenses", trips: "Trips", mysettings: "My Settings", worksettings: "Workspace Settings" };
+const PAGE_ICON = { dashboard: "chart-pie", transactions: "receipt", bills: "calendar", budget: "target", accounts: "bank", shared: "users", trips: "suitcase", mysettings: "user", worksettings: "building" };
 const BILL_STATUS_LABEL = { overdue: "Overdue", "due-soon": "Due soon", upcoming: "Upcoming" };
 
 const cat = (id) => fx.categoryById.get(id);
@@ -1416,8 +1420,8 @@ function renderTrips(concept) {
 // never a lookalike. Changing a control here visibly updates this preview's own state and nothing
 // else: no API call is ever made, and "Preview only" is said beside every control so nobody mistakes
 // it for a real change to their workspace.
-function settingsControls() {
-  const local = fx.settingsSample.map((s) => ({ ...s }));
+function settingsControls(sample) {
+  const local = sample.map((s) => ({ ...s }));
   return local.map((s) => {
     const options = s.type === "boolean" ? [{ value: "true", label: "On" }, { value: "false", label: "Off" }] : (s.options || []).map((o) => ({ value: String(o.value), label: o.label }));
     const pick = pickerSelect(options, String(s.value), {}, {});
@@ -1427,24 +1431,43 @@ function settingsControls() {
     return { s, control: field(s.label, pick, { help: "Preview only — nothing here is saved." }) };
   });
 }
-function settingsFlatList() {
-  const rows = settingsControls();
-  return [gcard("Workspace settings (illustrative)", "user", el("div", { class: "stack" }, rows.map((r) => r.control)), { full: true })];
+function workspaceSettingsFlatList() {
+  const rows = settingsControls(fx.settingsSample);
+  return [gcard("Workspace settings (illustrative)", "building", el("div", { class: "stack" }, rows.map((r) => r.control)), { full: true })];
 }
 // Mirrors the REAL responsive two-column settings layout shipped in the application itself (item 5,
 // settingsform.js/components.css .settings-group__body) — reusing the exact same class names, so a
 // concept that chooses this pattern previews the production mechanism, not a lookalike.
-function settingsTwoColumnGrouped() {
-  const rows = settingsControls();
-  return [gcard("Workspace settings (illustrative)", "user", el("div", { class: "settings-group__body" }, rows.map((r) => el("div", { class: "setting" }, [r.control]))), { full: true })];
+function workspaceSettingsTwoColumnGrouped() {
+  const rows = settingsControls(fx.settingsSample);
+  return [gcard("Workspace settings (illustrative)", "building", el("div", { class: "settings-group__body" }, rows.map((r) => el("div", { class: "setting" }, [r.control]))), { full: true })];
 }
-const SETTINGS_RENDERERS = { "flat-list": settingsFlatList, "two-column-grouped": settingsTwoColumnGrouped };
-function renderSettings(concept) {
-  const fn = SETTINGS_RENDERERS[concept.settingsPattern] || settingsFlatList;
-  return el("div", { class: "gpage gpage--list" }, [pageTitle("settings"), ...fn()]);
+const WORKSETTINGS_RENDERERS = { "flat-list": workspaceSettingsFlatList, "two-column-grouped": workspaceSettingsTwoColumnGrouped };
+function renderWorkspaceSettings(concept) {
+  const fn = WORKSETTINGS_RENDERERS[concept.settingsPattern] || workspaceSettingsFlatList;
+  return el("div", { class: "gpage gpage--list" }, [pageTitle("worksettings"), ...fn()]);
 }
 
-const PAGE_RENDERERS = { dashboard: renderDashboard, transactions: renderTransactions, bills: renderBills, budget: renderBudget, accounts: renderAccounts, shared: renderShared, trips: renderTrips, settings: renderSettings };
+// BT-013-14 (2026-09-20): My Settings — a genuinely SEPARATE required page from Workspace Settings
+// (never the same page pretending to cover both), preserving the real production distinction: applies
+// only to the person viewing it, never to anyone else in any workspace (app/js/ui/views/settings.js's
+// own opening sentence). Reuses the exact same real control mechanism and the concept's own chosen
+// `settingsPattern` shape (shared structure is fine — Terry's own words — the CONTENT is what differs).
+function mySettingsFlatList() {
+  const rows = settingsControls(fx.mySettingsSample);
+  return [gcard("My settings (illustrative)", "user", el("div", { class: "stack" }, rows.map((r) => r.control)), { full: true })];
+}
+function mySettingsTwoColumnGrouped() {
+  const rows = settingsControls(fx.mySettingsSample);
+  return [gcard("My settings (illustrative)", "user", el("div", { class: "settings-group__body" }, rows.map((r) => el("div", { class: "setting" }, [r.control]))), { full: true })];
+}
+const MYSETTINGS_RENDERERS = { "flat-list": mySettingsFlatList, "two-column-grouped": mySettingsTwoColumnGrouped };
+function renderMySettings(concept) {
+  const fn = MYSETTINGS_RENDERERS[concept.settingsPattern] || mySettingsFlatList;
+  return el("div", { class: "gpage gpage--list" }, [pageTitle("mysettings"), ...fn()]);
+}
+
+const PAGE_RENDERERS = { dashboard: renderDashboard, transactions: renderTransactions, bills: renderBills, budget: renderBudget, accounts: renderAccounts, shared: renderShared, trips: renderTrips, mysettings: renderMySettings, worksettings: renderWorkspaceSettings };
 
 // ---- the frame: nav + page, driven by the concept's own composition parameters --------------------
 function renderNav(concept, activeId, onNavigate, requiredPages) {

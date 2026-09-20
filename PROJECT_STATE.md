@@ -5542,3 +5542,74 @@ checkpoint — no new images needed); `node scripts/scan-staged.cjs`; commit; pu
 Preview; independently verify; present the honest status to Terry (individually-bespoke-per-page for all
 15 remains the largest further increment, flagged rather than assumed) without asking which batch next,
 per his own standing instruction.
+
+**Done, this same checkpoint:** committed as `422cbdb`, pushed, **PR #43** opened, deployed to Preview
+(sha `422cbdb`, independently verified), honest status presented. Terry replied "Merged" — verified via
+`gh pr view 43` (`state: MERGED`, merge commit `f4221fe`) and synced local `main` to it (fast-forward,
+`3179f5e..f4221fe`).
+
+**Waiting on Terry:** same open question as Checkpoint BJ's own end, not yet answered — whether to
+continue into individually bespoke (non-shared-pattern) treatment of every remaining page for all 15
+concepts (~90 more compositions, since the 6 summary-row helpers already closed the "bare list" gap
+structurally), or whether the Gallery's current state (one bespoke anchor page + real coordinated
+summary context everywhere else, via a genuinely reviewed shared-pattern system) is sufficient for now.
+Not assumed either way pending his explicit answer.
+
+## Checkpoint BL — BT-013-14: the real concept-by-page acceptance pass begins (2026-09-20) — Terry's
+correction: not "sufficient" (never claimed), not "90 uniquely-coded pages" (never demanded) — the
+actual standard is RENDERED visual quality/coherence/usability per page, evaluated directly, with
+shared structure explicitly PERMITTED. One branch, internal commits, ONE consolidated PR at the end; no
+more "continue?" questions unless a genuinely new conflict arises; present the finished result for
+Terry's own acceptance, never a self-declared "done."
+
+**Working on:** `feature/design-gallery-acceptance-BT-013-14` (created off `main` at `f4221fe`) — every
+change in this section lands here as internal commits; only ONE PR opens at the end, per Terry's own
+explicit "do not create another PR solely to document a merge" / "one consolidated PR" instruction.
+
+**Foundational gap closed first (before any per-page evaluation could be honest):** Terry named "My
+Settings" and "Workspace Settings" as two SEPARATE required pages — the Gallery only ever had one
+combined "Settings" page, never reflecting the real app's own personal-vs-workspace distinction (BT-017).
+Split `REQUIRED_PAGES`'s `'settings'` into `'mysettings'`/`'worksettings'` (`api/_shared/layouts.js`),
+added a new `mySettingsSample` fixture distinct in CONTENT from the existing (renamed-in-comment-only)
+workspace `settingsSample` (`app/js/ui/gallery/fixtures.js`), split `compose.js`'s single
+`renderSettings` into `renderMySettings`/`renderWorkspaceSettings` (each still driven by the SAME
+`settingsPattern` axis value per concept — shared STRUCTURE is fine, per Terry's own words; the CONTENT
+is what now genuinely differs), and updated `PAGE_LABEL`/`PAGE_ICON`/`PAGE_RENDERERS` accordingly. Every
+test/e2e hardcoding the old 8-page shape or the single "settings" page id was found and updated
+honestly (never worked around): `api/test/layouts.test.js`, `api/test/design-gallery.test.js`,
+`app/test/gallery.test.js` (both its own required-page count text AND its self-contained synthetic
+fixture's own page list, kept honestly in sync with the real shape though independent of it),
+`app/test/gallerypatterns.test.js` (extended the existing "no longer read-only" test to check BOTH new
+pages, and added a NEW test proving they show genuinely different, correctly-scoped content — My
+Settings never shows workspace-scoped text and vice versa), `scripts/dev/e2e/gallery.mjs` (the page walk
+list, the two-column-grouped class check implicitly covered by the unit test, the interactive-control
+check now looped over both real pages, and a hardcoded "8 required pages" count that would have silently
+gone stale otherwise — caught by actually running the suite, not assumed safe).
+
+**Evidence so far:** `npm test` 623/623 (up from 622 — one genuinely new test), `npm --prefix api test`
+779/779, `npm run validate` ok (27 routes), all exit 0. Real-browser: `npm run e2e -- --only gallery`
+171/171 exit 0 (one real, caught-by-running-the-suite fix: the hardcoded "8 required pages" e2e count);
+`npm run e2e -- --only gallerybatch2,gallerybatch3,gallerysummaries,acruoverview,finexabudget,ledgerflyforecast`
+74/74 exit 0 (no regression to any prior gallery work). Screenshots looked at directly: My Settings and
+Workspace Settings render as genuinely distinct pages with different real content, both still under each
+concept's own nav/density/card/typographic-voice/accent identity, both still with real interactive
+controls (not read-only).
+
+**Not yet done (honest, mid-checkpoint status):** the actual concept-by-page ACCEPTANCE EVALUATION Terry
+asked for — inspecting each of the 15 concepts' Transactions/Bills/Budget/Accounts/My Settings/Workspace
+Settings/Shared pages against that concept's own anchor page and the original visual references, then
+refining or redesigning whichever ones do not yet read as "the same deliberately designed product" —
+has not yet started. This foundational settings split had to happen first so there would be a genuine
+Workspace-vs-My-Settings distinction to evaluate at all. Trips stays illustrative-only per BT-010 hold;
+it still needs a baseline coherence check (not a redesign) alongside the other pages.
+
+**Exact next step:** build the actual per-concept, per-page acceptance matrix — inspect each of the 7
+non-anchor required pages (Trips included for a baseline check only) for every one of the 15 concepts,
+comparing against that concept's own anchor page's composition/typography/spacing/colour/chart quality
+and, where relevant, the original supplied reference image; record PASS / REFINE / REDESIGN per cell
+with a real reason; then do the actual refinement/redesign work batch by batch (likely grouped by page
+family again, since that is where shared structure lives), re-verifying desktop/mobile/light/dark/
+interactions/accessibility after each batch; keep committing internally without opening a PR until the
+whole matrix is genuinely at PASS or the honest remaining gaps are documented; then open the one
+consolidated PR, deploy to Preview, verify, and present the finished gallery for Terry's own acceptance
+review — never a self-declared "done."
