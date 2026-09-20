@@ -86,6 +86,9 @@ const ART = {
   // The compact record-actions menu trigger (BT-015, Terry, 2026-09-18: "a four-dot icon arranged in
   // two rows and two columns, visually like '::'"): four small filled dots, never text/punctuation.
   more: [["circle", { cx: 8, cy: 8, r: 1.7, fill: "currentColor", stroke: "none" }], ["circle", { cx: 16, cy: 8, r: 1.7, fill: "currentColor", stroke: "none" }], ["circle", { cx: 8, cy: 16, r: 1.7, fill: "currentColor", stroke: "none" }], ["circle", { cx: 16, cy: 16, r: 1.7, fill: "currentColor", stroke: "none" }]],
+  // The per-design appearance/colour-customization cog (BT-013-15): a hub, an outer ring and eight
+  // radial teeth — original simple geometry, not copied from any icon set.
+  cog: [c(12, 12, 3), c(12, 12, 8.2), p("M12 3.2v2.2"), p("M12 18.6v2.2"), p("M3.2 12h2.2"), p("M18.6 12h2.2"), p("M5.9 5.9l1.55 1.55"), p("M16.55 16.55l1.55 1.55"), p("M18.1 5.9l-1.55 1.55"), p("M7.45 16.55l-1.55 1.55")],
 };
 
 const LABELS = {
@@ -98,12 +101,12 @@ const LABELS = {
   cash: "Cash", "credit-card": "Card", loan: "Loan", mortgage: "Mortgage", store: "Store", "chart-line": "Investment", diamond: "Valuable",
   scale: "Balance", building: "Office", user: "Person", users: "Group", repeat: "Recurring", calendar: "Calendar", "id-card": "Membership",
   target: "Goal", filter: "Filter", "chart-pie": "Report", bell: "Bell", alert: "Warning", clock: "Clock", globe: "Globe", suitcase: "Trip",
-  more: "More actions",
+  more: "More actions", cog: "Customize appearance",
 };
 
 export const FALLBACK = "fallback";
 export const BUILT_IN_IDS = Object.freeze(Object.keys(ART));
-export const SYSTEM_IDS = Object.freeze(["fallback", "money-in", "money-out", "transfer", "reversal", "no-money-moved", "external", "more"]);
+export const SYSTEM_IDS = Object.freeze(["fallback", "money-in", "money-out", "transfer", "reversal", "no-money-moved", "external", "more", "cog"]);
 
 // The same allow-list the server applies to uploads (api/_shared/icon-svg.js).
 const SHAPES = Object.freeze({ path: ["d"], circle: ["cx", "cy", "r"], rect: ["x", "y", "width", "height", "rx", "ry"], line: ["x1", "y1", "x2", "y2"], polyline: ["points"], polygon: ["points"] });

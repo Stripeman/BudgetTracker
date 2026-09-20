@@ -483,3 +483,44 @@
 .gstory { max-width: 28rem; margin: 0 auto; text-align: center; align-items: center; }
 .gstory__icon { display: inline-flex; align-items: center; justify-content: center; width: 3rem; height: 3rem; border-radius: 50%; background: var(--g-accent-soft, var(--accent-soft)); color: var(--g-accent, var(--accent)); margin: 0 auto; }
 .gstory__net { font-weight: var(--weight-medium); }
+
+/* BT-013-15: the per-design appearance cog — a small circular icon-button trigger, placed on every
+   design card and inside the full-size preview toolbar, opening a floating panel (never a normal-flow
+   sibling, same overlay mechanism as .themepick__list above). */
+.gcog { display: inline-flex; }
+.gcog__toggle { display: inline-flex; align-items: center; justify-content: center; width: 2.25rem; height: 2.25rem; border-radius: 50%; border: 1px solid var(--border); background: var(--surface); color: var(--text-muted); cursor: pointer; }
+.gcog__toggle:hover, .gcog__toggle:focus-visible { color: var(--text); }
+.gcog__toggle[aria-expanded="true"] { color: var(--accent); border-color: var(--accent); }
+.gcog__panel {
+  position: fixed; z-index: 80;
+  top: var(--pop-top, 50%); left: var(--pop-left, 50%);
+  width: min(20rem, calc(100vw - 1rem));
+  max-height: var(--pop-max-height, 28rem);
+  overflow-y: auto;
+  display: flex; flex-direction: column; gap: var(--space-2);
+  padding: var(--space-3);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--surface-raised);
+  box-shadow: var(--shadow);
+}
+.gcog__panel[hidden] { display: none; }
+.gcog__panel-title { font-weight: var(--weight-bold); margin: 0; }
+.gcog__customrow { display: grid; grid-template-columns: 1fr 1fr; gap: var(--space-2); }
+.gcog__swatch { width: 100%; height: 2.25rem; padding: 0.15rem; border: 1px solid var(--control-border); border-radius: var(--control-radius); background: var(--control-surface); cursor: pointer; }
+.gcog__status:empty { display: none; }
+
+/* BT-013-15: "let me open each concept as a full-size experience — not just a small thumbnail
+   surrounded by the current application's own navigation". A fixed, full-viewport takeover (portaled
+   to the body, same as every other floating overlay here) covering the real application chrome
+   entirely; its own compact toolbar (page switcher, viewport, cog, exit) sits above the concept's
+   own frame, which renders at its full natural width rather than the admin page's capped preview. */
+.gfullscreen { position: fixed; inset: 0; z-index: 90; background: var(--surface); display: flex; flex-direction: column; overflow: hidden; }
+.gfullscreen__bar { display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; padding: var(--space-2) var(--space-3); border-bottom: 1px solid var(--border); background: var(--surface-raised); }
+.gfullscreen__bar .field { margin: 0; }
+.gfullscreen__body { flex: 1 1 auto; overflow: auto; }
+.gfullscreen__body .gframe { width: 100%; min-height: 100%; }
+.gfullscreen__body[data-viewport="mobile"] { display: flex; justify-content: center; background: var(--surface-sunken); padding: var(--space-3); }
+.gfullscreen__body[data-viewport="mobile"] .gframe { width: 23.4375rem; min-height: auto; box-shadow: var(--shadow); }
+.gfullscreen__body[data-viewport="tablet"] { display: flex; justify-content: center; background: var(--surface-sunken); padding: var(--space-3); }
+.gfullscreen__body[data-viewport="tablet"] .gframe { width: 52.125rem; min-height: auto; box-shadow: var(--shadow); }

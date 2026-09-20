@@ -1487,14 +1487,20 @@ function renderNav(concept, activeId, onNavigate, requiredPages) {
  * shared components — never a live API call. `onNavigate(pageId)` is called when a person presses a
  * nav item inside the preview (switching the previewed page; the Gallery page owns that state).
  */
-export function renderConceptFrame(concept, pageId, onNavigate, { requiredPages = Object.keys(PAGE_LABEL) } = {}) {
+export function renderConceptFrame(concept, pageId, onNavigate, { requiredPages = Object.keys(PAGE_LABEL), colorOverride = null } = {}) {
   const page = (PAGE_RENDERERS[pageId] || renderDashboard)(concept, onNavigate);
   return el("div", {
     class: "gframe", dataset: { nav: concept.navStyle, density: concept.density, card: concept.cardStyle, page: pageId, voice: concept.typeVoice, chart: concept.chartEmphasis, concept: concept.id },
     // Each concept's own colour identity (review, 2026-09-19), scoped to this frame only via CSS
     // custom properties never set outside it — see the accentLight/accentDark comment in
-    // api/_shared/layouts.js and the --g-accent rules in gallery.css.
-    vars: { "--g-accent-light": concept.accentLight || null, "--g-accent-dark": concept.accentDark || null },
+    // api/_shared/layouts.js and the --g-accent rules in gallery.css. BT-013-15 (2026-09-20): a
+    // signed-in site administrator's OWN personal override (`galleryDesignColors`,
+    // api/preferences/handler.js) takes precedence when present — never a workspace setting, never
+    // applied to anyone else, and it changes nothing about the concept's OWN declared defaults.
+    vars: {
+      "--g-accent-light": (colorOverride && colorOverride.light) || concept.accentLight || null,
+      "--g-accent-dark": (colorOverride && colorOverride.dark) || concept.accentDark || null,
+    },
     "aria-label": `${concept.name} preview, ${PAGE_LABEL[pageId] || pageId} page`,
   }, [
     renderNav(concept, pageId, onNavigate, requiredPages),
