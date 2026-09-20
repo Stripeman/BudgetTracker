@@ -155,7 +155,7 @@ export async function run(h, t) {
   await dave.shot("bills-timeline");
 
   // Accounts/Merchants — the page the Gallery was entirely missing before this fix.
-  await dave.click({ role: "button", text: "Preview this concept", scope: '[data-concept="sidebar-pro"]' }); // accountsPattern: table
+  await dave.click({ role: "button", text: "Preview this concept", scope: '[data-concept="acru-overview"]' }); // accountsPattern: table
   await dave.choose("Preview page", "Accounts / Merchants");
   const accountsPage = await dave.evaluate("(() => { const m = document.querySelector('.gpreview-pane .gframe__main'); return { text: m.textContent, hasTable: !!m.querySelector('table.gtable-dense') }; })()");
   t.check("the new Accounts/Merchants page shows real account and merchant names, as a table for this concept", {

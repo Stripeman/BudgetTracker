@@ -25,7 +25,15 @@
 //                      shared across concepts that choose them (never per-concept duplicated code):
 //                      'metric-grid' | 'chart-first' | 'table-first' | 'timeline' | 'card-stack' |
 //                      'goal-progress' | 'merchant-feed' | 'envelope-grid' | 'command-console' |
-//                      'split-focus' | 'story-flow' | 'adaptive'
+//                      'split-focus' | 'story-flow' | 'adaptive'.
+//                      BT-013-10 (Terry, 2026-09-20) adds 'reference-acru' and 'reference-ledgerfly':
+//                      unlike every pattern above, these are deliberately bespoke to a single concept
+//                      each (`acru-overview`, `ledgerfly-forecast`) rather than a reusable shared shape
+//                      — built closely against one specific real reference image, per Terry's explicit
+//                      instruction not to let the shared axis system dictate a reference-led design.
+//                      They stay in this same axis slot (so the existing "every concept renders every
+//                      required page" test still exercises them through the ordinary composition
+//                      engine) without pretending to be reusable.
 //   cardStyle         'flat-bordered' | 'soft-shadow' | 'outline-minimal' | 'filled-tint' | 'bordered-mono'
 //   chartEmphasis     which shared accessible chart primitive leads: 'bars' | 'line' | 'mixed' | 'donut' |
 //                      'area' ('donut'/'area' added with typeVoice below: a real circular-gauge and a
@@ -206,18 +214,18 @@ const CONCEPTS = Object.freeze([
     fidelity: 'standard', recommended: false,
   }),
   c({
-    id: 'minimal-professional', name: 'Quiet Practice',
-    tagline: 'Restrained, typography-led interface with minimal decoration.',
-    direction: 'A rounded segmented tab bar kept deliberately quiet, spacious density, and a story-flow dashboard rendered with almost no chrome — typography and whitespace do the work colour and cards do elsewhere.',
-    distinct: 'Outline-minimal card style with the story-flow pattern and an editorial serif voice: unlike Morning Briefing\'s structured list, this concept stays pure narrative prose — rules instead of shadows, hairlines instead of fills.',
-    audience: 'Users who find most finance apps visually noisy and want the plainest possible presentation of real figures.',
-    strengths: ['Extremely low visual noise; nothing competes with the numbers.', 'Fast to render, nothing decorative to distract from content.', 'Ages well — least likely of any concept to look dated.'],
-    tradeoffs: ['Provides the fewest visual landmarks for orientation; relies more on text hierarchy.', 'Some users read minimalism as "unfinished".'],
-    accessibilityNotes: ['Outline-only cards keep a visible focus ring that does not rely on the card\'s own border.', 'Heading hierarchy is the primary orientation cue and is kept strictly logical.'],
-    density: 'spacious', navStyle: 'tabs', dashboardPattern: 'story-flow', cardStyle: 'outline-minimal', chartEmphasis: 'line', typeVoice: 'editorial-serif',
+    id: 'ledgerfly-forecast', name: 'Executive Forecast',
+    tagline: 'A compact executive overview anchored by a dominant cash-forecast chart and a real scenario panel.',
+    direction: 'BT-013-10 (Terry, 2026-09-20): a reference-led composition, not an axis recombination — closely follows the Ledgerfly reference\'s whole Executive Overview page (`.local/refcheck/r05.png`, extracted from docs/BudgetTracker-references.html). A compact, professional dark sidebar with a clear active state; a restrained header; a KPI strip of four figures with one deliberately emphasised (Total balance, shown on a dark navy card, matching the reference\'s own emphasis treatment); a dominant filled cash-forecast chart with a readable legend, anchoring the page; a right-hand column of real BudgetTracker breakdowns (spending by category, primary cost drivers by merchant); a scenario panel stating the workspace\'s own already-real Expected/Cautious/Hopeful forecast figures (never a fabricated "run simulation" the Gallery cannot actually execute) and a genuine upcoming-obligation card (the largest unpaid bill). Navy/indigo emphasis throughout, balanced information density.',
+    distinct: 'A genuinely bespoke Dashboard renderer (`reference-ledgerfly`, app/js/ui/gallery/compose.js `heroReferenceLedgerfly`) built to match one specific reference\'s composition, not assembled from the shared axis vocabulary — its own dedicated CSS (`.gledgerfly-*`, app/styles/gallery.css) and a new filled-trend chart primitive kept structurally distinct from the existing `chart--area` primitive (so `wealth-overview` stays the sole concept whose `chartEmphasis` is `area`, per the existing test), never a recolour of an existing hero pattern.',
+    audience: 'Owners and managers who want an executive-style snapshot: cash position, burn, runway and a forward-looking forecast together, in a genuinely polished, reference-quality composition.',
+    strengths: ['The KPI strip states cash position, burn and runway together, before any chart — an at-a-glance executive read.', 'The dominant forecast chart and its scenario panel share the same real Expected/Cautious/Hopeful figures already used elsewhere in the Gallery, never a second invented forecast.', 'The right column\'s spending breakdown and top cost drivers give real depth without leaving the page.'],
+    tradeoffs: ['The bespoke composition is deliberately NOT reusable by other concepts the way the shared axis patterns are — by design, matching the same reference-led exception already established for the ACRU and Finexa concepts.', 'A workspace with very little transaction history shows a flatter forecast and a less meaningful runway figure at first.'],
+    accessibilityNotes: ['The forecast chart pairs with the same sr-only figure-table rule every other chart in this Gallery already uses.', 'The KPI strip states every figure as real visible text, never colour or card emphasis alone.', 'Sidebar order matches reading order for screen readers (nav before main), unchanged from the existing sidebar nav style.'],
+    density: 'comfortable', navStyle: 'sidebar', dashboardPattern: 'reference-ledgerfly', cardStyle: 'soft-shadow', chartEmphasis: 'line', typeVoice: 'condensed-utility',
     transactionsPattern: 'flat-list', billsPattern: 'timeline', budgetPattern: 'list-progress', accountsPattern: 'card-grid', settingsPattern: 'flat-list', sharedPattern: 'balance-list', tripsPattern: 'list',
-    accentLight: '#3d3d4a', accentDark: '#a3a3c2',
-    fidelity: 'standard', recommended: false,
+    accentLight: '#1a2a7a', accentDark: '#8fa0f5',
+    fidelity: 'flagship', recommended: false,
   }),
   c({
     id: 'analyst-workspace', name: 'Filter Desk',
@@ -262,31 +270,35 @@ const CONCEPTS = Object.freeze([
     fidelity: 'standard', recommended: false,
   }),
   c({
-    id: 'card-workspace', name: 'Metric Rings',
-    tagline: 'Budget, savings and payoff progress, as a cluster of dials.',
-    direction: 'A top-nav layout with layered, offset-panel cards whose dashboard is a compact cluster of circular gauges — budget used, savings goal, loan payoff — read together in one glance, not one at a time.',
-    distinct: 'Ring-cluster dashboard: several small circular gauges shown together, a genuinely denser and more comparative composition than Milestone Path\'s two full-width detailed goal cards.',
-    audience: 'Users who want a bit of everything without committing to one narrow point of view, read as quick comparative progress rather than a single dominant hero.',
-    strengths: ['Three progress figures compared side by side in one glance, not spread across separate cards.', 'Layered cards give real visual depth without relying on shadow blur or motion.', 'Easiest concept to extend with a fourth ring later without restructuring the page.'],
-    tradeoffs: ['No single strong point of view — less memorable than a concept built around one clear idea.', 'A cluster of gauges says less about WHY a number changed than a table or chart would.'],
-    accessibilityNotes: ['Each gauge is its own role="img" region with the real percentage in its accessible label, never colour or the arc alone.', 'Grid reflows to one column at 320px, in the same DOM order.'],
-    density: 'comfortable', navStyle: 'top', dashboardPattern: 'ring-cluster', cardStyle: 'layered', chartEmphasis: 'mixed', typeVoice: 'bold-display',
-    transactionsPattern: 'card-list', billsPattern: 'kanban-columns', budgetPattern: 'envelope-grid', accountsPattern: 'card-grid', settingsPattern: 'flat-list', sharedPattern: 'settlement-focus', tripsPattern: 'card-grid',
-    accentLight: '#7a6a0a', accentDark: '#e8d33d',
-    fidelity: 'standard', recommended: false,
+    id: 'finexa-budget', name: 'Budget Workspace',
+    tagline: 'A purpose-built budget workspace: utilization at a glance, bills tracked, categories broken out.',
+    direction: 'BT-013-10 (Terry, 2026-09-20): a reference-led composition for the BUDGET page specifically, not an axis recombination — closely follows the Finexa reference\'s whole Budgets page (`.local/refcheck/r02.png`, extracted from docs/BudgetTracker-references.html). A polished pill-style top navigation with a clear active state; a bold page title and subtitle over a primary "+ Add budget line" action; a large planned-vs-spent utilization chart paired with an upcoming-bills summary; four category cards each combining a spent figure, a utilization percentage, a genuinely different small chart, a remaining figure and a status pill; a cohesive purple/lavender palette on clean neutral surfaces.',
+    distinct: 'A genuinely bespoke Budget-page renderer (`reference-finexa`, app/js/ui/gallery/compose.js `budgetReferenceFinexa`) built to match one specific reference\'s composition, not assembled from the shared budgetPattern vocabulary — its own dedicated CSS (`.gfinexa-*`, app/styles/gallery.css) and two new shared chart primitives (a two-series comparison bar chart and a filled percentage dial), never a recolour of an existing budget pattern. Its own Dashboard still uses the existing ring-cluster hero (several comparative gauges), fitting a workspace this budget-focused without inventing a second unrelated composition.',
+    audience: 'Owners actively managing a monthly budget who want utilization, bills and category-level detail together on one page, in a genuinely polished, reference-quality composition.',
+    strengths: ['The utilization chart and bills summary read as one coordinated top section, not two unrelated cards.', 'Each category card genuinely differs in its chart type, mirroring how differently categories behave (steady vs. spiking vs. nearly exhausted).', 'Status pills state plainly, in words, whether a category is on track, almost reached or over — never colour alone.'],
+    tradeoffs: ['The bespoke Budget composition is deliberately NOT reusable by other concepts\' budgetPattern the way the shared axis patterns are — by design, matching the same reference-led exception already established for the ACRU-inspired Dashboard.', 'A workspace with very few budget lines shows fewer than four category cards, gracefully.'],
+    accessibilityNotes: ['The utilization chart pairs with the same sr-only figure-table rule every other chart in this Gallery already uses.', 'Each category card states its spent amount, percentage, remaining amount and status as real visible text beside its chart, never colour or the chart alone.', 'The pill nav keeps a visible focus ring and current-page state (aria-current) unchanged from the existing tabs nav style.'],
+    density: 'comfortable', navStyle: 'tabs', dashboardPattern: 'ring-cluster', cardStyle: 'soft-shadow', chartEmphasis: 'mixed', typeVoice: 'bold-display',
+    transactionsPattern: 'card-list', billsPattern: 'kanban-columns', budgetPattern: 'reference-finexa', accountsPattern: 'card-grid', settingsPattern: 'flat-list', sharedPattern: 'settlement-focus', tripsPattern: 'card-grid',
+    accentLight: '#6a1a9e', accentDark: '#c98ef0',
+    // recommended stays false here, matching the concept this replaced (Metric Rings) — `recommended`
+    // is this session's own pre-BT-013-10 top-10 label (see the comment above CONCEPTS), a bookkeeping
+    // fact this checkpoint has no reason to relitigate; flagship fidelity reflects the real bespoke
+    // reference-led build this checkpoint actually did.
+    fidelity: 'flagship', recommended: false,
   }),
   c({
-    id: 'sidebar-pro', name: 'Daily Driver',
-    tagline: 'Persistent professional navigation and productivity-oriented content.',
-    direction: 'A compact sidebar and a metric-grid dashboard: a tight grid of the key figures (net position, budget status, bills due, shared balance) with the sidebar always present for fast section-to-section movement.',
-    distinct: 'Metric-grid dashboard paired with sidebar nav at compact density — the most "daily productivity tool" combination, distinct from Metric Rings\' denser, gauge-only comparative version of the same "at a glance" idea.',
-    audience: 'Frequent, daily users who move between sections often and want the fastest key-figures overview plus fast navigation.',
-    strengths: ['Fastest section-to-section movement of any sidebar concept (compact density, persistent sidebar).', 'Key-figures grid answers the most common daily questions in one glance.', 'Scales well as a genuinely everyday-use tool.'],
-    tradeoffs: ['Compact density is not for everyone — never the site default.', 'Sidebar plus grid needs disciplined implementation to avoid feeling cramped on 13"-class laptop screens (verified at 1280px).'],
-    accessibilityNotes: ['Sidebar landmark (nav) precedes main in the DOM regardless of visual position.', 'Compact density keeps the same 44px interactive target sizes as every other density (padding compensates for smaller visible chrome).'],
-    density: 'compact', navStyle: 'sidebar', dashboardPattern: 'metric-grid', cardStyle: 'ribbon', chartEmphasis: 'bars', typeVoice: 'technical-mono',
+    id: 'acru-overview', name: 'Financial Overview',
+    tagline: 'A central cash-flow chart anchored by a coordinated sidebar, stat rail and account summary.',
+    direction: 'BT-013-10 (Terry, 2026-09-20): a reference-led composition, not an axis recombination — closely follows the ACRU reference\'s whole page (`.local/refcheck/r01.png`, extracted from docs/BudgetTracker-references.html), never just one borrowed element. A clean sidebar with a clear active state; a restrained utility header (search, notifications, settings, an "Add entry" primary action); a large central cash-flow chart anchoring the page with income/expenses/net figures placed deliberately beside it; a coordinated right-hand column of real BudgetTracker content (accounts, upcoming bills) replacing the reference\'s bank-card/promo area entirely, per Terry\'s explicit substitution rule; lower panels for spending distribution, overall budget health and this month\'s budget progress. Rounded surfaces, soft shadows, generous spacing.',
+    distinct: 'A genuinely bespoke Dashboard renderer (`reference-acru`, app/js/ui/gallery/compose.js `heroReferenceAcru`) built to match one specific reference\'s composition, not assembled from the shared axis vocabulary — its own dedicated CSS (`.gacru-*`, app/styles/gallery.css), never a recolour of an existing hero pattern.',
+    audience: 'Owners and managers who want one glance at cash flow, accounts and bills together, in a genuinely polished, reference-quality composition.',
+    strengths: ['The hero chart, stat rail and right column read as one coordinated composition, not separate cards competing for attention.', 'Spending distribution, budget health and progress panels below give real depth without leaving the page.', 'Sidebar orientation keeps every section one click away.'],
+    tradeoffs: ['The bespoke composition is deliberately NOT reusable by other concepts the way the shared axis patterns are — by design, since Terry\'s own instruction was that the existing template system must not dictate this design.', 'A new workspace with little transaction history has a flatter chart at first.'],
+    accessibilityNotes: ['The hero chart pairs with the same sr-only figure-table rule every other chart in this Gallery already uses.', 'The spending-distribution segmented bar states each category and its percentage in real text beside the bar, never colour alone.', 'Sidebar order matches reading order for screen readers (nav before main), unchanged from the existing sidebar nav style.'],
+    density: 'comfortable', navStyle: 'sidebar', dashboardPattern: 'reference-acru', cardStyle: 'soft-shadow', chartEmphasis: 'bars', typeVoice: 'technical-mono',
     transactionsPattern: 'dense-table', billsPattern: 'compact-table', budgetPattern: 'list-progress', accountsPattern: 'table', settingsPattern: 'two-column-grouped', sharedPattern: 'ledger-table', tripsPattern: 'list',
-    accentLight: '#0a4a5c', accentDark: '#3daee8',
+    accentLight: '#4a7a0a', accentDark: '#a3e85a',
     fidelity: 'flagship', recommended: true,
   }),
   c({
@@ -319,7 +331,7 @@ const CONCEPT_IDS = Object.freeze(CONCEPTS.map((x) => x.id));
 // name or visual redesign.
 const NAV_STYLES = Object.freeze(['top', 'rail', 'sidebar', 'sidebar-right', 'command', 'tabs']);
 const DENSITIES = Object.freeze(['spacious', 'comfortable', 'compact', 'ultra-compact']);
-const DASHBOARD_PATTERNS = Object.freeze(['metric-grid', 'chart-first', 'table-first', 'timeline', 'card-stack', 'goal-progress', 'merchant-feed', 'envelope-grid', 'command-console', 'split-focus', 'story-flow', 'adaptive', 'briefing', 'inbox', 'ring-cluster', 'mosaic', 'ledger-strip']);
+const DASHBOARD_PATTERNS = Object.freeze(['metric-grid', 'chart-first', 'table-first', 'timeline', 'card-stack', 'goal-progress', 'merchant-feed', 'envelope-grid', 'command-console', 'split-focus', 'story-flow', 'adaptive', 'briefing', 'inbox', 'ring-cluster', 'mosaic', 'ledger-strip', 'reference-acru', 'reference-ledgerfly']);
 const CARD_STYLES = Object.freeze(['flat-bordered', 'soft-shadow', 'outline-minimal', 'filled-tint', 'bordered-mono', 'ribbon', 'layered']);
 const CHART_EMPHASES = Object.freeze(['bars', 'line', 'mixed', 'donut', 'area']);
 const TYPE_VOICES = Object.freeze(['technical-mono', 'editorial-serif', 'friendly-rounded', 'bold-display', 'condensed-utility']);
@@ -333,7 +345,12 @@ const CATALOG_STATUSES = Object.freeze(['review', 'approved', 'retired']);
 // palette swap of the same one.
 //   transactionsPattern  'flat-list' | 'grouped-by-date' | 'dense-table' | 'card-list' | 'filter-first'
 //   billsPattern         'grouped-status' | 'timeline' | 'kanban-columns' | 'compact-table'
-//   budgetPattern        'envelope-grid' | 'bar-comparison' | 'list-progress'
+//   budgetPattern        'envelope-grid' | 'bar-comparison' | 'list-progress' | 'reference-finexa'
+//                        (BT-013-10, 2026-09-20: 'reference-finexa' is a second deliberately bespoke,
+//                        non-reusable pattern — the same exception dashboardPattern's 'reference-acru'
+//                        already established above — built closely against the real Finexa reference
+//                        image rather than the shared budgetPattern vocabulary, for the one concept
+//                        that chooses it.)
 //   accountsPattern      'card-grid' | 'table' | 'grouped-by-type' (BT-013 gap fix: Accounts/Merchants
 //                        was not a Gallery page at all before this — the design brief names it as one
 //                        of the required coordinated views for every concept)
@@ -345,7 +362,7 @@ const CATALOG_STATUSES = Object.freeze(['review', 'approved', 'retired']);
 //   tripsPattern         'card-grid' | 'list' | 'timeline'
 const TRANSACTIONS_PATTERNS = Object.freeze(['flat-list', 'grouped-by-date', 'dense-table', 'card-list', 'filter-first']);
 const BILLS_PATTERNS = Object.freeze(['grouped-status', 'timeline', 'kanban-columns', 'compact-table']);
-const BUDGET_PATTERNS = Object.freeze(['envelope-grid', 'bar-comparison', 'list-progress']);
+const BUDGET_PATTERNS = Object.freeze(['envelope-grid', 'bar-comparison', 'list-progress', 'reference-finexa']);
 const ACCOUNTS_PATTERNS = Object.freeze(['card-grid', 'table', 'grouped-by-type']);
 const SETTINGS_PATTERNS = Object.freeze(['flat-list', 'two-column-grouped']);
 const SHARED_PATTERNS = Object.freeze(['balance-list', 'ledger-table', 'settlement-focus']);

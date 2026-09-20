@@ -10,6 +10,7 @@ import { createView as createWorkspace, settingText } from "../js/ui/views/works
 import { createView as createPlanning, defaultBudgetStart, backdateProblem } from "../js/ui/views/planning.js";
 import { openBillEditor, createView as createBills } from "../js/ui/views/bills.js";
 import { createView as createDashboard } from "../js/ui/views/dashboard.js";
+import { todayIso } from "../js/core/format.js";
 import { navRoutes } from "../js/core/router.js";
 import { createShell } from "../js/ui/shell.js";
 import { createThemeController } from "../js/ui/theme.js";
@@ -310,7 +311,12 @@ describe("Settings card (shared by the workspace and group settings; UX review o
     const root = dom.body.querySelector(".modal");
     assert.match(spokenOf(triggerFor(pickerNamed(root, "Period"))), /^Period: Weekly/);
     const start = root.querySelector('input[type="date"]').value;
-    const today = new Date().toISOString().slice(0, 10);
+    // The app's own "today" is the viewer's LOCAL calendar date (todayIso(), used throughout the
+    // app so a person's own day boundary is never a UTC one); a bare `new Date().toISOString()`
+    // here would compare against UTC's own date instead, spuriously failing for roughly two hours
+    // out of every day in any timezone ahead of UTC (found and fixed 2026-09-20, Europe/Berlin, a
+    // real reproduction, not a hypothetical one — unrelated to any other change this session).
+    const today = todayIso();
     const days = (Date.parse(`${today}T00:00:00Z`) - Date.parse(`${start}T00:00:00Z`)) / 86400000;
     assert.equal(new Date(`${start}T00:00:00Z`).getUTCDay(), 0, `${start} is a Sunday`);
     assert.ok(days >= 0 && days <= 6, `${start} is the latest Sunday on or before ${today}`);

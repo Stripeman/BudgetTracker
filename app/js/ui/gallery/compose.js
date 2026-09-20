@@ -15,7 +15,7 @@
 // treatment), not hand-tuned per concept. See docs/REQUIREMENTS.md BT-013 for exactly which
 // concepts also received deeper, hand-tuned treatment beyond this shared template ("flagship").
 import { el, svgEl, mount } from "../dom.js";
-import { money, categoryLabel, badge, button, amountText, field, pickerSelect } from "../components.js";
+import { money, categoryLabel, badge, button, amountText, field, pickerSelect, input } from "../components.js";
 import { icon, withIcon } from "../icons.js";
 import { formatAmount } from "../../core/format.js";
 import * as fx from "./fixtures.js";
@@ -107,6 +107,67 @@ function radialGauge(pct, label, { size = 96, stroke = 10 } = {}) {
     "stroke-dasharray": circumference, "stroke-dashoffset": offset, transform: `rotate(-90 ${cx} ${cy})`,
   }));
   return el("div", { class: "ggauge" }, [svg, el("span", { class: "ggauge__pct", "aria-hidden": "true", text: `${clamped}%` })]);
+}
+
+// A two-series comparison bar chart (planned vs. spent, one paired group per category) — BT-013-10,
+// built for the Finexa-inspired Budget page (`.local/refcheck/r02.png`'s "Budget Utilization" chart):
+// the category with the highest utilization gets a highlighted (solid) spent bar, the rest stay a
+// muted accent, matching the reference's own single-highlighted-month treatment. Decorative only,
+// aria-hidden, and always paired with the same sr-only figure table every other chart here uses.
+function dualBarChart(lines, highlightIndex, { width = 520, height = 140 } = {}) {
+  const max = Math.max(1, ...lines.flatMap((l) => [l.planned, l.spent]));
+  const n = Math.max(1, lines.length);
+  const groupWidth = width / n;
+  const barWidth = groupWidth / 3;
+  const svg = svgEl("svg", { class: "chart chart--dualbars", viewBox: `0 0 ${width} ${height}`, "aria-hidden": "true", focusable: "false" });
+  lines.forEach((l, i) => {
+    const x0 = i * groupWidth + groupWidth / 2 - barWidth;
+    const hPlanned = Math.round((l.planned / max) * (height - 4));
+    const hSpent = Math.round((l.spent / max) * (height - 4));
+    svg.appendChild(svgEl("rect", { class: "chart__bar chart__bar--planned", x: x0, y: height - hPlanned, width: Math.max(1, barWidth - 2), height: Math.max(0, hPlanned) }));
+    svg.appendChild(svgEl("rect", {
+      class: `chart__bar chart__bar--spent${i === highlightIndex ? " chart__bar--highlight" : ""}`,
+      x: x0 + barWidth, y: height - hSpent, width: Math.max(1, barWidth - 2), height: Math.max(0, hSpent),
+    }));
+  });
+  return svg;
+}
+
+// A filled trend chart for the Ledgerfly-inspired forecast overview (BT-013-10, `.local/refcheck/r05.png`'s
+// dominant "Cash Forecast" chart) — deliberately built as its OWN primitive with its OWN class names
+// (`chart--trendfill`/`chart__trend-fill`), never reusing `areaChart`'s `chart--area`/`chart__area-fill`
+// classes: `wealth-overview` is the one and only concept whose `chartEmphasis` is `'area'`
+// (api/test/layouts.test.js asserts this exactly), and a shared class name would have made this
+// concept's bespoke Dashboard trip the existing "every OTHER concept's dashboard never renders the
+// area chart" test even though it is a structurally different composition. Reuses the shared
+// `chart__line--solid/dashed/dotted` dash-pattern classes (never colour alone), and always pairs with
+// the same sr-only figure table every other chart here uses.
+function forecastTrendChart(points, series, { width = 520, height = 160 } = {}) {
+  const all = points.flatMap((p) => series.map((s) => Number(p[s.key])));
+  const max = Math.max(1, ...all);
+  const min = Math.min(0, ...all);
+  const range = Math.max(1, max - min);
+  const stepX = points.length > 1 ? width / (points.length - 1) : width;
+  const y = (v) => Math.round(height - ((v - min) / range) * (height - 4) - 2);
+  const lead = series[0];
+  const coords = points.map((p, i) => [Math.round(i * stepX), y(Number(p[lead.key]))]);
+  const areaPoints = [[0, height], ...coords, [width, height]].map(([x, yy]) => `${x},${yy}`).join(" ");
+  const svg = svgEl("svg", { class: "chart chart--trendfill", viewBox: `0 0 ${width} ${height}`, "aria-hidden": "true", focusable: "false" });
+  svg.appendChild(svgEl("polygon", { class: "chart__trend-fill", points: areaPoints }));
+  for (const s of series) {
+    const c = points.map((p, i) => [Math.round(i * stepX), y(Number(p[s.key]))]);
+    svg.appendChild(svgEl("polyline", { class: `chart__line chart__line--${s.dash}`, points: c.map(([x, yy]) => `${x},${yy}`).join(" ") }));
+  }
+  return svg;
+}
+
+// A filled percentage dial (BT-013-10, matching the reference's own solid-pie category card) — a
+// genuinely different visual family from `radialGauge`'s hollow ring, built with a CSS conic-gradient
+// rather than SVG arc trigonometry. Purely decorative (aria-hidden): the real percentage is always
+// shown as visible text beside it by the caller, never colour or the dial alone.
+function pieDial(pct, { size = 76 } = {}) {
+  const clamped = Math.max(0, Math.min(100, pct));
+  return el("div", { class: "gpie", "aria-hidden": "true", vars: { "--pie-pct": `${clamped}%`, "--pie-size": `${size}px` } });
 }
 
 // ---- shared small building blocks -----------------------------------------------------------------
@@ -386,6 +447,204 @@ function heroLedgerStrip() {
   return [el("div", { class: "gledgerstrip-wrap" }, [strip]), ...heroTableFirst()];
 }
 
+// BT-013-10 (Terry, 2026-09-20): a BESPOKE Dashboard composition for `acru-overview`, built closely
+// against the real ACRU reference image (`.local/refcheck/r01.png`, extracted from
+// docs/BudgetTracker-references.html) — its whole page composition, not one borrowed element.
+// Deliberately NOT assembled from the shared hero vocabulary above: its own utility header, its own
+// two-column-plus-lower-row grid (`.gacru-*`, gallery.css), reusing shared PRIMITIVES (money,
+// categoryLabel, radialGauge, barChart, txRow, billRow) and the real canonical fixtures, never a
+// second parallel data model. The reference's own bank-card/promo area is replaced entirely with real
+// BudgetTracker content (accounts, upcoming bills) per Terry's explicit instruction; there is no
+// "Upgrade to Pro" or any promotional content anywhere in this composition.
+function heroReferenceAcru() {
+  // Every figure below is DERIVED from the same canonical fixtures every other concept already
+  // shares — never a separately invented number.
+  const incomeTotal = fx.transactions.filter((t) => Number(t.amount) > 0).reduce((s, t) => s + Number(t.amount), 0);
+  const expenseTotal = fx.transactions.filter((t) => Number(t.amount) < 0).reduce((s, t) => s - Number(t.amount), 0);
+  const byDate = new Map();
+  for (const t of fx.transactions) byDate.set(t.date, (byDate.get(t.date) || 0) + Number(t.amount));
+  const days = [...byDate.entries()].sort(([a], [b]) => (a < b ? -1 : 1));
+  const chartPoints = days.map(([date, value]) => ({ date, value }));
+  const peak = chartPoints.reduce((m, p) => (Math.abs(p.value) > Math.abs(m.value) ? p : m), chartPoints[0]);
+  const fmt = (v) => formatAmount(v.toFixed(2), fx.netPosition.currency);
+
+  const spendByCat = new Map();
+  let totalSpend = 0;
+  for (const t of fx.transactions) {
+    if (Number(t.amount) >= 0 || !t.category) continue;
+    const v = -Number(t.amount);
+    spendByCat.set(t.category, (spendByCat.get(t.category) || 0) + v);
+    totalSpend += v;
+  }
+  const segments = [...spendByCat.entries()].map(([id, v]) => ({ cat: cat(id), amount: v, pct: Math.round((v / totalSpend) * 100) })).sort((a, b) => b.amount - a.amount);
+
+  const plannedTotal = fx.budget.lines.reduce((s, l) => s + Number(l.planned), 0);
+  const spentTotal = fx.budget.lines.reduce((s, l) => s + Number(l.spent), 0);
+  const healthPct = Math.max(0, Math.min(100, Math.round((spentTotal / plannedTotal) * 100)));
+
+  // ---- restrained utility header: search, notifications, an account avatar, one primary action ----
+  const search = input({ type: "search", placeholder: "Quick search", "aria-label": "Quick search this workspace" });
+  const header = el("div", { class: "gacru-header" }, [
+    el("div", { class: "gacru-search" }, [search]),
+    el("div", { class: "gacru-header__actions" }, [
+      el("button", { type: "button", class: "gacru-iconbtn", "aria-label": "Notifications" }, [icon("bell")]),
+      el("div", { class: "gacru-avatar" }, [icon("user"), el("span", { class: "small", text: "Alice Fictional" })]),
+      button("+ Add entry", () => {}, { variant: "primary", small: true }),
+    ]),
+  ]);
+
+  // ---- the hero: a large central chart anchoring the page, with income/expense/net beside it -------
+  const heroCard = gcard("Balance overview", "chart-line", [
+    el("div", { class: "gacru-hero__top" }, [
+      el("div", {}, [
+        el("p", { class: "gacru-hero__figure" }, [money(fx.netPosition.amount, fx.netPosition.currency, fx.prefs)]),
+        el("p", { class: "muted small", text: "Net position across every account you can see" }),
+      ]),
+      el("div", { class: "gchart__legend" }, [el("span", { class: "gchart__key" }), " Net movement per day"]),
+    ]),
+    barChart(chartPoints, { width: 520, height: 140 }),
+    figureTable(chartPoints.map((p) => [p.date, fmt(p.value)]), "Net cash movement per day", ["Date", "Net"]),
+    peak ? el("p", { class: "muted small", text: `Largest movement: ${peak.date}, ${fmt(peak.value)}` }) : null,
+  ]);
+  const statRail = el("div", { class: "gacru-statrail" }, [
+    metric("Total income", amountText(incomeTotal.toFixed(2), fx.netPosition.currency, fx.prefs), "This period"),
+    metric("Total expenses", amountText((-expenseTotal).toFixed(2), fx.netPosition.currency, fx.prefs), "This period"),
+    metric("Net position", money(fx.netPosition.amount, fx.netPosition.currency, fx.prefs), "Across every account you can see"),
+  ]);
+
+  // ---- right column: real BudgetTracker content replaces the reference's bank-card/promo area -------
+  const accountsCard = gcard("Accounts", "bank", el("ul", { class: "stack" }, fx.accounts.map((a) => el("li", { class: "grow" }, [
+    withIcon(a.icon, a.name), el("span", { class: "app__spacer" }), money(a.balance, a.currency, fx.prefs),
+  ]))));
+  const billsCard = gcard("Upcoming bills", "calendar", el("ul", { class: "stack" }, fx.bills.slice(0, 4).map(billRow)));
+  const txCard = gcard("Transaction history", "receipt", el("ul", { class: "stack" }, fx.transactions.slice(0, 6).map(txRow)));
+
+  // ---- lower panels: spending distribution, overall budget health, this month's budget progress -----
+  const segBar = el("div", { class: "gacru-segbar" }, segments.map((s) => el("span", { class: "gacru-segbar__seg", vars: { "--seg-pct": `${s.pct}%`, "--seg-color": s.cat.color } })));
+  const segLegend = el("ul", { class: "gacru-seglegend" }, segments.map((s) => el("li", {}, [categoryLabel(s.cat.name, s.cat.color, s.cat.icon), el("span", { class: "app__spacer" }), el("span", { class: "small", text: `${s.pct}%` })])));
+  const spendingCard = gcard("Spending distribution", "chart-pie", [
+    el("p", { class: "gacru-hero__figure gacru-hero__figure--small" }, [amountText((-totalSpend).toFixed(2), fx.netPosition.currency, fx.prefs)]),
+    segBar, segLegend,
+  ]);
+  const healthCard = gcard("Budget health", "target", [radialGauge(healthPct, `${healthPct}% of this month's planned budget already spent`), el("p", { class: "muted small", text: `${formatAmount(spentTotal.toFixed(2), fx.budget.currency)} of ${formatAmount(plannedTotal.toFixed(2), fx.budget.currency)} planned` })]);
+  const progressCard = gcard("Budget progress", "chart-pie", el("ul", { class: "stack" }, fx.budget.lines.map((l) => {
+    const c = cat(l.category);
+    const pct = Math.max(0, Math.min(100, Math.round((Number(l.spent) / Number(l.planned)) * 100)));
+    return el("li", { class: "gacru-progrow" }, [
+      categoryLabel(c.name, c.color, c.icon),
+      el("div", { class: "gmeter", role: "img", "aria-label": `${pct}% of ${c.name}'s budget used` }, [el("div", { class: "gmeter__fill", vars: { "--pct": `${pct}%` } })]),
+      el("span", { class: "muted small", text: `${formatAmount(l.spent, fx.budget.currency)} / ${formatAmount(l.planned, fx.budget.currency)}` }),
+    ]);
+  })));
+
+  return [
+    header,
+    el("div", { class: "gacru-grid" }, [
+      el("div", { class: "gacru-main" }, [
+        heroCard, statRail,
+        el("div", { class: "gacru-lower" }, [spendingCard, healthCard, progressCard]),
+      ]),
+      el("div", { class: "gacru-side" }, [accountsCard, billsCard, txCard]),
+    ]),
+  ];
+}
+
+// BT-013-10 (Terry, 2026-09-20): a BESPOKE Dashboard composition for `ledgerfly-forecast`, built
+// closely against the real Ledgerfly reference image (`.local/refcheck/r05.png`, extracted from
+// docs/BudgetTracker-references.html) — its whole Executive Overview page composition, not one
+// borrowed element. Deliberately NOT assembled from the shared hero vocabulary above: a compact
+// header, a four-card KPI strip with one deliberately emphasised card, a dominant filled forecast
+// chart, a right-hand column of real breakdowns, and a scenario panel stating the workspace's own
+// already-real Expected/Cautious/Hopeful forecast figures (`fx.forecast`, the same figures other
+// concepts already use — never a second invented forecast, and never a fake "run simulation" control
+// this Gallery cannot actually execute). Reuses shared PRIMITIVES (money, amountText, categoryLabel,
+// figureTable, the new `forecastTrendChart`) and the real canonical fixtures throughout.
+function heroReferenceLedgerfly() {
+  const incomeTotal = fx.transactions.filter((t) => Number(t.amount) > 0).reduce((s, t) => s + Number(t.amount), 0);
+  const expenseTotal = fx.transactions.filter((t) => Number(t.amount) < 0).reduce((s, t) => s - Number(t.amount), 0);
+  const netFlow = incomeTotal - expenseTotal;
+  const totalCash = Number(fx.netPosition.amount);
+  const runwayMonths = expenseTotal > 0 ? (totalCash / expenseTotal).toFixed(1) : "—";
+
+  const kpis = [
+    { label: "Total balance", value: money(fx.netPosition.amount, fx.netPosition.currency, fx.prefs), meta: "Across every account you can see", emphasize: true },
+    { label: "Monthly spending", value: amountText((-expenseTotal).toFixed(2), fx.netPosition.currency, fx.prefs), meta: "This period" },
+    { label: "Runway", value: el("span", { text: `${runwayMonths} months` }), meta: "Balance ÷ this period's spending" },
+    { label: "Net monthly flow", value: amountText(netFlow.toFixed(2), fx.netPosition.currency, fx.prefs), meta: "Income minus spending" },
+  ];
+  const kpiStrip = el("div", { class: "gledgerfly-kpis" }, kpis.map((k) => el("div", { class: ["gledgerfly-kpi", k.emphasize ? "gledgerfly-kpi--emphasis" : ""] }, [
+    el("p", { class: "gledgerfly-kpi__label", text: k.label }),
+    el("p", { class: "gledgerfly-kpi__value" }, [k.value]),
+    el("p", { class: "gledgerfly-kpi__meta muted small", text: k.meta }),
+  ])));
+
+  const series = [{ key: "expected", dash: "solid" }, { key: "cautious", dash: "dashed" }, { key: "hopeful", dash: "dotted" }];
+  const forecastCard = gcard("Cash forecast", "chart-line", [
+    forecastTrendChart(fx.forecast.points, series),
+    figureTable(fx.forecast.points.map((p) => [p.date, p.expected, p.cautious, p.hopeful]), "Cash forecast, next 30 days", ["Date", "Expected", "Cautious", "Hopeful"]),
+    el("p", { class: "gchart__legend" }, [
+      el("span", { class: "gchart__key gchart__key--solid" }), "Expected  ",
+      el("span", { class: "gchart__key gchart__key--dashed" }), "Cautious  ",
+      el("span", { class: "gchart__key gchart__key--dotted" }), "Hopeful",
+    ]),
+  ], { full: true });
+
+  const spendByCat = new Map();
+  let totalSpend = 0;
+  for (const t of fx.transactions) {
+    if (Number(t.amount) >= 0 || !t.category) continue;
+    const v = -Number(t.amount);
+    spendByCat.set(t.category, (spendByCat.get(t.category) || 0) + v);
+    totalSpend += v;
+  }
+  const spendRows = [...spendByCat.entries()].map(([id, v]) => ({ cat: cat(id), amount: v, pct: Math.round((v / totalSpend) * 100) })).sort((a, b) => b.amount - a.amount);
+  const breakdownCard = gcard("Spending breakdown", "chart-pie", el("ul", { class: "stack" }, spendRows.map((s) => el("li", { class: "gledgerfly-breakdown__row" }, [
+    categoryLabel(s.cat.name, s.cat.color, s.cat.icon),
+    el("div", { class: "gmeter", role: "img", "aria-label": `${s.pct}% of spending was ${s.cat.name}` }, [el("div", { class: "gmeter__fill", vars: { "--pct": `${s.pct}%` } })]),
+    el("span", { class: "muted small", text: `${s.pct}% · ${formatAmount(s.amount.toFixed(2), fx.netPosition.currency)}` }),
+  ]))));
+
+  const spendByMerchant = new Map();
+  for (const t of fx.transactions) {
+    if (Number(t.amount) >= 0 || !t.payee) continue;
+    spendByMerchant.set(t.payee, (spendByMerchant.get(t.payee) || 0) + -Number(t.amount));
+  }
+  const topMerchants = [...spendByMerchant.entries()].map(([id, v]) => ({ m: merchant(id), amount: v })).sort((a, b) => b.amount - a.amount).slice(0, 2);
+  const driversCard = gcard("Primary cost drivers", "store", el("ul", { class: "stack" }, topMerchants.map((d) => el("li", { class: "grow" }, [
+    withIcon(d.m.icon, d.m.name), el("span", { class: "app__spacer" }), amountText((-d.amount).toFixed(2), fx.netPosition.currency, fx.prefs),
+  ]))));
+
+  // The reference's own "Run Simulation" scenario panel is deliberately NOT reproduced as a fake
+  // interactive control — this Gallery never calls a live API and has no real simulation to run.
+  // Instead, the panel states the workspace's own ALREADY-REAL Expected/Cautious/Hopeful 30-day
+  // forecast figures (the same ones `forecastCard` above already charts), honestly labelled.
+  const lastPoint = fx.forecast.points[fx.forecast.points.length - 1];
+  const scenarioCard = gcard("Scenario planning", "chart-line", [
+    el("p", { class: "muted small", text: `Net position by ${lastPoint.date}, across three real planning scenarios already used throughout this Gallery:` }),
+    el("ul", { class: "stack" }, [
+      el("li", { class: "grow" }, [el("span", { text: "Expected" }), el("span", { class: "app__spacer" }), amountText(lastPoint.expected, fx.netPosition.currency, fx.prefs)]),
+      el("li", { class: "grow" }, [el("span", { text: "Cautious" }), el("span", { class: "app__spacer" }), amountText(lastPoint.cautious, fx.netPosition.currency, fx.prefs)]),
+      el("li", { class: "grow" }, [el("span", { text: "Hopeful" }), el("span", { class: "app__spacer" }), amountText(lastPoint.hopeful, fx.netPosition.currency, fx.prefs)]),
+    ]),
+  ]);
+  const biggestBill = [...fx.bills].filter((b) => b.kind !== "income").sort((a, b) => Number(b.amount) - Number(a.amount))[0];
+  const obligationCard = gcard("Largest upcoming obligation", "calendar", [
+    withIcon(biggestBill.icon, biggestBill.name),
+    el("p", { class: "muted small", text: `Due ${biggestBill.dueDate}` }),
+    el("p", { class: "gledgerfly-obligation__amount" }, [amountText(`-${biggestBill.amount}`, biggestBill.currency, fx.prefs)]),
+    badge(BILL_STATUS_LABEL[biggestBill.status], biggestBill.status === "overdue" ? "danger" : biggestBill.status === "due-soon" ? "warning" : ""),
+  ]);
+
+  return [
+    kpiStrip,
+    el("div", { class: "gledgerfly-grid" }, [
+      el("div", { class: "gledgerfly-main" }, [forecastCard]),
+      el("div", { class: "gledgerfly-side" }, [breakdownCard, driversCard]),
+    ]),
+    el("div", { class: "gledgerfly-lower" }, [scenarioCard, obligationCard]),
+  ];
+}
+
 const DASHBOARD_RENDERERS = {
   "metric-grid": heroMetricGrid,
   "chart-first": heroChartFirst,
@@ -404,6 +663,8 @@ const DASHBOARD_RENDERERS = {
   "ring-cluster": heroRingCluster,
   mosaic: heroMosaic,
   "ledger-strip": heroLedgerStrip,
+  "reference-acru": heroReferenceAcru,
+  "reference-ledgerfly": heroReferenceLedgerfly,
 };
 
 function renderDashboard(concept, onNavigate) {
@@ -531,7 +792,92 @@ function budgetListProgress() {
   ]);
   return [gcard("Budget lines", "target", el("div", { class: "table-wrap" }, [table]), { full: true })];
 }
-const BUDGET_RENDERERS = { "envelope-grid": heroEnvelopeGrid, "bar-comparison": budgetBarComparison, "list-progress": budgetListProgress };
+// BT-013-10 (Terry, 2026-09-20): a BESPOKE Budget-page composition for `finexa-budget`, built closely
+// against the real Finexa reference image (`.local/refcheck/r02.png`, extracted from
+// docs/BudgetTracker-references.html) — its whole Budgets page composition, not one borrowed element.
+// Deliberately NOT assembled from the shared budgetPattern vocabulary above: a bold title/subtitle/
+// primary-action row, a large planned-vs-spent utilization chart paired with a real upcoming-bills
+// summary (replacing the reference's own SaaS-subscription tracking with real BudgetTracker bill
+// data — there is no "recurring payments" feature to invent one for), and four category cards each
+// with a genuinely different chart type, reusing shared PRIMITIVES (money, amountText, categoryLabel,
+// badge, figureTable, barChart, areaChart, radialGauge and the two new ones above) and the real
+// canonical `fx.budget.lines` — never a second parallel data model or an invented number.
+function budgetReferenceFinexa() {
+  const lines = fx.budget.lines.map((l) => {
+    const c = cat(l.category);
+    const planned = Number(l.planned);
+    const spent = Number(l.spent);
+    const pct = Math.round((spent / planned) * 100);
+    const remaining = Number(l.available);
+    const status = pct >= 95 ? { label: "Critical", variant: "danger" }
+      : pct >= 80 ? { label: "Almost reached", variant: "warning" }
+      : pct >= 50 ? { label: "On track", variant: "" }
+      : { label: "Healthy", variant: "shared" };
+    return { c, planned, spent, pct, remaining, status };
+  });
+  const highlightIndex = lines.reduce((best, l, i) => (l.pct > lines[best].pct ? i : best), 0);
+
+  const subhead = el("div", { class: "gfinexa-head" }, [
+    el("p", { class: "muted small", text: "Plan, track and control your spending limits with ease." }),
+    button("+ Add budget line", () => {}, { variant: "primary", small: true }),
+  ]);
+
+  const utilCard = gcard("Budget utilization", "chart-line", [
+    el("p", { class: "gchart__legend" }, [
+      el("span", { class: "gchart__key gfinexa-key--planned" }), "Planned  ",
+      el("span", { class: "gchart__key gfinexa-key--spent" }), "Spent",
+    ]),
+    dualBarChart(lines, highlightIndex),
+    figureTable(lines.map((l) => [l.c.name, formatAmount(l.planned.toFixed(2), fx.budget.currency), formatAmount(l.spent.toFixed(2), fx.budget.currency)]), "Planned versus spent, by category", ["Category", "Planned", "Spent"]),
+  ], { full: true });
+
+  const statusGroups = [["overdue", "Overdue"], ["due-soon", "Due soon"], ["upcoming", "Upcoming"]]
+    .map(([key, label]) => ({ label, rows: fx.bills.filter((b) => b.status === key) }))
+    .filter((g) => g.rows.length);
+  const billsTotal = fx.bills.filter((b) => b.kind !== "income").reduce((s, b) => s + Number(b.amount), 0);
+  const attentionPct = Math.round((fx.bills.filter((b) => b.status !== "upcoming").length / fx.bills.length) * 100);
+  const recurringCard = gcard("Upcoming bills", "calendar", [
+    el("div", { class: "gfinexa-recurring__top" }, [
+      metric("Bills tracked", String(fx.bills.length), null),
+      metric("Monthly total", amountText(billsTotal.toFixed(2), fx.budget.currency, fx.prefs), null),
+    ]),
+    el("p", { class: "small", text: "Needing attention" }),
+    el("div", { class: "gmeter", role: "img", "aria-label": `${attentionPct}% of bills are due soon or overdue` }, [el("div", { class: "gmeter__fill", vars: { "--pct": `${attentionPct}%` } })]),
+    el("ul", { class: "stack" }, statusGroups.map((g) => el("li", { class: "grow" }, [
+      el("span", { text: `${g.label} (${g.rows.length})` }), el("span", { class: "app__spacer" }),
+      amountText(g.rows.filter((b) => b.kind !== "income").reduce((s, b) => s + Number(b.amount), 0).toFixed(2), fx.budget.currency, fx.prefs),
+    ]))),
+  ]);
+
+  const chartFor = (i, l) => {
+    if (i === 0) return barChart([{ value: l.planned }, { value: l.spent }], { width: 160, height: 70 });
+    if (i === 1) return areaChart([{ v: l.planned }, { v: l.spent }], [{ key: "v", dash: "solid" }], { width: 160, height: 70 });
+    if (i === 2) return radialGauge(Math.min(100, l.pct), `${Math.min(100, l.pct)}% of ${l.c.name}'s budget used`, { size: 76, stroke: 9 });
+    return pieDial(l.pct, { size: 76 });
+  };
+  const categoryCards = lines.slice(0, 4).map((l, i) => gcard(l.c.name, l.c.icon, [
+    el("p", { class: "muted small", text: `Total budget: ${formatAmount(l.planned.toFixed(2), fx.budget.currency)}` }),
+    el("div", { class: "gfinexa-card__top" }, [
+      el("div", {}, [
+        el("p", { class: "gfinexa-card__amount" }, [money(l.spent.toFixed(2), fx.budget.currency, fx.prefs)]),
+        el("p", { class: "muted small", text: "Spent" }),
+      ]),
+      el("div", { class: "gfinexa-card__pct" }, [
+        el("p", { class: "gfinexa-card__pctvalue", text: `${l.pct}%` }),
+        el("p", { class: "muted small", text: "Utilization" }),
+      ]),
+    ]),
+    chartFor(i, l),
+    el("div", { class: "gfinexa-card__bottom" }, [
+      el("span", { class: "small", text: `Remaining: ${formatAmount(Math.abs(l.remaining).toFixed(2), fx.budget.currency)}` }),
+      badge(l.status.label, l.status.variant),
+    ]),
+  ]));
+
+  return [subhead, el("div", { class: "gfinexa-top" }, [utilCard, recurringCard]), el("div", { class: "gfinexa-cards" }, categoryCards)];
+}
+
+const BUDGET_RENDERERS = { "envelope-grid": heroEnvelopeGrid, "bar-comparison": budgetBarComparison, "list-progress": budgetListProgress, "reference-finexa": budgetReferenceFinexa };
 function renderBudget(concept) {
   const fn = BUDGET_RENDERERS[concept.budgetPattern] || heroEnvelopeGrid;
   return el("div", { class: "gpage gpage--list" }, [pageTitle("budget"), ...fn()]);
@@ -764,7 +1110,7 @@ function renderNav(concept, activeId, onNavigate, requiredPages) {
 export function renderConceptFrame(concept, pageId, onNavigate, { requiredPages = Object.keys(PAGE_LABEL) } = {}) {
   const page = (PAGE_RENDERERS[pageId] || renderDashboard)(concept, onNavigate);
   return el("div", {
-    class: "gframe", dataset: { nav: concept.navStyle, density: concept.density, card: concept.cardStyle, page: pageId, voice: concept.typeVoice, chart: concept.chartEmphasis },
+    class: "gframe", dataset: { nav: concept.navStyle, density: concept.density, card: concept.cardStyle, page: pageId, voice: concept.typeVoice, chart: concept.chartEmphasis, concept: concept.id },
     // Each concept's own colour identity (review, 2026-09-19), scoped to this frame only via CSS
     // custom properties never set outside it — see the accentLight/accentDark comment in
     // api/_shared/layouts.js and the --g-accent rules in gallery.css.
