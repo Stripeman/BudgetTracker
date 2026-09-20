@@ -5907,17 +5907,25 @@ Legend: ⬜ not started · 🟨 exists but not yet reference-matched to this con
 | Page | Executive Forecast (`ledgerfly-forecast`, navy) | Budget Workspace (`finexa-budget`, purple) | Financial Overview (`acru-overview`, green) |
 |---|---|---|---|
 | Dashboard (anchor) | ✅ BT-013-10 (`heroReferenceLedgerfly`) | 🟨 `ring-cluster` (shared pattern, not reference-led — Finexa's own anchor is its BUDGET page, per BT-013-10) | ✅ BT-013-10 (`heroReferenceAcru`) |
-| Budget (anchor for Finexa) | 🟨 `list-progress` (shared pattern) | ✅ BT-013-10 (`budgetReferenceFinexa`) | 🟨 `list-progress` (shared pattern) |
-| Transactions | 🟨 `flat-list` (shared pattern) | 🟨 `card-list` (shared pattern) | 🟨 `dense-table` (shared pattern) |
-| Bills | 🟨 `timeline` (shared pattern) | 🟨 `kanban-columns` (shared pattern) | 🟨 `compact-table` (shared pattern) |
-| Accounts | 🟨 `card-grid` (shared pattern) | 🟨 `card-grid` (shared pattern) | 🟨 `table` (shared pattern) |
-| Merchants (NEW, split from Accounts per Terry's table) | ⬜ not built | ⬜ not built | ⬜ not built |
-| Debt/loan detail (NEW) | ⬜ not built | ⬜ not built | ⬜ not built |
-| Shared expenses directory | 🟨 `balance-list` (shared pattern) | 🟨 `settlement-focus` (shared pattern) | 🟨 `ledger-table` (shared pattern) |
-| Shared expenses detail (NEW distinction) | ⬜ not built | ⬜ not built | ⬜ not built |
-| Trips (illustrative, BT-010 hold) | 🟨 `list` (shared pattern) | 🟨 `card-grid` (shared pattern) | 🟨 `list` (shared pattern) |
-| My Settings | 🟨 `flat-list` (shared pattern) | 🟨 `flat-list` (shared pattern) | 🟨 `two-column-grouped` (shared pattern) |
-| Workspace Settings | 🟨 `flat-list` (shared pattern) | 🟨 `flat-list` (shared pattern) | 🟨 `two-column-grouped` (shared pattern) |
+| Budget (anchor for Finexa) | ✅ `reference-ledgerfly` (`budgetReferenceLedgerfly`) | ✅ BT-013-10 (`budgetReferenceFinexa`) | 🟨 `list-progress` (shared pattern) |
+| Transactions | ✅ `reference-ledgerfly` (`txnReferenceLedgerfly`) | 🟨 `card-list` (shared pattern) | 🟨 `dense-table` (shared pattern) |
+| Bills | ✅ `reference-ledgerfly` (`billsReferenceLedgerfly`) | 🟨 `kanban-columns` (shared pattern) | 🟨 `compact-table` (shared pattern) |
+| Accounts | ✅ `reference-ledgerfly` (`accountsReferenceLedgerfly`) | 🟨 `card-grid` (shared pattern) | 🟨 `table` (shared pattern) |
+| Merchants (NEW, split from Accounts per Terry's table) | ✅ `reference-ledgerfly` (`merchantsReferenceLedgerfly`, extraPages) | ⬜ not built | ⬜ not built |
+| Debt/loan detail (NEW) | ✅ `reference-ledgerfly` (`debtReferenceLedgerfly`, extraPages) | ⬜ not built | ⬜ not built |
+| Shared expenses directory | ✅ `reference-ledgerfly` (`sharedReferenceLedgerfly`, combined view) | 🟨 `settlement-focus` (shared pattern) | 🟨 `ledger-table` (shared pattern) |
+| Shared expenses detail (NEW distinction) | ✅ real per-event balances via `fx.splitBalances` | ⬜ not built | ⬜ not built |
+| Trips (illustrative, BT-010 hold) | ✅ `reference-ledgerfly` (`tripsReferenceLedgerfly`) | 🟨 `card-grid` (shared pattern) | 🟨 `list` (shared pattern) |
+| My Settings | 🟨 `flat-list` (shared pattern — deliberately left shared, BT-013-14 audit already passed it) | 🟨 `flat-list` (shared pattern) | 🟨 `two-column-grouped` (shared pattern) |
+| Workspace Settings | 🟨 `flat-list` (shared pattern — deliberately left shared, BT-013-14 audit already passed it) | 🟨 `flat-list` (shared pattern) | 🟨 `two-column-grouped` (shared pattern) |
+
+**Executive Forecast (navy) is now COMPLETE** — every required and extra page reference-matched,
+verified in real browsers (`scripts/dev/e2e/ledgerflypages.mjs`, 21/21, stable across 3 runs; combined
+gallery e2e batch 281/281). My/Workspace Settings deliberately stay on the shared `flat-list`/
+`two-column-grouped` pattern for all three concepts, per BT-013-14's own already-passed acceptance
+audit (Terry's page-purpose table itself asks for "organized sections... not artificial financial
+charts" there, which the existing real interactive controls already satisfy) — this is a disclosed,
+deliberate scope decision, not an oversight.
 
 Every 🟨 already renders real, coordinated content (BT-013-13's summary rows, real fixtures) but through
 a pattern SHARED with other concepts, not yet carrying THIS concept's own reference identity the way
