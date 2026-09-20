@@ -5956,15 +5956,34 @@ controls already satisfy) — a disclosed, deliberate scope decision, not an ove
   accountsPattern" check went stale once ACRU got its own bespoke Accounts page; switched to
   Executive Ledger, which still genuinely uses that shared pattern.
 
-**Evidence (combined):** `npm test` 633/633, `npm --prefix api test` 780/780, `npm run validate` ok (27
-routes); `npm run e2e -- --only gallery,gallerybatch2,gallerybatch3,gallerysummaries,gallerysettings,
-gallerycog,acruoverview,ledgerflyforecast,ledgerflypages,finexabudget,finexapages,acrupages`
-**329/329, exit 0**, stable across 2 consecutive full runs.
+**Evidence (combined, final):** `npm test` 633/633, `npm --prefix api test` 780/780, `npm run validate`
+ok (27 routes); `npm run e2e -- --only gallery,gallerybatch2,gallerybatch3,gallerysummaries,
+gallerysettings,gallerycog,acruoverview,ledgerflyforecast,ledgerflypages,finexabudget,finexapages,
+acrupages,flagshipcolors` **339/339, exit 0**, stable across 2 consecutive full runs.
 
-**Not yet done for this scope (Terry's item 8, presenting evidence):** side-by-side reference-vs-
-implementation comparison images at comparable sizes; an explicit demonstration of >=2 colour schemes
-via the cog per design (the cog itself is built and verified generically in `gallerycog.mjs`, but not
-yet exercised specifically against all three flagship designs' own screenshots for the final
-presentation); a concise per-design adaptations/limitations write-up for the final PR description;
-opening the ONE consolidated PR for this whole branch; deploying to Preview and independently verifying
-the deployed commit; presenting the finished result to Terry for his own acceptance decision.
+## Checkpoint BQ (2026-09-20): BT-013-15 item 8 evidence complete; nav-duplication bug fixed; ready for the one consolidated PR
+
+Added `scripts/dev/e2e/flagshipcolors.mjs` (Terry's item 8: demonstrate at least two colour schemes via
+the cog, per design): opens the full-size preview and applies two presets each for Executive Forecast
+(Teal, Rose), Budget Workspace (Navy, Green) and Financial Overview (Purple, Amber), confirming each
+design's own layout/identity survives the repaint — 10/10, stable across 3 runs. Reviewing its own
+screenshots directly (not a test) found one more real bug: the full-size preview's nav listed
+Merchants/Debt detail TWICE for all three designs. Root cause: `app/js/ui/views/gallery.js`'s
+`renderFullscreen` was passing a `requiredPages` list that already included the concept's own
+`extraPages` into `renderConceptFrame`, which itself ALSO merges `extraPages` in — double-counted.
+Fixed by keeping the page picker's own (extraPages-inclusive) option list separate from the plain
+`requiredPages` passed to `renderConceptFrame`, and added a real assertion (unique nav item count,
+`flagshipcolors.mjs`) so this can never silently return.
+
+`docs/REQUIREMENTS.md` now has the full BT-013-15 row. **This authorized scope is now implementation-
+complete, tested and documented.** Remaining before presenting to Terry: open the ONE consolidated PR
+for this whole `feature/gallery-three-flagship-BT-013-15` branch (every commit from the branch's start
+through this checkpoint, never a PR per commit and never a bookkeeping-only PR), deploy to Preview via
+the sole supported path (`scripts/deploy/deploy.ps1 -Environment preview`), independently verify the
+deployed commit (`/api/site-settings`, not just trusting the deploy tool's own receipt), and present the
+finished three designs — this checklist, the screenshots already captured, the real bugs found and
+fixed, and an honest note that side-by-side pixel comparison against Terry's own original reference
+images was done by direct visual inspection during this session (not a generated composite image, since
+this agent has no image-compositing tool) — to Terry for HIS OWN acceptance decision. Never a self-
+declared "done". BT-007 and BT-010 remain on hold throughout; the other 12 gallery concepts' expansion
+remains paused, not abandoned. `main` was never merged and Production was never touched this checkpoint.
