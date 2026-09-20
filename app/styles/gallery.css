@@ -56,6 +56,26 @@
 .gframe[data-nav="sidebar-right"] { flex-direction: row-reverse; }
 .gframe[data-nav="sidebar-right"] > .gnav { border-right: none; border-left: 1px solid var(--border); }
 
+/* Mobile: a persistent side-by-side sidebar/rail squeezes real content into a narrow column instead
+   of genuinely reflowing (found by real-browser evidence while building BT-013-10's reference-led
+   concepts, 2026-09-20 — "mobile must be deliberately composed, not just a compressed desktop
+   screen"). Below this width every side nav becomes a horizontal strip above the content instead,
+   the same reflow direction `.gmosaic`/`.gkanban` already use elsewhere in this file — content gets
+   the full viewport width, and the nav's own items stay reachable via horizontal scroll. This is a
+   genuine fix for every sidebar/rail/sidebar-right concept, not only the new reference-led ones. */
+@media (max-width: 48rem) {
+  .gframe[data-nav="rail"], .gframe[data-nav="sidebar"], .gframe[data-nav="sidebar-right"] { flex-direction: column; }
+  .gframe[data-nav="rail"] > .gnav,
+  .gframe[data-nav="sidebar"] > .gnav,
+  .gframe[data-nav="sidebar-right"] > .gnav {
+    flex-direction: row; width: auto; max-width: none; border-right: none; border-left: none; border-bottom: 1px solid var(--border);
+    overflow-x: auto; align-items: center;
+  }
+  .gframe[data-nav="rail"] .gnav__items, .gframe[data-nav="sidebar"] .gnav__items, .gframe[data-nav="sidebar-right"] .gnav__items { flex-direction: row; }
+  .gframe[data-nav="rail"] .gnav__item span:not(.icon) { position: static; width: auto; height: auto; overflow: visible; clip: auto; white-space: normal; }
+  .gframe[data-nav="rail"] .gnav__brand span { display: inline; }
+}
+
 .gframe[data-nav="command"] > .gnav { gap: var(--space-4); }
 
 /* A sixth nav style (BT-013-09, 2026-09-19): a rounded, segmented tab bar rather than a plain link
@@ -246,3 +266,123 @@
 .gledgerstrip__item:last-child { border-right: none; }
 .gledgerstrip__label { margin: 0; font-size: var(--text-xs); color: var(--text-muted); }
 .gledgerstrip__value { font-size: var(--text-lg); font-weight: var(--weight-bold); }
+
+/* ---------------------------------------------------------------------------------------------- */
+/* BT-013-10 (Terry, 2026-09-20): a BESPOKE composition for `acru-overview`'s Dashboard only — built
+   closely against one real reference image's whole page, deliberately not a member of the shared
+   axis vocabulary above (see the design comment beside heroReferenceAcru in compose.js). Rounded
+   surfaces, generous spacing and a coordinated two-column-plus-lower-row grid, matching the reference
+   far more closely than a plain stack of equal-weight .gcard boxes ever could. Still built entirely
+   from the surface/text/border tokens (never a hand-picked colour), so every palette and both light
+   and dark modes apply automatically, exactly like the rest of the Gallery. */
+.gacru-header { display: flex; align-items: center; justify-content: space-between; gap: var(--space-4); flex-wrap: wrap; margin-bottom: var(--space-4); }
+.gacru-search { flex: 1 1 16rem; max-width: 22rem; }
+.gacru-search input { border-radius: var(--radius-pill); background: var(--surface-sunken); border-color: transparent; }
+.gacru-header__actions { display: flex; align-items: center; gap: var(--space-3); flex-wrap: wrap; }
+.gacru-iconbtn { display: inline-flex; align-items: center; justify-content: center; width: 2.25rem; height: 2.25rem; border-radius: 50%; border: 1px solid var(--border); background: var(--surface); color: var(--text-muted); cursor: pointer; }
+.gacru-iconbtn:hover { color: var(--text); }
+.gacru-avatar { display: inline-flex; align-items: center; gap: var(--space-2); }
+
+.gacru-grid { display: grid; grid-template-columns: 1fr; gap: var(--space-4); align-items: start; }
+@media (min-width: 60rem) { .gacru-grid { grid-template-columns: 2fr 1fr; } }
+.gacru-main, .gacru-side { min-width: 0; }
+
+.gacru-hero__top { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--space-3); flex-wrap: wrap; margin-bottom: var(--space-3); }
+.gacru-hero__figure { font-size: var(--text-2xl); font-weight: var(--weight-bold); margin: 0; }
+.gacru-hero__figure--small { font-size: var(--text-xl); }
+
+.gacru-statrail { display: grid; grid-template-columns: repeat(auto-fit, minmax(10rem, 1fr)); gap: var(--space-3); margin: 0 0 var(--space-4); }
+.gacru-statrail .gmetric { background: var(--surface); border-radius: var(--radius-lg); padding: var(--space-3); }
+
+.gacru-lower { display: grid; grid-template-columns: 1fr; gap: var(--space-3); }
+@media (min-width: 40rem) { .gacru-lower { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+.gacru-lower .gcard { margin-bottom: 0; }
+
+.gacru-segbar { display: flex; height: 0.75rem; border-radius: var(--radius-pill); overflow: hidden; background: var(--surface-sunken); margin: var(--space-2) 0; }
+.gacru-segbar__seg { display: block; width: var(--seg-pct, 0%); background: var(--seg-color, var(--g-accent, var(--accent))); }
+.gacru-seglegend { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: var(--space-1); }
+.gacru-seglegend li { display: flex; align-items: center; gap: var(--space-2); font-size: var(--text-sm); }
+
+.gacru-progrow { display: grid; grid-template-columns: minmax(7rem, 10rem) 1fr auto; align-items: center; gap: var(--space-3); padding: var(--space-2) 0; border-bottom: 1px solid var(--border); }
+.gacru-progrow:last-child { border-bottom: none; }
+
+/* ---------------------------------------------------------------------------------------------- */
+/* BT-013-10 (Terry, 2026-09-20): a BESPOKE composition for `finexa-budget`'s Budget page only — built
+   closely against the real Finexa reference image's whole Budgets page (see the design comment beside
+   budgetReferenceFinexa in compose.js). A bold title/subtitle/primary-action row, a large utilization
+   chart paired with a bills summary, and four category cards each with their own chart type. Built
+   entirely from the surface/text/border tokens (never a hand-picked colour), so every palette and
+   both light and dark modes apply automatically, exactly like the rest of the Gallery. */
+.gfinexa-head { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); flex-wrap: wrap; margin: var(--space-1) 0 var(--space-4); }
+
+.gfinexa-key--planned, .gfinexa-key--spent { display: inline-block; width: 0.75rem; height: 0.75rem; border-radius: var(--radius-sm); vertical-align: middle; margin-right: var(--space-1); }
+.gfinexa-key--planned { background: var(--border); }
+.gfinexa-key--spent { background: var(--g-accent, var(--accent)); }
+.chart--dualbars .chart__bar--planned { fill: var(--border); }
+.chart--dualbars .chart__bar--spent { fill: var(--g-accent-soft, var(--accent-soft)); }
+.chart--dualbars .chart__bar--spent.chart__bar--highlight { fill: var(--g-accent, var(--accent)); }
+
+.gfinexa-top { display: grid; grid-template-columns: 1fr; gap: var(--space-4); align-items: start; margin-bottom: var(--space-4); }
+@media (min-width: 60rem) { .gfinexa-top { grid-template-columns: 2fr 1fr; } }
+.gfinexa-top .gcard { margin-bottom: 0; }
+.gfinexa-recurring__top { display: flex; gap: var(--space-4); flex-wrap: wrap; margin-bottom: var(--space-3); }
+
+.gfinexa-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(13rem, 1fr)); gap: var(--space-3); }
+.gfinexa-card__top { display: flex; align-items: flex-end; justify-content: space-between; gap: var(--space-2); margin: var(--space-2) 0 var(--space-3); }
+.gfinexa-card__amount { font-size: var(--text-xl); font-weight: var(--weight-bold); margin: 0; }
+.gfinexa-card__pct { text-align: right; }
+.gfinexa-card__pctvalue { font-size: var(--text-xl); font-weight: var(--weight-bold); margin: 0; }
+.gfinexa-card__bottom { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); margin-top: var(--space-3); flex-wrap: wrap; }
+
+/* A filled percentage dial (compose.js pieDial): a genuinely different visual family from the hollow
+   `.ggauge` ring above — a solid conic-gradient fill, matching the reference's own solid-pie category
+   card. Purely decorative (aria-hidden); the real percentage is always shown as text beside it. */
+.gpie { width: var(--pie-size, 76px); height: var(--pie-size, 76px); border-radius: 50%; background: conic-gradient(var(--g-accent, var(--accent)) var(--pie-pct, 0%), var(--surface-sunken) 0); flex: none; }
+
+/* ---------------------------------------------------------------------------------------------- */
+/* BT-013-10 (Terry, 2026-09-20): a BESPOKE composition for `ledgerfly-forecast`'s Dashboard only —
+   built closely against the real Ledgerfly reference image's whole Executive Overview page (see the
+   design comment beside heroReferenceLedgerfly in compose.js). A KPI strip with one deliberately
+   emphasised dark card, a dominant forecast chart, a real breakdown column and a scenario/obligation
+   row. Built entirely from the surface/text/border tokens (never a hand-picked colour) EXCEPT the one
+   deliberately-dark emphasis card and sidebar below, which intentionally stay dark regardless of the
+   page's own light/dark mode — matching the reference's own constant-dark navigation and KPI
+   treatment — using the concept's OWN declared `--g-accent-light` (a real, verified-contrast colour
+   this concept already carries), never an arbitrary new hex value. */
+.gledgerfly-kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(11rem, 1fr)); gap: var(--space-3); margin: var(--space-1) 0 var(--space-4); }
+.gledgerfly-kpi { background: var(--surface); border-radius: var(--radius-lg); box-shadow: var(--shadow-sm); padding: var(--space-4); }
+.gledgerfly-kpi--emphasis { background: var(--g-accent-light); }
+.gledgerfly-kpi--emphasis .gledgerfly-kpi__label,
+.gledgerfly-kpi--emphasis .gledgerfly-kpi__value { color: #fff; }
+.gledgerfly-kpi--emphasis .gledgerfly-kpi__meta { color: rgba(255, 255, 255, 0.72); }
+.gledgerfly-kpi__label { margin: 0 0 var(--space-2); font-size: var(--text-sm); color: var(--text-muted); }
+.gledgerfly-kpi__value { margin: 0; font-size: var(--text-xl); font-weight: var(--weight-bold); }
+.gledgerfly-kpi__meta { margin: var(--space-1) 0 0; }
+
+.gledgerfly-grid { display: grid; grid-template-columns: 1fr; gap: var(--space-4); align-items: start; margin-bottom: var(--space-4); }
+@media (min-width: 60rem) { .gledgerfly-grid { grid-template-columns: 2fr 1fr; } }
+.gledgerfly-main .gcard { margin-bottom: 0; }
+.gledgerfly-side .gcard { margin-bottom: var(--space-3); }
+.gledgerfly-side .gcard:last-child { margin-bottom: 0; }
+
+.gledgerfly-breakdown__row { display: grid; grid-template-columns: minmax(7rem, 9rem) 1fr auto; align-items: center; gap: var(--space-2); padding: var(--space-2) 0; border-bottom: 1px solid var(--border); }
+.gledgerfly-breakdown__row:last-child { border-bottom: none; }
+
+.gledgerfly-lower { display: grid; grid-template-columns: 1fr; gap: var(--space-3); }
+@media (min-width: 48rem) { .gledgerfly-lower { grid-template-columns: 2fr 1fr; } }
+.gledgerfly-obligation__amount { font-size: var(--text-xl); font-weight: var(--weight-bold); margin: var(--space-1) 0; }
+
+/* The filled trend chart (compose.js forecastTrendChart) — a genuinely different primitive from
+   `chart--area`/`chart__area-fill` (kept structurally distinct so `wealth-overview` stays the sole
+   `chartEmphasis: 'area'` concept, per api/test/layouts.test.js). */
+.chart--trendfill .chart__trend-fill { fill: color-mix(in srgb, var(--g-accent, var(--accent)) 22%, transparent); stroke: none; }
+.chart--trendfill .chart__line--solid { stroke: var(--g-accent, var(--accent)); }
+
+/* A compact, professional DARK sidebar for this one concept only — the reference keeps its own
+   navigation a constant dark navy regardless of the surrounding page's light/dark mode. Scoped
+   strictly to this concept's own frame via the `data-concept` attribute (renderConceptFrame,
+   compose.js), never a global nav change affecting any other sidebar concept. */
+.gframe[data-concept="ledgerfly-forecast"] > .gnav { background: #141a3d; border-color: transparent; }
+.gframe[data-concept="ledgerfly-forecast"] > .gnav .gnav__brand,
+.gframe[data-concept="ledgerfly-forecast"] .gnav__item { color: #c7cdf0; }
+.gframe[data-concept="ledgerfly-forecast"] .gnav__item--active { background: rgba(255, 255, 255, 0.14); color: #fff; }

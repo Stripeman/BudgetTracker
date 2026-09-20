@@ -67,7 +67,7 @@ describe('BT-013 design gallery: permissions', () => {
 describe('BT-013 design gallery: recording Terry\'s picks', () => {
   test('a site administrator records picks; stored, returned, audited with before/after, attributed and timestamped', async () => {
     const h = harness();
-    const picked = ['executive-ledger', 'modern-banking', 'sidebar-pro'];
+    const picked = ['executive-ledger', 'modern-banking', 'acru-overview'];
     const out = ok(await h.call('design-gallery', 'PATCH', { as: 'dave', body: { picks: { selectedIds: picked, note: 'Strong shortlist for the first ten.' } } }));
     assert.deepEqual([...out.picks.selectedIds].sort(), [...picked].sort());
     assert.equal(out.picks.note, 'Strong shortlist for the first ten.');
