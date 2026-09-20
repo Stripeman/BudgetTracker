@@ -89,8 +89,14 @@
    row — the active tab is shown by SHAPE (a raised pill) and a border in the concept's own accent,
    never accent-coloured text (the same contrast-safety rule the other five nav styles already keep). */
 .gframe[data-nav="tabs"] > .gnav { padding: var(--space-2) var(--space-3); }
-.gframe[data-nav="tabs"] .gnav__items { display: inline-flex; background: var(--surface-sunken); border-radius: var(--radius-pill); padding: 0.25rem; gap: 0.125rem; }
-.gframe[data-nav="tabs"] .gnav__item { border-radius: var(--radius-pill); padding: var(--space-1) var(--space-3); }
+/* BT-013-14 (2026-09-20): found while evaluating rendered results after the My Settings/Workspace
+   Settings split raised every concept's own item count to 9 — the pill-tab row's inherited
+   `flex-wrap: wrap` (from the base `.gnav__items` rule) let one item (the longest label) wrap alone
+   onto its own line inside the still-rounded pill background, reading as broken, not deliberate. Real
+   pill-tab bars scroll horizontally instead of wrapping; fixed the same way here, contained entirely
+   within the nav's own row so it can never cause page-level horizontal overflow. */
+.gframe[data-nav="tabs"] .gnav__items { display: flex; flex-wrap: nowrap; overflow-x: auto; background: var(--surface-sunken); border-radius: var(--radius-pill); padding: 0.25rem; gap: 0.125rem; }
+.gframe[data-nav="tabs"] .gnav__item { flex: none; border-radius: var(--radius-pill); padding: var(--space-1) var(--space-3); }
 .gframe[data-nav="tabs"] .gnav__item--active { background: var(--bg); box-shadow: var(--shadow-sm); border-color: var(--g-accent, var(--accent)); }
 
 /* Density: spacing scale applied to the frame's own padding and card gaps only (never affects
