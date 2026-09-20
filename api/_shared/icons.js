@@ -32,6 +32,9 @@ const BUILT_IN = Object.freeze([
   ['external', 'Opens in a new tab', 'system'],
   // The compact record-actions menu trigger (BT-015), drawn by the app; never user-selectable.
   ['more', 'More actions', 'system'],
+  // The per-design appearance/colour-customization trigger (BT-013-15), drawn by the app on the
+  // Design Gallery only; never user-selectable elsewhere.
+  ['cog', 'Customize appearance', 'system'],
   ['home', 'Home', 'category'], ['bolt', 'Energy', 'category'], ['cart', 'Groceries', 'category'], ['utensils', 'Dining', 'category'],
   ['car', 'Car', 'category'], ['heart', 'Health', 'category'], ['shield', 'Protection', 'category'], ['film', 'Entertainment', 'category'],
   ['bag', 'Shopping', 'category'], ['plane', 'Travel', 'category'], ['book', 'Education', 'category'], ['gift', 'Gift', 'category'],

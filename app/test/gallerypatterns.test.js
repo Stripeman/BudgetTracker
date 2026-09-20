@@ -73,15 +73,32 @@ describe("BT-013 secondary-page composition patterns: every real concept, every 
     assert.ok(timelineFrame.querySelector("ol.gtimeline"), "timeline renders one ordered list");
   });
 
-  test("the new Accounts/Merchants page (gap fix) shows both accounts and merchants, in every one of its three patterns", () => {
+  test("the Accounts/Merchants page shows both accounts and merchants, in every pattern EXCEPT a concept with its own separate Merchants page (BT-013-15)", () => {
     for (const pattern of ACCOUNTS_PATTERNS) {
       const concept = CONCEPTS.find((c) => c.accountsPattern === pattern);
       assert.ok(concept, `at least one concept uses ${pattern}`);
       const frame = renderConceptFrame(concept, "accounts", () => {}, { requiredPages: REQUIRED_PAGES });
       const text = frame.querySelector(".gframe__main").textContent;
-      assert.match(text, /Merchants/, `${pattern} shows a Merchants section`);
+      const hasOwnMerchants = (concept.extraPages || []).includes("merchants");
+      if (hasOwnMerchants) assert.doesNotMatch(text, /Merchants/, `${pattern} (${concept.id}) has its own separate Merchants page, so Accounts no longer also embeds it`);
+      else assert.match(text, /Merchants/, `${pattern} shows a Merchants section`);
       assert.match(text, /Joint Checking|Household Card|Alice Savings|Car Loan/, `${pattern} shows real account names`);
     }
+  });
+
+  test("BT-013-15: a concept with its own extraPages (Merchants, Debt/loan detail) shows real, distinct content on each, and both are reachable from the nav", () => {
+    const concept = CONCEPTS.find((c) => (c.extraPages || []).includes("merchants") && (c.extraPages || []).includes("debt"));
+    assert.ok(concept, "at least one concept declares extraPages");
+    const requiredPages = REQUIRED_PAGES;
+    const merchantsFrame = renderConceptFrame(concept, "merchants", () => {}, { requiredPages });
+    const merchantsText = merchantsFrame.querySelector(".gframe__main").textContent;
+    assert.match(merchantsText, /Fictional Grocer|Corner Cafe|City Transit/, "Merchants shows real merchant names");
+    assert.match(merchantsFrame.querySelector(".gnav").textContent, /Merchants/, "Merchants is a real nav item");
+    const debtFrame = renderConceptFrame(concept, "debt", () => {}, { requiredPages });
+    const debtText = debtFrame.querySelector(".gframe__main").textContent;
+    assert.match(debtText, /Car Loan/, "Debt detail shows the real loan account");
+    assert.match(debtText, /illustrative/i, "the assumed APR/original balance is disclosed as illustrative");
+    assert.match(debtFrame.querySelector(".gnav").textContent, /Debt detail/, "Debt detail is a real nav item");
   });
 
   test("a two-column-grouped settings concept reuses the REAL production settings grid class, not a lookalike, on BOTH My Settings and Workspace Settings (BT-013-14)", () => {

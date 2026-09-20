@@ -63,3 +63,26 @@ describe('BT-011-04 category colours', () => {
     assert.deepEqual([reset.effective.categoryColors, reset.sources.categoryColors], [{}, 'default']);
   });
 });
+
+describe('BT-013-15 personal Design Gallery colour customization', () => {
+  const { CONCEPT_IDS } = require('../_shared/layouts');
+
+  test('each design\'s light/dark override is validated against its OWN mode\'s real surface, stored only in the caller\'s own preferences, and never affects anyone else', async () => {
+    const h = harness();
+    const f = await household(h);
+    const id = CONCEPT_IDS[0];
+    const bob = ok(await h.call('preferences', 'PUT', { as: 'bob', body: { galleryDesignColors: { [id]: { light: '#1a2a7a', dark: '#8fa0f5', preset: 'navy' } } } }));
+    assert.deepEqual(bob.effective.galleryDesignColors, { [id]: { light: '#1a2a7a', dark: '#8fa0f5', preset: 'navy' } });
+    assert.equal(bob.sources.galleryDesignColors, 'personal');
+    // Alice's own preferences, and the workspace itself, are completely untouched.
+    assert.deepEqual(ok(await h.call('preferences', 'GET', { as: 'alice' })).effective.galleryDesignColors, {});
+    // A light-mode colour is checked against the light surface, a dark-mode colour against the dark
+    // surface — NEVER both against the same one, since each is only ever drawn in its own mode.
+    code(await h.call('preferences', 'PUT', { as: 'bob', body: { galleryDesignColors: { [id]: { light: '#fefefe' } } } }), 400, 'color_contrast');
+    code(await h.call('preferences', 'PUT', { as: 'bob', body: { galleryDesignColors: { [id]: { dark: '#141a24' } } } }), 400, 'color_contrast');
+    code(await h.call('preferences', 'PUT', { as: 'bob', body: { galleryDesignColors: { [id]: { light: 'blue' } } } }), 400, 'invalid_color');
+    code(await h.call('preferences', 'PUT', { as: 'bob', body: { galleryDesignColors: { 'not-a-real-concept': { light: '#1a2a7a' } } } }), 400, 'invalid_id');
+    const reset = ok(await h.call('preferences', 'PUT', { as: 'bob', body: { galleryDesignColors: null } }));
+    assert.deepEqual([reset.effective.galleryDesignColors, reset.sources.galleryDesignColors], [{}, 'default']);
+  });
+});

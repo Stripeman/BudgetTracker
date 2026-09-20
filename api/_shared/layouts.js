@@ -94,6 +94,18 @@
 // combined page standing in for both.
 const REQUIRED_PAGES = Object.freeze(['dashboard', 'transactions', 'bills', 'budget', 'accounts', 'shared', 'trips', 'mysettings', 'worksettings']);
 
+// BT-013-15 (2026-09-20, Terry): two further pages his own page-purpose table names explicitly —
+// "Merchants" (split out from the combined Accounts/Merchants page) and "Debt/loan detail" — but
+// ONLY for the three flagship reference-matched designs this increment focuses on
+// (`acru-overview`, `finexa-budget`, `ledgerfly-forecast`), never added to `REQUIRED_PAGES` itself.
+// Terry's own instruction was to "pause expansion" of the other twelve concepts while these three are
+// brought to standard, not to retrofit two more pages onto all fifteen — so this stays a per-concept
+// `extraPages` list (empty for every concept that does not declare it) rather than a change to the
+// one global list every concept is tested against. A concept that lists a page here MUST also declare
+// the matching `<page>Pattern` field (e.g. `merchantsPattern`), exactly like every required page's own
+// pattern field.
+const EXTRA_PAGES = Object.freeze(['merchants', 'debt']);
+
 // The one real, selectable layout today (workspace setting `layoutId`, BT-011-07/BT-013): today's
 // existing implicit application layout, kept exactly as it behaves now. Nothing in CONCEPTS below is
 // in this list — that is the deliberate boundary between "under review in the Gallery" and "a real
@@ -229,7 +241,11 @@ const CONCEPTS = Object.freeze([
     tradeoffs: ['The bespoke composition is deliberately NOT reusable by other concepts the way the shared axis patterns are — by design, matching the same reference-led exception already established for the ACRU and Finexa concepts.', 'A workspace with very little transaction history shows a flatter forecast and a less meaningful runway figure at first.'],
     accessibilityNotes: ['The forecast chart pairs with the same sr-only figure-table rule every other chart in this Gallery already uses.', 'The KPI strip states every figure as real visible text, never colour or card emphasis alone.', 'Sidebar order matches reading order for screen readers (nav before main), unchanged from the existing sidebar nav style.'],
     density: 'comfortable', navStyle: 'sidebar', dashboardPattern: 'reference-ledgerfly', cardStyle: 'soft-shadow', chartEmphasis: 'line', typeVoice: 'condensed-utility',
-    transactionsPattern: 'flat-list', billsPattern: 'timeline', budgetPattern: 'list-progress', accountsPattern: 'card-grid', settingsPattern: 'flat-list', sharedPattern: 'balance-list', tripsPattern: 'list',
+    // BT-013-15 (2026-09-20): every required financial page now carries the SAME "restrained sidebar,
+    // KPI strip, dominant analytical chart" identity `reference-ledgerfly` established on the
+    // Dashboard, plus the two new pages Terry's table names — not the shared axis vocabulary.
+    transactionsPattern: 'reference-ledgerfly', billsPattern: 'reference-ledgerfly', budgetPattern: 'reference-ledgerfly', accountsPattern: 'reference-ledgerfly', settingsPattern: 'flat-list', sharedPattern: 'reference-ledgerfly', tripsPattern: 'reference-ledgerfly',
+    extraPages: ['merchants', 'debt'], merchantsPattern: 'reference-ledgerfly', debtPattern: 'reference-ledgerfly',
     accentLight: '#1a2a7a', accentDark: '#8fa0f5',
     fidelity: 'flagship', recommended: false,
   }),
@@ -278,14 +294,15 @@ const CONCEPTS = Object.freeze([
   c({
     id: 'finexa-budget', name: 'Budget Workspace',
     tagline: 'A purpose-built budget workspace: utilization at a glance, bills tracked, categories broken out.',
-    direction: 'BT-013-10 (Terry, 2026-09-20): a reference-led composition for the BUDGET page specifically, not an axis recombination — closely follows the Finexa reference\'s whole Budgets page (`.local/refcheck/r02.png`, extracted from docs/BudgetTracker-references.html). A polished pill-style top navigation with a clear active state; a bold page title and subtitle over a primary "+ Add budget line" action; a large planned-vs-spent utilization chart paired with an upcoming-bills summary; four category cards each combining a spent figure, a utilization percentage, a genuinely different small chart, a remaining figure and a status pill; a cohesive purple/lavender palette on clean neutral surfaces.',
-    distinct: 'A genuinely bespoke Budget-page renderer (`reference-finexa`, app/js/ui/gallery/compose.js `budgetReferenceFinexa`) built to match one specific reference\'s composition, not assembled from the shared budgetPattern vocabulary — its own dedicated CSS (`.gfinexa-*`, app/styles/gallery.css) and two new shared chart primitives (a two-series comparison bar chart and a filled percentage dial), never a recolour of an existing budget pattern. Its own Dashboard still uses the existing ring-cluster hero (several comparative gauges), fitting a workspace this budget-focused without inventing a second unrelated composition.',
+    direction: 'BT-013-10 (Terry, 2026-09-20): a reference-led composition for the BUDGET page specifically, not an axis recombination — closely follows the Finexa reference\'s whole Budgets page (`.local/refcheck/r02.png`, extracted from docs/BudgetTracker-references.html). A polished pill-style top navigation with a clear active state; a bold page title and subtitle over a primary "+ Add budget line" action; a large planned-vs-spent utilization chart paired with an upcoming-bills summary; four category cards each combining a spent figure, a utilization percentage, a genuinely different small chart, a remaining figure and a status pill; a cohesive purple/lavender palette on clean neutral surfaces. BT-013-15 (2026-09-20): every required and extra page now carries this SAME identity (subhead + primary action, a two-column "top" section, a card grid with a genuinely different chart per card) — not the shared axis vocabulary this concept previously used for them.',
+    distinct: 'A genuinely bespoke composition across every page (`reference-finexa`, app/js/ui/gallery/compose.js) built to match the Finexa reference\'s own composition, not assembled from the shared axis vocabulary — its own dedicated CSS (`.gfinexa-*`, app/styles/gallery.css) and two new shared chart primitives (a two-series comparison bar chart and a filled percentage dial), never a recolour of another concept\'s pattern.',
     audience: 'Owners actively managing a monthly budget who want utilization, bills and category-level detail together on one page, in a genuinely polished, reference-quality composition.',
     strengths: ['The utilization chart and bills summary read as one coordinated top section, not two unrelated cards.', 'Each category card genuinely differs in its chart type, mirroring how differently categories behave (steady vs. spiking vs. nearly exhausted).', 'Status pills state plainly, in words, whether a category is on track, almost reached or over — never colour alone.'],
-    tradeoffs: ['The bespoke Budget composition is deliberately NOT reusable by other concepts\' budgetPattern the way the shared axis patterns are — by design, matching the same reference-led exception already established for the ACRU-inspired Dashboard.', 'A workspace with very few budget lines shows fewer than four category cards, gracefully.'],
+    tradeoffs: ['The bespoke composition is deliberately NOT reusable by other concepts the way the shared axis patterns are — by design, matching the same reference-led exception already established for the ACRU-inspired Dashboard.', 'A workspace with very few budget lines shows fewer than four category cards, gracefully.'],
     accessibilityNotes: ['The utilization chart pairs with the same sr-only figure-table rule every other chart in this Gallery already uses.', 'Each category card states its spent amount, percentage, remaining amount and status as real visible text beside its chart, never colour or the chart alone.', 'The pill nav keeps a visible focus ring and current-page state (aria-current) unchanged from the existing tabs nav style.'],
-    density: 'comfortable', navStyle: 'tabs', dashboardPattern: 'ring-cluster', cardStyle: 'soft-shadow', chartEmphasis: 'mixed', typeVoice: 'bold-display',
-    transactionsPattern: 'card-list', billsPattern: 'kanban-columns', budgetPattern: 'reference-finexa', accountsPattern: 'card-grid', settingsPattern: 'flat-list', sharedPattern: 'settlement-focus', tripsPattern: 'card-grid',
+    density: 'comfortable', navStyle: 'tabs', dashboardPattern: 'reference-finexa', cardStyle: 'soft-shadow', chartEmphasis: 'mixed', typeVoice: 'bold-display',
+    transactionsPattern: 'reference-finexa', billsPattern: 'reference-finexa', budgetPattern: 'reference-finexa', accountsPattern: 'reference-finexa', settingsPattern: 'flat-list', sharedPattern: 'reference-finexa', tripsPattern: 'reference-finexa',
+    extraPages: ['merchants', 'debt'], merchantsPattern: 'reference-finexa', debtPattern: 'reference-finexa',
     accentLight: '#6a1a9e', accentDark: '#c98ef0',
     // recommended stays false here, matching the concept this replaced (Metric Rings) — `recommended`
     // is this session's own pre-BT-013-10 top-10 label (see the comment above CONCEPTS), a bookkeeping
@@ -297,13 +314,16 @@ const CONCEPTS = Object.freeze([
     id: 'acru-overview', name: 'Financial Overview',
     tagline: 'A central cash-flow chart anchored by a coordinated sidebar, stat rail and account summary.',
     direction: 'BT-013-10 (Terry, 2026-09-20): a reference-led composition, not an axis recombination — closely follows the ACRU reference\'s whole page (`.local/refcheck/r01.png`, extracted from docs/BudgetTracker-references.html), never just one borrowed element. A clean sidebar with a clear active state; a restrained utility header (search, notifications, settings, an "Add entry" primary action); a large central cash-flow chart anchoring the page with income/expenses/net figures placed deliberately beside it; a coordinated right-hand column of real BudgetTracker content (accounts, upcoming bills) replacing the reference\'s bank-card/promo area entirely, per Terry\'s explicit substitution rule; lower panels for spending distribution, overall budget health and this month\'s budget progress. Rounded surfaces, soft shadows, generous spacing.',
-    distinct: 'A genuinely bespoke Dashboard renderer (`reference-acru`, app/js/ui/gallery/compose.js `heroReferenceAcru`) built to match one specific reference\'s composition, not assembled from the shared axis vocabulary — its own dedicated CSS (`.gacru-*`, app/styles/gallery.css), never a recolour of an existing hero pattern.',
+    distinct: 'A genuinely bespoke composition across every page (`reference-acru`, app/js/ui/gallery/compose.js), built to match the ACRU reference\'s own composition, not assembled from the shared axis vocabulary — its own dedicated CSS (`.gacru-*`, app/styles/gallery.css), never a recolour of another concept\'s pattern.',
     audience: 'Owners and managers who want one glance at cash flow, accounts and bills together, in a genuinely polished, reference-quality composition.',
     strengths: ['The hero chart, stat rail and right column read as one coordinated composition, not separate cards competing for attention.', 'Spending distribution, budget health and progress panels below give real depth without leaving the page.', 'Sidebar orientation keeps every section one click away.'],
     tradeoffs: ['The bespoke composition is deliberately NOT reusable by other concepts the way the shared axis patterns are — by design, since Terry\'s own instruction was that the existing template system must not dictate this design.', 'A new workspace with little transaction history has a flatter chart at first.'],
     accessibilityNotes: ['The hero chart pairs with the same sr-only figure-table rule every other chart in this Gallery already uses.', 'The spending-distribution segmented bar states each category and its percentage in real text beside the bar, never colour alone.', 'Sidebar order matches reading order for screen readers (nav before main), unchanged from the existing sidebar nav style.'],
     density: 'comfortable', navStyle: 'sidebar', dashboardPattern: 'reference-acru', cardStyle: 'soft-shadow', chartEmphasis: 'bars', typeVoice: 'technical-mono',
-    transactionsPattern: 'dense-table', billsPattern: 'compact-table', budgetPattern: 'list-progress', accountsPattern: 'table', settingsPattern: 'two-column-grouped', sharedPattern: 'ledger-table', tripsPattern: 'list',
+    // BT-013-15 (2026-09-20): every required and extra page now carries the SAME "restrained header,
+    // main+side grid, segmented-bar breakdown" identity — not the shared axis vocabulary.
+    transactionsPattern: 'reference-acru', billsPattern: 'reference-acru', budgetPattern: 'reference-acru', accountsPattern: 'reference-acru', settingsPattern: 'two-column-grouped', sharedPattern: 'reference-acru', tripsPattern: 'reference-acru',
+    extraPages: ['merchants', 'debt'], merchantsPattern: 'reference-acru', debtPattern: 'reference-acru',
     accentLight: '#4a7a0a', accentDark: '#a3e85a',
     fidelity: 'flagship', recommended: true,
   }),
@@ -337,7 +357,9 @@ const CONCEPT_IDS = Object.freeze(CONCEPTS.map((x) => x.id));
 // name or visual redesign.
 const NAV_STYLES = Object.freeze(['top', 'rail', 'sidebar', 'sidebar-right', 'command', 'tabs']);
 const DENSITIES = Object.freeze(['spacious', 'comfortable', 'compact', 'ultra-compact']);
-const DASHBOARD_PATTERNS = Object.freeze(['metric-grid', 'chart-first', 'table-first', 'timeline', 'card-stack', 'goal-progress', 'merchant-feed', 'envelope-grid', 'command-console', 'split-focus', 'story-flow', 'adaptive', 'briefing', 'inbox', 'ring-cluster', 'mosaic', 'ledger-strip', 'reference-acru', 'reference-ledgerfly', 'reference-debtpayoff', 'trip-focus']);
+// BT-013-15 (2026-09-20): 'ring-cluster' retired (finexa-budget, its only user, now has its own
+// bespoke `reference-finexa` Dashboard) — never leave an unused pattern name in the enum.
+const DASHBOARD_PATTERNS = Object.freeze(['metric-grid', 'chart-first', 'table-first', 'timeline', 'card-stack', 'goal-progress', 'merchant-feed', 'envelope-grid', 'command-console', 'split-focus', 'story-flow', 'adaptive', 'briefing', 'inbox', 'mosaic', 'ledger-strip', 'reference-acru', 'reference-ledgerfly', 'reference-debtpayoff', 'reference-finexa', 'trip-focus']);
 const CARD_STYLES = Object.freeze(['flat-bordered', 'soft-shadow', 'outline-minimal', 'filled-tint', 'bordered-mono', 'ribbon', 'layered']);
 const CHART_EMPHASES = Object.freeze(['bars', 'line', 'mixed', 'donut', 'area']);
 const TYPE_VOICES = Object.freeze(['technical-mono', 'editorial-serif', 'friendly-rounded', 'bold-display', 'condensed-utility']);
@@ -374,20 +396,24 @@ const CATALOG_STATUSES = Object.freeze(['review', 'approved', 'retired']);
 //                        non-reusable pattern, same exception as above, for the one concept that
 //                        chooses it.)
 //   tripsPattern         'card-grid' | 'list' | 'timeline'
-const TRANSACTIONS_PATTERNS = Object.freeze(['flat-list', 'grouped-by-date', 'dense-table', 'card-list', 'filter-first', 'reference-monsy']);
-const BILLS_PATTERNS = Object.freeze(['grouped-status', 'timeline', 'kanban-columns', 'compact-table']);
-const BUDGET_PATTERNS = Object.freeze(['envelope-grid', 'bar-comparison', 'list-progress', 'reference-finexa']);
-const ACCOUNTS_PATTERNS = Object.freeze(['card-grid', 'table', 'grouped-by-type']);
+const TRANSACTIONS_PATTERNS = Object.freeze(['flat-list', 'grouped-by-date', 'dense-table', 'card-list', 'filter-first', 'reference-monsy', 'reference-ledgerfly', 'reference-finexa', 'reference-acru']);
+const BILLS_PATTERNS = Object.freeze(['grouped-status', 'timeline', 'kanban-columns', 'compact-table', 'reference-ledgerfly', 'reference-finexa', 'reference-acru']);
+const BUDGET_PATTERNS = Object.freeze(['envelope-grid', 'bar-comparison', 'list-progress', 'reference-finexa', 'reference-ledgerfly', 'reference-acru']);
+const ACCOUNTS_PATTERNS = Object.freeze(['card-grid', 'table', 'grouped-by-type', 'reference-ledgerfly', 'reference-finexa', 'reference-acru']);
 const SETTINGS_PATTERNS = Object.freeze(['flat-list', 'two-column-grouped']);
-const SHARED_PATTERNS = Object.freeze(['balance-list', 'ledger-table', 'settlement-focus', 'reference-groupsplit']);
-const TRIPS_PATTERNS = Object.freeze(['card-grid', 'list', 'timeline']);
+const SHARED_PATTERNS = Object.freeze(['balance-list', 'ledger-table', 'settlement-focus', 'reference-groupsplit', 'reference-ledgerfly', 'reference-finexa', 'reference-acru']);
+const TRIPS_PATTERNS = Object.freeze(['card-grid', 'list', 'timeline', 'reference-ledgerfly', 'reference-finexa', 'reference-acru']);
+// BT-013-15: the two new extra-page axes, declared only by concepts that list the matching page in
+// their own `extraPages` (see the EXTRA_PAGES comment above) — never required of the other twelve.
+const MERCHANTS_PATTERNS = Object.freeze(['reference-ledgerfly', 'reference-finexa', 'reference-acru']);
+const DEBT_PATTERNS = Object.freeze(['reference-ledgerfly', 'reference-finexa', 'reference-acru']);
 
 const findConcept = (id) => CONCEPTS.find((x) => x.id === id) || null;
 
 module.exports = {
-  CONCEPTS, CONCEPT_IDS, REQUIRED_PAGES, REAL_LAYOUT_OPTIONS, REAL_DEFAULT_LAYOUT_ID,
+  CONCEPTS, CONCEPT_IDS, REQUIRED_PAGES, EXTRA_PAGES, REAL_LAYOUT_OPTIONS, REAL_DEFAULT_LAYOUT_ID,
   NAV_STYLES, DENSITIES, DASHBOARD_PATTERNS, CARD_STYLES, CHART_EMPHASES, TYPE_VOICES, CATALOG_STATUSES,
   TRANSACTIONS_PATTERNS, BILLS_PATTERNS, BUDGET_PATTERNS, ACCOUNTS_PATTERNS, SETTINGS_PATTERNS,
-  SHARED_PATTERNS, TRIPS_PATTERNS,
+  SHARED_PATTERNS, TRIPS_PATTERNS, MERCHANTS_PATTERNS, DEBT_PATTERNS,
   findConcept,
 };

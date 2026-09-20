@@ -20,6 +20,27 @@ export const accounts = Object.freeze([
   { id: "acc-loan", name: "Car Loan", type: "loan", icon: "loan", balance: "-11480.00", currency: "EUR", access: "private" },
 ]);
 
+// BT-013-15 (2026-09-20): a Debt/loan detail page needs "balance movement, principal/interest/fees,
+// payment history and supported payoff information with explicit assumptions" (Terry's table) — this
+// is that detail for the one real loan account (`acc-loan`, "Car Loan"). `originalBalance` is the SAME
+// illustrative anchor `goal-navigator`'s own debt-payoff Dashboard already uses for this exact account
+// (never a second, disagreeing invented figure); `apr` and `payments` are clearly illustrative
+// assumptions, disclosed as such by every renderer that shows them, never presented as measured fact.
+export const debtDetail = Object.freeze({
+  "acc-loan": {
+    originalBalance: "15000.00",
+    openedDate: "2024-03-01",
+    apr: "6.4",
+    minimumPayment: "220.00",
+    payments: [
+      { date: "2026-06-01", amount: "220.00", principal: "156.00", interest: "64.00" },
+      { date: "2026-07-01", amount: "220.00", principal: "159.00", interest: "61.00" },
+      { date: "2026-08-01", amount: "220.00", principal: "163.00", interest: "57.00" },
+      { date: "2026-09-01", amount: "220.00", principal: "166.00", interest: "54.00" },
+    ],
+  },
+});
+
 export const netPosition = Object.freeze({
   currency: "EUR", amount: "11350.45",
   breakdown: { own: "8420.00", shared: "2930.45", granted: "0.00" },
@@ -89,22 +110,56 @@ export const forecast = Object.freeze({
 // `events` (added 2026-09-19, reflecting the now-real BT-009-20 event foundation shipped in the
 // application itself): every expense belongs to a named event with a real lifecycle status, exactly
 // like the production Shared expenses page's own Events card — never a Gallery-only invention.
+//
+// BT-013-15 (2026-09-20): `participants` and each expense's own `splitAmong` were added so a real
+// per-event balance can be DERIVED (`splitBalances()` below), never invented — closing the gap the
+// event-scoping comment right below used to name ("this fixture has no full balance-computation
+// engine behind it"). The top-level `balances` above is now itself one of the derived outputs (the
+// combined, all-events figure), so the combined and per-event numbers can never quietly disagree —
+// exactly the "totals... must agree" requirement. A third event ("Solo coffee run") is a genuinely
+// SETTLED example (an expense split only among its own payer, so nobody owes anybody) beside the
+// still-outstanding "Museum day" and the fully active "General" — real healthy/outstanding/settled
+// variety, not three copies of the same shape.
+export const participants = Object.freeze([
+  { name: "Alice", self: true },
+  { name: "Bob", self: false },
+  { name: "Dana", self: false },
+]);
+export const events = Object.freeze([
+  { id: "gev1", name: "General", status: "active", isDefault: true },
+  { id: "gev2", name: "Museum day", status: "closed", isDefault: false },
+  { id: "gev3", name: "Solo coffee run", status: "closed", isDefault: false },
+]);
+const rawExpenses = Object.freeze([
+  { id: "g1", description: "Dinner at the harbour", date: "2026-09-11", amount: "300.00", payer: "Alice", eventId: "gev1", splitAmong: ["Alice", "Bob", "Dana"] },
+  { id: "g2", description: "Taxi back", date: "2026-09-11", amount: "36.00", payer: "Bob", eventId: "gev1", splitAmong: ["Alice", "Bob", "Dana"] },
+  { id: "g3", description: "Museum tickets", date: "2026-09-13", amount: "100.00", payer: "Alice", eventId: "gev2", splitAmong: ["Alice", "Dana"] },
+  { id: "g4", description: "Coffee, just for me", date: "2026-09-07", amount: "4.80", payer: "Bob", eventId: "gev3", splitAmong: ["Bob"] },
+]);
+// Equal-split net balances (paid minus fair share) for a set of expenses, restricted to the people
+// who actually appear in it — the SAME real arithmetic for the combined figure and every per-event
+// figure, so they can never disagree. Rounds to the cent; any residual goes to the first participant
+// by name order, deterministically, the same "visible, deterministic rounding residual" rule the real
+// application's own split calculations already hold themselves to.
+export function splitBalances(expenses) {
+  const people = [...new Set(expenses.flatMap((e) => e.splitAmong))].sort();
+  const net = new Map(people.map((p) => [p, 0]));
+  for (const e of expenses) {
+    const amount = Number(e.amount);
+    const share = Math.round((amount / e.splitAmong.length) * 100) / 100;
+    const residual = Math.round((amount - share * e.splitAmong.length) * 100) / 100;
+    e.splitAmong.forEach((p, i) => {
+      net.set(p, (net.get(p) || 0) - share - (i === 0 ? residual : 0));
+    });
+    net.set(e.payer, (net.get(e.payer) || 0) + amount);
+  }
+  return people.map((name) => ({ name: name === "Alice" ? "You (Alice)" : name === "Dana" ? "Dana (contact)" : name, net: net.get(name).toFixed(2), self: name === "Alice" }));
+}
 export const shared = Object.freeze({
   currency: "EUR",
-  balances: [
-    { name: "You (Alice)", net: "35.00", self: true },
-    { name: "Bob", net: "-15.00", self: false },
-    { name: "Dana (contact)", net: "-20.00", self: false },
-  ],
-  events: [
-    { id: "gev1", name: "General", status: "active", isDefault: true },
-    { id: "gev2", name: "Museum day", status: "closed", isDefault: false },
-  ],
-  expenses: [
-    { id: "g1", description: "Dinner at the harbour", date: "2026-09-11", amount: "300.00", payer: "Alice", eventId: "gev1" },
-    { id: "g2", description: "Taxi back", date: "2026-09-11", amount: "36.00", payer: "Bob", eventId: "gev1" },
-    { id: "g3", description: "Museum tickets", date: "2026-09-13", amount: "100.00", payer: "Alice", eventId: "gev2" },
-  ],
+  balances: splitBalances(rawExpenses),
+  events,
+  expenses: rawExpenses,
 });
 
 // Trips (BT-010 is Planned, not yet built as a real feature): illustrative-only fictional data so

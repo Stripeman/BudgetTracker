@@ -5680,3 +5680,310 @@ consolidated PR for the whole `feature/design-gallery-acceptance-BT-013-14` bran
 independently verify the deployed commit, and present the completed gallery — this matrix, the fixes
 made, and the honest remaining-shared-structure disclosure — to Terry for his own acceptance decision,
 never a self-declared "done."
+
+## Checkpoint BN (2026-09-20): BT-013-14 finished — PR #44 merged by Terry, deployed to Preview and independently verified twice
+
+PR #44 (`feature/design-gallery-acceptance-BT-013-14`) was merged by Terry (main `f4221fe..e1c1ae9`).
+Deployed to Preview via `scripts/deploy/deploy.ps1 -Environment preview` from the merged feature branch
+HEAD first (receipt `SUCCESS`, `sha: 5c4cf3b...`), then Terry asked to confirm main and Preview matched
+exactly — local `main` was fetched and fast-forwarded to `origin/main` (`e1c1ae9`), verified clean
+(`git status -sb` showed no drift), and Preview was redeployed from that exact commit: receipt
+`SUCCESS`, `sha: e1c1ae96dfc77efd1c742f3a4a788c9cb6fb531b`, all checks ok. Independently verified both
+times via `curl` on `/api/site-settings` directly against the live Preview URL (not just trusting the
+deploy tool's own receipt) — final result `"environment":"preview"`,
+`"commit":"e1c1ae96dfc77efd1c742f3a4a788c9cb6fb531b"`, matching main's HEAD exactly. Remained on `main`
+afterward per Terry's explicit instruction, never pushed to it myself. A small docs-only follow-up
+commit (`96907fa`, this same Checkpoint BN content) was pushed to the now-merged feature branch only —
+deliberately NOT opened as a new PR, since that would be exactly the "PR solely to document a merge"
+Terry ruled out; it stayed there as history, superseded functionally by this same entry being carried
+into `main`'s own PROJECT_STATE.md via the next authorized branch below (BT-013-15's own first commit).
+
+## BT-013-15 — three exceptional, complete, reference-matched flagship experiences (Terry, 2026-09-20; survives a session restart; verbatim)
+
+**Recorded before any implementation, per Terry's explicit instruction to record this now so it
+survives a restart, then proceed directly into it without asking whether to continue.** This
+supersedes BT-013-14's "shared structure is permitted, evaluate rendered results" standard for THESE
+THREE concepts specifically: Terry has now seen the audited BT-013-14 gallery and judged it still short
+of the standard for these three ("I see differences between concepts, but most do not resemble the
+overall composition and polish of my references... Borrowing individual elements... is not enough.").
+The rest of the 15-concept gallery (BT-013-10 through BT-013-14) is explicitly PRESERVED, not deleted,
+and its own further expansion is explicitly PAUSED (not abandoned) until these three meet the standard.
+Terry's message, preserved in full for continuity:
+
+> Objective: three exceptional, complete visual experiences
+>
+> The gallery still does not deliver the visual quality I requested. I see differences between
+> concepts, but most do not resemble the overall composition and polish of my references.
+>
+> Borrowing individual elements—a ring, colour, chart or navigation style—is not enough. I want each
+> page to visually explain the financial situation relevant to that page.
+>
+> For this increment, focus on THREE complete, coordinated designs modeled directly on the attached
+> screenshots. Preserve the other gallery work, but pause its expansion until these three meet the
+> standard.
+>
+> This prioritizes quality over the count of 15; it does not authorize deleting existing work.
+>
+> **1. Use the actual screenshots as visual specifications** — IMG_9166.png (Ledgerfly, navy
+> financial/forecast overview), IMG_9165.png (Finexa, purple budget workspace), IMG_9164.jpeg (ACRU,
+> green financial dashboard). Inspect the images themselves; use their overall composition, panel
+> proportions, hierarchy, typography, spacing, surface treatment and chart prominence as the guide. Use
+> BudgetTracker branding and appropriate original assets. Do not copy advertisements, card issuance, an
+> AI assistant or unsupported services. The background surrounding each reference's application window
+> is presentation framing, not part of the app.
+>
+> **Ledgerfly-inspired: financial clarity** — restrained sidebar navigation, a clean utility header, a
+> strong KPI strip, a dominant analytical chart and a narrower supporting column. Navy/indigo used
+> selectively to emphasize important figures and actions. Adapt business-specific metrics to relevant,
+> supported BudgetTracker information. Carry that analytical clarity through EVERY page, not just the
+> dashboard.
+>
+> **Finexa-inspired: polished budget planning** — rounded horizontal navigation, generous spacing,
+> refined purple/lavender accents, strong page titles and clear primary actions. Pair a prominent
+> comparison or trend with a useful summary panel. Coordinated category/account cards with meaningful
+> figures, progress and status. Must retain the reference's polished composition, not become the
+> existing budget list with purple borders.
+>
+> **ACRU-inspired: comprehensive money overview** — clean sidebar, large chart-and-summary region,
+> useful secondary column, coordinated lower grid of analysis panels. Green and complementary colours
+> used deliberately. Balance spending breakdowns, progress, account summaries and recent activity.
+> Replace unrelated banking/promotional content with useful BudgetTracker features while retaining the
+> visual richness.
+>
+> **2. Every page must answer its own question.** Design around the page's purpose before choosing its
+> widgets:
+> - Dashboard: where do I stand, what changed, what needs attention? — position, income/outflow
+>   trends, upcoming obligations, prioritized alerts.
+> - Transactions: where did money come from or go this period? — filter-aware totals and a meaningful
+>   trend/breakdown above an excellent searchable list; distinguish transfers from spending.
+> - Bills: what is due, when, how much must I fund? — payment timeline/calendar, overdue/upcoming
+>   totals, recurring commitments, clear payment actions.
+> - Budgets: what remains, where am I overspending? — planned-vs-actual, category progress, remaining
+>   amounts, clear warnings.
+> - Accounts: where is my money, what do I owe? — asset/liability grouping, balances, trends, activity;
+>   never equate credit limits with available cash.
+> - Debt/loan detail: what remains to repay, what changed the balance? — balance movement,
+>   principal/interest/fees, payment history, supported payoff info with explicit assumptions.
+> - Merchants: who am I spending with, how is that changing? — ranked spend, frequency, trends,
+>   merchant detail linked to bills/transactions.
+> - Shared-expense directory: which events are active, settled or need attention? — event cards/rows
+>   showing lifecycle, participants, spending, outstanding settlements.
+> - Shared-expense detail: who paid, who owes whom, what remains unresolved? — participant balances,
+>   expense breakdowns, clear settlement relationships, relevant actions.
+> - My Settings: what can I personalize? — organized sections, useful appearance previews, clear
+>   controls and save feedback, not artificial financial charts.
+> - Workspace Settings: what applies to this workspace and its members? — clearly organized
+>   permissions, defaults, membership, a separate destructive-actions area.
+>
+> Preserve all existing capabilities; summaries supplement detailed records, never hide/replace them.
+> Keep BT-007 and BT-010 on hold; do not implement held functionality merely to populate a gallery page;
+> unavailable capabilities must be explicitly labelled illustrative, never presented as operational.
+>
+> **3. Visual explanations, not decoration.** Each financial page needs: a clear title and relevant
+> date/filter context; a few meaningful headline figures; a dominant chart or visual summary where it
+> helps; supporting information explaining those figures; obvious actions and access to underlying
+> records. Do not give every panel identical size/emphasis — deliberately guide the eye. Do not repeat
+> the same summary strip and chart on every tab; use lines/areas for change over time, comparable bars
+> for planned/actual or category/merchant comparisons, progress indicators for real targets,
+> timelines/calendars for obligations, balance bars/clear relationships for settlements. Charts need
+> understandable units, dates, legends, values, useful hover/focus/tap detail and accessible
+> alternatives; clearly distinguish actual/planned/forecast. Do not copy ambiguous charts or
+> inconsistent numbers from the references — preserve visual quality while improving clarity and
+> accessibility.
+>
+> **4. Colour-scheme customization through a cog.** Each of the three design cards, and its full-size
+> preview, must have a clearly visible, accessible cog button opening that design's appearance
+> settings: coordinated preset colour schemes; custom primary/accent colours via the existing
+> colour-picker components where appropriate; immediate preview across navigation, charts, highlights
+> and other themed elements; light/dark preview with the existing moon/sun control; "Reset to design
+> defaults." Save customization separately for each design in Terry's personal gallery preferences —
+> changing one must never change another design, another user's preferences, or a live workspace.
+> Preserve readable contrast, category-colour meaning, warning/error semantics; validate unsuitable
+> combinations and explain the problem. Colour customization must preserve each design's distinct
+> layout/identity — these must not become three recolours of one template.
+>
+> **5. Coherent fictional data.** A realistic fictional workspace with enough history/variety
+> (accounts, income, expenses, recurring bills, debt, budgets, merchants, shared events); healthy,
+> overdue, over-budget, settled and outstanding examples. Same underlying demonstration data across all
+> three designs for fair comparison — totals/charts/lists/drilldowns must agree; filters must update
+> the relevant summaries; never blend currencies without an explicit conversion basis. Never commit
+> real financial information, private reference screenshots or personal identifiers to the public repo.
+>
+> **6. Usable, full-size experiences.** Real browser-rendered interfaces, never static mockup images.
+> Representative interactions must work in isolated demonstration state: navigation, filtering, chart
+> details, record/event selection, relevant forms, appearance customization. Clearly label anything
+> intentionally illustrative; no dead or misleading buttons. Let Terry open each concept as a full-size
+> experience, not just a small thumbnail surrounded by the current application's own navigation. Mobile
+> needs deliberate prioritization/rearrangement, not a compressed desktop dashboard or dozens of
+> unchanged stacked panels. Preserve keyboard access, readable contrast, comfortable touch targets,
+> meaningful labels and existing functionality; dropdowns/action menus must never shift surrounding
+> content.
+>
+> **7. Do not let existing templates limit the result.** Reuse financial logic, permissions, controls
+> and useful components; extend or replace presentation components where necessary. "I do not require
+> separately coded versions of everything. I require three visibly excellent, coherent experiences." A
+> shared renderer is an implementation choice, not proof of completion — neither a new renderer nor
+> passing tests establishes the visual brief has been met.
+>
+> **8. Present visual evidence.** For each concept: the reference beside the actual implemented
+> reference-matching page at comparable sizes; browser screenshots of every required page;
+> desktop/mobile and light/dark coverage; at least two colour schemes and the cog customization
+> demonstrated; a direct Preview entry point and clear navigation instructions; a concise account of
+> adaptations and remaining limitations. Inspect the rendered screenshots and fix weak composition,
+> awkward spacing, excessive text, empty-looking panels, clipped content and unclear charts before
+> presenting them. "My visual review determines acceptance. Do not mark the designs accepted merely
+> because automated tests pass."
+>
+> **9. Delivery and continuation.** Complete all required pages for these three designs before
+> returning to the remaining gallery concepts — do not stop after their anchor pages or ask again
+> whether secondary pages are included; they are. Maintain a concept-by-page checklist, requirements
+> and PROJECT_STATE.md. Continue through authorized work; ask only about genuinely new consequential
+> decisions. One feature branch, one consolidated PR for this increment, safe recovery checkpoints, no
+> separate bookkeeping PRs. Deploy and verify the candidate through the established Preview workflow.
+> This instruction does not authorize changing the active workspace layout, merging main or deploying
+> Production.
+>
+> The goal: when Terry opens each concept, he should recognize the quality of its reference, understand
+> the relevant financial situation at a glance, and want to explore the rest of the application.
+
+**Working plan (this checkpoint, before any code):** branch `feature/gallery-three-flagship-BT-013-15`
+created off `main` at `e1c1ae9`. The three concepts already exist as one bespoke anchor page each
+(`acru-overview`/Dashboard, `finexa-budget`/Budget, `ledgerfly-forecast`/Dashboard, from BT-013-10) —
+this increment must extend EACH to a fully coordinated, reference-matched experience across every
+required page (Dashboard, Transactions, Bills, Budget, Accounts, Merchants — new dedicated page per
+Terry's table, was folded into Accounts before — Shared directory, Shared detail, Trips (illustrative),
+My Settings, Workspace Settings, and a Debt/loan detail page — new), PLUS the cross-cutting full-size
+standalone preview mode and the per-design colour-customization cog, all before returning to the other
+12 concepts. Next step: inspect the three reference images directly, inspect current
+`app/js/ui/gallery/{compose,fixtures,layouts}.js` structure and the Gallery view/routing
+(`app/js/ui/views/gallery.js`) for what "full-size standalone preview" and "personal gallery
+preferences" already have vs. need building, then build a concept-by-page checklist as the working
+tracker.
+
+## Checkpoint BP (2026-09-20): BT-013-15 cross-cutting infrastructure complete — cog + full-size preview; concept-by-page checklist opened
+
+Commit `6c7ea3d` on `feature/gallery-three-flagship-BT-013-15`. Built the TWO cross-cutting pieces
+Terry's items 4 and 6 require before any per-page redesign work, since all three flagship designs need
+both:
+
+- **Per-design colour cog (item 4):** new personal preference `galleryDesignColors`
+  (`api/preferences/handler.js`) — `{ [conceptId]: { light, dark, preset } }`, each colour validated
+  against its OWN mode's real surface only (never both), never a workspace setting, never visible to
+  another person (`api/test/colors.test.js`, alice/bob). Eight coordinated presets
+  (`app/js/ui/gallery/colorschemes.js`, seven reused from already-verified concept accents, one new,
+  all re-verified directly). The cog itself (`app/js/ui/gallery/appearancecog.js`): a new `cog` icon
+  (kept in sync client/server by the existing parity test), a floating panel with the preset picker
+  (reusing `createThemePicker`), two native colour inputs for exact custom hex, "Reset to design
+  defaults" — on every concept card and the full-size preview toolbar, live-painting the affected
+  `.gframe`'s CSS vars directly (no DOM rebuild, so the open panel is never closed out from under
+  whoever is using it).
+- **Full-size standalone preview (item 6):** a fixed, full-viewport takeover (`app/js/ui/views/gallery.js`
+  `openFullscreen`/`renderFullscreen`), portaled to the body, own toolbar (page/viewport pickers, the
+  cog, the existing day/night control), making the real app shell inert and locking background scroll
+  while open (same technique as `app/js/ui/modal.js`'s real dialog), restoring both and returning focus
+  to the opener on Escape/Exit.
+
+**A real bug found and fixed via real-browser e2e, not assumed:** the cog panel's own `focusout`-based
+auto-close did not compose reliably with its nested preset picker's own independent popup lifecycle — a
+genuine, intermittent close-before-the-pick-registers race, reproduced directly (`scripts/dev/e2e/
+gallerycog.mjs` failed 2 of ~7 raw runs before the fix, 5/5 clean after). Root cause: this DUPLICATED a
+job the app's shared popup-dismissal registry (`app/js/ui/popup.js`) already does correctly, including
+for a popup nested inside another (its `opened()`/`dismissOutside()` anchor-containment chain). Fixed by
+removing the redundant, conflicting focusout mechanism entirely rather than patching it further — the
+cog now closes only on Escape or a genuine outside press, exactly like every other picker in the app.
+
+**Evidence:** `npm test` 627/627, `npm --prefix api test` 780/780, `npm run validate` ok (27 routes);
+`npm run e2e -- --only gallery,gallerybatch2,gallerybatch3,gallerysummaries,gallerysettings,gallerycog`
+**256/256, exit 0** (new `gallerycog.mjs` 10/10, stress-run 5/5 clean after the popup fix, no regression
+to any prior gallery batch). Screenshots inspected directly (full-size dark-mode dashboard with the
+cog's own light/dark accent swatches; the card-level cog panel mid-edit, "Purple" preset applied and
+"Saved.") — both genuinely coherent, not merely structurally present.
+
+### Concept-by-page checklist for the three flagship designs (Terry's own required set, item 2's table)
+
+Legend: ⬜ not started · 🟨 exists but not yet reference-matched to this concept's own identity ·
+✅ built and verified this scope.
+
+| Page | Executive Forecast (`ledgerfly-forecast`, navy) | Budget Workspace (`finexa-budget`, purple) | Financial Overview (`acru-overview`, green) |
+|---|---|---|---|
+| Dashboard | ✅ BT-013-10 (`heroReferenceLedgerfly`) | ✅ BT-013-15 (`heroReferenceFinexa`; replaces the old shared `ring-cluster`, retired from `DASHBOARD_PATTERNS`) | ✅ BT-013-10 (`heroReferenceAcru`) |
+| Budget | ✅ `reference-ledgerfly` (`budgetReferenceLedgerfly`) | ✅ BT-013-10 (`budgetReferenceFinexa`, this concept's own original anchor) | ✅ `reference-acru` (`budgetReferenceAcru`) |
+| Transactions | ✅ `reference-ledgerfly` (`txnReferenceLedgerfly`) | ✅ `reference-finexa` (`txnReferenceFinexa`) | ✅ `reference-acru` (`txnReferenceAcru`) |
+| Bills | ✅ `reference-ledgerfly` (`billsReferenceLedgerfly`) | ✅ `reference-finexa` (`billsReferenceFinexa`) | ✅ `reference-acru` (`billsReferenceAcru`) |
+| Accounts | ✅ `reference-ledgerfly` (`accountsReferenceLedgerfly`) | ✅ `reference-finexa` (`accountsReferenceFinexa`) | ✅ `reference-acru` (`accountsReferenceAcru`) |
+| Merchants (NEW, split from Accounts per Terry's table) | ✅ `reference-ledgerfly` (`merchantsReferenceLedgerfly`, extraPages) | ✅ `reference-finexa` (`merchantsReferenceFinexa`, extraPages) | ✅ `reference-acru` (`merchantsReferenceAcru`, extraPages) |
+| Debt/loan detail (NEW) | ✅ `reference-ledgerfly` (`debtReferenceLedgerfly`, extraPages) | ✅ `reference-finexa` (`debtReferenceFinexa`, extraPages) | ✅ `reference-acru` (`debtReferenceAcru`, extraPages) |
+| Shared expenses directory | ✅ `reference-ledgerfly` (`sharedReferenceLedgerfly`, combined view) | ✅ `reference-finexa` (`sharedReferenceFinexa`, combined view) | ✅ `reference-acru` (`sharedReferenceAcru`, combined view) |
+| Shared expenses detail (NEW distinction) | ✅ real per-event balances via `fx.splitBalances` | ✅ real per-event balances via `fx.splitBalances` | ✅ real per-event balances via `fx.splitBalances` |
+| Trips (illustrative, BT-010 hold) | ✅ `reference-ledgerfly` (`tripsReferenceLedgerfly`) | ✅ `reference-finexa` (`tripsReferenceFinexa`) | ✅ `reference-acru` (`tripsReferenceAcru`) |
+| My Settings | 🟨 `flat-list` (shared — BT-013-14 audit already passed it) | 🟨 `flat-list` (shared — BT-013-14 audit already passed it) | 🟨 `two-column-grouped` (shared — BT-013-14 audit already passed it) |
+| Workspace Settings | 🟨 `flat-list` (shared — BT-013-14 audit already passed it) | 🟨 `flat-list` (shared — BT-013-14 audit already passed it) | 🟨 `two-column-grouped` (shared — BT-013-14 audit already passed it) |
+
+**All three flagship designs are now COMPLETE — every required and extra page reference-matched to
+that design's own identity, in real browsers, for all three:**
+
+- **Executive Forecast (navy)** — the KPI-strip-led identity from its own Dashboard anchor carried
+  through every page (`ledgerflyKpiStrip()` reused throughout). `scripts/dev/e2e/ledgerflypages.mjs`,
+  21/21, stable across 3+ runs.
+- **Budget Workspace (purple)** — the subhead+primary-action, two-column top, varied-chart-card-grid
+  identity from its own Budget anchor carried through every page, INCLUDING a genuinely new bespoke
+  Dashboard (`heroReferenceFinexa`) replacing the old shared `ring-cluster` hero.
+  `scripts/dev/e2e/finexapages.mjs`, 21/21, stable across 2+ runs.
+- **Financial Overview (green)** — the restrained-header, main+side-grid, segmented-bar-breakdown
+  identity from its own Dashboard anchor carried through every page (`acruHeader()` reused
+  throughout). `scripts/dev/e2e/acrupages.mjs`, 19/19 clean.
+
+Each of the three concepts' OWN internal design system is deliberately DIFFERENT from the other two
+(KPI strip vs. subhead+cards vs. header+grid) — satisfying "not become three recolours of one
+template" while each is internally coherent across its own required and extra pages. My/Workspace
+Settings deliberately stay on the shared `flat-list`/`two-column-grouped` pattern for all three
+concepts, per BT-013-14's own already-passed acceptance audit (Terry's page-purpose table itself asks
+for "organized sections... not artificial financial charts" there, which the existing real interactive
+controls already satisfy) — a disclosed, deliberate scope decision, not an oversight.
+
+**Real bugs found and fixed along the way (never merely assumed correct):**
+- A genuine, intermittent real-browser e2e race in the appearance cog (`gallerycog.mjs`, ~1-in-4-to-8
+  runs): clicking the nested preset picker's own toggle occasionally computed a stale bounding rect
+  and landed on unrelated card text, which the shared outside-press dismissal correctly treated as a
+  real outside press, closing the panel. Root-caused via temporary diagnostic instrumentation
+  (captured the exact stray DOM node hit, then removed the instrumentation); fixed by invoking that
+  one control's real click handler directly rather than via coordinate dispatch — 10/10 clean across
+  10 consecutive stress runs afterward.
+- A genuine labelling bug found by reviewing screenshots, not by any test: both Finexa's and ACRU's
+  shared-expenses "combined totals" card was titled with the currently selected EVENT's own name while
+  still showing every event's combined total inside it. Fixed to a constant, accurate title.
+- `scripts/dev/e2e/gallery.mjs`'s own hardcoded "acru-overview demonstrates the plain 'table'
+  accountsPattern" check went stale once ACRU got its own bespoke Accounts page; switched to
+  Executive Ledger, which still genuinely uses that shared pattern.
+
+**Evidence (combined, final):** `npm test` 633/633, `npm --prefix api test` 780/780, `npm run validate`
+ok (27 routes); `npm run e2e -- --only gallery,gallerybatch2,gallerybatch3,gallerysummaries,
+gallerysettings,gallerycog,acruoverview,ledgerflyforecast,ledgerflypages,finexabudget,finexapages,
+acrupages,flagshipcolors` **339/339, exit 0**, stable across 2 consecutive full runs.
+
+## Checkpoint BQ (2026-09-20): BT-013-15 item 8 evidence complete; nav-duplication bug fixed; ready for the one consolidated PR
+
+Added `scripts/dev/e2e/flagshipcolors.mjs` (Terry's item 8: demonstrate at least two colour schemes via
+the cog, per design): opens the full-size preview and applies two presets each for Executive Forecast
+(Teal, Rose), Budget Workspace (Navy, Green) and Financial Overview (Purple, Amber), confirming each
+design's own layout/identity survives the repaint — 10/10, stable across 3 runs. Reviewing its own
+screenshots directly (not a test) found one more real bug: the full-size preview's nav listed
+Merchants/Debt detail TWICE for all three designs. Root cause: `app/js/ui/views/gallery.js`'s
+`renderFullscreen` was passing a `requiredPages` list that already included the concept's own
+`extraPages` into `renderConceptFrame`, which itself ALSO merges `extraPages` in — double-counted.
+Fixed by keeping the page picker's own (extraPages-inclusive) option list separate from the plain
+`requiredPages` passed to `renderConceptFrame`, and added a real assertion (unique nav item count,
+`flagshipcolors.mjs`) so this can never silently return.
+
+`docs/REQUIREMENTS.md` now has the full BT-013-15 row. **This authorized scope is now implementation-
+complete, tested and documented.** Remaining before presenting to Terry: open the ONE consolidated PR
+for this whole `feature/gallery-three-flagship-BT-013-15` branch (every commit from the branch's start
+through this checkpoint, never a PR per commit and never a bookkeeping-only PR), deploy to Preview via
+the sole supported path (`scripts/deploy/deploy.ps1 -Environment preview`), independently verify the
+deployed commit (`/api/site-settings`, not just trusting the deploy tool's own receipt), and present the
+finished three designs — this checklist, the screenshots already captured, the real bugs found and
+fixed, and an honest note that side-by-side pixel comparison against Terry's own original reference
+images was done by direct visual inspection during this session (not a generated composite image, since
+this agent has no image-compositing tool) — to Terry for HIS OWN acceptance decision. Never a self-
+declared "done". BT-007 and BT-010 remain on hold throughout; the other 12 gallery concepts' expansion
+remains paused, not abandoned. `main` was never merged and Production was never touched this checkpoint.

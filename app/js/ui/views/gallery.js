@@ -18,6 +18,7 @@ import { pageHead, field, pickerSelect, button, badge } from "../components.js";
 import { createDayNightControl } from "../daynight.js";
 import { createThemePicker } from "../themepicker.js";
 import { renderConceptFrame, PAGE_LABEL } from "../gallery/compose.js";
+import { createAppearanceCog } from "../gallery/appearancecog.js";
 import { messageFor } from "../../core/errors.js";
 
 const VIEWPORTS = [{ id: "desktop", label: "Desktop", width: "" }, { id: "tablet", label: "Tablet", width: "834px" }, { id: "mobile", label: "Mobile", width: "375px" }];
@@ -68,8 +69,130 @@ export function createView(ctx) {
   let viewport = "desktop";
   let previewPage = "dashboard";
   const pendingPicks = new Set();
+  // BT-013-15: the signed-in administrator's OWN personal colour overrides, kept in sync with the
+  // app's own preferences state (never a workspace setting) — see `overrideFor`/`saveOverride` below.
+  let designColors = {};
+  // BT-013-15: "let me open each concept as a full-size experience" — a fixed, full-viewport takeover
+  // portaled to the body, independent of the small capped preview pane above. `null` when closed.
+  let liveId = null;
+  let livePage = "dashboard";
+  let liveViewport = "desktop";
+  let liveHost = null;
 
   function conceptById(id) { return (data.concepts || []).find((c) => c.id === id) || null; }
+
+  // ---- BT-013-15: per-design colour customization, saved only in the caller's own preferences ------
+  function overrideFor(id) {
+    const stored = designColors[id];
+    return stored ? { light: stored.light || null, dark: stored.dark || null, preset: stored.preset || null } : null;
+  }
+  // Live-paints every currently-rendered copy of a concept's frame (thumbnail, inline preview,
+  // full-size) directly, without rebuilding any DOM — so an open appearance panel is never closed out
+  // from under the person still using it, and every place the concept is shown updates together.
+  function paintOverride(id, entry) {
+    const concept = conceptById(id);
+    if (!concept) return;
+    const light = (entry && entry.light) || concept.accentLight;
+    const dark = (entry && entry.dark) || concept.accentDark;
+    document.querySelectorAll(`.gframe[data-concept="${id}"]`).forEach((f) => {
+      f.style.setProperty("--g-accent-light", light);
+      f.style.setProperty("--g-accent-dark", dark);
+    });
+  }
+  async function saveOverride(id, next) {
+    const merged = { ...designColors, [id]: next };
+    const out = await ctx.store.actions.savePreferences({ galleryDesignColors: merged });
+    if (out.ok) { designColors = merged; paintOverride(id, next); }
+    return out;
+  }
+  async function resetOverride(id) {
+    const merged = { ...designColors };
+    delete merged[id];
+    const out = await ctx.store.actions.savePreferences({ galleryDesignColors: Object.keys(merged).length ? merged : null });
+    if (out.ok) { designColors = merged; paintOverride(id, null); }
+    return out;
+  }
+  function makeCog(concept) {
+    return createAppearanceCog({
+      concept,
+      getOverride: () => overrideFor(concept.id),
+      onChange: (next) => saveOverride(concept.id, next),
+      onReset: () => resetOverride(concept.id),
+    });
+  }
+
+  // ---- BT-013-15: the full-size standalone preview -----------------------------------------------
+  // The same "make the rest of the page inert and restore focus to the opener" technique
+  // app/js/ui/modal.js already uses for a real dialog — this is a full-viewport takeover of
+  // equivalent weight (it fully covers and blocks the real application shell), so it earns the same
+  // keyboard/screen-reader guarantees: nothing behind it stays reachable by Tab while it is open.
+  let liveOpener = null;
+  let liveAppWasInert = false;
+  let liveBodyOverflow = "";
+  function onFullscreenKey(e) {
+    if (e.key === "Escape") { e.preventDefault(); closeFullscreen(); }
+  }
+  function closeFullscreen() {
+    if (!liveHost) { liveId = null; return; }
+    liveId = null;
+    liveHost.remove();
+    liveHost = null;
+    document.removeEventListener("keydown", onFullscreenKey, true);
+    const app = document.getElementById("app");
+    if (app) app.inert = liveAppWasInert;
+    document.body.style.overflow = liveBodyOverflow;
+    if (liveOpener && document.body.contains(liveOpener) && typeof liveOpener.focus === "function") liveOpener.focus();
+    liveOpener = null;
+  }
+  function renderFullscreen() {
+    if (!liveHost) return;
+    const concept = conceptById(liveId);
+    if (!concept) { closeFullscreen(); return; }
+    const requiredPages = data.requiredPages || [];
+    // BT-013-15: the page PICKER's own options additionally include the concept's own extra pages
+    // (Merchants, Debt/loan detail) so it can reach every page the in-frame nav already can — kept as
+    // its own list, never passed to `renderConceptFrame` as `requiredPages`, which already merges in
+    // `concept.extraPages` itself; passing them here too would list every extra page twice in the nav.
+    const pagePickerOptions = [...requiredPages, ...(concept.extraPages || [])];
+    const pagePicker = pickerSelect(pagePickerOptions.map((p) => ({ value: p, label: PAGE_LABEL[p] || p })), livePage, {});
+    pagePicker.addEventListener("change", () => { livePage = pagePicker.value; renderFullscreen(); });
+    const viewportPicker = pickerSelect(VIEWPORTS.map((v) => ({ value: v.id, label: v.label })), liveViewport, {});
+    viewportPicker.addEventListener("change", () => { liveViewport = viewportPicker.value; renderFullscreen(); });
+    const dayNight = createDayNightControl({ theme: ctx.theme, onChange: (mode) => { void ctx.store.actions.savePreferences({ themeMode: mode }); } });
+    const cog = makeCog(concept);
+    const exit = button("← Exit full-size", () => { closeFullscreen(); }, { small: true, attrs: { "aria-label": "Exit full-size preview, back to the Design Gallery" } });
+    const bar = el("div", { class: "gfullscreen__bar" }, [
+      exit,
+      el("strong", { text: concept.name }),
+      field("Page", pagePicker), field("Viewport", viewportPicker),
+      el("span", { class: "app__spacer" }),
+      cog.element, dayNight.element,
+    ]);
+    const body = el("div", { class: "gfullscreen__body", dataset: { viewport: liveViewport } }, [
+      renderConceptFrame(concept, livePage, (id) => { livePage = id; renderFullscreen(); }, { requiredPages, colorOverride: overrideFor(concept.id) }),
+    ]);
+    mount(liveHost, el("div", { class: "gfullscreen", role: "dialog", "aria-modal": "true", "aria-label": `${concept.name} full-size preview` }, [bar, body]));
+  }
+  function openFullscreen(id) {
+    liveId = id;
+    livePage = previewPage;
+    liveOpener = document.activeElement;
+    const app = document.getElementById("app");
+    liveAppWasInert = app ? app.inert : false;
+    if (app) app.inert = true;
+    // Locks the real page's own scroll while the takeover is open, so its background scrollbar (which
+    // would otherwise still show through and shave a scrollbar's width off an `inset: 0` fixed overlay
+    // — real, measured browser behaviour, not a hypothetical) never appears, and the full-size preview
+    // genuinely spans the whole viewport. Restored exactly in `closeFullscreen`.
+    liveBodyOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    document.addEventListener("keydown", onFullscreenKey, true);
+    liveHost = el("div", { class: "gfullscreen-host" });
+    document.body.appendChild(liveHost);
+    renderFullscreen();
+    const exitBtn = liveHost.querySelector(".gfullscreen__bar button");
+    if (exitBtn) exitBtn.focus();
+  }
 
   function renderToolbar() {
     // The EXISTING reused controls (BT-011-01/03), applied globally exactly as the account menu
@@ -99,14 +222,14 @@ export function createView(ctx) {
     const requiredPages = data.requiredPages || [];
     const primary = el("div", { class: "gpreview-frame-wrap", vars: { "--gframe-width": frameWidthVar() || null } }, [
       el("h3", { class: "gpreview-label" }, [`${concept.name} — ${PAGE_LABEL[previewPage] || previewPage}`]),
-      renderConceptFrame(concept, previewPage, (id) => { previewPage = id; renderPreview(); }, { requiredPages }),
+      renderConceptFrame(concept, previewPage, (id) => { previewPage = id; renderPreview(); }, { requiredPages, colorOverride: overrideFor(concept.id) }),
     ]);
     if (!compareId || compareId === selectedId) { mount(previewBox, primary); return; }
     const other = conceptById(compareId);
     if (!other) { mount(previewBox, primary); return; }
     const secondary = el("div", { class: "gpreview-frame-wrap", vars: { "--gframe-width": frameWidthVar() || null } }, [
       el("h3", { class: "gpreview-label" }, [`${other.name} — ${PAGE_LABEL[previewPage] || previewPage}`]),
-      renderConceptFrame(other, previewPage, (id) => { previewPage = id; renderPreview(); }, { requiredPages }),
+      renderConceptFrame(other, previewPage, (id) => { previewPage = id; renderPreview(); }, { requiredPages, colorOverride: overrideFor(other.id) }),
     ]);
     mount(previewBox, el("div", { class: "gcompare" }, [primary, secondary]));
   }
@@ -177,7 +300,7 @@ export function createView(ctx) {
   }
 
   function conceptCard(concept) {
-    const thumbWrap = el("div", { class: "gthumb", "aria-hidden": "true" }, [renderConceptFrame(concept, "dashboard", () => {}, { requiredPages: data.requiredPages || [] })]);
+    const thumbWrap = el("div", { class: "gthumb", "aria-hidden": "true" }, [renderConceptFrame(concept, "dashboard", () => {}, { requiredPages: data.requiredPages || [], colorOverride: overrideFor(concept.id) })]);
     const check = el("input", { type: "checkbox", id: `pick-${concept.id}` });
     check.checked = pendingPicks.has(concept.id);
     check.addEventListener("change", () => { if (check.checked) pendingPicks.add(concept.id); else pendingPicks.delete(concept.id); });
@@ -201,7 +324,7 @@ export function createView(ctx) {
 
     return el("article", { class: "gcard-outer card", dataset: { concept: concept.id } }, [
       thumbWrap,
-      el("h3", { class: "card__title", text: concept.name }),
+      el("div", { class: "row" }, [el("h3", { class: "card__title", text: concept.name }), el("span", { class: "app__spacer" }), makeCog(concept).element]),
       el("p", { class: "muted small", text: concept.tagline }),
       el("p", { class: "small" }, [el("strong", { text: "Intended audience: " }), concept.audience]),
       el("p", { class: "small" }, [el("strong", { text: "Direction: " }), concept.direction]),
@@ -211,6 +334,7 @@ export function createView(ctx) {
       el("div", { class: "row" }, [
         button("Preview this concept", () => { selectedId = concept.id; renderGrid(); renderPreview(); }, { small: true, variant: selectedId === concept.id ? "primary" : "" }),
         button(compareId === concept.id ? "Remove from compare" : "Compare with current preview", () => { compareId = compareId === concept.id ? null : concept.id; renderPreview(); }, { small: true }),
+        button("Open full-size", () => { openFullscreen(concept.id); }, { small: true, attrs: { "aria-label": `Open ${concept.name} as a full-size experience` } }),
       ]),
       el("details", {}, [
         el("summary", { text: "Site-admin catalog controls" }),
@@ -245,6 +369,11 @@ export function createView(ctx) {
     const isAdmin = !!(state.auth && state.auth.user && state.auth.user.siteAdmin);
     notAdmin.hidden = isAdmin;
     content.hidden = !isAdmin;
+    if (!isAdmin && liveId) closeFullscreen();
+    // BT-013-15: the caller's own personal colour overrides, read from the same preferences state
+    // every other personal preference (theme, category colours) already flows through — never a
+    // second, separate storage mechanism.
+    designColors = (state.preferences && state.preferences.effective && state.preferences.effective.galleryDesignColors) || {};
     if (isAdmin && !loaded) { loaded = true; void load(); }
   }
 

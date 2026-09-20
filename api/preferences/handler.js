@@ -20,6 +20,7 @@ const money = require('../_shared/money');
 const fields = require('../_shared/fields');
 const colors = require('../_shared/colors');
 const icons = require('../_shared/icons');
+const { CONCEPT_IDS } = require('../_shared/layouts');
 
 // Personal category colours (BT-011-04): { <categoryId>: "#rrggbb" }, validated like workspace
 // colours. Keys must be category ids, so no key can reach an object's prototype.
@@ -51,6 +52,43 @@ function categoryIcons(v, { catalog, stored }) {
   return out;
 }
 
+// Per-design Gallery colour customization (BT-013-15, Terry 2026-09-20): a site administrator's OWN
+// personal preference only — never a workspace setting, never seen by or applied to anyone else, and
+// never touching a real workspace's own layout. `{ <conceptId>: { light, dark, preset } }`. `light`/
+// `dark` each get the SAME >=3:1 non-text-contrast bar the Gallery's own built-in accentLight/
+// accentDark pairs already hold (api/_shared/layouts.js, app/test/gallerypatterns.test.js) — checked
+// against the real light surface and the real dark surface RESPECTIVELY (never both, since each hex
+// is only ever used in its own mode), so a person can never save a combination that would be
+// unreadable in the mode it is actually shown in; the specific problem is explained back, never a
+// silent rejection. `preset` is a purely cosmetic label (which preset currently matches, for
+// highlighting in the picker) and never affects rendering — a stale value after presets change is
+// harmless, so it only needs a safe shape, not a fixed enum.
+function galleryAccentHex(value, surface, field) {
+  if (typeof value !== 'string' || !/^#[0-9a-fA-F]{6}$/.test(value)) throw badRequest(`${field} must be a colour written like #3b82f6.`, 'invalid_color');
+  const hex = value.toLowerCase();
+  if (colors.contrast(hex, surface) < colors.MIN_CONTRAST) throw badRequest(`${field} is too close to its own background to read clearly. Choose a stronger colour.`, 'color_contrast');
+  return hex;
+}
+function galleryDesignColors(v) {
+  if (!v || typeof v !== 'object' || Array.isArray(v)) throw badRequest('Gallery design colours must be an object.', 'invalid_field');
+  const entries = Object.entries(v);
+  if (entries.length > CONCEPT_IDS.length) throw badRequest('Too many gallery design colours.', 'invalid_field');
+  const out = {};
+  for (const [id, cfg] of entries) {
+    if (!CONCEPT_IDS.includes(id)) throw badRequest('Gallery concept id is not valid.', 'invalid_id');
+    if (!cfg || typeof cfg !== 'object' || Array.isArray(cfg)) throw badRequest('Gallery design colour entry is not valid.', 'invalid_field');
+    const entry = {};
+    if (cfg.light !== undefined && cfg.light !== null) entry.light = galleryAccentHex(cfg.light, colors.SURFACES[0], 'Design accent colour (light mode)');
+    if (cfg.dark !== undefined && cfg.dark !== null) entry.dark = galleryAccentHex(cfg.dark, colors.SURFACES[1], 'Design accent colour (dark mode)');
+    if (cfg.preset !== undefined && cfg.preset !== null) {
+      if (typeof cfg.preset !== 'string' || cfg.preset.length > 40 || !/^[a-z0-9-]+$/.test(cfg.preset)) throw badRequest('Preset id is not valid.', 'invalid_field');
+      entry.preset = cfg.preset;
+    }
+    if (Object.keys(entry).length) out[id] = entry;
+  }
+  return out;
+}
+
 const VALIDATORS = {
   themeMode: (v) => fields.oneOf(v, site.THEME_MODES, 'Theme mode'),
   themePalette: (v) => fields.oneOf(v, site.PALETTES, 'Theme palette'),
@@ -70,6 +108,7 @@ const VALIDATORS = {
   favoritePayees: (v) => { if (!Array.isArray(v) || v.length > 50 || !v.every(isSafeId)) throw badRequest('Favourite payees are not valid.', 'invalid_field'); return [...new Set(v)]; },
   categoryColors,
   categoryIcons,
+  galleryDesignColors,
   // The staging (preview) site's address, opened from the account menu (BT-011-06). The app never
   // hard-codes it: each person sets it, or inherits the site default. Stored normalised; http to a
   // loopback host only while the API runs in local development.
@@ -81,7 +120,7 @@ const VALIDATORS = {
   groupPaidBy: (v) => fields.oneOf(v, ['me', 'nobody'], 'Who paid by default'),
   groupBalanceView: (v) => fields.oneOf(v, ['suggested', 'direct'], 'Balance view'),
 };
-const BUILT_IN = { locale: 'en', timeZone: 'UTC', dateFormat: 'iso', numberFormat: '1,234.56', displayCurrency: null, balanceMasking: false, defaultWorkspaceId: null, dashboardWidgets: ['balances', 'upcoming', 'budgets', 'recent'], favoritePayees: [], categoryColors: {}, categoryIcons: {}, stagingUrl: null };
+const BUILT_IN = { locale: 'en', timeZone: 'UTC', dateFormat: 'iso', numberFormat: '1,234.56', displayCurrency: null, balanceMasking: false, defaultWorkspaceId: null, dashboardWidgets: ['balances', 'upcoming', 'budgets', 'recent'], favoritePayees: [], categoryColors: {}, categoryIcons: {}, galleryDesignColors: {}, stagingUrl: null };
 
 function resolve(stored, siteDoc) {
   const effective = {};
