@@ -5126,3 +5126,84 @@ inspired budget workspace, Ledgerfly-inspired forecast overview) with their real
 already captured this session, and explicitly ask for his visual feedback before doing anything further
 with the Design Gallery. Do not commit/push/open a PR unless Terry asks. Continue any OTHER already-
 authorized, unblocked work in the meantime, per his own "keep other authorized work moving" instruction.
+
+## Checkpoint BF — BT-013-10 review checkpoint COMMITTED and DEPLOYED to Preview for Terry's visual
+review (2026-09-20); working tree clean; no PR opened yet (not requested)
+
+Terry explicitly asked to present the three completed designs for review now, said the review
+checkpoint "does not require leaving completed work uncommitted," and asked for it saved/secret-scanned/
+committed and deployed to Preview for his review, with the Preview link and exact open instructions.
+
+**Presented to Terry this checkpoint** (in the chat response, not repeated here): the ACRU/Finexa/
+Ledgerfly reference image beside each concept's real desktop screenshot, plus mobile light/dark, and
+each concept's supporting secondary page (Transactions for ACRU and Ledgerfly, Dashboard for Finexa —
+disclosed as the secondary page actually shown, since Finexa's OWN primary reference page is Budget
+itself), with retained/adapted notes and disclosed compromises per concept (repeating what Checkpoints
+BC/BD/BE already recorded in full; not re-litigated here).
+
+**Secret scan and commit:** `git add -A` was NOT used; the 12 exact files touched by Checkpoints BC/BD/
+BE were staged individually and `git status`/`git diff --cached --stat` inspected before committing —
+9 modified (`PROJECT_STATE.md`, `api/_shared/layouts.js`, `api/test/design-gallery.test.js`,
+`app/js/ui/gallery/compose.js`, `app/styles/gallery.css`, `app/test/workspacesettings.test.js`,
+`docs/REQUIREMENTS.md`, `scripts/dev/e2e/gallery.mjs`, `scripts/dev/e2e/run.mjs`) and 3 new
+(`scripts/dev/e2e/acruoverview.mjs`, `finexabudget.mjs`, `ledgerflyforecast.mjs`) — matching exactly
+what these three checkpoints described, nothing else swept in. Verified BEFORE staging that the private
+reference material stays out of the public repository: `git check-ignore -v` confirmed
+`docs/BudgetTracker-references.html` and everything under `.local/` (including `.local/refcheck/` and
+every `.local/e2e/` evidence run) are covered by existing `.gitignore` rules (lines 48/52), and the
+other three pre-existing untracked docs files noted at the very start of this session
+(`BudgetTracker-review.md`, `Claude-handoff.md`) are likewise already gitignored (lines 49/50) — none of
+these were ever staged. `node scripts/scan-staged.cjs` (the repo's own pre-commit gitleaks wrapper) run
+manually before commit: **12 staged files clean, no leaks found**; it ran again automatically via the
+`.githooks` pre-commit hook during the commit itself and passed again. Committed as **`92f67b6`** on
+`feature/design-gallery-reference-led-BT-013-10` (on top of `main`'s `bfec99d`, the PR #39 merge already
+verified in Checkpoint BB's "Resolved" note) — a single commit covering all three reference-led
+concepts together, not three separate ones, since they were built and are being reviewed as one unit.
+Pushed to `origin/feature/design-gallery-reference-led-BT-013-10`. **No pull request opened** — Terry
+did not ask for one this checkpoint, and this is explicitly a review-before-more-work stop, not a
+finished deliverable ready for merge.
+
+**Deployment:** `pwsh -NoProfile -File scripts/deploy/deploy.ps1 -Environment preview` (the one
+supported deploy path, BT-003-05) — full gate ran and passed: `ok target, ok gitState, ok confirmation,
+ok azureResource, ok settings, ok test, ok validate, ok build, ok secretScan, ok upload, ok
+commitSetting, ok healthCheck`, **result: SUCCESS**. Receipt: target `budget-tracker/budget-tracker
+(preview)`, url `https://polite-plant-03bb7570f-preview.eastus2.3.azurestaticapps.net`, sha
+`92f67b659cd0bb7d8eff59ed52b9f3e64f7adbaa`, version `0.1.0-alpha.1`. Independently re-verified after
+deployment (not just trusted the receipt) via a direct `curl` of the live `/api/site-settings` endpoint:
+returned `commit: 92f67b659cd0bb7d8eff59ed52b9f3e64f7adbaa`, `environment: preview` — matches the
+just-pushed commit exactly. **Production was never touched under this instruction** (Terry explicitly
+said not to); no Production deploy command was run.
+
+**Working tree:** clean on `feature/design-gallery-reference-led-BT-013-10` after the commit and push;
+`git status -sb` shows nothing outstanding for this checkpoint's own scope.
+
+**Other authorized, unblocked work:** none identified this checkpoint to continue in parallel — this
+session's active thread has been the Design Gallery reference-led checkpoint throughout; no other
+in-flight BT item was left mid-work when this began. If Terry has other priorities in mind, they are
+not yet reflected in this file as "authorized and unblocked" — flagging rather than inventing work.
+
+**Exact next step:** wait for Terry's actual visual feedback on the three Preview-deployed concepts
+before touching the Design Gallery further (no PR, no merge, no further concepts) — this is the explicit
+design-review stop he asked for. If he approves, the next natural step is either opening a PR for this
+same commit or proceeding to the remaining 12 concepts at this same standard, per his own direction once
+given.
+
+## Checkpoint BG — Terry's first visual feedback on the three reference-led designs: positive, brief
+(2026-09-20)
+
+Terry's own words, verbatim, in full: "Good much better." Recorded as genuine positive feedback on the
+three Preview-deployed concepts (ACRU/Finexa/Ledgerfly) — a real improvement over the 2026-09-19 batch
+he rejected outright. Treated as approval of the DIRECTION and standard of finish achieved, NOT
+over-read as: (a) explicit approval to merge this branch or open a PR, (b) explicit approval to build
+the remaining 12 concepts at this same bespoke standard (a large effort commitment this file should not
+assume without him saying so directly, matching this session's own standing rule to distinguish real
+sign-off from a rounded-up inference), or (c) feedback on any specific remaining compromise already
+disclosed (ACRU's inherited typeVoice, Finexa's inherited voice/card/chart-emphasis, Ledgerfly's
+sparse-history runway figure) — none of those were individually addressed, so none should be assumed
+approved or rejected point-by-point. Replied asking him to clarify scope for the next step (proceed to
+the remaining 12 now vs. something else first) rather than assuming either a merge or a large 12-concept
+build was authorized by three words alone.
+
+**Waiting on Terry:** explicit direction on what happens next — (1) open a PR for `92f67b6` now for his
+own merge, (2) proceed to redesigning the remaining 12 concepts to this same reference-led standard, or
+(3) something else. Nothing further has been built, committed, or deployed this checkpoint.
