@@ -94,6 +94,18 @@
 // combined page standing in for both.
 const REQUIRED_PAGES = Object.freeze(['dashboard', 'transactions', 'bills', 'budget', 'accounts', 'shared', 'trips', 'mysettings', 'worksettings']);
 
+// BT-013-15 (2026-09-20, Terry): two further pages his own page-purpose table names explicitly —
+// "Merchants" (split out from the combined Accounts/Merchants page) and "Debt/loan detail" — but
+// ONLY for the three flagship reference-matched designs this increment focuses on
+// (`acru-overview`, `finexa-budget`, `ledgerfly-forecast`), never added to `REQUIRED_PAGES` itself.
+// Terry's own instruction was to "pause expansion" of the other twelve concepts while these three are
+// brought to standard, not to retrofit two more pages onto all fifteen — so this stays a per-concept
+// `extraPages` list (empty for every concept that does not declare it) rather than a change to the
+// one global list every concept is tested against. A concept that lists a page here MUST also declare
+// the matching `<page>Pattern` field (e.g. `merchantsPattern`), exactly like every required page's own
+// pattern field.
+const EXTRA_PAGES = Object.freeze(['merchants', 'debt']);
+
 // The one real, selectable layout today (workspace setting `layoutId`, BT-011-07/BT-013): today's
 // existing implicit application layout, kept exactly as it behaves now. Nothing in CONCEPTS below is
 // in this list — that is the deliberate boundary between "under review in the Gallery" and "a real
@@ -229,7 +241,11 @@ const CONCEPTS = Object.freeze([
     tradeoffs: ['The bespoke composition is deliberately NOT reusable by other concepts the way the shared axis patterns are — by design, matching the same reference-led exception already established for the ACRU and Finexa concepts.', 'A workspace with very little transaction history shows a flatter forecast and a less meaningful runway figure at first.'],
     accessibilityNotes: ['The forecast chart pairs with the same sr-only figure-table rule every other chart in this Gallery already uses.', 'The KPI strip states every figure as real visible text, never colour or card emphasis alone.', 'Sidebar order matches reading order for screen readers (nav before main), unchanged from the existing sidebar nav style.'],
     density: 'comfortable', navStyle: 'sidebar', dashboardPattern: 'reference-ledgerfly', cardStyle: 'soft-shadow', chartEmphasis: 'line', typeVoice: 'condensed-utility',
-    transactionsPattern: 'flat-list', billsPattern: 'timeline', budgetPattern: 'list-progress', accountsPattern: 'card-grid', settingsPattern: 'flat-list', sharedPattern: 'balance-list', tripsPattern: 'list',
+    // BT-013-15 (2026-09-20): every required financial page now carries the SAME "restrained sidebar,
+    // KPI strip, dominant analytical chart" identity `reference-ledgerfly` established on the
+    // Dashboard, plus the two new pages Terry's table names — not the shared axis vocabulary.
+    transactionsPattern: 'reference-ledgerfly', billsPattern: 'reference-ledgerfly', budgetPattern: 'reference-ledgerfly', accountsPattern: 'reference-ledgerfly', settingsPattern: 'flat-list', sharedPattern: 'reference-ledgerfly', tripsPattern: 'reference-ledgerfly',
+    extraPages: ['merchants', 'debt'], merchantsPattern: 'reference-ledgerfly', debtPattern: 'reference-ledgerfly',
     accentLight: '#1a2a7a', accentDark: '#8fa0f5',
     fidelity: 'flagship', recommended: false,
   }),
@@ -374,20 +390,24 @@ const CATALOG_STATUSES = Object.freeze(['review', 'approved', 'retired']);
 //                        non-reusable pattern, same exception as above, for the one concept that
 //                        chooses it.)
 //   tripsPattern         'card-grid' | 'list' | 'timeline'
-const TRANSACTIONS_PATTERNS = Object.freeze(['flat-list', 'grouped-by-date', 'dense-table', 'card-list', 'filter-first', 'reference-monsy']);
-const BILLS_PATTERNS = Object.freeze(['grouped-status', 'timeline', 'kanban-columns', 'compact-table']);
-const BUDGET_PATTERNS = Object.freeze(['envelope-grid', 'bar-comparison', 'list-progress', 'reference-finexa']);
-const ACCOUNTS_PATTERNS = Object.freeze(['card-grid', 'table', 'grouped-by-type']);
+const TRANSACTIONS_PATTERNS = Object.freeze(['flat-list', 'grouped-by-date', 'dense-table', 'card-list', 'filter-first', 'reference-monsy', 'reference-ledgerfly']);
+const BILLS_PATTERNS = Object.freeze(['grouped-status', 'timeline', 'kanban-columns', 'compact-table', 'reference-ledgerfly']);
+const BUDGET_PATTERNS = Object.freeze(['envelope-grid', 'bar-comparison', 'list-progress', 'reference-finexa', 'reference-ledgerfly']);
+const ACCOUNTS_PATTERNS = Object.freeze(['card-grid', 'table', 'grouped-by-type', 'reference-ledgerfly']);
 const SETTINGS_PATTERNS = Object.freeze(['flat-list', 'two-column-grouped']);
-const SHARED_PATTERNS = Object.freeze(['balance-list', 'ledger-table', 'settlement-focus', 'reference-groupsplit']);
-const TRIPS_PATTERNS = Object.freeze(['card-grid', 'list', 'timeline']);
+const SHARED_PATTERNS = Object.freeze(['balance-list', 'ledger-table', 'settlement-focus', 'reference-groupsplit', 'reference-ledgerfly']);
+const TRIPS_PATTERNS = Object.freeze(['card-grid', 'list', 'timeline', 'reference-ledgerfly']);
+// BT-013-15: the two new extra-page axes, declared only by concepts that list the matching page in
+// their own `extraPages` (see the EXTRA_PAGES comment above) — never required of the other twelve.
+const MERCHANTS_PATTERNS = Object.freeze(['reference-ledgerfly']);
+const DEBT_PATTERNS = Object.freeze(['reference-ledgerfly']);
 
 const findConcept = (id) => CONCEPTS.find((x) => x.id === id) || null;
 
 module.exports = {
-  CONCEPTS, CONCEPT_IDS, REQUIRED_PAGES, REAL_LAYOUT_OPTIONS, REAL_DEFAULT_LAYOUT_ID,
+  CONCEPTS, CONCEPT_IDS, REQUIRED_PAGES, EXTRA_PAGES, REAL_LAYOUT_OPTIONS, REAL_DEFAULT_LAYOUT_ID,
   NAV_STYLES, DENSITIES, DASHBOARD_PATTERNS, CARD_STYLES, CHART_EMPHASES, TYPE_VOICES, CATALOG_STATUSES,
   TRANSACTIONS_PATTERNS, BILLS_PATTERNS, BUDGET_PATTERNS, ACCOUNTS_PATTERNS, SETTINGS_PATTERNS,
-  SHARED_PATTERNS, TRIPS_PATTERNS,
+  SHARED_PATTERNS, TRIPS_PATTERNS, MERCHANTS_PATTERNS, DEBT_PATTERNS,
   findConcept,
 };

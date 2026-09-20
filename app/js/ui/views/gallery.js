@@ -148,7 +148,9 @@ export function createView(ctx) {
     if (!liveHost) return;
     const concept = conceptById(liveId);
     if (!concept) { closeFullscreen(); return; }
-    const requiredPages = data.requiredPages || [];
+    // BT-013-15: includes the concept's OWN extra pages (Merchants, Debt/loan detail) too, so the
+    // full-size preview's own page picker can reach every page its in-frame nav already can.
+    const requiredPages = [...(data.requiredPages || []), ...(concept.extraPages || [])];
     const pagePicker = pickerSelect(requiredPages.map((p) => ({ value: p, label: PAGE_LABEL[p] || p })), livePage, {});
     pagePicker.addEventListener("change", () => { livePage = pagePicker.value; renderFullscreen(); });
     const viewportPicker = pickerSelect(VIEWPORTS.map((v) => ({ value: v.id, label: v.label })), liveViewport, {});

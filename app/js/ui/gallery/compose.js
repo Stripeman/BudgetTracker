@@ -24,8 +24,8 @@ import * as fx from "./fixtures.js";
 // combined "Settings" page never reflected the real app's own distinction (My Settings: applies only to
 // you; Workspace Settings: applies to everyone in the workspace, BT-017) — Terry named both explicitly
 // as required pages. Two real pages now, never one page pretending to be both.
-const PAGE_LABEL = { dashboard: "Dashboard", transactions: "Transactions", bills: "Bills", budget: "Budget", accounts: "Accounts / Merchants", shared: "Shared expenses", trips: "Trips", mysettings: "My Settings", worksettings: "Workspace Settings" };
-const PAGE_ICON = { dashboard: "chart-pie", transactions: "receipt", bills: "calendar", budget: "target", accounts: "bank", shared: "users", trips: "suitcase", mysettings: "user", worksettings: "building" };
+const PAGE_LABEL = { dashboard: "Dashboard", transactions: "Transactions", bills: "Bills", budget: "Budget", accounts: "Accounts / Merchants", shared: "Shared expenses", trips: "Trips", mysettings: "My Settings", worksettings: "Workspace Settings", merchants: "Merchants", debt: "Debt detail" };
+const PAGE_ICON = { dashboard: "chart-pie", transactions: "receipt", bills: "calendar", budget: "target", accounts: "bank", shared: "users", trips: "suitcase", mysettings: "user", worksettings: "building", merchants: "store", debt: "loan" };
 const BILL_STATUS_LABEL = { overdue: "Overdue", "due-soon": "Due soon", upcoming: "Upcoming" };
 
 const cat = (id) => fx.categoryById.get(id);
@@ -683,6 +683,17 @@ function heroReferenceAcru() {
 // concepts already use — never a second invented forecast, and never a fake "run simulation" control
 // this Gallery cannot actually execute). Reuses shared PRIMITIVES (money, amountText, categoryLabel,
 // figureTable, the new `forecastTrendChart`) and the real canonical fixtures throughout.
+// BT-013-15 (2026-09-20): extracted from the Dashboard's own KPI strip so EVERY Ledgerfly page can
+// open with the same "restrained header, strong KPI strip" identity Terry asked to be carried through
+// every page, not only the Dashboard — the exact same markup/CSS the anchor page already established
+// and was already reviewed, never a second lookalike.
+function ledgerflyKpiStrip(kpis) {
+  return el("div", { class: "gledgerfly-kpis" }, kpis.map((k) => el("div", { class: ["gledgerfly-kpi", k.emphasize ? "gledgerfly-kpi--emphasis" : ""] }, [
+    el("p", { class: "gledgerfly-kpi__label", text: k.label }),
+    el("p", { class: "gledgerfly-kpi__value" }, [k.value]),
+    el("p", { class: "gledgerfly-kpi__meta muted small", text: k.meta }),
+  ])));
+}
 function heroReferenceLedgerfly() {
   const incomeTotal = fx.transactions.filter((t) => Number(t.amount) > 0).reduce((s, t) => s + Number(t.amount), 0);
   const expenseTotal = fx.transactions.filter((t) => Number(t.amount) < 0).reduce((s, t) => s - Number(t.amount), 0);
@@ -690,17 +701,12 @@ function heroReferenceLedgerfly() {
   const totalCash = Number(fx.netPosition.amount);
   const runwayMonths = expenseTotal > 0 ? (totalCash / expenseTotal).toFixed(1) : "—";
 
-  const kpis = [
+  const kpiStrip = ledgerflyKpiStrip([
     { label: "Total balance", value: money(fx.netPosition.amount, fx.netPosition.currency, fx.prefs), meta: "Across every account you can see", emphasize: true },
     { label: "Monthly spending", value: amountText((-expenseTotal).toFixed(2), fx.netPosition.currency, fx.prefs), meta: "This period" },
     { label: "Runway", value: el("span", { text: `${runwayMonths} months` }), meta: "Balance ÷ this period's spending" },
     { label: "Net monthly flow", value: amountText(netFlow.toFixed(2), fx.netPosition.currency, fx.prefs), meta: "Income minus spending" },
-  ];
-  const kpiStrip = el("div", { class: "gledgerfly-kpis" }, kpis.map((k) => el("div", { class: ["gledgerfly-kpi", k.emphasize ? "gledgerfly-kpi--emphasis" : ""] }, [
-    el("p", { class: "gledgerfly-kpi__label", text: k.label }),
-    el("p", { class: "gledgerfly-kpi__value" }, [k.value]),
-    el("p", { class: "gledgerfly-kpi__meta muted small", text: k.meta }),
-  ])));
+  ]);
 
   const series = [{ key: "expected", dash: "solid" }, { key: "cautious", dash: "dashed" }, { key: "hopeful", dash: "dotted" }];
   const forecastCard = gcard("Cash forecast", "chart-line", [
@@ -878,8 +884,8 @@ function renderDashboard(concept, onNavigate) {
 
 // ---- the shared template for the other six required pages (real structural composition driven by
 // the concept's own nav/density/card rules, never hand-duplicated per concept) ----------------------
-function pageTitle(pageId) {
-  return el("div", { class: "gpage__head" }, [el("h2", {}, [withIcon(PAGE_ICON[pageId], PAGE_LABEL[pageId])])]);
+function pageTitle(pageId, labelOverride) {
+  return el("div", { class: "gpage__head" }, [el("h2", {}, [withIcon(PAGE_ICON[pageId], labelOverride || PAGE_LABEL[pageId])])]);
 }
 
 // ---- Transactions: five genuinely different compositions (review, 2026-09-18) ---------------------
@@ -985,7 +991,48 @@ function txnReferenceMonsy() {
   return [head, actions, gcard("All entries", "receipt", el("div", { class: "table-wrap" }, [table]), { full: true })];
 }
 
-const TRANSACTIONS_RENDERERS = { "flat-list": txnFlatList, "grouped-by-date": txnGroupedByDate, "dense-table": txnDenseTable, "card-list": txnCardList, "filter-first": txnFilterFirst, "reference-monsy": txnReferenceMonsy };
+// BT-013-15 (2026-09-20): a BESPOKE Transactions composition for `ledgerfly-forecast`, carrying the
+// SAME navy KPI-strip identity its Dashboard already established through every required page (Terry:
+// "Carry that analytical clarity through every page — not just the dashboard"). Answers the page's own
+// question (Terry's table): where did money come from or go this period — filter-aware totals and a
+// meaningful trend above an excellent list, distinguishing transfers from spending, never colour alone.
+function txnReferenceLedgerfly() {
+  const incomeTotal = fx.transactions.filter((t) => Number(t.amount) > 0).reduce((s, t) => s + Number(t.amount), 0);
+  const expenseTotal = fx.transactions.filter((t) => Number(t.amount) < 0).reduce((s, t) => s - Number(t.amount), 0);
+  const kpiStrip = ledgerflyKpiStrip([
+    { label: "Total in", value: amountText(incomeTotal.toFixed(2), "EUR", fx.prefs), meta: "This period", emphasize: true },
+    { label: "Total out", value: amountText((-expenseTotal).toFixed(2), "EUR", fx.prefs), meta: "This period" },
+    { label: "Net", value: amountText((incomeTotal - expenseTotal).toFixed(2), "EUR", fx.prefs), meta: "In minus out" },
+    { label: "Entries", value: el("span", { text: String(fx.transactions.length) }), meta: "This period" },
+  ]);
+  const byDate = new Map();
+  for (const t of fx.transactions) byDate.set(t.date, (byDate.get(t.date) || 0) + Number(t.amount));
+  const chartPoints = [...byDate.entries()].sort(([a], [b]) => (a < b ? -1 : 1)).map(([date, value]) => ({ date, value }));
+  const trendCard = gcard("Daily net movement", "chart-line", [
+    barChart(chartPoints, { width: 640, height: 140 }),
+    figureTable(chartPoints.map((p) => [p.date, formatAmount(p.value.toFixed(2), "EUR")]), "Daily net movement", ["Date", "Net"]),
+  ], { full: true });
+  const typeOf = (t) => (Number(t.amount) > 0 ? { label: "Income", variant: "shared" } : t.category ? { label: "Spending", variant: "" } : { label: "Transfer", variant: "warning" });
+  const rows = [...fx.transactions].sort((a, b) => (a.date > b.date ? -1 : 1)).map((t) => {
+    const m = t.payee ? merchant(t.payee) : null;
+    const c = t.category ? cat(t.category) : null;
+    const type = typeOf(t);
+    return el("tr", {}, [
+      el("td", { class: "muted small", text: t.date }),
+      el("td", {}, [m ? withIcon(m.icon, m.name) : el("span", { text: t.label || "Transfer" })]),
+      el("td", {}, [c ? categoryLabel(c.name, c.color, c.icon) : el("span", { class: "muted small", text: "—" })]),
+      el("td", {}, [badge(type.label, type.variant)]),
+      el("td", { class: "num" }, [amountText(t.amount, "EUR", fx.prefs)]),
+    ]);
+  });
+  const table = el("table", { class: "table gtable-dense" }, [
+    el("thead", {}, [el("tr", {}, ["Date", "Description", "Category", "Type", "Amount"].map((h) => el("th", { scope: "col", class: h === "Amount" ? "num" : "", text: h })))]),
+    el("tbody", {}, rows),
+  ]);
+  const listCard = gcard("All entries", "receipt", el("div", { class: "table-wrap" }, [table]), { full: true });
+  return [kpiStrip, trendCard, listCard];
+}
+const TRANSACTIONS_RENDERERS = { "flat-list": txnFlatList, "grouped-by-date": txnGroupedByDate, "dense-table": txnDenseTable, "card-list": txnCardList, "filter-first": txnFilterFirst, "reference-monsy": txnReferenceMonsy, "reference-ledgerfly": txnReferenceLedgerfly };
 function renderTransactions(concept) {
   const fn = TRANSACTIONS_RENDERERS[concept.transactionsPattern] || txnFlatList;
   return el("div", { class: "gpage gpage--list" }, [pageTitle("transactions"), ...fn()]);
@@ -1034,7 +1081,36 @@ function billsCompactTable() {
   ]);
   return [billsSummaryRow(), gcard("All bills", "calendar", el("div", { class: "table-wrap" }, [table]), { full: true })];
 }
-const BILLS_RENDERERS = { "grouped-status": billsGroupedStatus, timeline: billsTimeline, "kanban-columns": billsKanban, "compact-table": billsCompactTable };
+// BT-013-15: Bills answers "what is due, when, how much must I fund" (Terry's table) — a navy KPI
+// strip (overdue/due-soon/upcoming totals) above a real payment timeline, with a plainly labelled
+// needs-attention list (never a dead "Record payment" button this Gallery cannot actually act on).
+function billsReferenceLedgerfly() {
+  const real = fx.bills.filter((b) => b.kind !== "income");
+  const overdue = real.filter((b) => b.status === "overdue");
+  const dueSoon = real.filter((b) => b.status === "due-soon");
+  const upcoming = real.filter((b) => b.status === "upcoming");
+  const sum = (list) => list.reduce((s, b) => s + Number(b.amount), 0);
+  const kpiStrip = ledgerflyKpiStrip([
+    { label: "Overdue", value: amountText((-sum(overdue)).toFixed(2), "EUR", fx.prefs), meta: `${overdue.length} bill${overdue.length === 1 ? "" : "s"}`, emphasize: overdue.length > 0 },
+    { label: "Due soon", value: amountText((-sum(dueSoon)).toFixed(2), "EUR", fx.prefs), meta: `${dueSoon.length} bill${dueSoon.length === 1 ? "" : "s"}` },
+    { label: "Upcoming", value: amountText((-sum(upcoming)).toFixed(2), "EUR", fx.prefs), meta: `${upcoming.length} bill${upcoming.length === 1 ? "" : "s"}` },
+    { label: "Total due", value: amountText((-sum(real)).toFixed(2), "EUR", fx.prefs), meta: "Overdue + due soon + upcoming" },
+  ]);
+  const ordered = [...fx.bills].sort((a, b) => (a.dueDate < b.dueDate ? -1 : 1));
+  const timeline = gcard("Payment timeline", "calendar", el("ol", { class: "gtimeline" }, ordered.map((b) => el("li", { class: ["gtimeline__item", b.status === "overdue" ? "gtimeline__item--past" : "gtimeline__item--future"] }, [
+    el("span", { class: "gtimeline__date muted small", text: b.dueDate }),
+    withIcon(b.icon, b.name),
+    badge(BILL_STATUS_LABEL[b.status] || b.status, b.status === "overdue" ? "danger" : b.status === "due-soon" ? "warning" : ""),
+    el("span", { class: "app__spacer" }),
+    amountText(b.kind === "income" ? b.amount : `-${b.amount}`, b.currency, fx.prefs),
+  ]))), { full: true });
+  const needsAttention = [...overdue, ...dueSoon];
+  const actions = gcard("Needs attention", "bell", needsAttention.length
+    ? el("ul", { class: "stack" }, needsAttention.map((b) => el("li", { class: "grow" }, [withIcon(b.icon, b.name), el("span", { class: "muted small", text: `Due ${b.dueDate}` }), el("span", { class: "app__spacer" }), badge(b.status === "overdue" ? "Overdue — record or skip" : "Due soon", b.status === "overdue" ? "danger" : "warning")])))
+    : el("p", { class: "muted small", text: "Nothing needs attention right now." }), { full: true });
+  return [kpiStrip, timeline, actions];
+}
+const BILLS_RENDERERS = { "grouped-status": billsGroupedStatus, timeline: billsTimeline, "kanban-columns": billsKanban, "compact-table": billsCompactTable, "reference-ledgerfly": billsReferenceLedgerfly };
 function renderBills(concept) {
   const fn = BILLS_RENDERERS[concept.billsPattern] || billsGroupedStatus;
   return el("div", { class: "gpage gpage--list" }, [pageTitle("bills"), ...fn()]);
@@ -1166,7 +1242,41 @@ function budgetReferenceFinexa() {
   return [subhead, el("div", { class: "gfinexa-top" }, [utilCard, recurringCard]), el("div", { class: "gfinexa-cards" }, categoryCards)];
 }
 
-const BUDGET_RENDERERS = { "envelope-grid": heroEnvelopeGrid, "bar-comparison": budgetBarComparison, "list-progress": budgetListProgress, "reference-finexa": budgetReferenceFinexa };
+// BT-013-15: Budget answers "what remains, and where am I overspending" — a navy KPI strip (planned/
+// spent/remaining/over-budget count) above a real planned-vs-spent comparison chart and a category
+// breakdown with clear warnings, never colour alone.
+function budgetReferenceLedgerfly() {
+  const plannedTotal = fx.budget.lines.reduce((s, l) => s + Number(l.planned), 0);
+  const spentTotal = fx.budget.lines.reduce((s, l) => s + Number(l.spent), 0);
+  const overLines = fx.budget.lines.filter((l) => Number(l.available) < 0);
+  const kpiStrip = ledgerflyKpiStrip([
+    { label: "Planned", value: money(plannedTotal.toFixed(2), "EUR", fx.prefs), meta: "This month", emphasize: true },
+    { label: "Spent", value: amountText((-spentTotal).toFixed(2), "EUR", fx.prefs), meta: "This month" },
+    { label: "Remaining", value: amountText((plannedTotal - spentTotal).toFixed(2), "EUR", fx.prefs), meta: "Planned minus spent" },
+    { label: "Over budget", value: el("span", { text: String(overLines.length) }), meta: overLines.length ? "categories need attention" : "nothing over" },
+  ]);
+  const lines = fx.budget.lines.map((l) => ({ c: cat(l.category), planned: Number(l.planned), spent: Number(l.spent) }));
+  const worst = lines.reduce((best, l, i) => (l.spent / l.planned > lines[best].spent / lines[best].planned ? i : best), 0);
+  const chart = gcard("Planned vs. spent", "chart-line", [
+    dualBarChart(lines, worst),
+    el("p", { class: "gchart__legend" }, [el("span", { class: "gchart__key gfinexa-key--planned" }), "Planned  ", el("span", { class: "gchart__key gfinexa-key--spent" }), "Spent"]),
+    figureTable(lines.map((l) => [l.c.name, l.planned.toFixed(2), l.spent.toFixed(2)]), "Planned versus spent, by category", ["Category", "Planned", "Spent"]),
+  ], { full: true });
+  const rows = fx.budget.lines.map((l) => {
+    const c = cat(l.category);
+    const over = Number(l.available) < 0;
+    const pct = Math.round((Number(l.spent) / Number(l.planned)) * 100);
+    return el("li", { class: "gledgerfly-breakdown__row" }, [
+      categoryLabel(c.name, c.color, c.icon),
+      el("div", { class: "gmeter", role: "img", "aria-label": `${pct}% of ${c.name}'s budget used` }, [el("div", { class: "gmeter__fill", vars: { "--pct": `${Math.min(100, pct)}%` } })]),
+      el("span", { class: "muted small", text: `${pct}%` }),
+      over ? badge(`Over by ${formatAmount(Math.abs(Number(l.available)).toFixed(2), "EUR")}`, "danger") : el("span", { class: "muted small", text: `${formatAmount(l.available, "EUR")} left` }),
+    ]);
+  });
+  const breakdown = gcard("Category detail", "chart-pie", el("ul", { class: "stack" }, rows), { full: true });
+  return [kpiStrip, chart, breakdown];
+}
+const BUDGET_RENDERERS = { "envelope-grid": heroEnvelopeGrid, "bar-comparison": budgetBarComparison, "list-progress": budgetListProgress, "reference-finexa": budgetReferenceFinexa, "reference-ledgerfly": budgetReferenceLedgerfly };
 function renderBudget(concept) {
   const fn = BUDGET_RENDERERS[concept.budgetPattern] || heroEnvelopeGrid;
   return el("div", { class: "gpage gpage--list" }, [pageTitle("budget"), ...fn()]);
@@ -1227,10 +1337,113 @@ function accountsGroupedByType() {
   const merchantChips = fx.merchants.map((m) => el("span", { class: "badge" }, [withIcon(m.icon, m.name)]));
   return [accountsSummaryRow(), ...groups, gcard("Merchants", "store", el("div", { class: "row" }, merchantChips), { full: true })];
 }
-const ACCOUNTS_RENDERERS = { "card-grid": accountsCardGrid, table: accountsTable, "grouped-by-type": accountsGroupedByType };
+// BT-013-15: for `ledgerfly-forecast`, Merchants is its OWN required page (extraPages) — this page
+// focuses purely on "where is my money and what do I owe" (Terry's table): asset/liability grouping,
+// balances, recent activity. Never equates a credit limit with available cash (a plain sentence beside
+// any credit-type liability, matching the existing invariant this Gallery already holds elsewhere).
+function accountsReferenceLedgerfly() {
+  const assets = fx.accounts.filter((a) => Number(a.balance) >= 0);
+  const liabilities = fx.accounts.filter((a) => Number(a.balance) < 0);
+  const totalAssets = assets.reduce((s, a) => s + Number(a.balance), 0);
+  const totalLiabilities = liabilities.reduce((s, a) => s + Math.abs(Number(a.balance)), 0);
+  const kpiStrip = ledgerflyKpiStrip([
+    { label: "Net position", value: money(fx.netPosition.amount, fx.netPosition.currency, fx.prefs), meta: "Assets minus liabilities", emphasize: true },
+    { label: "Assets", value: money(totalAssets.toFixed(2), "EUR", fx.prefs), meta: `${assets.length} account${assets.length === 1 ? "" : "s"}` },
+    { label: "Liabilities", value: amountText((-totalLiabilities).toFixed(2), "EUR", fx.prefs), meta: `${liabilities.length} account${liabilities.length === 1 ? "" : "s"}` },
+    { label: "Accounts", value: el("span", { text: String(fx.accounts.length) }), meta: "Total tracked" },
+  ]);
+  const groups = el("div", { class: "gwealth-split" }, [
+    gcard("Assets", "bank", assets.length ? assets.map((a) => el("div", { class: "row" }, [withIcon(a.icon, a.name), el("span", { class: "app__spacer" }), money(a.balance, a.currency, fx.prefs)])) : el("p", { class: "muted small", text: "No asset accounts." })),
+    gcard("What you owe", "loan", liabilities.map((a) => el("div", { class: "stack" }, [
+      el("div", { class: "row" }, [withIcon(a.icon, a.name), el("span", { class: "app__spacer" }), amountText(a.balance, a.currency, fx.prefs)]),
+      a.type === "credit-card" ? el("p", { class: "muted small", text: "A credit limit is never counted as available cash — only the balance above is owed." }) : null,
+    ]))),
+  ]);
+  const activity = gcard("Recent activity", "receipt", el("ul", { class: "stack" }, fx.transactions.slice(0, 6).map(txRow)), { full: true });
+  return [kpiStrip, groups, activity];
+}
+const ACCOUNTS_RENDERERS = { "card-grid": accountsCardGrid, table: accountsTable, "grouped-by-type": accountsGroupedByType, "reference-ledgerfly": accountsReferenceLedgerfly };
 function renderAccounts(concept) {
   const fn = ACCOUNTS_RENDERERS[concept.accountsPattern] || accountsCardGrid;
-  return el("div", { class: "gpage gpage--list" }, [pageTitle("accounts"), ...fn()]);
+  const hasOwnMerchants = (concept.extraPages || []).includes("merchants");
+  return el("div", { class: "gpage gpage--list" }, [pageTitle("accounts", hasOwnMerchants ? "Accounts" : null), ...fn()]);
+}
+
+// BT-013-15: Merchants as its OWN page (extraPages), for concepts whose accounts page above no longer
+// folds it in. Answers "who am I spending with, how is that changing" (Terry's table): ranked spend,
+// frequency and a trend, from the managed merchant directory — never free text.
+function merchantsReferenceLedgerfly() {
+  const spendByMerchant = new Map();
+  const countByMerchant = new Map();
+  for (const t of fx.transactions) {
+    if (Number(t.amount) >= 0 || !t.payee) continue;
+    spendByMerchant.set(t.payee, (spendByMerchant.get(t.payee) || 0) + -Number(t.amount));
+    countByMerchant.set(t.payee, (countByMerchant.get(t.payee) || 0) + 1);
+  }
+  const ranked = fx.merchants.map((m) => ({ m, spend: spendByMerchant.get(m.id) || 0, count: countByMerchant.get(m.id) || 0 })).sort((a, b) => b.spend - a.spend);
+  const totalSpend = ranked.reduce((s, r) => s + r.spend, 0);
+  const kpiStrip = ledgerflyKpiStrip([
+    { label: "Merchants tracked", value: el("span", { text: String(fx.merchants.length) }), meta: "In the managed directory", emphasize: true },
+    { label: "Total spend", value: amountText((-totalSpend).toFixed(2), "EUR", fx.prefs), meta: "Across every merchant" },
+    { label: "Top merchant", value: el("span", { text: ranked[0] ? ranked[0].m.name : "—" }), meta: ranked[0] ? formatAmount(ranked[0].spend.toFixed(2), "EUR") : "No spend yet" },
+    { label: "Entries with a merchant", value: el("span", { text: String(fx.transactions.filter((t) => t.payee).length) }), meta: "This period" },
+  ]);
+  const chart = gcard("Spend by merchant", "chart-pie", [
+    barChart(ranked.map((r) => ({ value: r.spend })), { width: 520, height: 140 }),
+    figureTable(ranked.map((r) => [r.m.name, r.spend.toFixed(2)]), "Spend by merchant", ["Merchant", "Spend"]),
+  ], { full: true });
+  const rows = ranked.map((r) => el("li", { class: "grow" }, [
+    withIcon(r.m.icon, r.m.name),
+    el("span", { class: "muted small", text: `${r.count} ${r.count === 1 ? "entry" : "entries"}` }),
+    el("span", { class: "app__spacer" }),
+    amountText((-r.spend).toFixed(2), "EUR", fx.prefs),
+  ]));
+  const list = gcard("Merchants, ranked by spend", "store", el("ul", { class: "stack" }, rows), { full: true });
+  return [kpiStrip, chart, list];
+}
+const MERCHANTS_RENDERERS = { "reference-ledgerfly": merchantsReferenceLedgerfly };
+function renderMerchants(concept) {
+  const fn = MERCHANTS_RENDERERS[concept.merchantsPattern];
+  return el("div", { class: "gpage gpage--list" }, [pageTitle("merchants"), ...(fn ? fn() : [el("p", { class: "muted", text: "Merchants is not built for this concept yet." })])]);
+}
+
+// BT-013-15: Debt/loan detail as its OWN page (extraPages). Answers "what remains to repay, and what
+// changed the balance" (Terry's table): balance movement, principal/interest, payment history and
+// supported payoff information with EXPLICIT assumptions — reusing the same illustrative original-
+// balance anchor `goal-navigator`'s own Dashboard already uses for this exact account, never a second,
+// disagreeing invented figure.
+function debtReferenceLedgerfly() {
+  const loan = account("acc-loan");
+  const detail = fx.debtDetail["acc-loan"];
+  const balance = Math.abs(Number(loan.balance));
+  const original = Number(detail.originalBalance);
+  const paidOff = original - balance;
+  const pct = Math.max(0, Math.min(100, Math.round((paidOff / original) * 100)));
+  const kpiStrip = ledgerflyKpiStrip([
+    { label: "Current balance", value: money(loan.balance, loan.currency, fx.prefs), meta: loan.name, emphasize: true },
+    { label: "Paid off", value: el("span", { text: `${pct}%` }), meta: `${formatAmount(paidOff.toFixed(2), loan.currency)} of ${formatAmount(original.toFixed(2), loan.currency)}` },
+    { label: "APR (illustrative)", value: el("span", { text: `${detail.apr}%` }), meta: "Assumed for this projection" },
+    { label: "Minimum payment", value: money(detail.minimumPayment, loan.currency, fx.prefs), meta: "Per month" },
+  ]);
+  const progress = gcard("Balance movement", "chart-line", [
+    el("div", { class: "gmeter", role: "img", "aria-label": `${pct}% of the original balance paid off` }, [el("div", { class: "gmeter__fill", vars: { "--pct": `${pct}%` } })]),
+    el("p", { class: "muted small", text: `Opened ${detail.openedDate}. Original balance ${formatAmount(original.toFixed(2), loan.currency)} is an illustrative anchor, the same one this Gallery's debt-payoff concept already uses for this account — never a second, disagreeing figure.` }),
+  ], { full: true });
+  const rows = detail.payments.map((p) => el("tr", {}, [
+    el("td", { text: p.date }), el("td", { class: "num" }, [money(p.amount, loan.currency, fx.prefs)]),
+    el("td", { class: "num" }, [money(p.principal, loan.currency, fx.prefs)]), el("td", { class: "num" }, [money(p.interest, loan.currency, fx.prefs)]),
+  ]));
+  const table = el("table", { class: "table gtable-dense" }, [
+    el("thead", {}, [el("tr", {}, ["Date", "Payment", "Principal", "Interest"].map((h, i) => el("th", { scope: "col", class: i ? "num" : "", text: h })))]),
+    el("tbody", {}, rows),
+  ]);
+  const history = gcard("Payment history (illustrative)", "calendar", el("div", { class: "table-wrap" }, [table]), { full: true });
+  return [kpiStrip, progress, history];
+}
+const DEBT_RENDERERS = { "reference-ledgerfly": debtReferenceLedgerfly };
+function renderDebt(concept) {
+  const fn = DEBT_RENDERERS[concept.debtPattern];
+  return el("div", { class: "gpage gpage--list" }, [pageTitle("debt"), ...(fn ? fn() : [el("p", { class: "muted", text: "Debt/loan detail is not built for this concept yet." })])]);
 }
 
 // ---- Shared expenses: three genuinely different compositions (closing the gap the review's own
@@ -1344,7 +1557,49 @@ function sharedReferenceGroupsplit(expenses) {
   const listCard = gcard("Expenses", "receipt", cards.length ? el("div", { class: "ggroupsplit-list" }, cards) : el("p", { class: "muted small", text: "No expenses in this event." }), { full: true });
   return [totalCard, listCard];
 }
-const SHARED_RENDERERS = { "balance-list": sharedBalanceList, "ledger-table": sharedLedgerTable, "settlement-focus": sharedSettlementFocus, "reference-groupsplit": sharedReferenceGroupsplit };
+// BT-013-15: Shared expenses answers TWO questions on two views of the SAME page (Terry: "Preserve the
+// distinction between event directory and event detail"). The DIRECTORY (`eventsDirectory()` above,
+// shared by every pattern) already shows which events are active, closed or being viewed; when no
+// event is selected this renderer adds the real combined balances and recent activity. When ONE event
+// IS selected, this is the DETAIL: real per-event participant balances (`fx.splitBalances`, never the
+// combined figure), who owes whom, and that event's own expenses — a genuinely different, richer view
+// from the directory, not merely a narrowed list.
+function sharedReferenceLedgerfly(expenses, selectedEvent) {
+  const totalExpenses = fx.shared.expenses.reduce((s, g) => s + Number(g.amount), 0);
+  const outstanding = fx.shared.balances.filter((b) => Number(b.net) < 0).reduce((s, b) => s - Number(b.net), 0);
+  const kpiStrip = ledgerflyKpiStrip([
+    { label: "Events", value: el("span", { text: String(fx.shared.events.length) }), meta: `${fx.shared.events.filter((e) => e.status === "active").length} active`, emphasize: true },
+    { label: "Members", value: el("span", { text: String(fx.shared.balances.length) }), meta: "In this workspace" },
+    { label: "Total expenses", value: amountText((-totalExpenses).toFixed(2), fx.shared.currency, fx.prefs), meta: "Across every event" },
+    { label: "Outstanding", value: amountText((-outstanding).toFixed(2), fx.shared.currency, fx.prefs), meta: "Still to settle" },
+  ]);
+  if (!selectedEvent) {
+    return [
+      kpiStrip,
+      gcard("Balances", "users", fx.shared.balances.map((b) => el("div", { class: "row" }, [el("span", { text: b.name }), el("span", { class: "app__spacer" }), amountText(b.net, fx.shared.currency, fx.prefs)]))),
+      gcard("Recent shared expenses", "receipt", el("ul", { class: "stack" }, expenses.map((g) => el("li", { class: "grow" }, [el("span", { class: "muted small", text: g.date }), el("span", { text: g.description }), el("span", { class: "muted small", text: `paid by ${g.payer}` }), el("span", { class: "app__spacer" }), amountText(`-${g.amount}`, fx.shared.currency, fx.prefs)]))), { full: true }),
+    ];
+  }
+  const balances = fx.splitBalances(expenses);
+  const owes = balances.filter((b) => Number(b.net) < 0);
+  const owed = balances.filter((b) => Number(b.net) > 0);
+  const settled = balances.every((b) => Math.abs(Number(b.net)) < 0.01);
+  const suggestions = owes.flatMap((from) => owed.map((to) => el("li", { class: "grow" }, [
+    el("span", { text: `${from.name} → ${to.name}` }), el("span", { class: "app__spacer" }),
+    amountText(String(Math.min(Math.abs(Number(from.net)), Number(to.net)).toFixed(2)), fx.shared.currency, fx.prefs),
+  ])));
+  return [
+    kpiStrip,
+    gcard(`${selectedEvent.name} — who owes whom`, "users", [
+      badge(settled ? "Settled" : "Outstanding", settled ? "shared" : "warning"),
+      el("ul", { class: "stack" }, balances.map((b) => el("li", { class: "grow" }, [el("span", { text: b.name }), el("span", { class: "app__spacer" }), amountText(b.net, fx.shared.currency, fx.prefs)]))),
+    ], { full: true }),
+    gcard("Settle up", "scale", suggestions.length ? el("ul", { class: "stack" }, suggestions) : el("p", { class: "muted small", text: "Everyone is settled up for this event." }), { full: true }),
+    gcard(`${selectedEvent.name} — expenses`, "receipt", el("ul", { class: "stack" }, expenses.map((g) => el("li", { class: "grow" }, [el("span", { class: "muted small", text: g.date }), el("span", { text: g.description }), el("span", { class: "muted small", text: `paid by ${g.payer}, split ${g.splitAmong.length} way${g.splitAmong.length === 1 ? "" : "s"}` }), el("span", { class: "app__spacer" }), amountText(`-${g.amount}`, fx.shared.currency, fx.prefs)]))), { full: true }),
+  ];
+}
+const REAL_EVENT_SCOPED_PATTERNS = new Set(["reference-ledgerfly"]);
+const SHARED_RENDERERS = { "balance-list": sharedBalanceList, "ledger-table": sharedLedgerTable, "settlement-focus": sharedSettlementFocus, "reference-groupsplit": sharedReferenceGroupsplit, "reference-ledgerfly": sharedReferenceLedgerfly };
 function renderShared(concept) {
   const page = el("div", { class: "gpage gpage--list" });
   let selectedEventId = null;
@@ -1352,11 +1607,14 @@ function renderShared(concept) {
     const fn = SHARED_RENDERERS[concept.sharedPattern] || sharedBalanceList;
     const selectedEvent = selectedEventId ? fx.shared.events.find((e) => e.id === selectedEventId) : null;
     const expenses = selectedEvent ? fx.shared.expenses.filter((g) => g.eventId === selectedEvent.id) : fx.shared.expenses;
+    // BT-013-15: patterns in REAL_EVENT_SCOPED_PATTERNS compute a genuine per-event balance
+    // (`fx.splitBalances`) for their own detail view, so the older "balances stay combined" honesty
+    // disclosure — still true and still shown for every OTHER pattern, which do not — does not apply.
     mount(page,
       pageTitle("shared"),
       eventsDirectory(selectedEventId, (id) => { selectedEventId = id; paint(); }),
-      selectedEvent ? el("p", { class: "field__help", text: `Showing only "${selectedEvent.name}"'s own shared expenses. Balances above stay combined across every event in this illustrative preview.` }) : null,
-      ...fn(expenses),
+      (selectedEvent && !REAL_EVENT_SCOPED_PATTERNS.has(concept.sharedPattern)) ? el("p", { class: "field__help", text: `Showing only "${selectedEvent.name}"'s own shared expenses. Balances above stay combined across every event in this illustrative preview.` }) : null,
+      ...fn(expenses, selectedEvent),
     );
   }
   paint();
@@ -1404,7 +1662,20 @@ function tripsTimeline() {
     el("span", { class: "gtimeline__date muted small", text: t.dateRange }), withIcon(t.icon, t.name), el("span", { class: "muted small" }, [` — ${t.spent} of ${t.budget} ${t.currency}`]),
   ]))), { full: true })];
 }
-const TRIPS_RENDERERS = { "card-grid": tripsCardGrid, list: tripsList, timeline: tripsTimeline };
+// BT-013-15: Trips stays illustrative (BT-010 hold) — the SAME KPI-strip identity, still clearly
+// labelled by TRIPS_NOTE above whatever this renders.
+function tripsReferenceLedgerfly() {
+  const budget = fx.trips.reduce((s, t) => s + Number(t.budget), 0);
+  const spent = fx.trips.reduce((s, t) => s + Number(t.spent), 0);
+  const kpiStrip = ledgerflyKpiStrip([
+    { label: "Trips", value: el("span", { text: String(fx.trips.length) }), meta: "Illustrative", emphasize: true },
+    { label: "Combined budget", value: money(budget.toFixed(2), fx.trips[0].currency, fx.prefs), meta: "Across every trip" },
+    { label: "Combined spent", value: amountText((-spent).toFixed(2), fx.trips[0].currency, fx.prefs), meta: "Across every trip" },
+    { label: "Remaining", value: amountText((budget - spent).toFixed(2), fx.trips[0].currency, fx.prefs), meta: "Budget minus spent" },
+  ]);
+  return [kpiStrip, gcard("Trips", "suitcase", el("div", { class: "ggrid ggrid--metrics" }, fx.trips.map((t) => gcard(t.name, t.icon, tripCard(t, { withName: false })))), { full: true })];
+}
+const TRIPS_RENDERERS = { "card-grid": tripsCardGrid, list: tripsList, timeline: tripsTimeline, "reference-ledgerfly": tripsReferenceLedgerfly };
 function renderTrips(concept) {
   const fn = TRIPS_RENDERERS[concept.tripsPattern] || tripsCardGrid;
   return el("div", { class: "gpage gpage--list" }, [pageTitle("trips"), el("p", { class: "field__help", text: TRIPS_NOTE }), ...fn()]);
@@ -1467,14 +1738,17 @@ function renderMySettings(concept) {
   return el("div", { class: "gpage gpage--list" }, [pageTitle("mysettings"), ...fn()]);
 }
 
-const PAGE_RENDERERS = { dashboard: renderDashboard, transactions: renderTransactions, bills: renderBills, budget: renderBudget, accounts: renderAccounts, shared: renderShared, trips: renderTrips, mysettings: renderMySettings, worksettings: renderWorkspaceSettings };
+const PAGE_RENDERERS = { dashboard: renderDashboard, transactions: renderTransactions, bills: renderBills, budget: renderBudget, accounts: renderAccounts, shared: renderShared, trips: renderTrips, mysettings: renderMySettings, worksettings: renderWorkspaceSettings, merchants: renderMerchants, debt: renderDebt };
 
 // ---- the frame: nav + page, driven by the concept's own composition parameters --------------------
-function renderNav(concept, activeId, onNavigate, requiredPages) {
-  const items = requiredPages.map((id) => el("button", {
+// `pages` already includes the concept's own `extraPages` (renderConceptFrame merges them in below) —
+// "Accounts" reads without "/ Merchants" whenever Merchants is present as its own separate nav item.
+function renderNav(concept, activeId, onNavigate, pages) {
+  const hasOwnMerchants = pages.includes("merchants");
+  const items = pages.map((id) => el("button", {
     type: "button", class: ["gnav__item", id === activeId ? "gnav__item--active" : ""], "aria-current": id === activeId ? "page" : null,
     onClick: () => onNavigate(id),
-  }, [withIcon(PAGE_ICON[id], PAGE_LABEL[id])]));
+  }, [withIcon(PAGE_ICON[id], id === "accounts" && hasOwnMerchants ? "Accounts" : PAGE_LABEL[id])]));
   const brand = el("div", { class: "gnav__brand" }, [withIcon("scale", "BudgetTracker")]);
   if (concept.navStyle === "command") {
     return el("nav", { class: "gnav gnav--command", "aria-label": "Gallery preview navigation" }, [brand, el("div", { class: "gnav__items" }, items.slice(0, 3)), el("span", { class: "gnav__more muted small" }, ["More …"])]);
@@ -1488,6 +1762,10 @@ function renderNav(concept, activeId, onNavigate, requiredPages) {
  * nav item inside the preview (switching the previewed page; the Gallery page owns that state).
  */
 export function renderConceptFrame(concept, pageId, onNavigate, { requiredPages = Object.keys(PAGE_LABEL), colorOverride = null } = {}) {
+  // BT-013-15: a concept's own `extraPages` (Merchants, Debt/loan detail — declared only by the
+  // concepts that build them) are appended to the required set for nav purposes ONLY here, never by
+  // changing the global REQUIRED_PAGES the other twelve concepts are tested against.
+  const pages = [...requiredPages, ...(concept.extraPages || [])];
   const page = (PAGE_RENDERERS[pageId] || renderDashboard)(concept, onNavigate);
   return el("div", {
     class: "gframe", dataset: { nav: concept.navStyle, density: concept.density, card: concept.cardStyle, page: pageId, voice: concept.typeVoice, chart: concept.chartEmphasis, concept: concept.id },
@@ -1503,7 +1781,7 @@ export function renderConceptFrame(concept, pageId, onNavigate, { requiredPages 
     },
     "aria-label": `${concept.name} preview, ${PAGE_LABEL[pageId] || pageId} page`,
   }, [
-    renderNav(concept, pageId, onNavigate, requiredPages),
+    renderNav(concept, pageId, onNavigate, pages),
     el("div", { class: "gframe__main" }, [page]),
   ]);
 }
