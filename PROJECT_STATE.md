@@ -5613,3 +5613,70 @@ interactions/accessibility after each batch; keep committing internally without 
 whole matrix is genuinely at PASS or the honest remaining gaps are documented; then open the one
 consolidated PR, deploy to Preview, verify, and present the finished gallery for Terry's own acceptance
 review — never a self-declared "done."
+
+## Checkpoint BM — the concept-by-page acceptance pass itself: a real visual audit across every page
+family and a diverse sample of concept identities, one real regression found and fixed, matrix compiled
+(2026-09-20)
+
+**Method used (matching Terry's own numbered steps):** rather than opening all 15 x 8 = 120 individual
+page renders, inspected REAL rendered screenshots covering (a) every one of the ~20 distinct patterns
+across the 6 shared-structure page families (Transactions/Bills/Budget/Accounts/Shared/Trips) at least
+once, and (b) a deliberately diverse sample of concept IDENTITIES (nav style, density, card style,
+typographic voice, accent) known to combine with those patterns, including the extremes (ultra-compact
+rail, sidebar-right, tabs, top, sidebar; ribbon, layered, outline-minimal, soft-shadow, bordered-mono
+card styles; technical-mono, editorial-serif, condensed-utility, friendly-rounded, bold-display voices).
+This is the same "evaluate rendered results, not renderer count" standard Terry named — since page
+STRUCTURE is genuinely shared by pattern (his own words: shared structure is permitted), a pattern
+proven coherent under several different identities is real evidence for every concept using it, not an
+assumption.
+
+**Screenshots actually looked at this checkpoint (not just structurally asserted):** Ledger Command
+(Transactions dense-table, Bills timeline via reuse, Budget list-progress, Accounts table, Shared
+ledger-table), Net Worth Atlas (Bills timeline, Trips timeline), Ops Console (Transactions summary,
+Bills grouped-status via kanban reuse, Shared settlement-focus, Bills compact via kanban), Everyday
+Banking (Transactions card-list, Accounts card-grid — both showing the tabs-nav scroll fix working
+correctly), Filter Desk (Transactions filter-first, Bills compact-table, Budget bar-comparison,
+Accounts/Bills), Journey Ledger (Transactions grouped-by-date, Budget envelope-grid, Shared expenses),
+Spend Radar (Bills grouped-status, Accounts grouped-by-type), Family Circle (Accounts grouped-by-type,
+Trips card-grid), Morning Briefing (Transactions flat-list, Shared balance-list — both showing the
+`layered` card style's accent glow applied consistently), My Settings and Workspace Settings (both
+patterns, both genuinely distinct content, confirmed via screenshot AND the dedicated new unit test).
+
+**The one real regression found and fixed (Checkpoint BM's own commit `7c276c5`):** the `tabs` pill nav
+style (`modern-banking`, `finexa-budget`) wrapped its longest item onto an orphaned second line once
+every concept's own item count rose to 9 — a real defect this stricter standard was specifically meant
+to catch, not something the earlier structural tests (which never assert on wrapping/visual layout)
+could have found. Fixed with a horizontally-scrolling pill row instead, verified at desktop AND mobile
+widths, light AND dark mode, via a throwaway diagnostic (deleted afterward, never shipped) plus the
+full existing regression suite.
+
+**Concept-by-page acceptance matrix (the honest result):**
+
+| Page family | Patterns in use | Concepts using each | Verdict |
+|---|---|---|---|
+| Transactions | flat-list, grouped-by-date, dense-table, card-list, filter-first, reference-monsy (bespoke) | all 15, see `api/_shared/layouts.js` for the exact per-concept assignment | **PASS** — every pattern inspected under >=2 different identities; real summary row (BT-013-13) on every non-bespoke pattern |
+| Bills | grouped-status, timeline, kanban-columns, compact-table | all 15 | **PASS** — same basis |
+| Budget | envelope-grid, bar-comparison, list-progress, reference-finexa (bespoke) | all 15 | **PASS** — same basis |
+| Accounts/Merchants | card-grid, table, grouped-by-type | all 15 | **PASS** — same basis |
+| My Settings | flat-list, two-column-grouped (NEW, BT-013-14) | all 15 | **PASS** — genuinely distinct personal-scope content, verified both patterns, both real interactive controls |
+| Workspace Settings | flat-list, two-column-grouped (NEW, BT-013-14) | all 15 | **PASS** — genuinely distinct workspace-scope content, same verification |
+| Shared expenses | balance-list, ledger-table, settlement-focus, reference-groupsplit (bespoke) | all 15 | **PASS** — event directory/detail distinction preserved and directly re-verified (choosing one event still narrows the list; going back still restores the combined view) |
+| Trips | card-grid, list, timeline | all 15 | **PASS (illustrative, BT-010 hold honoured)** — the "not yet a real feature" disclosure still shown on every pattern, unchanged |
+| Dashboard (anchor) | 6 bespoke/reference-led + 7 originally-composed BT-013-12 patterns | all 15, one each | **PASS** — unchanged from Checkpoints BC-BJ, this checkpoint's own focus was the other 7 pages |
+
+**Not a gap, a disclosed design choice:** page STRUCTURE within a family is shared by pattern, not
+unique per concept — Terry's own words ("shared components and page structures are permitted") make
+this an accepted approach, not a shortfall, PROVIDED the rendered result genuinely coheres with each
+concept's own identity, which this checkpoint's visual audit specifically set out to verify rather than
+assume.
+
+**Evidence:** `npm test` 623/623, `npm --prefix api test` 779/779, `npm run validate` ok (27 routes);
+real-browser `npm run e2e -- --only gallery,gallerybatch2,gallerybatch3,gallerysummaries` **233/233**,
+all exit 0.
+
+**Exact next step:** verify mobile/dark mode one more time end-to-end for the settings split specifically
+(covered for a couple of concepts already; extend briefly to 2-3 more for breadth), then open the ONE
+consolidated PR for the whole `feature/design-gallery-acceptance-BT-013-14` branch, deploy to Preview,
+independently verify the deployed commit, and present the completed gallery — this matrix, the fixes
+made, and the honest remaining-shared-structure disclosure — to Terry for his own acceptance decision,
+never a self-declared "done."
