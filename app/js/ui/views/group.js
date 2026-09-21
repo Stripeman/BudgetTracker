@@ -23,6 +23,7 @@ import { downloadFile } from "../permanentdelete.js";
 // Values in words exactly as the workspace settings card shows them (eefd115).
 import { createSettingsForm, settingText } from "../settingsform.js";
 import { trackUnsaved } from "../../core/unsaved.js";
+import { effectiveLayoutId, layoutAccentVars } from "../../core/layoutmeta.js";
 
 // Who changes the group's settings, said once (UX/accessibility review of eefd115, findings 6 and 11).
 const INTRO_CHANGE = "These decide how everyone in this group works. Owners and managers change them. Each one starts with how Shared expenses has always worked, and every change is kept below.";
@@ -169,26 +170,38 @@ export function createView(ctx) {
   const mineBox = el("div");
   const mineCard = el("section", { class: "card", "aria-labelledby": "grp-mine", hidden: true }, [titled("grp-mine", "user", "Your own defaults"), mineBox]);
   let mode = personalDefault(ctx.store.getState(), "groupBalanceView") || "suggested";
-  const element = el("section", {}, [
-    el("div", { class: "page-head" }, [el("h1", { text: "Shared expenses" }), actions]),
-    intro,
-    el("div", { class: "stack" }, [
-      needs,
-      eventsCard,
-      unitsCard,
-      fundCard,
-      remindersCard,
-      insightsCard,
-      offlineCard,
-      // Full width: the balances table has seven columns (half width clipped the balance itself).
-      el("section", { class: "card", "aria-labelledby": "grp-balances" }, [titled("grp-balances", "scale", "Balances"), balancesBox]),
-      el("section", { class: "card", "aria-labelledby": "grp-settle" }, [titled("grp-settle", "users", "Settle up"), settleBox]),
-      el("section", { class: "card", "aria-labelledby": "grp-expenses" }, [titled("grp-expenses", "receipt", "Expenses"), expensesBox]),
-      el("section", { class: "card", "aria-labelledby": "grp-payments" }, [titled("grp-payments", "coins", "Payments"), myRight, paymentsBox]),
-      settingsCard,
-      mineCard,
-    ]),
+  // BT-013-16: this page is already built as a stack of individually-carded sections (Balances,
+  // Settle up, Expenses, Payments, Events, Households, Shared fund, Payment reminders, Insights,
+  // Offline entry, Settings, Your own defaults) — every one of them, and everything inside them
+  // (adding/editing/reversing expenses and payments, settings, offline queueing, insights), stays
+  // completely shared and unchanged. The SAME stack is reparented into a `.dashflag` accent wrapper
+  // for the flagship layouts rather than restructured, given this page's size and the real financial
+  // risk of touching its settlement/ledger logic — a deliberate, disclosed narrower scope than the
+  // other real pages' own KPI strips.
+  const stack = el("div", { class: "stack" }, [
+    needs,
+    eventsCard,
+    unitsCard,
+    fundCard,
+    remindersCard,
+    insightsCard,
+    offlineCard,
+    // Full width: the balances table has seven columns (half width clipped the balance itself).
+    el("section", { class: "card", "aria-labelledby": "grp-balances" }, [titled("grp-balances", "scale", "Balances"), balancesBox]),
+    el("section", { class: "card", "aria-labelledby": "grp-settle" }, [titled("grp-settle", "users", "Settle up"), settleBox]),
+    el("section", { class: "card", "aria-labelledby": "grp-expenses" }, [titled("grp-expenses", "receipt", "Expenses"), expensesBox]),
+    el("section", { class: "card", "aria-labelledby": "grp-payments" }, [titled("grp-payments", "coins", "Payments"), myRight, paymentsBox]),
+    settingsCard,
+    mineCard,
   ]);
+  const bodyHost = el("div");
+  const element = el("section", {}, [el("div", { class: "page-head" }, [el("h1", { text: "Shared expenses" }), actions]), intro, bodyHost]);
+  const FLAGSHIP_IDS = new Set(["ledgerfly-forecast", "finexa-budget", "acru-overview"]);
+  let mountedLayout = null;
+  function arrangementFor(layoutId) {
+    if (!FLAGSHIP_IDS.has(layoutId)) return stack;
+    return el("div", { class: "dashflag", vars: layoutAccentVars(ctx.store.getState(), layoutId) }, [stack]);
+  }
   void ctx.store.actions.refreshGroup();
   // BT-009-26: the offline queue lives outside the store's own state on purpose (never mirrored
   // into it — "minimal retained data"), so this page re-renders itself directly whenever it
@@ -203,6 +216,9 @@ export function createView(ctx) {
   if (typeof window !== "undefined" && window.addEventListener) window.addEventListener("online", onOnline);
 
   function update(state) {
+    const ws = (state.workspaces || []).find((w) => w.id === state.selectedWorkspaceId);
+    const layoutId = effectiveLayoutId(state, ws);
+    if (mountedLayout !== layoutId) { mount(bodyHost, arrangementFor(layoutId)); mountedLayout = layoutId; }
     const slice = sliceFor(state, "group");
     const data = slice.data;
     const loading = stateView(slice);
