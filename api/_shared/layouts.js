@@ -106,11 +106,23 @@ const REQUIRED_PAGES = Object.freeze(['dashboard', 'transactions', 'bills', 'bud
 // pattern field.
 const EXTRA_PAGES = Object.freeze(['merchants', 'debt']);
 
-// The one real, selectable layout today (workspace setting `layoutId`, BT-011-07/BT-013): today's
-// existing implicit application layout, kept exactly as it behaves now. Nothing in CONCEPTS below is
-// in this list — that is the deliberate boundary between "under review in the Gallery" and "a real
-// workspace may choose this".
-const REAL_LAYOUT_OPTIONS = Object.freeze([{ value: 'classic', label: 'Classic (current)' }]);
+// The real, selectable layouts today (workspace setting `layoutId`, BT-011-07/BT-013, extended by
+// BT-013-16): `classic` is today's existing implicit application layout, kept exactly as it behaves
+// now. BT-013-16 (Terry, 2026-09-21: "a real, user-facing Layout Picker... using the designs already
+// created") makes the three flagship reference-matched Gallery concepts real, selectable options for
+// the first time — `ledgerfly-forecast` (Executive Forecast), `finexa-budget` (Budget Workspace) and
+// `acru-overview` (Financial Overview) — labelled here with the same name Terry reviewed them by in
+// the Gallery. The other twelve Gallery concepts stay out of this list: they remain "Demo only" until
+// genuinely integrated (api/_shared/layout-catalog.js, api/workspace-layouts). Retirement of one of
+// the four below (site-admin only, api/site-layouts) does not remove it from this list — a retired
+// layout is refused for NEW selection at the catalogue layer, never by shrinking the generic option
+// set an already-applied workspace's stored value must remain valid against.
+const REAL_LAYOUT_OPTIONS = Object.freeze([
+  { value: 'classic', label: 'Classic (current)' },
+  { value: 'ledgerfly-forecast', label: 'Executive Forecast' },
+  { value: 'finexa-budget', label: 'Budget Workspace' },
+  { value: 'acru-overview', label: 'Financial Overview' },
+]);
 const REAL_DEFAULT_LAYOUT_ID = 'classic';
 
 function c(entry) { return Object.freeze(entry); }
