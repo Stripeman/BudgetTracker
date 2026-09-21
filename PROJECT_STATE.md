@@ -6082,3 +6082,33 @@ before this instruction arrived. This checkpoint's new commits (the settings sce
 registration, this record) stay on the SAME branch; the closest honest compliance with "no separate
 bookkeeping PR" is exactly ONE new PR containing this genuine new evidence/fix content, opened next, for
 Terry's own review and merge decision — never merged by this agent, never touching Production.
+
+## Checkpoint BS (2026-09-21): PR #46 merged by Terry; Preview redeployed and independently re-verified; awaiting his own visual acceptance
+
+PR #46 (the four evidence-gap closures above) was merged by Terry (`main` `31bf70c..3ee6802`) — verified
+via `git fetch`/`git log origin/main`, not assumed. Following the same instruction he gave earlier this
+session ("change to main, pull and push to preview"): local `main` fetched and fast-forwarded cleanly
+(`Updating 31bf70c..3ee6802`, fast-forward, no conflicts); deployed via the sole supported path
+(`scripts/deploy/deploy.ps1 -Environment preview`), receipt `result: SUCCESS`,
+`sha: 3ee68027a9954c6d795d311ed3ad725360618e23`; independently verified (not just trusting the deploy
+receipt) via a direct `curl` on `/api/site-settings` against the live Preview URL —
+`"environment":"preview"`, `"commit":"3ee68027a9954c6d795d311ed3ad725360618e23"`, matching `main`'s
+exact HEAD.
+
+This closing record is committed on this already-twice-merged feature branch directly (never pushed to
+`main` by this agent, never a third bookkeeping-only PR for a record-only entry — the same precedent as
+Checkpoint BN).
+
+**Current state, plainly:** both PR #45 (the three flagship designs, every required and extra page) and
+PR #46 (the four evidence gaps Terry named after reviewing PR #45's Preview deployment) are merged into
+`main` and live on Preview at the verified commit above. BT-013-15's AUTHORIZED IMPLEMENTATION SCOPE is
+complete. **Terry's own visual acceptance of the three designs against his own reference screenshots —
+the actual gate, repeatedly named as distinct from implementation completion — has not yet been given
+and is not assumed here.** BT-007 and BT-010 remain on hold. The other 12 gallery concepts' expansion
+remains paused, not abandoned, pending Terry's own decision on whether/when to resume it. `main` was
+never merged by this agent at any point this session; Production was never touched.
+
+**Waiting on Terry:** his own visual acceptance decision on the three designs (Executive Forecast,
+Budget Workspace, Financial Overview) as rendered on Preview, using the exact navigation instructions
+and the private `.local/refcheck/compare.html` side-by-side already provided; whether any further
+refinement is wanted; whether/when to resume the other 12 concepts, BT-007, or BT-010.
