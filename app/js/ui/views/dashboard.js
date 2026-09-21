@@ -27,7 +27,7 @@ import { openGroupExpense, balanceLabel, shownTables } from "./group.js";
 import { sharedExpensesOn } from "../../core/workspacesettings.js";
 import { categoryIndex } from "../../core/categories.js";
 import { donutChart, moneyFigureTable, chartLegend } from "../charts.js";
-import { layoutMeta } from "../../core/layoutmeta.js";
+import { layoutMeta, effectiveLayoutId } from "../../core/layoutmeta.js";
 
 // A card title with its icon (BT-011-05); the words name the card, the icon is decoration.
 const titled = (id, iconId, text, tag = "h2") => el(tag, { class: "card__title", id }, [withIcon(iconId, text)]);
@@ -39,13 +39,6 @@ const titled = (id, iconId, text, tag = "h2") => el(tag, { class: "card__title",
 const SHARED_KINDS = new Set(["group", "trip"]);
 const workspaceOf = (state) => (state.workspaces || []).find((w) => w.id === state.selectedWorkspaceId) || null;
 
-// The workspace's real, applied layout (BT-013-16): already resolved on every workspace summary
-// (`api/_shared/workspace-model.js` `summary()`), no new fetch. Falls back to "classic" for a
-// workspace record the store has not loaded yet, exactly like every other setting read this way
-// already does (app/js/ui/views/planning.js, bills.js).
-function layoutIdOf(ws) {
-  return (ws && ws.settingValues && ws.settingValues.layoutId) || "classic";
-}
 
 // ---- one derivation, shared by every renderer (CLAUDE.md: one canonical calculation per concept) ---
 function deriveDashboardData(state) {
@@ -127,7 +120,16 @@ function deriveDashboardData(state) {
 }
 
 // Shared across every layout (Terry: "available actions" must be preserved regardless of layout).
+// BT-013-16: while previewing a layout, opening the real entry form would be pointless (any submit
+// is refused by the store's own guard) and confusing — the button explains why instead of opening
+// it. The guard in app/js/core/store.js `write()` is the real, authoritative safety net regardless.
 function renderActions(actionsEl, ctx, state, data) {
+  if (state.layoutPreview) {
+    mount(actionsEl, button(data.sharedKind && data.ws.role !== "viewer" ? "Add shared expense" : "Add expense", () => {}, {
+      variant: "primary", attrs: { disabled: true, "aria-disabled": "true", title: "This is a read-only layout preview. Exit preview to make changes." },
+    }));
+    return;
+  }
   if (data.sharedKind && data.ws.role !== "viewer") {
     mount(actionsEl, button("Add shared expense", () => openGroupExpense(ctx), { variant: "primary" }),
       canAddEntries(state) ? button("Add to an account", () => openQuickEntry(ctx)) : null);
@@ -432,7 +434,7 @@ export function createView(ctx) {
     loadGroup(state);
     const data = deriveDashboardData(state);
     renderActions(actions, ctx, state, data);
-    const layoutId = layoutIdOf(data.ws);
+    const layoutId = effectiveLayoutId(state, data.ws);
     const renderer = FLAGSHIP_RENDERERS[layoutId];
     if (!renderer) {
       if (mountedLayout !== "classic") { mount(bodyHost, classicTree); mountedLayout = "classic"; }

@@ -36,6 +36,12 @@ export function initialState() {
     // `write(fn, REFRESH)` call site's plain `refreshGroup()` automatically re-fetches whichever
     // scope the person is actually looking at, with no per-call-site change needed.
     groupEventFilter: null,
+    // BT-013-16: the real Layout Picker's temporary, client-only preview — never persisted, never
+    // sent to the server except through the one explicit "Apply" action. `null` when not previewing;
+    // otherwise `{ layoutId }`. Ambient like `selectedWorkspaceId`/`groupEventFilter`: reset
+    // synchronously on a workspace switch (below) so a preview never survives into a different
+    // workspace, and checked by `actions.write` (SEC: "disable financial mutations" while previewing).
+    layoutPreview: null,
   };
 }
 
@@ -98,7 +104,7 @@ export function createStore({ api }) {
       generation += 1;
       // Synchronous reset BEFORE any await, so nothing from the previous workspace can render.
       commit({
-        selectedWorkspaceId: id, groupEventFilter: null,
+        selectedWorkspaceId: id, groupEventFilter: null, layoutPreview: null,
         accounts: emptySlice(id), transactions: emptySlice(id), payees: emptySlice(id), categories: emptySlice(id), members: emptySlice(id), bills: emptySlice(id),
         budgets: emptySlice(id), forecast: emptySlice(id), icons: emptySlice(id), group: emptySlice(id), monthActivity: emptySlice(id), weekActivity: emptySlice(id),
         accountTypes: emptySlice(id), categoryTypes: emptySlice(id), merchantTypes: emptySlice(id),
@@ -246,7 +252,16 @@ export function createStore({ api }) {
     },
 
     // Every write re-reads the affected slices afterwards; the server is the source of truth.
-    async write(fn, refresh = ["accounts", "transactions", "payees"]) {
+    // BT-013-16: while a layout preview is active, every write is refused client-side UNLESS the
+    // caller explicitly marks itself `allowDuringPreview` — the layout-management actions
+    // (Apply/hide/restore/colours) that are the whole point of a preview, never a financial one. This
+    // is a genuine safety net, not merely a UI nicety: it refuses ANY mutation on ANY page reachable
+    // while previewing, including pages this feature has not touched yet, without needing every
+    // button on every page to remember to check preview state itself.
+    async write(fn, refresh = ["accounts", "transactions", "payees"], { allowDuringPreview = false } = {}) {
+      if (state.layoutPreview && !allowDuringPreview) {
+        return { ok: false, error: new ApiError({ kind: ErrorKind.FORBIDDEN, code: "preview_read_only", message: "This is a read-only layout preview. Exit preview to make changes." }) };
+      }
       const wsId = state.selectedWorkspaceId;
       try {
         const result = await fn(wsId);
@@ -283,6 +298,14 @@ export function createStore({ api }) {
         return { ok: false, error: err };
       }
     },
+
+    // BT-013-16: the real Layout Picker's full-size Preview — an ephemeral, client-only override of
+    // which layout the CURRENT browser renders for the workspace already selected. Never a server
+    // write, never seen by another member, restored to the real applied layout on exit simply by
+    // clearing this (there is nothing saved to roll back). Real pages read the effective layout via
+    // `app/js/core/layoutmeta.js` `effectiveLayoutId(state, ws)`.
+    previewLayout(layoutId) { commit({ layoutPreview: { layoutId } }); },
+    exitLayoutPreview() { commit({ layoutPreview: null }); },
   };
 
   return {

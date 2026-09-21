@@ -18,3 +18,13 @@ export const REAL_LAYOUT_IDS = Object.freeze(REAL_LAYOUTS.map((l) => l.id));
 export function layoutMeta(id) {
   return REAL_LAYOUTS.find((l) => l.id === id) || REAL_LAYOUTS[0];
 }
+
+// The workspace's real, applied layout (`settingValues.layoutId`, already resolved on every
+// workspace summary — no new fetch), UNLESS a full-size Preview (BT-013-16) is currently overriding
+// it for this browser only. Every real page should read the layout to render through this one
+// function, never `ws.settingValues.layoutId` directly, so a preview reaches every page uniformly
+// the moment that page adopts a layout-aware renderer.
+export function effectiveLayoutId(state, ws) {
+  if (state && state.layoutPreview) return state.layoutPreview.layoutId;
+  return (ws && ws.settingValues && ws.settingValues.layoutId) || "classic";
+}

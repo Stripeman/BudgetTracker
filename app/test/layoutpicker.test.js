@@ -29,7 +29,7 @@ function layouts({ currentId = "classic", canApply = true, canManage = true, hid
 const DEMO = [{ id: "executive-ledger", name: "Ledger Command", tagline: "A running strip of the figures that matter." }];
 
 function page(overrides = {}) {
-  const calls = { patchWorkspace: [], patchLayout: [], preferences: [], refreshed: 0 };
+  const calls = { patchWorkspace: [], patchLayout: [], preferences: [], refreshed: 0, previewed: [], navigated: [] };
   let current = overrides.currentId || "classic";
   const state = { selectedWorkspaceId: "ws_1" };
   const api = {
@@ -57,9 +57,11 @@ function page(overrides = {}) {
       write: async (fn) => { try { const result = await fn("ws_1"); return { ok: true, result }; } catch (error) { return { ok: false, error }; } },
       refreshWorkspaces: async () => { calls.refreshed += 1; return { ok: true }; },
       savePreferences: async (body) => { calls.preferences.push(body); return { ok: true }; },
+      previewLayout: (id) => { calls.previewed.push(id); },
     },
   };
-  return { ctx: { api, store }, calls };
+  const navigate = (route) => { calls.navigated.push(route); };
+  return { ctx: { api, store, navigate }, calls };
 }
 
 async function open(overrides) {
@@ -143,12 +145,16 @@ describe("BT-013-16 the real Layout Picker", () => {
     void calls;
   });
 
-  test("Preview is present, as the card spec asks, but honestly disabled until the takeover is built", async () => {
-    const { root } = await open();
-    const card = cardNamed(root, "Executive Forecast");
-    const preview = buttonNamed(card, "Preview");
-    assert.ok(preview);
-    assert.ok(preview.disabled);
+  test("Preview sets the client-only preview override and opens the Dashboard; every member may preview, even a hidden or retired layout", async () => {
+    const { root, calls } = await open({ canApply: false, canManage: false, hiddenIds: ["finexa-budget"], retiredIds: ["acru-overview"] });
+    for (const name of ["Executive Forecast", "Budget Workspace", "Financial Overview"]) {
+      const card = cardNamed(root, name);
+      const preview = buttonNamed(card, "Preview");
+      assert.ok(preview && !preview.disabled, `${name}: Preview is enabled`);
+    }
+    buttonNamed(cardNamed(root, "Executive Forecast"), "Preview").click();
+    assert.deepEqual(calls.previewed, ["ledgerfly-forecast"]);
+    assert.deepEqual(calls.navigated, ["dashboard"]);
   });
 
   test("each colorable layout gets an accessible appearance cog for the caller's own colours; Classic (no accent identity) gets none", async () => {

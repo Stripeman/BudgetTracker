@@ -10,10 +10,12 @@
 // (`settings.layoutId`) — never a second mutation path — so it is audited, historied and permission-
 // checked exactly like every other workspace setting.
 //
-// Full-size Preview (real workspace data, read-only, Apply/Exit) is a separate, not-yet-built
-// increment (BT-013-16 step 3 in PROJECT_STATE.md): the "Preview" button below is present, as Terry's
-// card spec asks, but honestly disabled with a stated reason rather than faking a preview that does
-// not exist yet.
+// Full-size Preview: "Preview" sets an ephemeral, client-only override (`store.actions.previewLayout`,
+// app/js/core/store.js — never a server write, never seen by another member) and opens the
+// Dashboard, the one real page with a layout-aware renderer so far (app/js/ui/views/dashboard.js);
+// the shell's own persistent banner (app/js/ui/shell.js) stays visible while navigating anywhere
+// else, with Apply/Exit, and financial mutations are refused everywhere by `store.actions.write`'s
+// own guard while previewing — a real safety net, not merely a disabled button on this one page.
 import { el, mount, announce } from "../dom.js";
 import { button, badge } from "../components.js";
 import { messageFor } from "../../core/errors.js";
@@ -92,9 +94,14 @@ export function createLayoutPicker(ctx) {
         title: l.current ? "This is already the workspace's layout." : !l.selectable ? "This layout has been retired by the site administrator and cannot be newly applied." : l.hidden ? "Restore it to this workspace's choices first." : "Only owners and managers can apply a layout." },
     }));
     // Not the ghost variant: a disabled ghost button (transparent border/background) reads as nearly
-    // invisible next to a solid Apply button (real-browser screenshot review, this checkpoint) —
-    // Preview keeps a visible border like every other real action here.
-    actions.push(button("Preview", () => {}, { small: true, attrs: { disabled: true, "aria-disabled": "true", title: "Full-size preview with this workspace's own data arrives in a following update." } }));
+    // invisible next to a solid Apply button (real-browser screenshot review, an earlier checkpoint) —
+    // Preview keeps a visible border like every other real action here. Every member may preview
+    // (Terry: "Other members may preview available layouts without changing the shared default"),
+    // whatever this workspace's current/hidden/retired state — it never writes anything.
+    actions.push(button("Preview", () => {
+      store.actions.previewLayout(l.id);
+      if (ctx.navigate) ctx.navigate("dashboard");
+    }, { small: true }));
     if (data.canManage && !l.system) {
       actions.push(l.hidden
         ? button("Restore to this workspace", () => { void hideRestore(l, "restore"); }, { small: true, variant: "ghost" })

@@ -11,7 +11,7 @@
 // on Escape (focus returns to the button), on an outside click and when focus leaves it.
 import { el, mount, clear, focusFirst, announce } from "./dom.js";
 import { createDayNightControl } from "./daynight.js";
-import { initials } from "./components.js";
+import { initials, button } from "./components.js";
 import { withIcon } from "./icons.js";
 import { createThemePicker } from "./themepicker.js";
 import { createWorkspacePicker } from "./workspacepicker.js";
@@ -20,6 +20,7 @@ import { AUTH } from "../core/api.js";
 import { ROUTES, navRoutes } from "../core/router.js";
 import { sharedExpensesOn } from "../core/workspacesettings.js";
 import { Status } from "../core/store.js";
+import { layoutMeta } from "../core/layoutmeta.js";
 
 import * as dashboard from "./views/dashboard.js";
 import * as transactions from "./views/transactions.js";
@@ -96,6 +97,10 @@ export function createShell({ mountPoint, store, router, theme, api }) {
   const header = el("header", { class: "app__header" });
   const nav = el("nav", { class: "app__nav", "aria-label": "Sections" });
   const siteAdminNav = el("nav", { class: "app__nav app__nav--sub", "aria-label": "Site administration" });
+  // BT-013-16: the full-size Layout Preview banner — present on every page while a preview is
+  // active, so "remain active while navigating between pages" is genuinely true (this is shell
+  // chrome, not per-view state). Built once, refreshed in place like the header/footer above.
+  const previewBanner = el("div", { class: "preview-banner", role: "status", hidden: true });
   const main = el("main", { class: "app__main", id: "main", tabindex: "-1" });
   const footer = el("footer", { class: "app__footer" });
   let view = null;
@@ -306,6 +311,49 @@ export function createShell({ mountPoint, store, router, theme, api }) {
       el("span", { text: "Financial records are private by default. Site administrators cannot see them." }));
   }
 
+  // BT-013-16: the full-size Layout Preview banner, BUILT ONCE and refreshed in place (the header's
+  // own established pattern in this file) rather than rebuilt per render, so an in-flight Apply is
+  // never orphaned on a stale, already-replaced button by a background store commit arriving mid-
+  // request. `state.layoutPreview` is a client-only, ephemeral override (app/js/core/store.js) —
+  // never a server write — so "Exit" simply clears it, instantly restoring the real applied layout
+  // with no server round trip and no effect on anyone else. "Apply" is the ONE write allowed through
+  // while previewing (`allowDuringPreview: true`): the real, existing, audited
+  // `PATCH /api/workspaces?id=` settings mechanism, never a second one.
+  const previewText = el("span");
+  const previewError = el("span", { class: "error-text small", role: "alert" });
+  let previewLayoutId = null;
+  const previewApplyBtn = button("Apply to workspace", async () => {
+    if (!previewLayoutId) return;
+    previewApplyBtn.disabled = true;
+    previewError.textContent = "";
+    const out = await store.actions.write(
+      (id) => api.request("workspaces", { method: "PATCH", query: { id }, body: { settings: { layoutId: previewLayoutId } } }),
+      [], { allowDuringPreview: true },
+    );
+    if (!out.ok) { previewApplyBtn.disabled = false; previewError.textContent = messageFor(out.error); return; }
+    const appliedName = layoutMeta(previewLayoutId).name;
+    if (store.actions.refreshWorkspaces) await store.actions.refreshWorkspaces();
+    store.actions.exitLayoutPreview();
+    announce(`${appliedName} applied. Everyone in the workspace now sees this layout.`);
+  }, { small: true, variant: "primary" });
+  const previewExitBtn = button("Exit preview", () => store.actions.exitLayoutPreview(), { small: true, variant: "ghost" });
+  previewBanner.append(el("div", { class: "preview-banner__inner" }, [previewText, el("div", { class: "row" }, [previewApplyBtn, previewExitBtn]), previewError]));
+  function renderPreviewBanner(state) {
+    const preview = state.layoutPreview;
+    if (!preview) { previewBanner.hidden = true; previewLayoutId = null; return; }
+    const ws = state.workspaces.find((w) => w.id === state.selectedWorkspaceId);
+    const meta = layoutMeta(preview.layoutId);
+    // A NEW preview session (including re-previewing after a previous one) always starts with a
+    // fresh, enabled Apply button and no stale error — these controls are built once and reused
+    // across sessions, so nothing from a previous session may leak into this one.
+    if (previewLayoutId !== preview.layoutId) { previewApplyBtn.disabled = false; previewError.textContent = ""; }
+    previewLayoutId = preview.layoutId;
+    previewText.textContent = `Previewing ${meta.name}${ws ? ` for ${ws.name}` : ""} — read-only.`;
+    const canApply = !!ws && (ws.role === "owner" || ws.role === "manager");
+    previewApplyBtn.hidden = !canApply;
+    previewBanner.hidden = false;
+  }
+
   function renderView(state, route) {
     const ws = state.workspaces.find((w) => w.id === state.selectedWorkspaceId);
     const groupOff = route.id === "group" && !sharedExpensesOn(ws || null, state.site);
@@ -361,9 +409,10 @@ export function createShell({ mountPoint, store, router, theme, api }) {
     }
     pendingEl = null;
     pendingKind = null;
-    if (!mountPoint.contains(main)) mount(mountPoint, header, nav, siteAdminNav, main, footer);
+    if (!mountPoint.contains(main)) mount(mountPoint, header, nav, siteAdminNav, previewBanner, main, footer);
     renderHeader(state);
     renderFooter(state);
+    renderPreviewBanner(state);
     // Without a workspace there are no sections to navigate, so the nav is hidden (UX-011). My
     // settings stays reachable from the account menu: personal preferences, and for a site
     // administrator the icon catalogue (BT-011-05), need no workspace. Usage, Design Gallery and the

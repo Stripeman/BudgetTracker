@@ -143,6 +143,12 @@ fieldset.budget-line { margin: 0; padding: var(--space-3); border: 1px solid var
 .dashflag-hero__figure { font-size: var(--text-2xl, 2rem); font-weight: var(--weight-bold); font-variant-numeric: tabular-nums; color: var(--flag-accent); }
 .dashflag-statrail { display: grid; gap: var(--space-3); grid-template-columns: repeat(auto-fit, minmax(min(10rem, 100%), 1fr)); margin-top: var(--space-3); }
 
+/* BT-013-16: the full-size Layout Preview banner (app/js/ui/shell.js) — present on every page while
+   previewing, so it is genuinely one continuous session across navigation, not a per-page state. */
+.preview-banner { background: var(--color-info-soft, var(--surface-sunken)); border-bottom: 1px solid var(--border); }
+.preview-banner__inner { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-3); max-width: var(--content-max); margin: 0 auto; padding: var(--space-2) var(--space-4); font-size: var(--text-sm); }
+.preview-banner__inner .row { margin-left: auto; }
+
 /* ---------- states ---------- */
 .state { padding: var(--space-6) var(--space-4); text-align: center; color: var(--text-muted); border: 1px dashed var(--border-strong); border-radius: var(--radius-lg); }
 .state--error { border-style: solid; border-color: var(--color-danger); color: var(--color-danger-text); background: var(--surface); }
