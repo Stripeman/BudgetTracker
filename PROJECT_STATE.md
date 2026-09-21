@@ -6560,3 +6560,129 @@ page in Terry's own listed order: Transactions. Budget, Accounts + debt/loan det
 Shared expenses directory + detail, My Settings and Workspace Settings follow, each its own
 checkpointed commit, per the standing "never batch into one giant unverified commit" discipline this
 whole feature has followed so far.
+
+### Progress checkpoint (2026-09-22): step (5) — ALL 8 real pages — is DONE, real and verified in real browsers
+
+Terry's own explicit instruction this session ("do not stop till its all complete and pushed to main
+and preview") was received and answered plainly: pushing to `main` or merging is a hard, standing
+boundary (CLAUDE.md — Terry controls promotion, never an agent), not a pacing choice, and holds even
+under a direct instruction to keep going; deploying to Preview remains explicitly authorized and is
+still owed (not yet done as of this checkpoint — see below). Terry acknowledged this ("ok that works
+too") and confirmed continuing without further questions. Work continued uninterrupted through all
+remaining real pages.
+
+Commits on `feature/workspace-layout-picker-BT-013-16`, each its own tested, real-browser-verified
+checkpoint: `1a3ba4e` (Transactions), `ff3ec80` (Bills + Planning/Budget), `4ff5952` (Accounts),
+`2c82f75` (Merchants), `19a30e6` (Shared expenses), `6af3601` (My Settings + Workspace Settings). Every
+one of Terry's originally listed 8 real pages (Dashboard done previously; Transactions, Bills, Budget,
+Accounts, Merchants, Shared expenses, My Settings, Workspace Settings done this checkpoint) now applies
+the workspace's real, effective layout. `npm test` (repo+api+app) stood at 39/792/719 passing, exit 0,
+by the last of these commits; `npm run validate` ok (29 routes) throughout.
+
+**The pattern used, and where it was deliberately narrowed, disclosed per page:**
+- Transactions, Bills, Planning/Budget, Accounts, Merchants: each real page's existing filters, forms,
+  tables and EVERY real action (edit, reverse, move, delete, pause/resume, close/reopen, add-as-bill,
+  record-payment, etc.) stay 100% shared and unchanged — the SAME persistent DOM nodes are reparented
+  between the classic and flagship arrangements via `mount()`, never rebuilt, so an open filter panel
+  or in-progress state survives a layout switch untouched. A small real per-currency KPI strip (the
+  SAME already-computed summary figures, never a second calculation) gives each of these a genuine
+  flagship identity; Bills' own pre-existing Overdue/Due-soon/Next-30-days cards already served that
+  role as-is, no new calculation needed there.
+- Accounts: "Add account" stays a STATIC button present at `createView()` time (unlike the other
+  pages' dynamically-mounted primary action) because several pre-existing tests click it before any
+  `update()` call — this was found by running those tests, not assumed; the preview-disable
+  enhancement was deliberately skipped for this one button, relying solely on the store's own
+  `write()` guard, which remains fully authoritative regardless.
+- Shared expenses, My Settings, Workspace settings: each already built as a stack/grid of
+  individually-carded sections (Shared expenses alone is 2000+ lines with real settlement/ledger
+  logic; Workspace settings is where the real Layout Picker card itself lives). Given their size and,
+  for Shared expenses specifically, genuine financial risk, the SAME stack/grid is reparented into ONE
+  `.dashflag` accent wrapper per flagship layout rather than restructured into per-page KPI strips —
+  colour identity changes, structure does not. This is a real, disclosed narrower scope for these
+  three specifically, not a silent shortcut, and it was the deliberate, judged trade-off given the
+  size of the remaining work and the standing instruction not to rush a multi-file change to a
+  financially sensitive page.
+- My Settings: entirely personal preferences (appearance, display, contacts) — confirmed NOT gated by
+  the preview read-only guard, since none of it is a financial mutation; a person previewing a layout
+  still changes their own light/dark mode, palette or contacts normally, exactly as before.
+- Debt/loan detail (from Terry's original page list): confirmed via `grep` that no separate route
+  exists for it in the real application at all — debt actions (interest, fees, payments, balance
+  correction) live entirely inside Accounts' own per-row actions menu, already made layout-aware.
+  Nothing further was built for it as a distinct page, and this is stated plainly rather than silently
+  assumed complete.
+
+**Real bugs found and fixed via this checkpoint's own tests and real-browser screenshots, not left
+for later:**
+1. Transactions: `arrangementFor()`'s flagship-vs-classic check originally treated ANY non-`"classic"`
+   id as flagship-worthy, including an unknown or demo-only Gallery concept id — found by this page's
+   own "unknown layoutId falls back to Classic" test (which Dashboard's own equivalent `FLAGSHIP_
+   RENDERERS[layoutId]` lookup pattern never had, since it fails closed on an undefined lookup by
+   construction). Fixed with an explicit `FLAGSHIP_IDS` set, mirrored into every other page written
+   this checkpoint from the start.
+2. Transactions: the preview read-only guard did not apply when Classic ITSELF was being previewed
+   (checked `layoutId === "classic"` rather than `state.layoutPreview` directly) — found by a
+   dedicated test, fixed to check the preview flag unconditionally, matching Dashboard's own correct
+   behaviour.
+3. **A genuine test-infrastructure hazard, found via Planning/Budget's own reparenting test and fixed
+   everywhere it appears in this test suite:** `assert.equal()` (or `assert.strict.equal`) on two raw
+   DOM node objects from this project's own lightweight domdouble (`app/test/domdouble.js`), when they
+   do NOT match, makes Node's `assert` module attempt to build a diff by inspecting both objects —
+   which for this domdouble's Node class (every node carries `ownerDocument` pointing back to the
+   whole shared document, `parentNode`/`childNodes` chains, and per-node closures) is not a fast,
+   clean failure but an actual multi-second-to-multi-minute hang/`RangeError: Array buffer allocation
+   failed`, discovered only by isolating it with `timeout`, redirecting to a file (stdout buffering
+   masked it when piped), and a step-by-step reproduction (documented in the session transcript, not
+   repeated here). The ORIGINAL test was also checking the wrong thing — budget CARDS, like table rows
+   on other pages, are rebuilt on every `update()` regardless of layout, so their node identity was
+   never meaningful; the correct check is a genuinely stable, never-rebuilt container (e.g.
+   `archivedBox`). Both the test-design bug and the assertion-safety issue were fixed together in
+   `ff3ec80`, and the same `assert.ok(a === b)` fix was applied retroactively to the two earlier page
+   test files (`transactionsflagship.test.js`, `billsflagship.test.js`) that had the identical latent
+   risk (undetected only because their own comparisons happened to already be correct/matching). This
+   is now documented inline in every affected test file for future test authors on this codebase.
+4. Layout Picker banner e2e (`layoutpreview.mjs`, still passing, no code change needed): confirmed the
+   picker's own transient "applied" status text clears itself the instant its post-apply data reload
+   finishes — a real-browser scenario asserting on that literal text can race and time out even though
+   the underlying apply genuinely succeeded; `workspaceflagship.mjs` was written to assert on the
+   durable "Currently applied" badge and the persisted server-side setting instead, which is more
+   robust and exactly what actually needed proving.
+
+**What is genuinely still open, stated plainly (Terry's own item 8, and the delivery discipline in
+item 9 — "colours, a selector, or a single redesigned page are intermediate steps, not completion"):**
+- The full cross-cutting verification matrix has NOT been run as such: two workspaces with different
+  layouts AND different colour settings simultaneously; a member seeing only their own permitted data
+  while looking at the SAME layout a manager configured; privacy across charts/totals/lists/details
+  specifically under a flagship renderer (not just Classic, which already has this coverage); large
+  datasets, long labels and multiple currencies exercised specifically through a flagship renderer;
+  keyboard access and dropdowns that never shift content, checked directly on a flagship page rather
+  than inferred from reusing already-accessible shared components. Each individual page's own e2e
+  scenario proves REAL data renders correctly and shared actions still work, which is necessary but
+  not the same thing as this matrix.
+- Every one of this feature's ~15 new e2e scenarios has so far only been run individually or in pairs
+  (`--only x,y`) — never together as one combined batch alongside the REST of the app's existing ~60
+  scenarios in a single `npm run e2e` pass. A full combined run was started at the end of this
+  checkpoint (see below for its outcome once known) specifically to catch any cross-scenario
+  interaction this page-by-page approach could not.
+- Security and financial review have not been invoked at this milestone (both are named as required
+  "at major milestones and before release" — this is a major milestone: every real page now renders
+  authorized financial data through new, previously-nonexistent rendering code paths).
+- The workspace-DEFAULT colour scheme (`doc.settings.layoutColors`, fully real and settable since step
+  1/2) is still not read by any real-page renderer — every flagship page resolves personal override
+  else built-in default only. A manager who sets a workspace default sees it correctly in the Layout
+  Picker's own cards but nowhere else yet.
+- No drag-and-drop or combined-layout editor was built — correctly, per Terry's own explicit "do not
+  build a general drag-and-drop layout editor now" instruction — and remains real future work once
+  Terry evaluates the three flagship layouts with his own data and asks for a combined design (item 7).
+- No consolidated PR has been opened yet. No `main` merge or Production deploy is authorized by this
+  instruction or any instruction in this session — both remain Terry's own action, explicitly restated
+  by him mid-session.
+
+**Exact next step:** (1) check the combined `npm run e2e` full-suite run's outcome (started at the end
+of this checkpoint, log not yet reviewed as this entry is written) and fix anything it surfaces that
+the individual runs did not; (2) build at least a partial cross-cutting verification pass for the
+highest-value gaps above (two workspaces/two layouts/two members' privacy, specifically) since that is
+the one item 8 concern existing single-page e2e scenarios structurally cannot catch; (3) invoke
+security-privacy-reviewer and financial-accuracy-reviewer given this is explicitly a major milestone;
+(4) open the one consolidated PR Terry asked for; (5) deploy to Preview via the established
+`.\deploy.ps1 -Environment preview` workflow and independently verify — all before considering this
+authorized scope actually complete, per Terry's own "intermediate steps, not completion" standard.
