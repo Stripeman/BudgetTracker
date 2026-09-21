@@ -117,6 +117,16 @@ fieldset.budget-line { margin: 0; padding: var(--space-3); border: 1px solid var
 .badge--env { text-transform: uppercase; letter-spacing: 0.04em; }
 .badge--source { font-size: 0.7rem; }
 
+/* BT-013-16: the real workspace Layout Picker (Workspace settings). Plain app tokens only — the
+   Design Gallery's own `.g*` classes (app/styles/gallery.css) stay scoped to its fictional-data-only
+   preview pages, never reused here for a real-data view (see gallery.css's own header comment). */
+.layoutpicker-grid { display: grid; gap: var(--space-3); grid-template-columns: repeat(auto-fit, minmax(min(18rem, 100%), 1fr)); margin-block: var(--space-3); }
+.layoutpicker-card { display: flex; flex-direction: column; gap: var(--space-2); padding: var(--space-3); border: 1px solid var(--border); border-radius: var(--radius-lg); background: var(--surface); }
+.layoutpicker-card h3 { margin: 0; font-size: var(--text-base); }
+.layoutpicker-card--demo { opacity: 0.85; }
+.layoutpicker-thumb { height: 4.5rem; border-radius: var(--radius); background: linear-gradient(135deg, var(--lp-light, var(--accent)), var(--lp-dark, var(--accent))); }
+.layoutpicker-demoheading { margin-top: var(--space-4); font-size: var(--text-sm); color: var(--text-muted); }
+
 /* ---------- states ---------- */
 .state { padding: var(--space-6) var(--space-4); text-align: center; color: var(--text-muted); border: 1px dashed var(--border-strong); border-radius: var(--radius-lg); }
 .state--error { border-style: solid; border-color: var(--color-danger); color: var(--color-danger-text); background: var(--surface); }

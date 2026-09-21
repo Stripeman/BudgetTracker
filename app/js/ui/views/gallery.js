@@ -40,7 +40,14 @@ export function createView(ctx) {
   const picksBox = el("div");
 
   const content = el("div", { class: "stack", hidden: true }, [
-    el("p", { class: "field__help", text: "Fifteen layout-theme concepts for review, built from fictional data only. Nothing here is visible to, or ever computed from, any real workspace. Palette and appearance mode use the same controls as the rest of the app; layout theme itself is a separate, workspace-level setting (Workspace → Layout theme) not changed from here." }),
+    el("p", { class: "field__help", text: "Fifteen layout-theme concepts for review, built from fictional data only. Nothing here is visible to, or ever computed from, any real workspace. Palette and appearance mode use the same controls as the rest of the app." }),
+    // BT-013-16: the real, per-workspace Layout Picker (using real data, real permissions) now lives
+    // in Workspace settings — this Gallery stays fictional-data-only review, never the place a real
+    // workspace's layout is actually chosen.
+    el("p", { class: "field__help" }, [
+      "Executive Forecast, Budget Workspace and Financial Overview are now real, selectable workspace layouts. ",
+      button("Go to the real Layout Picker in Workspace settings", () => { if (ctx.navigate) ctx.navigate("workspace"); }, { small: true }),
+    ]),
     toolbar,
     el("section", { class: "card", "aria-labelledby": "gallery-preview" }, [
       el("h2", { class: "card__title", id: "gallery-preview", text: "Preview" }),

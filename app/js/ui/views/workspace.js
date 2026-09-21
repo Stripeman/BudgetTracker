@@ -18,6 +18,7 @@ import { createIconPicker } from "../iconpicker.js";
 import { builtInIconFor, withIcon } from "../icons.js";
 import { managesSharedLists } from "../../core/workspacesettings.js";
 import { openWorkspacePermanentDeleteDialog } from "../permanentdelete.js";
+import { createLayoutPicker } from "./layoutpicker.js";
 
 // Icons for the workspace's types (BT-011-05): accounts, bills and merchants of a type show this icon
 // unless one was chosen on the record itself.
@@ -121,6 +122,7 @@ export function createView(ctx) {
   const formerBox = el("div");
   const historyBox = el("div");
   const settingsBox = el("div", { class: "stack" });
+  const layoutPicker = createLayoutPicker(ctx);
   const coloursBox = el("div", { class: "stack" });
   const typesBox = el("div", { class: "stack" });
   const accountTypesBox = el("div", { class: "stack" });
@@ -146,6 +148,9 @@ export function createView(ctx) {
       el("section", { class: "card", "aria-labelledby": "ws-members" }, [el("h2", { class: "card__title", id: "ws-members", text: "Members" }), membersBox]),
       el("section", { class: "card", "aria-labelledby": "ws-invite" }, [el("h2", { class: "card__title", id: "ws-invite", text: "Invite someone" }), inviteBox]),
       el("section", { class: "card card--full", "aria-labelledby": "ws-settings" }, [el("h2", { class: "card__title", id: "ws-settings", text: "Workspace settings" }), settingsBox]),
+      // BT-013-16: the real Layout Picker — a separate, richer control from the plain "Layout theme"
+      // dropdown inside the settings card above (which keeps working; both change the same setting).
+      el("section", { class: "card card--full", "aria-labelledby": "ws-layout" }, [el("h2", { class: "card__title", id: "ws-layout", text: "Layout" }), layoutPicker.element]),
       el("section", { class: "card", "aria-labelledby": "ws-backups" }, [el("h2", { class: "card__title", id: "ws-backups", text: "Backups and restore" }), backupsBox]),
       el("section", { class: "card", "aria-labelledby": "ws-activity" }, [el("h2", { class: "card__title", id: "ws-activity", text: "Recent activity" }), auditBox]),
       el("section", { class: "card", "aria-labelledby": "ws-former" }, [el("h2", { class: "card__title", id: "ws-former", text: "Former members" }), formerBox]),
@@ -941,7 +946,7 @@ export function createView(ctx) {
     })));
     // An enhanced select's focus() lands on its trigger.
     if (focusKey && memberControls[focusKey]) memberControls[focusKey].focus();
-    if (!loaded) { loaded = true; void loadInvites(); void loadBackups(); void loadAudit(); void loadInfo(); }
+    if (!loaded) { loaded = true; void loadInvites(); void loadBackups(); void loadAudit(); void loadInfo(); void layoutPicker.load(); }
     // A removal, role change or rejoin changes the members list; the former members reload with it.
     if (members.data !== lastMembers) { lastMembers = members.data; void loadFormer(); }
     renderDelete(state, role);

@@ -173,6 +173,15 @@ export function createApiClient({ fetchImpl = globalThis.fetch.bind(globalThis),
     // workspace's data.
     designGallery: () => request("design-gallery"),
     saveDesignGallery: (body) => request("design-gallery", { method: "PATCH", body }),
+    // BT-013-16: the real, per-workspace Layout Picker. Members only; no financial data ever flows
+    // through this route. `patchWorkspaceLayout` covers hide/restore/colors/publish-personal-colors —
+    // applying a layout itself stays `saveWorkspaceSettings({ layoutId })` below, the one existing,
+    // already-audited mechanism, never duplicated here.
+    workspaceLayouts: (id) => request("workspace-layouts", { query: ws(id) }),
+    patchWorkspaceLayout: (id, body) => request("workspace-layouts", { method: "PATCH", query: ws(id), body }),
+    // BT-013-16: the site-wide layout catalogue (retire/reinstate + usage counts). Site admin only.
+    siteLayouts: () => request("site-layouts"),
+    siteLayoutAction: (action, layoutId) => request("site-layouts", { method: "POST", query: { action }, body: { layoutId } }),
     // BT-014 permanent deletion: one pair of generic calls reused by every record type (accounts,
     // transactions, payees, categories, recurring, budgets, contacts — each its own `route` and
     // idField in the body), the owner's whole-workspace route (`route: "workspaces"`, `query: {
