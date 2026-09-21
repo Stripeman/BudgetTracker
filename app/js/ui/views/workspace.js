@@ -19,6 +19,7 @@ import { builtInIconFor, withIcon } from "../icons.js";
 import { managesSharedLists } from "../../core/workspacesettings.js";
 import { openWorkspacePermanentDeleteDialog } from "../permanentdelete.js";
 import { createLayoutPicker } from "./layoutpicker.js";
+import { effectiveLayoutId, layoutAccentVars } from "../../core/layoutmeta.js";
 
 // Icons for the workspace's types (BT-011-05): accounts, bills and merchants of a type show this icon
 // unless one was chosen on the record itself.
@@ -142,27 +143,38 @@ export function createView(ctx) {
   // "Delete workspace" (owners only): a separate danger-style card at the bottom of the page, outside
   // the two-column grid, built only for an owner (finding: it must not exist in the DOM for anyone else).
   const deleteBox = el("div");
-  const element = el("section", {}, [
-    pageHead("Workspace"),
-    el("div", { class: "grid grid--two" }, [
-      el("section", { class: "card", "aria-labelledby": "ws-members" }, [el("h2", { class: "card__title", id: "ws-members", text: "Members" }), membersBox]),
-      el("section", { class: "card", "aria-labelledby": "ws-invite" }, [el("h2", { class: "card__title", id: "ws-invite", text: "Invite someone" }), inviteBox]),
-      el("section", { class: "card card--full", "aria-labelledby": "ws-settings" }, [el("h2", { class: "card__title", id: "ws-settings", text: "Workspace settings" }), settingsBox]),
-      // BT-013-16: the real Layout Picker — a separate, richer control from the plain "Layout theme"
-      // dropdown inside the settings card above (which keeps working; both change the same setting).
-      el("section", { class: "card card--full", "aria-labelledby": "ws-layout" }, [el("h2", { class: "card__title", id: "ws-layout", text: "Layout" }), layoutPicker.element]),
-      el("section", { class: "card", "aria-labelledby": "ws-backups" }, [el("h2", { class: "card__title", id: "ws-backups", text: "Backups and restore" }), backupsBox]),
-      el("section", { class: "card", "aria-labelledby": "ws-activity" }, [el("h2", { class: "card__title", id: "ws-activity", text: "Recent activity" }), auditBox]),
-      el("section", { class: "card", "aria-labelledby": "ws-former" }, [el("h2", { class: "card__title", id: "ws-former", text: "Former members" }), formerBox]),
-      el("section", { class: "card", "aria-labelledby": "ws-history" }, [el("h2", { class: "card__title", id: "ws-history", text: "Workspace changes" }), historyBox]),
-      el("section", { class: "card card--full" }, [groupColours.element]),
-      el("section", { class: "card card--full", "aria-labelledby": "ws-account-types" }, [el("h2", { class: "card__title", id: "ws-account-types", text: "Account types" }), accountTypesBox]),
-      el("section", { class: "card card--full", "aria-labelledby": "ws-category-types" }, [el("h2", { class: "card__title", id: "ws-category-types", text: "Category types" }), categoryTypesBox]),
-      el("section", { class: "card card--full", "aria-labelledby": "ws-merchant-types" }, [el("h2", { class: "card__title", id: "ws-merchant-types", text: "Merchant types" }), merchantTypesBox]),
-      el("section", { class: "card", "aria-labelledby": "ws-types" }, [el("h2", { class: "card__title", id: "ws-types", text: "Icons for types" }), typesBox]),
-    ]),
-    deleteBox,
+  // BT-013-16: this page (where the real Layout Picker itself lives) is already a `.grid.grid--two`
+  // of individually-carded sections. Given its size and its permission-sensitive content (members,
+  // invitations, backups/restore, permanent workspace deletion), the SAME grid is reparented into a
+  // `.dashflag` accent wrapper for flagship layouts rather than restructured — the same minimal,
+  // low-risk pattern already used for Shared expenses and My Settings; nothing inside any card
+  // changes.
+  const grid = el("div", { class: "grid grid--two" }, [
+    el("section", { class: "card", "aria-labelledby": "ws-members" }, [el("h2", { class: "card__title", id: "ws-members", text: "Members" }), membersBox]),
+    el("section", { class: "card", "aria-labelledby": "ws-invite" }, [el("h2", { class: "card__title", id: "ws-invite", text: "Invite someone" }), inviteBox]),
+    el("section", { class: "card card--full", "aria-labelledby": "ws-settings" }, [el("h2", { class: "card__title", id: "ws-settings", text: "Workspace settings" }), settingsBox]),
+    // BT-013-16: the real Layout Picker — a separate, richer control from the plain "Layout theme"
+    // dropdown inside the settings card above (which keeps working; both change the same setting).
+    el("section", { class: "card card--full", "aria-labelledby": "ws-layout" }, [el("h2", { class: "card__title", id: "ws-layout", text: "Layout" }), layoutPicker.element]),
+    el("section", { class: "card", "aria-labelledby": "ws-backups" }, [el("h2", { class: "card__title", id: "ws-backups", text: "Backups and restore" }), backupsBox]),
+    el("section", { class: "card", "aria-labelledby": "ws-activity" }, [el("h2", { class: "card__title", id: "ws-activity", text: "Recent activity" }), auditBox]),
+    el("section", { class: "card", "aria-labelledby": "ws-former" }, [el("h2", { class: "card__title", id: "ws-former", text: "Former members" }), formerBox]),
+    el("section", { class: "card", "aria-labelledby": "ws-history" }, [el("h2", { class: "card__title", id: "ws-history", text: "Workspace changes" }), historyBox]),
+    el("section", { class: "card card--full" }, [groupColours.element]),
+    el("section", { class: "card card--full", "aria-labelledby": "ws-account-types" }, [el("h2", { class: "card__title", id: "ws-account-types", text: "Account types" }), accountTypesBox]),
+    el("section", { class: "card card--full", "aria-labelledby": "ws-category-types" }, [el("h2", { class: "card__title", id: "ws-category-types", text: "Category types" }), categoryTypesBox]),
+    el("section", { class: "card card--full", "aria-labelledby": "ws-merchant-types" }, [el("h2", { class: "card__title", id: "ws-merchant-types", text: "Merchant types" }), merchantTypesBox]),
+    el("section", { class: "card", "aria-labelledby": "ws-types" }, [el("h2", { class: "card__title", id: "ws-types", text: "Icons for types" }), typesBox]),
   ]);
+  const bodyHost = el("div");
+  const element = el("section", {}, [pageHead("Workspace"), bodyHost, deleteBox]);
+  const classicArrangement = grid;
+  const FLAGSHIP_IDS = new Set(["ledgerfly-forecast", "finexa-budget", "acru-overview"]);
+  let mountedLayout = null;
+  function arrangementFor(layoutId) {
+    if (!FLAGSHIP_IDS.has(layoutId)) return classicArrangement;
+    return el("div", { class: "dashflag", vars: layoutAccentVars(ctx.store.getState(), layoutId) }, [grid]);
+  }
 
   const me = () => ((sliceFor(store.getState(), "members").data || {}).members || []).find((m) => m.self) || { role: "viewer" };
 
@@ -869,6 +881,9 @@ export function createView(ctx) {
   // Each member's role and allowance pickers, by member, so focus can follow a re-render.
   let memberControls = {};
   function update(state) {
+    const ws = (state.workspaces || []).find((w) => w.id === state.selectedWorkspaceId);
+    const layoutId = effectiveLayoutId(state, ws);
+    if (mountedLayout !== layoutId) { mount(bodyHost, arrangementFor(layoutId)); mountedLayout = layoutId; }
     renderColours(state);
     renderAccountTypes(state);
     renderCategoryTypes(state);

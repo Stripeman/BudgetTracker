@@ -16,6 +16,7 @@ import { withIcon } from "../icons.js";
 import { stagingState, stagingAnchor, setAnchorHref, openStagingEditor, openPersonalStagingEditor, isLocal, STAGING_ADD_TEXT } from "../staginglink.js";
 import { stagingHref, stagingHost } from "../../core/links.js";
 import { createSettingsGroup } from "../settingsgroup.js";
+import { effectiveLayoutId, layoutAccentVars } from "../../core/layoutmeta.js";
 
 const MAX_ICON_BYTES = 8 * 1024;
 
@@ -214,20 +215,30 @@ export function createView(ctx) {
   const groupColours = createSettingsGroup({ id: "set-g-colours", storageKey: GROUP_KEY, name: "Category colours & icons", defaultOpen: false, hidden: true, nodes: [colourCard, catalogCard] });
   const groupDeleted = createSettingsGroup({ id: "set-g-deleted", storageKey: GROUP_KEY, name: "Deleted workspaces", defaultOpen: true, hidden: true, nodes: [deletedCard] });
 
-  const element = el("section", {}, [
-    pageHead("My settings"),
+  // BT-013-16: everything on this page is personal (never a financial mutation, never gated by the
+  // preview read-only guard — a member previewing a layout still changes their own appearance,
+  // display and contacts normally). The same groups are reparented into a `.dashflag` accent
+  // wrapper for the currently selected workspace's flagship layout, matching the minimal, low-risk
+  // pattern already used for Shared expenses, given this page is a real settings surface too.
+  const introBlock = el("div", {}, [
     // A personal-vs-workspace distinction (BT-017), stated as plainly and symmetrically as
     // Workspace Settings' own "These decide how everyone in this workspace works": everything on
     // this page is personal to the signed-in person, never shared with or changed by anyone else in
     // a workspace, no matter how many workspaces they belong to.
     el("p", { class: "muted small", text: "These apply only to you, everywhere you sign in — not to anyone else in any of your workspaces. To change something for everyone in a workspace, go to that workspace's own Workspace page." }),
     el("p", { class: "muted small", text: "“Inherited” values follow the site default until you change them. “Customized” values are your own choice; use “Use inherited” to return to the default. “Locked by site” values are set by the site administrator." }),
-    groupProfile.element,
-    groupDisplay.element,
-    groupLinks.element,
-    groupColours.element,
-    groupDeleted.element,
   ]);
+  const bodyHost = el("div");
+  const element = el("section", {}, [pageHead("My settings"), bodyHost]);
+  const classicArrangement = el("div", {}, [introBlock, groupProfile.element, groupDisplay.element, groupLinks.element, groupColours.element, groupDeleted.element]);
+  const FLAGSHIP_IDS = new Set(["ledgerfly-forecast", "finexa-budget", "acru-overview"]);
+  let mountedLayout = null;
+  function arrangementFor(layoutId) {
+    if (!FLAGSHIP_IDS.has(layoutId)) return classicArrangement;
+    return el("div", { class: "dashflag", vars: layoutAccentVars(ctx.store.getState(), layoutId) }, [
+      introBlock, groupProfile.element, groupDisplay.element, groupLinks.element, groupColours.element, groupDeleted.element,
+    ]);
+  }
 
   async function save(patch) {
     status.textContent = "Saving…";
@@ -440,6 +451,9 @@ export function createView(ctx) {
 
   let rendered = "";
   function update(state) {
+    const ws = (state.workspaces || []).find((w) => w.id === state.selectedWorkspaceId);
+    const layoutId = effectiveLayoutId(state, ws);
+    if (mountedLayout !== layoutId) { mount(bodyHost, arrangementFor(layoutId)); mountedLayout = layoutId; }
     // Show the saved name, or suggest the Google one once, without overwriting what is being typed.
     if (!nameTouched && document.activeElement !== nameInput) {
       const current = state.auth && state.auth.user ? state.auth.user.name || "" : "";
