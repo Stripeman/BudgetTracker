@@ -6762,3 +6762,25 @@ deployment mechanism) and independently verify the deployed application (version
 a real smoke check such as `/api/site-settings` or equivalent), then report the PR URL, the Preview
 verification, and this full checkpoint to Terry. Never merge `main`, never deploy Production — both
 remain exclusively his own action.
+
+**Done, same session — PR and Preview:**
+- PR #47 opened: https://github.com/Stripeman/BudgetTracker/pull/47 (`feature/workspace-layout-picker-BT-013-16` → `main`, not merged).
+- `scripts/deploy/deploy.ps1 -Environment preview` run: full gate chain (`gitState`, `confirmation`,
+  `azureResource`, `settings`, `test` 39/792/719, `validate` ok 29 routes, `build`, `secretScan` no
+  leaks, `upload`, `commitSetting`, `healthCheck`) all `ok`, result `SUCCESS`. Deployed at commit
+  `56de292` (the same commit as PR #47's head, after the docs-checkpoint commit).
+  Receipt url: `https://polite-plant-03bb7570f-preview.eastus2.3.azurestaticapps.net`.
+- Independently re-verified (not just trusting the receipt): `curl` of that URL's `/` returned HTTP
+  200, and `/api/site-settings` returned `"app":{"name":"BudgetTracker","version":"0.1.0-alpha.1",
+  "channel":"alpha","environment":"preview","commit":"56de29283209fb5aeb1e95fa9b4114f8f145672e"}` —
+  commit matches HEAD exactly, environment is genuinely `preview`, confirming the deploy is real and
+  live, not merely a script exit code.
+- No `main` merge, no Production deploy — both remain exclusively Terry's own action, per his explicit
+  restatement this session.
+
+This closes out everything asked for under "just go till done and in preview" within the stated
+boundary: BT-013-16 steps 1-9 are implemented, tested (unit+real-browser, individually and in one full
+combined run), reviewed, documented, PR'd and deployed to Preview. Remaining honest gaps (dedicated
+flagship-specific keyboard/dropdown assertions, flagship-specific large-dataset/multi-currency stress,
+the workspace-default colour scheme not yet read by any renderer, no drag-and-drop combined editor) are
+recorded above and in docs/REQUIREMENTS.md's BT-013-16 row for Terry's own review alongside the PR.
