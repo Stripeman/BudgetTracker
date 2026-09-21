@@ -6446,3 +6446,65 @@ exercised). `createView(ctx)`'s `update(state)` should pick the renderer by the 
 the Preview takeover, can follow once at least one real page can actually look different, so there is
 something genuine to preview — building it before step (4) would mean previewing a page that always
 renders the same regardless of which layout is "previewed," which would not be an honest preview.
+
+### Progress checkpoint (2026-09-21, later still): step (4) of the pacing list is DONE, real and verified in real browsers
+
+Commit `1a86159` on `feature/workspace-layout-picker-BT-013-16` (on top of `4e62421`). `npm test`
+(repo+api+app): 39/39 + 792/792 + 655/655 passing, exit 0. `npm run validate`: ok (29 routes).
+`npm run e2e -- --only dashboardflagship`: 18/18 real-browser checks passed, exit 0. Also re-ran
+`--only layoutpicker` (11/11) to confirm no regression from the Dashboard refactor. Step (5) (the
+remaining 8 real pages) and the resequenced step (3) (Preview takeover) are NOT started.
+
+What this actually proves, concretely: a real workspace with a real account, a real category-tagged
+expense and a real merchant, viewed by the real owner, shows the SAME real figures (`EUR 957.50`
+balance, `Groceries`, `E2E Fictional Grocer`) under Classic and under all three flagship layouts —
+each in a genuinely different composition (a KPI strip with one emphasised card; a subhead + a row of
+varied metric cards; a hero figure + stat rail beside a two-column body) — confirmed by both a unit
+test suite (`app/test/dashboardflagship.test.js`, using synthetic fixture state) AND real-browser
+screenshots (`.local/e2e/<run>/dashboardflagship/shots/`, reviewed this checkpoint, not committed).
+The three flagship renderers reuse the real `donutChart`/`chartLegend`/`moneyFigureTable` primitives
+(`app/js/ui/charts.js`) — the Gallery's own separate, fictional-fixture-only chart functions in
+`app/js/ui/gallery/compose.js` are never imported by this page, preserving the Gallery's hard
+boundary in the other direction too (a real page never reaches INTO the Gallery's rendering path,
+just as the Gallery never reaches into real data).
+
+One deliberate, disclosed scope narrowing found during implementation: the Gallery's OWN fictional
+`heroReferenceLedgerfly`/`heroReferenceFinexa` dashboards feature a dominant 30-day cash-forecast
+line chart (`fx.forecast.points`, a full daily {date, expected, cautious, hopeful} series) — the REAL
+forecast API (`api/_shared/budgeting.js` `forecast()`) does NOT compute a comparable daily series; it
+returns each account's own `start`/`expected.end`/`lowest{amount,date}` and cash-flow warnings only,
+never a full point cloud. Building a fabricated smooth trend line from data that does not exist in
+that shape would have violated "Do not invent operational features to fill a design," so this
+checkpoint's three renderers deliberately do NOT include a forecast trend chart at all — they compose
+real net position, week activity, spending-by-category and top-merchant figures instead (all already
+loaded, all already proven correct by `app/test/dashboard.test.js`'s own arithmetic tests). Adding a
+real, honestly-scoped forecast visualisation (e.g., a start-vs-projected-end comparison per account,
+or extending `api/_shared/budgeting.js` to actually return a daily series) is real, undone work,
+disclosed here rather than silently worked around with fake data.
+
+Also disclosed, not silently skipped: the workspace-DEFAULT colour scheme (`doc.settings.layoutColors`,
+fully real and settable since step 1/2) is not yet READ by the Dashboard — only the personal override
+(`galleryDesignColors`) and each layout's own built-in accent are applied. A manager who sets a
+workspace default today sees it reflected correctly in the Layout Picker's own cards (step 2), but not
+yet on the Dashboard itself. Wiring this in is a small, contained addition (one more field to resolve
+in `accentVars`, reading `workspaces.find(...).settings.layoutColors` — note this needs the FULL
+`workspace.settings` object, not just `settingValues`; confirm whether `state.workspaces` entries
+carry it or whether a targeted fetch is needed before assuming zero-cost) — left for the next
+Dashboard-adjacent checkpoint rather than done partially now.
+
+Also disclosed: each flagship renderer rebuilds its entire DOM tree on every `update(state)` call
+(`mount(bodyHost, renderer(...))`), unlike Classic's targeted per-box `mount()` calls. This means a
+background refresh while using a flagship-layout Dashboard could reset scroll position or drop focus
+from a control inside it — not verified either way in this checkpoint's e2e run (which did not test
+mid-session background refreshes), and a real, not-yet-closed gap for a later polish/accessibility
+pass, not a fabricated "this is fine" claim.
+
+**Exact next step:** either (a) begin step (5) — apply the same derive/render-split pattern to the
+next real page in Terry's listed order (Transactions), or (b) build the resequenced step (3) (the
+full-size Preview takeover) now that the Dashboard gives it something genuine to preview. Given
+Terry's own item 7 ("I want to evaluate all three using my data... organize reusable presentation
+components") explicitly frames the near-term goal as trying the layouts with his own real data, and a
+Preview takeover would let him do that WITHOUT needing to actually apply a layout for the whole
+workspace first, (b) is judged the higher-value next increment and is the recommended default absent
+a new instruction — but this is a genuinely open sequencing choice, not a foreclosed one, and should be
+confirmed or overridden at the next natural check-in rather than assumed silently forever.
