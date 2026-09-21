@@ -27,7 +27,7 @@ import { openGroupExpense, balanceLabel, shownTables } from "./group.js";
 import { sharedExpensesOn } from "../../core/workspacesettings.js";
 import { categoryIndex } from "../../core/categories.js";
 import { donutChart, moneyFigureTable, chartLegend } from "../charts.js";
-import { layoutMeta, effectiveLayoutId } from "../../core/layoutmeta.js";
+import { effectiveLayoutId, layoutAccentVars } from "../../core/layoutmeta.js";
 
 // A card title with its icon (BT-011-05); the words name the card, the icon is decoration.
 const titled = (id, iconId, text, tag = "h2") => el(tag, { class: "card__title", id }, [withIcon(iconId, text)]);
@@ -250,12 +250,6 @@ function renderClassicDashboard(ctx, state, data, boxes) {
 // light/dark by app/styles/components.css `[data-color-scheme]` rules (BT-013-16 item 4). The
 // workspace-DEFAULT colour scheme (`doc.settings.layoutColors`, set in the Layout Picker) is not yet
 // read here — a disclosed, later step (PROJECT_STATE.md), not silently skipped.
-function accentVars(state, layoutId) {
-  const meta = layoutMeta(layoutId);
-  const personal = state.preferences && state.preferences.effective && state.preferences.effective.galleryDesignColors && state.preferences.effective.galleryDesignColors[layoutId];
-  return { "--flag-light": (personal && personal.light) || meta.accentLight, "--flag-dark": (personal && personal.dark) || meta.accentDark };
-}
-
 function alertsCard(data, empty) {
   const items = buildAlertItems(data.alertFacts);
   return el("section", { class: "card", "aria-labelledby": "dash-alerts" }, [
@@ -317,7 +311,7 @@ function renderLedgerflyDashboard(ctx, state, data) {
     el("p", { class: "dashflag-kpi__value" }, [k.value]),
     el("p", { class: "muted small", text: k.meta }),
   ])));
-  return el("div", { class: "dashflag", vars: accentVars(state, "ledgerfly-forecast") }, [
+  return el("div", { class: "dashflag", vars: layoutAccentVars(state, "ledgerfly-forecast") }, [
     kpiStrip,
     el("div", { class: "grid grid--two" }, [
       el("div", { class: "stack" }, [spendingCard(data, "Spending breakdown"), recentEntriesCard(data)]),
@@ -342,7 +336,7 @@ function renderFinexaDashboard(ctx, state, data) {
       ? el("section", { class: "card" }, [el("p", { class: "card__title", text: "Shared balance" }, ), data.groupCard.mine.length ? el("div", { class: "card__value small" }, data.groupCard.mine.map(([t, r]) => el("div", {}, [balanceLabel(r, t.currency, data.fmt, { self: true, subject: "You" })]))) : el("p", { class: "muted small", text: "You are settled up" })])
       : el("section", { class: "card" }, [el("p", { class: "card__title", text: "Accounts" }), el("div", { class: "card__value" }, [String((data.accounts.data && data.accounts.data.accounts.filter((a) => !a.deletedAt).length) || 0)])]),
   ];
-  return el("div", { class: "dashflag", vars: accentVars(state, "finexa-budget") }, [
+  return el("div", { class: "dashflag", vars: layoutAccentVars(state, "finexa-budget") }, [
     el("div", { class: "dashflag-subhead" }, [el("h2", { text: "Overview" }), el("p", { class: "muted small", text: "Where you stand today, at a glance." })]),
     el("div", { class: "grid grid--two" }, [spendingCard(data), alertsCard(data, "Nothing needs attention right now.")]),
     el("div", { class: "grid grid--cards" }, cards),
@@ -364,7 +358,7 @@ function renderAcruDashboard(ctx, state, data) {
       el("div", {}, [el("p", { class: "muted small", text: "Needs attention" }), el("span", { text: String(data.alertCount) })]),
     ]),
   ]);
-  return el("div", { class: "dashflag", vars: accentVars(state, "acru-overview") }, [
+  return el("div", { class: "dashflag", vars: layoutAccentVars(state, "acru-overview") }, [
     hero,
     el("div", { class: "grid grid--two" }, [
       el("div", { class: "stack" }, [accountsListCard(data), recentEntriesCard(data)]),

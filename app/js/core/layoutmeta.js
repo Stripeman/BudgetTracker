@@ -28,3 +28,16 @@ export function effectiveLayoutId(state, ws) {
   if (state && state.layoutPreview) return state.layoutPreview.layoutId;
   return (ws && ws.settingValues && ws.settingValues.layoutId) || "classic";
 }
+
+// Every real, layout-aware page's accent-colour resolution (BT-013-16 item 4): the caller's OWN
+// personal override (the same `galleryDesignColors` preference the appearance cog already writes to,
+// api/preferences/handler.js) else the layout's own built-in identity — as CSS custom properties
+// (`--flag-light`/`--flag-dark`), resolved for light/dark by app/styles/components.css's
+// `[data-color-scheme]` rule. One function so every page applies the SAME colour, never a
+// per-page reimplementation. The workspace-DEFAULT colour scheme is not read here yet (disclosed in
+// PROJECT_STATE.md); when it is, this is the one place that needs to change.
+export function layoutAccentVars(state, layoutId) {
+  const meta = layoutMeta(layoutId);
+  const personal = state && state.preferences && state.preferences.effective && state.preferences.effective.galleryDesignColors && state.preferences.effective.galleryDesignColors[layoutId];
+  return { "--flag-light": (personal && personal.light) || meta.accentLight, "--flag-dark": (personal && personal.dark) || meta.accentDark };
+}
