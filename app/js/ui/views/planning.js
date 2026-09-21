@@ -18,6 +18,7 @@ import { messageFor } from "../../core/errors.js";
 import { icon, withIcon } from "../icons.js";
 import { createIconPicker, iconChange } from "../iconpicker.js";
 import { managesSharedLists } from "../../core/workspacesettings.js";
+import { effectiveLayoutId, layoutAccentVars } from "../../core/layoutmeta.js";
 
 // Account icons for the forecast tables (BT-011-05), from the accounts the viewer may see.
 const accountIcons = (state) => new Map(((sliceFor(state, "accounts").data || {}).accounts || []).map((a) => [a.id, a.icon]));
@@ -87,8 +88,13 @@ export function createView(ctx) {
   const horizon = pickerSelect(HORIZONS, "90", {}, { search: false });
   const buffer = input({ inputmode: "decimal", placeholder: "Optional, e.g. 500.00" });
   const run = button("Update forecast", () => refresh());
-  const element = el("section", {}, [
-    el("div", { class: "page-head" }, [el("h1", { text: "Planning" })]),
+  // BT-013-16: the SAME persistent elements every layout reuses (budgets, archived list, forecast
+  // filters/warnings/table, what-if) — nothing about budgeting/forecast calculation, filtering or
+  // permission logic differs; only the surrounding wrapper/card styling per layout, exactly like
+  // app/js/ui/views/transactions.js and bills.js.
+  const bodyHost = el("div");
+  const element = el("section", {}, [el("div", { class: "page-head" }, [el("h1", { text: "Planning" })]), bodyHost]);
+  const classicArrangement = el("div", {}, [
     el("div", { class: "page-head" }, [el("h2", { class: "section-title" }, [withIcon("target", "Budgets")]), budgetActions]),
     budgetsBox,
     archivedBox,
@@ -99,6 +105,24 @@ export function createView(ctx) {
     el("h2", { class: "section-title", text: "What if…" }),
     whatIfBox,
   ]);
+  const FLAGSHIP_IDS = new Set(["ledgerfly-forecast", "finexa-budget", "acru-overview"]);
+  let mountedLayout = null;
+  function arrangementFor(layoutId) {
+    if (!FLAGSHIP_IDS.has(layoutId)) return classicArrangement;
+    return el("div", { class: "dashflag", vars: layoutAccentVars(ctx.store.getState(), layoutId) }, [
+      el("section", { class: "card", "aria-labelledby": "plan-budgets" }, [
+        el("div", { class: "row" }, [el("h2", { class: "card__title", id: "plan-budgets" }, [withIcon("target", "Budgets")]), budgetActions]),
+        budgetsBox, archivedBox,
+      ]),
+      el("section", { class: "card", "aria-labelledby": "plan-cashflow" }, [
+        el("h2", { class: "card__title", id: "plan-cashflow" }, [withIcon("chart-line", "Cash flow")]),
+        el("p", { class: "muted small", text: "Projected balances from today, including bills that are due and not yet recorded, skipped or paused. Only accounts whose balance you can see are included." }),
+        el("div", { class: "filters" }, [field("Look ahead", horizon), field("Warn me below", buffer), el("div", { class: "filters__actions" }, [run])]),
+        warningsBox, forecastBox,
+      ]),
+      el("section", { class: "card", "aria-labelledby": "plan-whatif" }, [el("h2", { class: "card__title", id: "plan-whatif", text: "What if…" }), whatIfBox]),
+    ]);
+  }
   const params = () => ({ horizon: horizon.value, ...(buffer.value.trim() ? { buffer: buffer.value.trim() } : {}) });
   const refresh = () => ctx.store.actions.refreshForecast(params());
   commitOnEnter(buffer, refresh);
@@ -110,11 +134,18 @@ export function createView(ctx) {
   mount(whatIfBox, whatIf.element);
 
   function update(state) {
+    const ws = (state.workspaces || []).find((w) => w.id === state.selectedWorkspaceId);
+    const layoutId = effectiveLayoutId(state, ws);
+    if (mountedLayout !== layoutId) { mount(bodyHost, arrangementFor(layoutId)); mountedLayout = layoutId; }
     const eff = (state.preferences && state.preferences.effective) || {};
     const plain = { effective: { ...eff, balanceMasking: false } };
     const fmt = (v, c) => formatAmount(v, c, { numberFormat: eff.numberFormat });
-    const role = ((state.workspaces || []).find((w) => w.id === state.selectedWorkspaceId) || {}).role;
-    mount(budgetActions, role && role !== "viewer" ? button("Add budget", () => openBudgetEditor(ctx), { variant: "primary" }) : null);
+    const role = ws ? ws.role : null;
+    mount(budgetActions, role && role !== "viewer"
+      ? (state.layoutPreview
+        ? button("Add budget", () => {}, { variant: "primary", attrs: { disabled: true, "aria-disabled": "true", title: "This is a read-only layout preview. Exit preview to make changes." } })
+        : button("Add budget", () => openBudgetEditor(ctx), { variant: "primary" }))
+      : null);
 
     const budgets = sliceFor(state, "budgets");
     const bs = stateView(budgets, { empty: "No budgets yet. Add one to plan spending by category.", isEmpty: (d) => !d.budgets.length });

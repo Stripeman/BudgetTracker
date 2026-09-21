@@ -72,7 +72,11 @@ describe("BT-013-16 Transactions renders the workspace's real, applied layout", 
     state.workspaces[0].settingValues.layoutId = "ledgerfly-forecast";
     view.update(state);
     const sameFilterBox = view.element.querySelector(".filters-box");
-    assert.equal(sameFilterBox, filterBox, "the exact same DOM node, just reparented");
+    // assert.ok on a boolean, never assert.equal on two raw DOM node objects: a genuine mismatch
+    // would make node:assert try to inspect two large, ownerDocument-linked objects for its diff,
+    // which is extremely slow/memory-heavy for this domdouble's circularly-linked Node class
+    // (found the hard way in app/test/planningflagship.test.js — see its own note).
+    assert.ok(sameFilterBox === filterBox, "the exact same DOM node, just reparented");
     assert.equal(sameFilterBox.open, true, "an open filter panel is never lost across a layout switch");
   });
 

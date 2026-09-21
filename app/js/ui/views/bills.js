@@ -19,6 +19,7 @@ import { icon, withIcon, defaultIconFor, iconLabel } from "../icons.js";
 import { createIconPicker, iconChange } from "../iconpicker.js";
 import { pickerOf } from "../selectpicker.js";
 import { createActionsMenu } from "../actionsmenu.js";
+import { effectiveLayoutId, layoutAccentVars } from "../../core/layoutmeta.js";
 
 const PRESETS = [
   { value: "weekly", label: "Weekly", freq: "weekly", interval: 1 },
@@ -134,24 +135,42 @@ function table(headers, rows, label) {
 }
 
 export function createView(ctx) {
+  const intro = el("p", { class: "muted", text: "Bills and income that repeat. Each payment is reviewed before it becomes an entry, and changing a bill never rewrites payments already recorded." });
   const cards = el("div", { class: "grid grid--cards" });
   const attention = el("div");
   const listBox = el("div");
   const roleNote = el("p", { class: "muted small" });
   const actions = el("div", { class: "page-head__actions" });
-  const element = el("section", {}, [
-    el("div", { class: "page-head" }, [el("h1", { text: "Bills" }), actions]),
-    el("p", { class: "muted", text: "Bills and income that repeat. Each payment is reviewed before it becomes an entry, and changing a bill never rewrites payments already recorded." }),
-    cards,
+  // BT-013-16: the SAME persistent elements every layout reuses (the Overdue/Due soon/Next 30 days
+  // cards already serve the flagship "KPI strip" role as-is; "Needs attention" and "All bills" stay
+  // completely shared and unchanged) — only the surrounding wrapper/card styling differs per layout,
+  // exactly like app/js/ui/views/transactions.js.
+  const bodyHost = el("div");
+  const element = el("section", {}, [el("div", { class: "page-head" }, [el("h1", { text: "Bills" }), actions]), bodyHost]);
+  const classicArrangement = el("div", {}, [
+    intro, cards,
     el("h2", { class: "section-title", text: "Needs attention" }), attention,
     el("h2", { class: "section-title", text: "All bills" }), roleNote, listBox,
   ]);
+  const FLAGSHIP_IDS = new Set(["ledgerfly-forecast", "finexa-budget", "acru-overview"]);
+  let mountedLayout = null;
+  function arrangementFor(layoutId) {
+    if (!FLAGSHIP_IDS.has(layoutId)) return classicArrangement;
+    return el("div", { class: "dashflag", vars: layoutAccentVars(ctx.store.getState(), layoutId) }, [
+      intro, cards,
+      el("section", { class: "card", "aria-labelledby": "bills-attention" }, [el("h2", { class: "card__title", id: "bills-attention", text: "Needs attention" }), attention]),
+      el("section", { class: "card", "aria-labelledby": "bills-all" }, [el("h2", { class: "card__title", id: "bills-all", text: "All bills" }), roleNote, listBox]),
+    ]);
+  }
   void ctx.store.actions.refreshBills();
 
   function update(state) {
-    mount(actions, canAddEntries(state)
-      ? button("Add bill", () => openBillEditor(ctx), { variant: "primary" })
-      : addEntriesBlocked(state, "bills"));
+    const ws = (state.workspaces || []).find((w) => w.id === state.selectedWorkspaceId);
+    const layoutId = effectiveLayoutId(state, ws);
+    if (mountedLayout !== layoutId) { mount(bodyHost, arrangementFor(layoutId)); mountedLayout = layoutId; }
+    mount(actions, state.layoutPreview
+      ? button("Add bill", () => {}, { variant: "primary", attrs: { disabled: true, "aria-disabled": "true", title: "This is a read-only layout preview. Exit preview to make changes." } })
+      : canAddEntries(state) ? button("Add bill", () => openBillEditor(ctx), { variant: "primary" }) : addEntriesBlocked(state, "bills"));
     const eff = (state.preferences && state.preferences.effective) || {};
     const plain = { effective: { ...eff, balanceMasking: false } };
     const fmt = (v, c) => formatAmount(v, c, { numberFormat: eff.numberFormat });
