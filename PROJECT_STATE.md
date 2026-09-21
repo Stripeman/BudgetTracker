@@ -6377,3 +6377,72 @@ simplifications, never a scope cut Terry asked for):
 `workspace-layouts`/`site-layouts`, a card list in Workspace Settings per Terry's spec — name,
 thumbnail, current indicator, Preview, Apply, cog, Remove/Restore — entry point from the Gallery,
 demo-only badges with no Apply for the twelve non-flagship concepts), per step (2) of the pacing list.
+
+### Progress checkpoint (2026-09-21, later same day): step (2) of the pacing list is DONE, real and verified in real browsers
+
+Commit `aa5065f` on `feature/workspace-layout-picker-BT-013-16` (on top of `898ccae`). `npm test`
+(repo+api+app): 39/39 + 792/792 + 642/642 passing, exit 0. `npm run validate`: ok (29 routes).
+`npm run e2e -- --only layoutpicker`: 11/11 real-browser checks passed, exit 0, clean process/data
+teardown (two real Edge browsers, alice owner + bob member). Steps (3)-(5) (Preview takeover,
+Dashboard, the remaining 8 pages) are NOT started — see the explicit statement below.
+
+What was built: `app/js/ui/views/layoutpicker.js` (new), mounted as a "Layout" card in
+`app/js/ui/views/workspace.js` alongside the pre-existing generic "Layout theme" settings dropdown
+(both change the same `layoutId` setting; neither replaces the other). Cards for the four real
+layouts show a gradient thumbnail (from each layout's own `accentLight`/`accentDark`, via CSS custom
+properties — `el()` refuses inline `style` under CSP), a "Currently applied" badge, "Apply to
+workspace" (calls the EXISTING `PATCH /api/workspaces?id=` with `settings.layoutId` — confirmed by a
+real-browser check that the workspace's `settings.layoutId` is genuinely persisted and audited, and
+that a second browser signed in as a plain member sees the SAME applied layout after a reload), a
+"Preview" button (present, per Terry's card spec, but disabled with a stated reason — the full-size
+takeover is explicitly step 3, not yet built; faking a working preview here would have been
+dishonest), "Remove from this workspace's choices"/"Restore" (manager+, calls the new
+`PATCH /api/workspace-layouts`, confirmed real-browser: a member never sees this control at all, and
+a hidden layout's Apply stays disabled until restored), and, for each of the three flagship layouts
+(not Classic, which has no Gallery accent identity), two `createAppearanceCog` instances reused
+VERBATIM from BT-013-15 — one for the caller's own personal colours (same `galleryDesignColors`
+preference, same ids, so a Gallery-time customization already carries over with zero new code) and,
+for managers only, a second for the workspace-default colours plus an explicit "Use my colours as the
+workspace default" button (disabled until the caller has a personal colour to publish — never
+automatic). The other twelve Gallery concepts render as plain "Demo only" cards with NO buttons at
+all (verified by a unit test: `demoCard.querySelectorAll("button").length === 0`) — they cannot
+prematurely offer Apply because there is nothing to click.
+
+Two real, disclosed findings from reviewing the ACTUAL real-browser screenshots this checkpoint took
+(`.local/e2e/<run>/layoutpicker/shots/`, not committed — gitignored evidence only), fixed in the same
+commit rather than left for a later review pass: (1) the disabled "Preview" button used the `ghost`
+button variant (transparent border/background) and was nearly invisible next to the solid "Apply to
+workspace" button in dark mode — changed to the default bordered variant; (2) the "Apply" button was
+being relabelled "Currently applied" for the current layout, duplicating the badge above it word for
+word — the button now always reads "Apply to workspace" (disabled, with a `title` explaining why) and
+the badge alone is the "clear indicator" Terry's item 1 asks for. Neither of these was caught by the
+domdouble unit tests (which do not render real CSS) — only the real-browser screenshot did, which is
+exactly why this agent's standing obligation to verify interface claims in real browsers, not source
+reading or unit tests alone, exists.
+
+Explicitly NOT true yet, stated plainly so it is never rounded up in a later summary: applying
+Executive Forecast, Budget Workspace or Financial Overview changes ONLY the stored `layoutId` value
+today. Every real page — Dashboard included — still renders exactly as Classic regardless of which
+layout is applied. There is no visual difference anywhere in the real application yet from choosing a
+different layout. The Layout Picker page itself is the only place any of this is visible. This is
+precisely why step (4) (Dashboard fully real for all three flagship layouts) is the next milestone
+that actually proves the pipeline end to end, not this one.
+
+Not deployed to Preview yet (per the "colours, a selector... are intermediate steps, not completion"
+standard — a picker that changes nothing else visible is not worth a deploy on its own; it will
+deploy together with at least the Dashboard renderer in step 4). `docs/REQUIREMENTS.md` still has no
+BT-013-16 entry — still deferred until there is an end-to-end visible result to document honestly.
+
+**Exact next step:** step (4) of the pacing list — extract `app/js/ui/views/dashboard.js`'s existing
+inline `update(state)` derivation into a pure `deriveDashboardData(state, ctx)` function (zero DOM),
+keep today's markup verbatim as the `classic` renderer, then add three new renderer functions
+(Executive Forecast/`reference-ledgerfly`, Budget Workspace/`reference-finexa`, Financial
+Overview/`reference-acru`) that consume the SAME derived data and the SAME real action callbacks,
+composing DOM in that layout's own established visual language (adapted from the Gallery's fictional-
+fixture renderers in `app/js/ui/gallery/compose.js` to real data shapes: empty states, large lists,
+multiple currencies, long labels — none of which the Gallery's fixed fictional fixtures ever
+exercised). `createView(ctx)`'s `update(state)` should pick the renderer by the workspace's real
+`layoutId` (read from the `workspaces` slice/`sliceFor`, already loaded — no new fetch). Step (3),
+the Preview takeover, can follow once at least one real page can actually look different, so there is
+something genuine to preview — building it before step (4) would mean previewing a page that always
+renders the same regardless of which layout is "previewed," which would not be an honest preview.
