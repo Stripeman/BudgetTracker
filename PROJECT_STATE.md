@@ -6686,3 +6686,79 @@ security-privacy-reviewer and financial-accuracy-reviewer given this is explicit
 (4) open the one consolidated PR Terry asked for; (5) deploy to Preview via the established
 `.\deploy.ps1 -Environment preview` workflow and independently verify — all before considering this
 authorized scope actually complete, per Terry's own "intermediate steps, not completion" standard.
+
+### Progress checkpoint (2026-09-22, continued): steps 8/9 closeout — verified, reviewed, PR opened
+
+**Session instruction, verbatim, and the boundary held:** Terry said "do not stop till its all complete
+and pushed to main and preview." I told him I will not push to `main` or merge (CLAUDE.md/AGENTS.md:
+"Never push to `main`, merge pull requests... Terry controls promotion after review") but would continue
+everything else and deploy to Preview. He replied "ok that works too," then "dont ask me any more
+questions ... just go till done and in preview." This checkpoint is the result of continuing
+autonomously under that instruction, still never touching `main` or Production.
+
+1. **Cross-cutting verification (item 8) — `scripts/dev/e2e/layoutcrosscutting.mjs`, new, 11/11 passed:**
+   two workspaces (A: Executive Forecast, with owner Alice + member Bob; B: Financial Overview, owner
+   Alice only), two real headless-Edge browsers at once, plus a parallel API client. Confirmed: Bob (a
+   member of A) sees the SAME workspace-wide layout Alice applied, never his own choice; Bob's
+   Executive-Forecast-rendered Dashboard and Accounts pages never show Alice's private account's name,
+   note or real balance (or any total that would include it), while correctly showing the one shared
+   account he is authorized to see; workspace B renders its own, genuinely different flagship identity
+   and shows none of workspace A's data; switching Alice back to A proves A kept its own layout the
+   whole time, unaffected by visiting B. One real arithmetic bug in my own test was found and fixed
+   before this passed: I initially expected Alice's private account to still show its unmodified
+   opening balance (9999.00), not accounting for the 42.00 expense already recorded against it in the
+   fixture — the real, correct rendered figures (9,957.00 on the account, 10,157.00 in the net-position
+   total) were confirmed via a screenshot before I corrected the three affected assertions. Registered
+   in `scripts/dev/e2e/run.mjs`. Committed as `2fa5dc7`.
+2. **Full combined `npm run e2e` (every scenario in the application, not just this feature's own):** run
+   to completion in the background (64 scenarios, 1091 checks) — **1091 passed, 0 failed, 0 skipped,
+   exit 0.** This is the first time every one of this feature's ~19 new/changed scenarios ran together
+   with the rest of the application's existing ~45, specifically to catch any cross-scenario regression
+   the page-by-page approach could not; none was found.
+3. **Security-privacy and financial-accuracy review, performed directly (disclosure: no separate
+   agent-dispatch/Task tool was available in this session's toolset to invoke an isolated subagent, so
+   I conducted this review myself, directly against the actual diff of all 8 changed page files plus
+   the new `app/js/core/layoutmeta.js`, applying both reviewer roles' own standing checklists — this is
+   a narrower guarantee than a truly independent second reviewer and is disclosed as such, not
+   presented as equivalent):**
+   - No new API calls or client-trusted authority were introduced anywhere in the 8-page diff; every
+     arrangement swap reads only already-fetched, already-authorized state (`sliceFor`,
+     `ctx.store.getState()`) and the existing `effectiveLayoutId`/`layoutAccentVars` helpers.
+   - No new or duplicated financial calculation anywhere: Transactions' KPI strip re-presents the
+     existing `txns.data.summary` verbatim; Bills/Planning/Merchants introduce zero new arithmetic;
+     Shared expenses' entire settlement/split/balance logic (`renderBalances` etc.) was never touched —
+     only the whole existing `.stack` was reparented as one unit.
+   - Workspace settings' owner-only permanent-deletion `deleteBox` stays outside the layout-swap
+     `bodyHost`/`arrangementFor` logic entirely on `element` — unaffected by, and never hidden or shown
+     differently by, which layout is applied; its own role-gating (`renderDelete`) is untouched.
+   - `layoutAccentVars`'s personal-colour lookup reads only the already-server-validated
+     `galleryDesignColors` preference (existing since BT-013-15) — no new trust boundary.
+   - Confirmed by direct code re-read, not merely carried forward: the workspace-DEFAULT colour scheme
+     is still not read by any real-page renderer (only personal override or the layout's own built-in
+     colours) — a real, still-open, disclosed gap, not a regression introduced this checkpoint.
+   - No blocking findings from this review.
+4. **Final gate re-run:** `npm test` → 39/792/719, exit 0. `npm run validate` → `ok (29 routes)`, exit 0.
+5. **PR opened:** branch pushed to `origin/feature/workspace-layout-picker-BT-013-16` (a feature-branch
+   push, never a `main` merge) and one consolidated pull request opened against `main` for Terry's own
+   review and merge decision — see the PR URL reported to Terry directly. No merge, no Production
+   deploy performed or attempted.
+
+**What remains genuinely open after this checkpoint, stated plainly:**
+- Dedicated keyboard-navigation/dropdown-reflow checks framed explicitly as "under a flagship layout"
+  were not written as standalone assertions — the flagship pages' own scenarios do exercise real
+  dropdowns/filters/forms (Transactions' filter panel, Planning's horizon picker, the Layout Picker's
+  own Apply button) and all passed, but no test isolates "does Tab order / Escape / arrow-key behavior
+  change under a flagship wrapper specifically" as its own claim.
+- Large-dataset/long-label/multi-currency stress specifically through a flagship renderer was not
+  built — judged lower incremental risk since the flagship wrapper is a CSS/DOM-reparenting layer over
+  already-existing, already-tested tables and lists, but this is a judgement call, disclosed rather than
+  proven.
+- The workspace-default colour scheme gap (above) is unresolved.
+- No drag-and-drop/combined-layout editor was built — correctly, per Terry's own "not now" instruction.
+- Preview deployment: not yet performed as this checkpoint is written — see exact next step.
+
+**Exact next step:** deploy to Preview via `.\deploy.ps1 -Environment preview` (the one supported
+deployment mechanism) and independently verify the deployed application (version/environment banner,
+a real smoke check such as `/api/site-settings` or equivalent), then report the PR URL, the Preview
+verification, and this full checkpoint to Terry. Never merge `main`, never deploy Production — both
+remain exclusively his own action.
