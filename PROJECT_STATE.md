@@ -6304,3 +6304,76 @@ end to end); (5) the remaining real pages in the order Terry listed them (Transa
 Accounts + debt/loan detail, Merchants, Shared expenses directory + detail, My Settings, Workspace
 Settings), each checkpointed separately. Progress against this list is reported honestly at every
 checkpoint, never rounded up.
+
+### Progress checkpoint (2026-09-21): step (1) of the pacing list above is DONE, real and tested
+
+Commit `898ccae` on `feature/workspace-layout-picker-BT-013-16`. `npm test` (repo+api+app):
+39/39 + 792/792 + 633/633 passing, exit 0. `npm run validate`: ok (29 routes). Nothing else on this
+branch yet — steps (2)-(5) (Picker UI, Preview takeover, Dashboard, the remaining 8 pages) are NOT
+started. Do not report more than this until they are.
+
+What was actually built, and where it differs from the sketch above (all differences are narrowings/
+simplifications, never a scope cut Terry asked for):
+- `api/_shared/layouts.js`: `REAL_LAYOUT_OPTIONS` now has all four ids (`classic`,
+  `ledgerfly-forecast`, `finexa-budget`, `acru-overview`) with labels matching the Gallery's own
+  concept names. This alone makes `layoutId` (the existing setting) genuinely apply/persist/audit the
+  three flagship layouts through the UNCHANGED `PATCH /api/workspaces?id=` route — no new mutation
+  path for "Apply" was written or is needed.
+- `api/_shared/layout-catalog.js` (new): `site/layouts.json`, `BUILT_IN_IDS`/`BUILT_IN` (with each
+  entry's name/tagline/accent pulled live from `findConcept()` so it can never drift from the
+  Gallery), `SYSTEM = {classic}`, `isSelectable`, `validateChoice` (retired ids refused for NEW
+  selection only; the value already applied always stays accepted — verified by test), `catalogView`,
+  `COLORABLE_IDS` (the three flagship ids only — Classic has no Gallery accent identity, so it is
+  excluded from workspace-default-colour and personal-override validation on purpose),
+  `validateHideTarget` (refuses hiding `classic`), `validateLayoutColorEntry` (same >=3:1
+  per-mode-surface contrast rule as `galleryDesignColors`), `validateLayoutId`.
+- `api/workspaces/handler.js` `patch()`: the layered extra rule for `layoutId` reads the site catalogue
+  once (only when `layoutId` is actually present in the request, to avoid an extra storage read on
+  every unrelated settings PATCH) BEFORE the synchronous `mutateWorkspace` callback (which must stay
+  synchronous — this was the one real implementation surprise: `store.mutateWorkspace`'s `fn` return
+  value is used directly as the result with no `await`, so any catalogue/business-rule read that needs
+  `async` has to happen outside it, exactly like `icons.js`'s `patchTypeIcons` already does for the
+  icon catalogue). Refusal codes: `layout_retired` (site-wide) and `layout_hidden` (this workspace).
+- `api/workspace-layouts` (new, member-gated): `GET ?workspaceId=` returns the four real layouts
+  (current/hidden/retired/selectable/colorable + `workspaceColors` + the caller's own `personalColors`
+  read straight from their `galleryDesignColors` preference, never copied or duplicated) and
+  `demoLayouts` (the other twelve Gallery concepts, `demoOnly: true`, name/tagline/accent only — no
+  Apply, no Preview capability implied by this endpoint). `PATCH` actions: `hide`/`restore` (manager+,
+  refuses `classic`), `colors` (manager+, `colors: null` resets to the layout's own built-in default),
+  `publish-personal-colors` (manager+, explicit one-call action that copies the CALLER's own personal
+  colour choice into the workspace default — refuses with `no_personal_colors` if they have not set one
+  for that layout; never runs automatically). One implementation fix during testing: the manager+ check
+  now runs via a dedicated `requireManager()` BEFORE any action-specific validation (matching
+  `icons.js`'s `requireAdmin`-first ordering) — the first draft validated the request body first, which
+  meant a member with an invalid request got a 400 instead of the correct 403; a test caught this
+  immediately and it was fixed the same session, never left for later.
+- `api/site-layouts` (new, site-admin only): `GET` returns the four layouts plus `appliedCount`/
+  `hiddenByWorkspaceCount` per layout via the same structure-only `storage.list('workspaces/')`
+  enumeration `analytics`'s `directory()` action already uses (verified by test: the response never
+  contains a workspace's name, account name, or any amount/currency string). `POST ?action=retire|
+  reinstate` mirrors `icons.js`'s built-in enable/disable exactly, refuses touching `classic`
+  (`layout_system`). `POST ?action=delete` ALWAYS returns 400 `layout_builtin` with a plain-language
+  explanation ("retire it... removing its definition needs a later code change") — there is no
+  code path that can delete a real layout today, and none was faked; this satisfies Terry's "explain
+  blockers... never label retirement as permanent deletion" without inventing a capability that does
+  not exist.
+- Tests: `api/test/workspace-layouts.test.js` and `api/test/site-layouts.test.js` (new, full coverage
+  of every action, every role boundary, the retired/hidden refusal layer, and the no-privacy-leak
+  check on usage counts); `api/test/workspace-settings.test.js`, `api/test/layouts.test.js`,
+  `api/test/design-gallery.test.js` updated for the now-real options (each failure was the direct,
+  expected consequence of extending `REAL_LAYOUT_OPTIONS` — not a regression — and each was fixed by
+  updating the expected value or, for workspace-settings.test.js, adding genuinely new test cases for
+  the new retired/hidden refusal behaviour).
+- Deliberately NOT built in this step (next, per the pacing list): the Layout Picker UI itself (no
+  `app/js/ui/views/layoutpicker.js` or Workspace Settings card yet — `api/workspace-layouts`/
+  `api/site-layouts` have no caller in `app/js/core/api.js` yet); the Preview takeover; the real
+  appearance cog wired to these routes; any Dashboard or other page's flagship renderer; any of the
+  8 remaining real pages. `docs/REQUIREMENTS.md` has no BT-013-16 entry yet — added once the picker UI
+  makes this reachable/verifiable end to end (matching this session's own established "document after
+  real, verified progress" pattern). Not deployed to Preview yet (nothing user-visible changed — the
+  three flagship ids being valid `layoutId` values has no UI to reach them through yet).
+
+**Exact next step:** build the Layout Picker UI (client `app/js/core/api.js` calls for
+`workspace-layouts`/`site-layouts`, a card list in Workspace Settings per Terry's spec — name,
+thumbnail, current indicator, Preview, Apply, cog, Remove/Restore — entry point from the Gallery,
+demo-only badges with no Apply for the twelve non-flagship concepts), per step (2) of the pacing list.
