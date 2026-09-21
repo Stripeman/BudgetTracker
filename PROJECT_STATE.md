@@ -6082,3 +6082,225 @@ before this instruction arrived. This checkpoint's new commits (the settings sce
 registration, this record) stay on the SAME branch; the closest honest compliance with "no separate
 bookkeeping PR" is exactly ONE new PR containing this genuine new evidence/fix content, opened next, for
 Terry's own review and merge decision — never merged by this agent, never touching Production.
+
+## BT-013-16 — live workspace Layout Picker (Terry, 2026-09-21; survives a session restart; verbatim, then the plan)
+
+**PR #46 was merged, Preview redeployed and re-verified (see Checkpoint BS on the now-twice-merged
+`feature/gallery-three-flagship-BT-013-15` branch).** Terry then asked what the three flagship designs
+are called and how to test them with his own data; told directly this is not possible today (the Gallery
+is fictional-data-only by design, and no Gallery concept is a real, selectable workspace layout yet —
+`REAL_LAYOUT_OPTIONS` still holds only `classic`) and asked whether he wanted this built. His answer,
+preserved in full:
+
+> I want an authentic, user-facing **Layout Picker for each workspace**, using the designs already
+> created. This is the next authorized implementation task—not another gallery prototype or a
+> colour-only update. My immediate goal is to try the layouts with my own workspace data, customize
+> their colours, and remove choices I dislike. Later, I will ask for a new layout combining my
+> favourite features from several designs. This picker should remain the normal way users choose their
+> workspace's appearance afterward. Finish any currently active work safely, then implement this.
+> Inspect the architecture, record the plan and proceed without another permission-to-start question.
+>
+> **1. A real workspace Layout Picker.** Provide a Layout Picker in Workspace Settings, with an
+> appropriate entry point from the existing gallery. Display available designs as visual cards
+> containing: name and representative thumbnail; a clear "Currently applied" indicator; **Preview**;
+> **Apply to workspace**; **Appearance cog**; **Remove from this workspace's choices**. Initially
+> integrate all three flagship designs (Executive Forecast/ledgerfly-forecast, Budget
+> Workspace/finexa-budget, Financial Overview/acru-overview). Keep Classic available as a reliable
+> fallback. Preserve other gallery concepts, but label them "Demo only" until genuinely integrated; they
+> must not offer Apply prematurely. I do not need the comparison tool. Keep individual previews and
+> colour customization. Distinguish any in-app comparison controls from the separate local
+> reference-comparison files before changing either.
+>
+> **2. Preview with actual workspace data.** Preview must render the selected workspace's actual data,
+> restricted to what the signed-in user is authorized to see. Do not export, copy or reseed data just to
+> preview a layout. Preview should: open at full size; clearly identify the workspace and previewed
+> layout; remain active while navigating between pages; provide Apply and Exit preview; restore the
+> saved layout when exited; leave other members' experience unchanged until Apply is confirmed. During
+> this initial temporary preview, disable financial mutations and explain that preview is read-only.
+> Applying a layout must enable the normal authorized workflows. Never mix fictional gallery figures
+> into real-data pages. Show honest empty or unavailable states when data or a capability is missing.
+> Site administration does not grant additional financial visibility.
+>
+> **3. Apply and persist the workspace layout.** Applying a design must actually change the workspace's
+> layout across its relevant pages—not merely its colours or dashboard. Persist the selection across
+> navigation, reloads and future sessions. Different workspaces must be able to use different layouts.
+> Use existing workspace-settings permissions: owners/managers with the appropriate permission may
+> change the workspace layout; other members may preview available layouts without changing the shared
+> default. Everyone gets the selected workspace layout, but each person still sees only their authorized
+> information. Switching layouts must preserve financial records, calculations, available actions and
+> compatible navigation/filter state. It must be reversible without a financial-data migration.
+>
+> **4. Appearance cog and colour customization.** Each layout card and full-size preview must have an
+> accessible appearance cog. Retain: coordinated colour presets; custom primary/accent colours;
+> light/dark/device-mode support and the existing moon/sun control; immediate visual preview; reset to
+> design defaults. Support a clearly labelled workspace default colour scheme and a personal appearance
+> override. Workspace defaults require the appropriate management permission; personal overrides affect
+> only that person. Remember colour choices separately for each layout. Switching away and back must not
+> discard them. Allow existing personal gallery customizations to be carried over through an explicit
+> choice. Do not silently publish someone's personal preferences as workspace defaults. Preserve
+> readable contrast, category-colour meaning and warning/error semantics. A new colour scheme must
+> retain the layout's visual identity.
+>
+> **5. Remove unwanted choices.** Switching to Classic is not the same as removing an unwanted layout.
+> Provide these distinct operations: **Remove from this workspace's choices** (hide the option for this
+> workspace only, with a restore mechanism); **Retire from the site catalogue** (a site-admin action
+> preventing new selection across the site; show usage counts without exposing private workspace
+> contents; existing users must not suddenly lose a working layout); **Permanently delete a layout
+> definition** (where technically supported, allow this only when no workspace uses it and no other
+> layout depends on it; explain blockers and use existing confirmation/audit standards). Removing an
+> active layout from a workspace requires choosing and confirming its replacement first. Do not label
+> retirement as permanent deletion. Built-in layouts backed by shipped code may require retirement
+> through the UI and a later code change for physical removal. Classic remains available as the
+> fallback. None of these actions deletes financial records.
+>
+> **6. Integrate the designs with the real application.** Reuse canonical authorized data access,
+> calculations, formatting, filters, pagination, forms, validation, permissions and actions. Do not
+> build three independent financial applications or duplicate accounting logic. Separate presentation
+> from behavior where necessary so layouts can use the same working functionality. Preserve the visual
+> quality of the flagship designs. Applying them must not simply wrap Classic pages in different colours.
+> Complete their relevant pages and workflows: Dashboard; Transactions; Bills; Budgets; Accounts and
+> debt/loan detail; Merchants; Shared-expense directory and event detail; My Settings and Workspace
+> Settings; other existing supported pages, with consistent navigation and appearance. Keep BT-007 and
+> BT-010 on hold. Do not invent operational features to fill a design.
+>
+> **7. Support a future combined layout.** I want to evaluate all three using my data, then request a
+> new layout combining selected features. Organize reusable presentation components so that future work
+> is practical. Preserve the original designs when a combined design is eventually created. Do not build
+> a general drag-and-drop layout editor now. This request is for a real picker and usable layouts.
+>
+> **8. Verify complete workflows.** Two workspaces using different layouts and colour settings;
+> different members seeing only their permitted data in the same layout; privacy across charts, totals,
+> lists, details and account selectors; preview navigation and exit without changing records or saved
+> settings; applying, switching, resetting, hiding and restoring choices; retirement and blocked
+> deletion while a layout is in use; empty/large datasets, long labels, multiple currencies and
+> unavailable modules; normal financial workflows after applying each layout; desktop/mobile, light/dark,
+> keyboard access and dropdowns that never shift content. Use appropriate security and financial review.
+> Report precisely what was independently reviewed and what remains outstanding.
+>
+> **9. Delivery.** Track this as live workspace layout selection, separately from gallery visual
+> acceptance. Continue through backend, frontend and full integration. Colours, a selector, or a single
+> redesigned page are intermediate steps—not completion. Use one feature branch, safe recovery
+> checkpoints and one consolidated PR. Keep requirements and PROJECT_STATE.md current. Ask only about
+> genuinely new consequential decisions, and continue unrelated unblocked work. Deploy and verify through
+> the established Preview workflow. Use only data already authorized and available in Preview; do not
+> copy Production data into it under this instruction. I am handling Production myself. This request
+> does not authorize a main merge or Production deployment.
+
+### Architecture inspection (done before any code, per instruction) and the concrete plan
+
+Branch: `feature/workspace-layout-picker-BT-013-16`, off `main` at `3ee6802` (the BT-013-15 state, both
+PR #45 and #46 merged). No active work was left uncommitted.
+
+**Already-real, already-reviewed mechanisms this plan reuses rather than reinvents:**
+- `layoutId` is ALREADY a real, persisted, audited, manager+-gated workspace setting
+  (`api/_shared/workspace-settings.js`), today limited to `REAL_LAYOUT_OPTIONS = [{value:'classic'}]`
+  (`api/_shared/layouts.js`). Its own code comment already anticipated this exact moment: "When he
+  does, their ids join `options` here unchanged — no new mechanism, no migration of this setting's
+  shape." Applying a layout is changing THIS existing setting through the EXISTING
+  `PATCH /api/workspaces?id=` route (audit, history, before/after, manager+ check — all already built
+  and tested), never a new mutation mechanism.
+- The client store (`app/js/core/store.js`) already loads every real data slice for the selected
+  workspace (accounts, transactions, categories, members, bills, budgets, forecast, group/shared
+  expenses, account/category/merchant types) through authorized API calls, deep-frozen, workspace-
+  isolated. A layout-aware page needs NO new data fetching — it reads the SAME slices via the SAME
+  `sliceFor(state, name)` selector the Classic view already uses.
+- The site-wide catalogue-with-retirement pattern (`api/_shared/icons.js`: `BUILT_IN`, `SYSTEM`
+  (never-retirable), a small `site/<name>.json` document holding only a `disabled` list + `audit`,
+  `isSelectable()` refusing NEW selection of a disabled entry while a record already using it keeps
+  drawing it) is copied near-verbatim for a new `site/layouts.json` catalogue — "retire, never delete,
+  keep working wherever already used" is EXACTLY Terry's own requirement 5, already built and reviewed
+  once for icons.
+- The colour cog mechanism (`app/js/ui/gallery/appearancecog.js`, `app/js/ui/gallery/colorschemes.js`,
+  `galleryDesignColors` personal preference, `api/preferences/handler.js`) already stores a
+  `{light, dark, preset}` per concept id, validated per-mode-surface contrast, personal-only. The REAL
+  personal override in the workspace picker is the SAME preference key, read against the SAME (now
+  real) layout ids — "carrying over" a Gallery-time customization is automatic because it is literally
+  the same stored value, never a copy.
+- The workspace-wide "usage count without exposing private content" mechanism already exists
+  (`api/analytics/handler.js`'s `directory` action: `storage.list('workspaces/')` +
+  `readDocument('workspace', ...)`, reading ONLY structural fields — kind, status, counts — never a
+  name, note, balance or account identity). Site-admin layout-retirement usage counts reuse this exact
+  enumeration, adding only `layoutId` to what is read.
+- `themePalette`'s existing personal → site-default → built-in resolution (`api/preferences/handler.js`
+  `resolve()`) is the template for the new 3-tier colour resolution: personal override
+  (`galleryDesignColors`) → workspace default (new `settings.layoutColors`) → the layout's own built-in
+  accent pair.
+
+**New pieces, each mapped to an existing precedent, none invented from nothing:**
+1. `api/_shared/layout-catalog.js` (new) — `site/layouts.json`, modelled on `icons.js`: `BUILT_IN`
+   (classic, ledgerfly-forecast, finexa-budget, acru-overview — ids match the Gallery's own
+   `CONCEPT_IDS` exactly, labels read from `findConcept(id).name` so the picker and the Gallery can
+   never drift apart), `SYSTEM = {classic}` (can never be retired or deleted — the permanent fallback),
+   `isSelectable`, `retire`/`reinstate` (site admin, audited), `deletable` (true only for a hypothetical
+   future non-built-in entry with zero workspace usage — for now always false for the four built-ins,
+   explained as "built into the application; ask for a code change to remove it," never silently
+   mislabelled as impossible-forever).
+2. Workspace document: `doc.hiddenLayouts: string[]` (new field, no schema bump — absent reads as `[]`,
+   the same "tolerant of an older document" rule every other optional field already follows) — ids
+   hidden from THIS workspace's own picker, manager+ to change (hide/restore), audited exactly like any
+   other workspace change.
+3. `doc.settings.layoutColors: { [layoutId]: {light, dark, preset} }` (new settings-adjacent key,
+   validated by a new dedicated function mirroring `categoryColors`/`typeIcons`, manager+ to change) —
+   the WORKSPACE default colour per layout. Never auto-populated from anyone's personal preference; a
+   manager explicitly sets it (the UI MAY offer "start from my own current colours" as a convenience
+   default to click, never silently).
+4. `layoutId`'s validation gains one additional, explicit business-rule layer (mirroring exactly how
+   `reportingCurrency` already gets an extra check beyond the generic settings model in
+   `api/workspaces/handler.js`'s `patch()`): a NEWLY chosen value must be selectable per the site
+   catalogue AND not hidden for this workspace; the CURRENTLY stored value is always accepted again
+   (never breaks an existing choice), matching `icons.js`'s own "the value a record already has is
+   never forced off" rule.
+5. New route `api/workspace-layouts` (real, member-gated): `GET` — for the caller's workspace, every
+   built-in layout's status from this workspace's own point of view (current / selectable / hidden /
+   retired-site-wide) plus every OTHER Gallery concept id labelled `demoOnly: true` (no Apply, per
+   Terry's explicit instruction); `PATCH` — `{hide|restore: id}` (manager+) and `{colors: {...}}`
+   (manager+, workspace default) and `{personalColors: {...}}` (any member, thin proxy to the existing
+   `galleryDesignColors` preference so the picker UI has one call site). Applying a layout itself still
+   goes through the EXISTING `PATCH /api/workspaces?id=` (`settings.layoutId`), never duplicated.
+6. New route `api/site-layouts` (site admin only, mirrors `api/icons`'s own site-admin branch): retire /
+   reinstate / attempt-permanent-delete (refuses for any of the four built-ins today, explaining why),
+   usage counts via the `analytics` directory-style enumeration.
+7. Client: a real (not Gallery-only) appearance cog reused for the workspace picker, wired to the
+   3-tier colour resolution above, plus a NEW `app/js/ui/views/layoutpicker.js` (or a card embedded in
+   the existing Workspace Settings view) rendering the cards Terry specified (thumbnail, name, current
+   indicator, Preview, Apply, cog, Remove/Restore), with a `demoOnly` badge and no Apply for the other
+   12 concepts.
+8. Client: a real full-size Preview takeover (same "make the app shell inert, lock background scroll,
+   Escape/Exit restores focus" technique as the Gallery's `openFullscreen`/the real `modal.js`), driven
+   by an EPHEMERAL client-only override of which layout renders the CURRENT workspace's ALREADY-LOADED
+   real store slices — never a second fetch, export, copy or reseed. Mutating actions (Add expense,
+   Edit, Delete, forms) are disabled/hidden while previewing, with a visible "Preview — read-only"
+   banner; Apply (manager+ only) commits the real setting change through the existing PATCH; Exit
+   discards the override with no server write at all.
+9. Per real page: extract the EXISTING inline data-derivation logic (already proven correct — real
+   authorization, real arithmetic, real formatting) out of each view's `update(state)` into a pure
+   `derive*(state, ctx)` function returning plain data, with ZERO DOM construction. Keep the CURRENT
+   markup as the `classic` renderer (verbatim, so nothing regresses). Add three new renderer functions
+   per page (one per flagship layout) that take the SAME derived data and the SAME real action
+   callbacks and compose DOM in that layout's own established visual language (reusing the Gallery's
+   own `.g*` CSS/typography/card/nav conventions, adapted to real data shapes: empty states, multiple
+   currencies, long labels, large lists — none of which the Gallery's fixed fictional fixtures ever
+   exercised). `createView(ctx)`'s own `update(state)` picks the renderer by the workspace's real
+   (or previewed) layout id. This is the literal mechanism for requirement 6's "separate presentation
+   from behavior... reuse canonical... do not duplicate accounting logic" and requirement 7's "organize
+   reusable presentation components so future work is practical."
+
+**Explicit, disclosed judgment calls (not asked about, since they are not genuinely open questions —
+each follows an existing, already-reviewed precedent in this codebase):** hide/restore and workspace
+default colour are gated manager+ (matching `layoutId` itself); retire/reinstate/delete are site-admin
+only (matching the icon catalogue); the four built-in layouts can never be permanently deleted through
+the UI today (matching Terry's own "built-in layouts... may require retirement through the UI and a
+later code change for physical removal" — the mechanism is built to make deletion POSSIBLE in general
+and refuses these four specifically, with the reason stated, never silently).
+
+**Honest scope pacing (Terry's own "colours, a selector, or a single redesigned page are intermediate
+steps — not completion" standard applies):** given the size of item 9 above repeated across ten real
+pages, this is being built and checkpointed in this order, each a genuine, working, tested slice, never
+declared finished until the whole list is: (1) the site/workspace catalogue backend, hide/restore,
+colours, permissions — fully real and tested; (2) the Layout Picker UI wired to it; (3) the Preview
+takeover and Apply/Exit; (4) Dashboard fully real for all three flagship layouts (the proof that the
+whole pipeline — real data, real permissions, real colours, real preview, real apply — genuinely works
+end to end); (5) the remaining real pages in the order Terry listed them (Transactions, Bills, Budget,
+Accounts + debt/loan detail, Merchants, Shared expenses directory + detail, My Settings, Workspace
+Settings), each checkpointed separately. Progress against this list is reported honestly at every
+checkpoint, never rounded up.
