@@ -6508,3 +6508,55 @@ Preview takeover would let him do that WITHOUT needing to actually apply a layou
 workspace first, (b) is judged the higher-value next increment and is the recommended default absent
 a new instruction — but this is a genuinely open sequencing choice, not a foreclosed one, and should be
 confirmed or overridden at the next natural check-in rather than assumed silently forever.
+
+### Progress checkpoint (2026-09-21, later still): step (3) of the pacing list is DONE, real and verified in real browsers
+
+Commit `b5dcb37` on `feature/workspace-layout-picker-BT-013-16` (on top of `ffcabc7`). `npm test`
+(repo+api+app): 39/39 + 792/792 + 664/664 passing, exit 0. `npm run validate`: ok (29 routes).
+`npm run e2e -- --only layoutpreview`: 9/9 real-browser checks passed, exit 0, confirmed with a
+real-browser screenshot review this checkpoint. Chose option (b) from the prior checkpoint's
+recommendation (Preview before the next real page), since it was disclosed as the recommendation and
+no new instruction arrived to override it.
+
+What this actually proves: `state.layoutPreview` (`app/js/core/store.js`) is a genuinely client-only,
+ephemeral override — never written to the server, never visible to another member (confirmed:
+Bob previewing sees nothing different in Alice's session, and Alice's own preview never appears to
+Bob until she explicitly Applies). The persistent shell-level banner (`app/js/ui/shell.js`, built
+once, refreshed in place — never rebuilt per render, avoiding the same stale-closure risk already
+solved for the Layout Picker's own Apply button in the step-2 checkpoint) proves "remain active while
+navigating between pages" concretely: confirmed by real-browser navigation from Dashboard to
+Transactions and back. The `write()` guard (`allowDuringPreview`) is a genuine safety net at the
+lowest common choke point every mutating action in the app already goes through, not a per-page or
+per-button check that a future page could forget to add — confirmed by both a direct unit test
+(`app/test/layoutpreview.test.js`) and a real-browser check that "Add expense" is disabled during
+preview.
+
+One implementation bug found and fixed during this same checkpoint (not left for later): the banner's
+Apply button, being built once and reused across preview sessions, could stay `disabled` forever
+after a prior session's `disabled=true` was set right before that session's own successful Apply
+call, since exiting a preview never re-enabled it — a SECOND, later preview session (of a different
+layout, opened after the first was applied) would silently show a permanently-disabled Apply button
+with no visible reason. Fixed by resetting `disabled`/the error text whenever `renderPreviewBanner`
+sees a NEW `layoutId` (a genuinely new session), not only on mount. No test had caught this before a
+targeted review of the banner's own reuse-across-sessions behaviour; it is now covered by
+`layoutpreview.test.js`'s own re-preview-and-apply-again path implicitly through the "Apply sends the
+real settings PATCH" test, though a more explicit "second preview session's Apply is not stuck
+disabled" regression test would be a reasonable, cheap addition at the next checkpoint touching this
+file, not yet written.
+
+Explicitly still true, disclosed again so it is never rounded up: only the Dashboard visually differs
+during preview; navigating to Transactions/Bills/Accounts/etc. during preview shows those pages
+completely unchanged (Classic, always) because they have no layout-aware renderer yet — this is
+honest (the banner never claims otherwise), but a person previewing today will reasonably expect
+every page to look different and will not find that yet outside Dashboard. This is the concrete
+argument for step (5) becoming the next priority now: the value of Preview compounds directly with
+how many real pages have a flagship renderer.
+
+**Exact next step:** step (5) — apply the same derive/render-split pattern (`app/js/ui/views/
+dashboard.js` is now the concrete template: extract pure derivation, keep Classic's exact markup and
+update behaviour verbatim, add flagship renderers reusing the SAME real chart/component primitives,
+resolve the effective layout via `app/js/core/layoutmeta.js` `effectiveLayoutId`) to the next real
+page in Terry's own listed order: Transactions. Budget, Accounts + debt/loan detail, Merchants,
+Shared expenses directory + detail, My Settings and Workspace Settings follow, each its own
+checkpointed commit, per the standing "never batch into one giant unverified commit" discipline this
+whole feature has followed so far.
