@@ -6962,3 +6962,133 @@ from that same commit via `scripts/deploy/deploy.ps1 -Environment preview` — f
   no drag-and-drop combined-layout editor (deliberately deferred, Terry's own "not now").
 - Production deployment: not requested, not performed, remains exclusively Terry's own action
   whenever he chooses to authorize it.
+
+## BT-022: real category management, My Settings clarity, and a new Management sub-tab (2026-09-22)
+
+**Terry's instruction, verbatim intent:** "I tried to add a category called 'Web Development' and
+could not find a way to do it." My Settings only changes EXISTING categories' colour/icon;
+Workspace → Categories & types only lets one create a category TYPE, a different thing. Fix the
+complete UX, tracked as a functional gap, not a label change: (1) real category management under
+Categories & types (name, income/expense, colour, icon, reusing the existing category API/ids/
+validation/permissions); (2) clarify category vs category type in plain language, never require a
+type to add an ordinary category, preserve existing types and their accounting behaviour; (3) make
+My Settings unambiguous (rename, remove the duplicated heading, explain personal-vs-workspace and
+permissions, link to where creation happens); (4) compact aligned rows, an expandable editor rather
+than a permanently expanded wall of fields, dropdowns that never push content down; (5) the new
+category available everywhere with no reload, respecting income/expense filtering, workspace
+defaults and personal overrides staying separate. Verify on localhost with real browser evidence.
+Also: a new "Management" sub-tab holding "Soft Delete Workspace" and "Permanently Delete This
+workspace- (Cannot be undone)" (his exact wording), moved off the three other tabs.
+
+**Branch:** continued on `feature/workspace-page-reorg-BT-021` (unpushed local work at the time this
+was written — see exact next step below for pushing/PR once verification is complete), since it
+directly extends that same page's just-built tab structure; BT-022 is its own tracked requirement
+row regardless of which branch carries it.
+
+**Source inspection FIRST** (`main` at `95b0eba`, as Terry asked): confirmed `POST/PATCH
+/api/categories` already existed, fully permission-checked (name, `type`, `categoryTypeId`, `color`,
+`icon`, `archived`) — but literally no frontend code ever called `POST`. `grep -rln "createCategory"
+app/js` returned nothing.
+
+**Built:**
+1. New `createCategoryManager()` in `app/js/ui/views/workspace.js`, mounted as a new "Categories"
+   card FIRST on "Categories & types" (before Account/Category/Merchant types) — the SAME
+   expandable-row idiom BT-021 already established for types (compact row: icon, name, colour dot,
+   Income/Expense badge, optional category-type badge, Archived badge; full name/colour/icon/
+   optional-category-type/archive editor behind a collapsed per-row `<details>`), chosen for visual
+   consistency with what sits beside it, not a new pattern invented for this one section. Creation
+   is its own collapsed "+ Add category" disclosure (name + a plain Income/Expense choice only —
+   never a category type), with a DISTINCT submit label ("Save category") from the toggle's own
+   label ("Add category") — applying, from the start, the exact toggle-vs-submit-ambiguity fix
+   BT-021 had to discover the hard way for types. A tab-level intro paragraph states the category-
+   vs-category-type relationship in plain language. A category's own optional "Category type
+   (optional)" field only ever offers types of ITS OWN fixed income/expense class. A non-editor gets
+   no creation control and no per-row editor in the DOM at all (the established "must not exist"
+   rule). Categories stay archived, never deleted here — permanent deletion was not requested.
+2. Consolidation: the OLD workspace-level "Category colours and icons" colour/icon-ONLY editor (on
+   "Layout & colours") is REMOVED entirely (`renderColours`, `coloursBox`, `groupColours` all
+   deleted) — a strict subset of the new manager — replaced with a one-line pointer and a "Go to
+   Categories & types" button.
+3. My Settings (`settings.js`): the personal-override group renamed "Category colours & icons" →
+   **"My category appearance"**; its own inner card heading — the literal duplicate Terry saw
+   ("Category colours & icons," then "Category colours and icons") — renamed to "Your overrides for
+   this workspace"; new text states these are personal, work regardless of role, and that creation/
+   renaming/workspace-wide colour changes happen via a new **"Manage workspace categories"** button
+   (`ctx.navigate("workspace", { tab: "types" })`).
+4. `workspace.js` gained a small, additive `tab` deep-link param (alongside the pre-existing
+   `setting` one, which still wins if both are present) so a link can land directly on a named tab.
+   `gallery.js`'s own pre-existing "Go to the real Layout Picker" link was found, in this same pass,
+   to have never specified a tab at all since BT-021 moved the Layout Picker off the default tab — a
+   real, disclosed gap from that earlier checkpoint, now fixed (`{ tab: "appearance" }`).
+5. New "Management" sub-tab (4th tab): the two workspace-deletion cards, renamed exactly as asked —
+   "Delete workspace" → **"Soft Delete Workspace"** (button/dialog text renamed to match: "Soft
+   delete workspace…"/"Soft delete `<name>`?"/"Soft delete workspace") and "Permanently delete
+   workspace (cannot be undone)" → **"Permanently Delete This workspace- (Cannot be undone)"**
+   (verbatim, including the hyphen) — removed from their previous always-visible-outside-every-tab
+   position. A non-owner sees one plain explanatory line instead of a silently empty tab.
+
+**Real interaction verified in real browsers, not assumed:** created "E2E Web Development"
+(expense); set its colour and icon on the very row just created; used it on a real Transactions
+quick-entry with ZERO reload in between (the same shared `categories` slice every page already
+reads from, confirmed architecture from BT-021 needed no new wiring); reloaded and confirmed both
+the transaction and the Workspace page's own list still show it correctly; Bob (member) set his OWN
+personal colour override, confirmed saved only to his own preferences and never touching the
+workspace's real category record, invisible to Alice (owner) and Carol (viewer) after their own
+reloads; Carol confirmed to have zero creation/edit controls in the DOM; "Manage workspace
+categories" confirmed to land exactly on the Categories & types tab; a real dropdown-open-vs-page-
+height check confirmed a colour picker overlays rather than pushing content down (`scrollHeight`
+identical before/after, 3182px both times).
+
+**Real bugs/gaps found and fixed while building this, each confirmed, not guessed:**
+1. A cross-browser data-staleness gap in my own new e2e scenario: Bob's and Carol's browsers each
+   fetch `categories` once during their own earlier navigation, so seeing a category Alice created
+   afterward needs a real reload in their own browser first — matching the established pattern
+   already used everywhere else in this suite (no live-push sync exists or was ever promised); fixed
+   the test, not the product.
+2. A navigation-timing gap: the harness's `settle()` only waits for network activity, and a pure
+   client-side hash navigation (like the new "Manage workspace categories" link) has none, so a
+   check immediately after `settle()` could run before the router's own re-render happened; fixed by
+   waiting for the real rendered condition (the target tab's `aria-selected`) instead of a generic
+   text match (which was itself misleadingly satisfied early by the ALWAYS-VISIBLE "Categories &
+   types" tab LABEL text, not the panel's actual content).
+3. `gallery.js`'s stale "Go to the real Layout Picker" link (item 4 above) — a genuine, disclosed
+   BT-021 gap, closed now.
+4. An expense transaction's `amount` is stored/shown signed negative (money-direction convention) —
+   found via a failing lookup in my own new e2e test, not a product bug, just my own wrong
+   assumption while writing the test.
+
+**Evidence:** new `app/test/categories-ui.test.js` (7/7: compact rows, read-only for a viewer,
+create expense/income, edit name/colour, archive/reopen, the optional category-type link correctly
+filtered by class with "None" clearing it); `app/test/workspacesettings.test.js`'s now-obsolete
+BT-019-04 describe block (the old workspace-level colour-only panel) removed, superseded by the new
+file; `app/test/{accounttypes-ui,categorymerchanttypes-ui,workspacetabs,deleteworkspace}.test.js`
+re-verified clean after the shared `WORKSPACE_GROUP_KEY`/tab changes. Real-browser e2e
+`scripts/dev/e2e/categories.mjs` (new, 16/16, replaces the retired `workspacecolours.mjs` — its own
+narrower subject, a workspace-level colour-only collapsible panel, no longer exists as a separate
+thing) plus updated `scripts/dev/e2e/{mysettings,deleteworkspace,permanentdelete,gallery}.mjs` for
+the renamed text/Management tab/tab-aware navigation, each re-run individually to a clean PASS
+(mysettings 8/8, deleteworkspace 10/10, permanentdelete 17/17, gallery 171/171). `npm test`
+(repo+api+app) 39/792/730, exit 0; `npm run validate` ok (29 routes), exit 0. Full combined
+`npm run e2e` was run to completion to confirm no cross-scenario regression — see the exact result
+recorded in the next checkpoint entry once its log is checked (started in background as this entry
+was written).
+
+**Not yet done, disclosed honestly:** permanent (as opposed to archive) category deletion was not
+requested and was not built; no dedicated screen-reader-specific audit beyond the real keyboard/ARIA
+checks already established for this page's tabs (BT-021); the workspace-default colour scheme (a
+pre-existing, separately-disclosed BT-013-16 gap) remains unread by any renderer, unaffected by this
+change.
+
+**Branch correction, caught before committing anything:** this work was first done directly on
+`chore/project-state-pr49-merge-verified` (the small, already-pushed, already-PR'd #50 docs-only
+branch) by mistake, mixing a large feature into a branch whose open PR describes a docs-only change.
+Fixed before any BT-022 commit was made: branched fresh to `feature/category-management-BT-022`
+from that same point (carrying the uncommitted working tree forward with no conflicts, since the
+only overlapping file, PROJECT_STATE.md, had no committed-vs-uncommitted divergence to reconcile).
+Its diff against `main` will therefore also include PR #50's own one-paragraph docs commit (not yet
+merged when this branch split off) — harmless and already accurate, disclosed here and in the PR
+description rather than solved with a risky rebase.
+
+**Exact next step:** confirm the full `npm run e2e` background run finished clean; commit this work
+on `feature/category-management-BT-022`; push and open a PR; report to Terry with before/after
+screenshots. No `main` merge, no deploy — both remain Terry's own action.

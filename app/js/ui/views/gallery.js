@@ -46,7 +46,7 @@ export function createView(ctx) {
     // workspace's layout is actually chosen.
     el("p", { class: "field__help" }, [
       "Executive Forecast, Budget Workspace and Financial Overview are now real, selectable workspace layouts. ",
-      button("Go to the real Layout Picker in Workspace settings", () => { if (ctx.navigate) ctx.navigate("workspace"); }, { small: true }),
+      button("Go to the real Layout Picker in Workspace settings", () => { if (ctx.navigate) ctx.navigate("workspace", { tab: "appearance" }); }, { small: true }),
     ]),
     toolbar,
     el("section", { class: "card", "aria-labelledby": "gallery-preview" }, [

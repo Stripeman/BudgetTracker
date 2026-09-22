@@ -42,23 +42,26 @@ export async function run(h, t) {
 
   // ---- Alice deletes it, from her own browser --------------------------------------------------------
   await b.alice.goto("workspace");
-  await b.alice.waitForText("Delete workspace…", { scope: "main" });
+  // BT-022 (2026-09-22): "Delete workspace" (renamed "Soft Delete Workspace") now lives on its own
+  // "Management" sub-tab, moved off every other tab.
+  await b.alice.click({ role: "tab", name: "Management" });
+  await b.alice.waitForText("Soft Delete Workspace", { scope: "main" });
   // BT-021 (2026-09-22): the page's several loaders (invites, backups, audit, workspace info, the
-  // Layout Picker) still resolve for a moment after "Delete workspace…" itself first appears; each
-  // one that changes height above this button can shift it between locate()'s coordinate read and
-  // the dispatched click. Waiting for the network to go quiet first (the harness's own established
+  // Layout Picker) still resolve for a moment after this panel itself first appears; each one that
+  // changes height above this button can shift it between locate()'s coordinate read and the
+  // dispatched click. Waiting for the network to go quiet first (the harness's own established
   // pattern for this) avoids a real, reproduced click-vs-layout-shift race here.
   await b.alice.settle();
-  await b.alice.click({ role: "button", name: "Delete workspace…", scope: "main" });
-  await b.alice.waitFor("!!document.querySelector('.modal')", { what: "the Delete workspace dialog" });
+  await b.alice.click({ role: "button", name: "Soft delete workspace…", scope: "main" });
+  await b.alice.waitFor("!!document.querySelector('.modal')", { what: "the Soft delete workspace dialog" });
   // A wrong name is refused, in the dialog, before anything is sent.
   await b.alice.fill({ label: `Type ${W.name} to confirm`, scope: ".modal" }, "not the right name");
-  await b.alice.click({ role: "button", name: "Delete workspace", scope: ".modal" });
+  await b.alice.click({ role: "button", name: "Soft delete workspace", scope: ".modal" });
   await b.alice.waitForText(`Type the workspace name, ${W.name}, to confirm.`, { scope: ".modal" });
   const stillOpen = await b.alice.exists(".modal");
   t.note(`screenshot of the refused delete: ${await b.alice.shot("delete-refused")}`);
   await b.alice.fill({ label: `Type ${W.name} to confirm`, scope: ".modal" }, W.name);
-  await b.alice.click({ role: "button", name: "Delete workspace", scope: ".modal" });
+  await b.alice.click({ role: "button", name: "Soft delete workspace", scope: ".modal" });
   await b.alice.waitFor("!document.querySelector('.modal')", { what: "the dialog to close after deleting" });
   await b.alice.settle();
   t.check("a wrong name is refused inside the dialog; the right name deletes it and closes the dialog", { expected: { stillOpen: true }, actual: { stillOpen } });

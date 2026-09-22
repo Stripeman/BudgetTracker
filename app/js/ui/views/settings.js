@@ -58,10 +58,18 @@ export function createView(ctx) {
   ]);
   // Site administrators only (BT-011-05): the icon catalogue. It holds no financial data and gives
   // no access to any workspace.
-  // Category colours and icons belong to a workspace, so the card is hidden without one.
+  // BT-022 (Terry, 2026-09-22): renamed and clarified so this is never mistaken for the place
+  // categories are actually CREATED (that lives on the Workspace page's own Categories & types
+  // tab; this card only ever overrides how EXISTING categories look, for you alone). The heading
+  // deliberately does not repeat the outer group's own name (Terry: "I see 'Category colours &
+  // icons,' followed by another 'Category colours and icons' heading" — the exact duplication this
+  // closes). Category colours and icons belong to a workspace, so the card is hidden without one.
+  const manageCategoriesBtn = button("Manage workspace categories", () => { if (ctx.navigate) ctx.navigate("workspace", { tab: "types" }); }, { small: true, variant: "ghost" });
   const colourCard = el("section", { class: "card card--full", "aria-labelledby": "set-colours", hidden: true }, [
-    el("h2", { class: "card__title", id: "set-colours", text: "Category colours and icons" }),
-    el("p", { class: "field__help", text: "Your own colours and icons for this workspace's categories. They change only what you see; workspace colours and icons are managed on the Workspace page." }),
+    el("h2", { class: "card__title", id: "set-colours", text: "Your overrides for this workspace" }),
+    el("p", { class: "field__help", text: "Your own colours and icons for this workspace's existing categories. They change only what you see — never anyone else's view, and never the workspace's own colours and icons." }),
+    el("p", { class: "field__help", text: "Anyone may set these personal overrides, whatever their role. To create a new category, rename one, or change what everyone sees, use Manage workspace categories below (owners and managers)." }),
+    el("div", { class: "row" }, [manageCategoriesBtn]),
     colourBox,
   ]);
   const catalogBox = el("div", { class: "stack" });
@@ -212,7 +220,9 @@ export function createView(ctx) {
   const groupProfile = createSettingsGroup({ id: "set-g-profile", storageKey: GROUP_KEY, name: "Profile & appearance", defaultOpen: true, nodes: [nameCard, appearanceCard] });
   const groupDisplay = createSettingsGroup({ id: "set-g-display", storageKey: GROUP_KEY, name: "Display, privacy & contacts", defaultOpen: true, nodes: [displayCard, contactsCard] });
   const groupLinks = createSettingsGroup({ id: "set-g-links", storageKey: GROUP_KEY, name: "Staging link", defaultOpen: true, nodes: [stagingCard] });
-  const groupColours = createSettingsGroup({ id: "set-g-colours", storageKey: GROUP_KEY, name: "Category colours & icons", defaultOpen: false, hidden: true, nodes: [colourCard, catalogCard] });
+  // BT-022: renamed from "Category colours & icons" — unambiguously personal, never a place
+  // categories are created (see colourCard's own clarified heading/text above).
+  const groupColours = createSettingsGroup({ id: "set-g-colours", storageKey: GROUP_KEY, name: "My category appearance", defaultOpen: false, hidden: true, nodes: [colourCard, catalogCard] });
   const groupDeleted = createSettingsGroup({ id: "set-g-deleted", storageKey: GROUP_KEY, name: "Deleted workspaces", defaultOpen: true, hidden: true, nodes: [deletedCard] });
 
   // BT-013-16: everything on this page is personal (never a financial mutation, never gated by the

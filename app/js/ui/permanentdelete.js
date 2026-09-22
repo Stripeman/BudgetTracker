@@ -290,7 +290,7 @@ export function openWorkspacePermanentDeleteDialog(ctx, { wsId, onDeleted = () =
       const status = el("p", { class: "muted small", role: "status" });
       const warning = () => el("div", { class: "state state--error permdelete-warning", role: "alert" }, [
         el("strong", { text: "This cannot be undone." }),
-        el("p", { text: "Once confirmed, this workspace — its accounts, entries, merchants, categories, bills, budgets, contacts and Shared expenses — is gone for good. This is NOT the recoverable \"Delete workspace\" action in Settings; there is no \"Bring back\" for this." }),
+        el("p", { text: "Once confirmed, this workspace — its accounts, entries, merchants, categories, bills, budgets, contacts and Shared expenses — is gone for good. This is NOT the recoverable \"Soft Delete Workspace\" action on the Workspace page's Management tab; there is no \"Bring back\" for this." }),
         el("p", { text: "If you have not backed it up, you can take a restorable encrypted backup first." }),
       ]);
       const render = () => setBody([warning(), ...impactBody(impact), status]);

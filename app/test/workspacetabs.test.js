@@ -55,16 +55,16 @@ const tabs = (root) => root.querySelectorAll('[role="tab"]');
 const tabNamed = (root, name) => tabs(root).find((t) => t.textContent === name);
 const panelOf = (root, tab) => root.querySelector(`#${tab.getAttribute("aria-controls")}`);
 
-describe("BT-021 Workspace page: General / Layout & colours / Categories & types sub-tabs", () => {
-  test("three real tabs, General active by default: correct roving tabindex, aria-selected, and only its own panel visible", async () => {
+describe("BT-021/BT-022 Workspace page: General / Layout & colours / Categories & types / Management sub-tabs", () => {
+  test("four real tabs, General active by default: correct roving tabindex, aria-selected, and only its own panel visible", async () => {
     const { root } = await open();
     const list = root.querySelector('[role="tablist"]');
     assert.ok(list, "a real tablist exists");
     assert.equal(list.getAttribute("aria-label"), "Workspace sections");
     const all = tabs(root);
-    assert.deepEqual(all.map((t) => t.textContent), ["General", "Layout & colours", "Categories & types"]);
-    assert.deepEqual(all.map((t) => t.getAttribute("aria-selected")), ["true", "false", "false"]);
-    assert.deepEqual(all.map((t) => t.getAttribute("tabindex")), ["0", "-1", "-1"]);
+    assert.deepEqual(all.map((t) => t.textContent), ["General", "Layout & colours", "Categories & types", "Management"]);
+    assert.deepEqual(all.map((t) => t.getAttribute("aria-selected")), ["true", "false", "false", "false"]);
+    assert.deepEqual(all.map((t) => t.getAttribute("tabindex")), ["0", "-1", "-1", "-1"]);
     const general = tabNamed(root, "General");
     const appearance = tabNamed(root, "Layout & colours");
     assert.equal(panelOf(root, general).hidden, false);
@@ -73,6 +73,20 @@ describe("BT-021 Workspace page: General / Layout & colours / Categories & types
     // content — Layout — is not shown while it is the hidden panel.
     assert.match(panelOf(root, general).textContent, /Members/);
     assert.doesNotMatch(panelOf(root, general).textContent, /Layout/);
+  });
+
+  test("BT-022: Management holds the renamed Soft Delete Workspace and PERMANENT deletion cards, and only those", async () => {
+    const { root } = await open();
+    const management = tabNamed(root, "Management");
+    const panel = panelOf(root, management);
+    assert.match(panel.textContent, /Soft Delete Workspace/);
+    assert.match(panel.textContent, /Permanently Delete This workspace- \(Cannot be undone\)/);
+    // Moved off every other tab: General/Layout & colours/Categories & types no longer show them.
+    for (const name of ["General", "Layout & colours", "Categories & types"]) {
+      const other = panelOf(root, tabNamed(root, name));
+      assert.doesNotMatch(other.textContent, /Soft Delete Workspace/, name);
+      assert.doesNotMatch(other.textContent, /Permanently Delete This workspace/, name);
+    }
   });
 
   test("clicking a tab switches which panel is visible and updates aria-selected/tabindex on both", async () => {
@@ -89,10 +103,10 @@ describe("BT-021 Workspace page: General / Layout & colours / Categories & types
     assert.match(panelOf(root, appearance).textContent, /Layout/);
   });
 
-  test("keyboard: ArrowRight moves focus AND activates the next tab (automatic activation, WAI-ARIA APG), wraps around; Home/End jump to the first/last", async () => {
+  test("keyboard: ArrowRight moves focus AND activates the next tab (automatic activation, WAI-ARIA APG), wraps around through all four; Home/End jump to the first/last", async () => {
     const { root } = await open();
     const general = tabNamed(root, "General");
-    const types = tabNamed(root, "Categories & types");
+    const management = tabNamed(root, "Management");
     fire(general, "keydown", { key: "ArrowRight" });
     let active = tabs(root).find((t) => t.getAttribute("aria-selected") === "true");
     assert.equal(active.textContent, "Layout & colours");
@@ -100,24 +114,27 @@ describe("BT-021 Workspace page: General / Layout & colours / Categories & types
     fire(active, "keydown", { key: "ArrowRight" });
     active = tabs(root).find((t) => t.getAttribute("aria-selected") === "true");
     assert.equal(active.textContent, "Categories & types");
+    fire(active, "keydown", { key: "ArrowRight" });
+    active = tabs(root).find((t) => t.getAttribute("aria-selected") === "true");
+    assert.equal(active.textContent, "Management");
     // Wraps around: ArrowRight from the last tab goes back to the first.
     fire(active, "keydown", { key: "ArrowRight" });
     active = tabs(root).find((t) => t.getAttribute("aria-selected") === "true");
     assert.equal(active.textContent, "General");
     fire(general, "keydown", { key: "End" });
     active = tabs(root).find((t) => t.getAttribute("aria-selected") === "true");
-    assert.equal(active.textContent, "Categories & types");
-    fire(types, "keydown", { key: "Home" });
+    assert.equal(active.textContent, "Management");
+    fire(management, "keydown", { key: "Home" });
     active = tabs(root).find((t) => t.getAttribute("aria-selected") === "true");
     assert.equal(active.textContent, "General");
   });
 
-  test("ArrowLeft moves to the previous tab, wrapping from the first to the last", async () => {
+  test("ArrowLeft moves to the previous tab, wrapping from the first to the last (Management)", async () => {
     const { root } = await open();
     const general = tabNamed(root, "General");
     fire(general, "keydown", { key: "ArrowLeft" });
     const active = tabs(root).find((t) => t.getAttribute("aria-selected") === "true");
-    assert.equal(active.textContent, "Categories & types");
+    assert.equal(active.textContent, "Management");
   });
 
   test("the chosen tab is remembered per browser: a fresh page instance opens on it again", async () => {
