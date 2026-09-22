@@ -6784,3 +6784,16 @@ combined run), reviewed, documented, PR'd and deployed to Preview. Remaining hon
 flagship-specific keyboard/dropdown assertions, flagship-specific large-dataset/multi-currency stress,
 the workspace-default colour scheme not yet read by any renderer, no drag-and-drop combined editor) are
 recorded above and in docs/REQUIREMENTS.md's BT-013-16 row for Terry's own review alongside the PR.
+
+**Terry merged PR #47 himself** (his own message: "merged"): `origin/main` moved from `3ee6802` to
+`94317be` (a merge commit of `feature/workspace-layout-picker-BT-013-16` into `main`), confirmed via
+`git fetch origin` + `git log origin/main`. I did not perform or assist the merge — Terry's own GitHub
+action, consistent with "Terry controls promotion after review." My local `main` ref was fast-forwarded
+to match `origin/main` (`git branch -f main origin/main`, a local-only ref update, never a push) purely
+so local Git state is not stale; I stayed on `feature/workspace-layout-picker-BT-013-16` throughout,
+never checked out or built from `main` myself. The deployed Preview app (commit `56de292`) is now one
+docs-only commit behind `main`'s tip (`17e29a7`/merge `94317be` — no application code differs); Preview
+was already deployed at `56de292` earlier this session and still correctly reflects everything
+functional in BT-013-16. Production remains untouched and still requires Terry's own separate, explicit
+authorization and his own run of `deploy.ps1 -Environment production -AuthorizedProduction` — not
+inferred from this merge, and not something I initiate on my own.
