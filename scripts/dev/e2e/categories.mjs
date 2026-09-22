@@ -126,7 +126,10 @@ export async function run(h, t) {
   await b.bob.click({ role: "button", name: "My category appearance", scope: "main" });
   await b.bob.waitForText(CAT_NAME, { scope: "main" });
   const bobToggleSpot = await b.bob.evaluate(`(() => {
-    const row = [...document.querySelectorAll('main .catrow')].find((r) => r.textContent.includes(${JSON.stringify(CAT_NAME)}));
+    // BT-024: this personal-appearance row is now a compact, collapsed one-line row (the same
+    // expandable-row idiom the Workspace page's own category/type managers use) — open it first.
+    const row = [...document.querySelectorAll('main .typerow')].find((r) => r.textContent.includes(${JSON.stringify(CAT_NAME)}));
+    if (row && !row.open) row.querySelector('summary').click();
     const toggle = row ? row.querySelector('.themepick__toggle') : null;
     if (!toggle) return null;
     toggle.scrollIntoView({ block: 'center' });
