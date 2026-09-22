@@ -22,6 +22,7 @@ const icons = require('../_shared/icons');
 const workspaceSettings = require('../_shared/workspace-settings');
 const merchants = require('../_shared/merchants');
 const merchantTypes = require('../_shared/merchant-types');
+const deletion = require('../_shared/deletion');
 
 const mayManage = (doc, member) => workspaceSettings.managesSharedLists(doc, member);
 const catalogFor = async (ctx, body) => (body.icon !== undefined ? (await icons.readCatalog(ctx.storage)).catalog : null);
@@ -102,8 +103,19 @@ async function patch(ctx, req) {
   return { body: result };
 }
 
+// Permanent deletion (BT-023): a built-in type can never be permanently deleted (mirrors "can never
+// be retired"); a custom type in use is never blocked — every merchant carrying it is severed
+// (`merchantTypeId` reset to null), never removed, since the link is only an optional label.
+const permanentRoutes = deletion.makeRoutes({
+  type: 'merchant-type', idField: 'typeId',
+  find: (doc, id, ctx) => merchantTypes.findEffectiveType(doc, id, ctx.nowIso()),
+  authorize: (doc, member) => { if (!mayManage(doc, member)) throw forbidden('Only owners and managers can change merchant types in this workspace.'); },
+});
+
 async function post(ctx, req) {
   const action = query(req, 'action');
+  if (action === 'delete-impact') return permanentRoutes.impactRoute(ctx, req);
+  if (action === 'delete-permanent') return permanentRoutes.permanentRoute(ctx, req);
   if (action !== undefined) throw notFound();
   return create(ctx, req);
 }

@@ -292,6 +292,57 @@ function contactApply(doc, contact) {
   doc.contacts = (doc.contacts || []).filter((c) => c.id !== contact.id);
 }
 
+// BT-023 (Terry, 2026-09-22): "anything created needs to be able to be deleted. However, if there
+// are any items attached to it, warn the user X number of records will be unset or have to be
+// rechosen, and show which items are affected." Account/category/merchant types (BT-019-01/02/03)
+// were retire-only until now, the last "created but never deletable" gap alongside categories
+// above. A system default can never be permanently deleted (mirrors "can never be retired" — a
+// workspace always keeps its basic set available); a custom type in use is never blocked, since the
+// link is only an optional presentation label — every record that carries it is SEVERED (its
+// [x]TypeId reset to null, "will be unset"), never removed, exactly like a deleted category leaves
+// its transactions with categoryId: null rather than deleting them.
+function accountTypeImpact(doc, t) {
+  const blockers = t.system ? ['A built-in account type can never be permanently deleted — a workspace always keeps its basic set available.'] : [];
+  const accts = t.system ? [] : (doc.accounts || []).filter((a) => a.accountTypeId === t.id);
+  return {
+    target: { type: 'account-type', id: t.id, label: t.name, confirmPhrase: t.name },
+    blocked: blockers.length > 0, blockers, cascade: [], together: [], autoCleanup: [],
+    severed: accts.length ? [{ type: 'account', field: 'accountTypeId', count: accts.length }] : [],
+  };
+}
+function accountTypeApply(doc, t) {
+  for (const a of doc.accounts || []) if (a.accountTypeId === t.id) a.accountTypeId = null;
+  doc.accountTypes = (doc.accountTypes || []).filter((x) => x.id !== t.id);
+}
+
+function categoryTypeImpact(doc, t) {
+  const blockers = t.system ? ['A built-in category type can never be permanently deleted — a workspace always keeps its basic set available.'] : [];
+  const cats = t.system ? [] : (doc.categories || []).filter((c) => c.categoryTypeId === t.id);
+  return {
+    target: { type: 'category-type', id: t.id, label: t.name, confirmPhrase: t.name },
+    blocked: blockers.length > 0, blockers, cascade: [], together: [], autoCleanup: [],
+    severed: cats.length ? [{ type: 'category', field: 'categoryTypeId', count: cats.length }] : [],
+  };
+}
+function categoryTypeApply(doc, t) {
+  for (const c of doc.categories || []) if (c.categoryTypeId === t.id) c.categoryTypeId = null;
+  doc.categoryTypes = (doc.categoryTypes || []).filter((x) => x.id !== t.id);
+}
+
+function merchantTypeImpact(doc, t) {
+  const blockers = t.system ? ['A built-in merchant type can never be permanently deleted — a workspace always keeps its basic set available.'] : [];
+  const payees = t.system ? [] : (doc.payees || []).filter((p) => p.merchantTypeId === t.id);
+  return {
+    target: { type: 'merchant-type', id: t.id, label: t.name, confirmPhrase: t.name },
+    blocked: blockers.length > 0, blockers, cascade: [], together: [], autoCleanup: [],
+    severed: payees.length ? [{ type: 'payee', field: 'merchantTypeId', count: payees.length }] : [],
+  };
+}
+function merchantTypeApply(doc, t) {
+  for (const p of doc.payees || []) if (p.merchantTypeId === t.id) p.merchantTypeId = null;
+  doc.merchantTypes = (doc.merchantTypes || []).filter((x) => x.id !== t.id);
+}
+
 const TYPES = {
   account: { impact: accountImpact, apply: accountApply },
   transaction: { impact: transactionImpact, apply: transactionApply },
@@ -300,6 +351,9 @@ const TYPES = {
   recurring: { impact: recurringImpact, apply: recurringApply },
   budget: { impact: budgetImpact, apply: budgetApply },
   contact: { impact: contactImpact, apply: contactApply },
+  'account-type': { impact: accountTypeImpact, apply: accountTypeApply },
+  'category-type': { impact: categoryTypeImpact, apply: categoryTypeApply },
+  'merchant-type': { impact: merchantTypeImpact, apply: merchantTypeApply },
 };
 
 function computeImpact(type, doc, record) {

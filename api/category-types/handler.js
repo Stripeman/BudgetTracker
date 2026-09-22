@@ -24,6 +24,7 @@ const colors = require('../_shared/colors');
 const icons = require('../_shared/icons');
 const workspaceSettings = require('../_shared/workspace-settings');
 const categoryTypes = require('../_shared/category-types');
+const deletion = require('../_shared/deletion');
 
 const mayManage = (doc, member) => workspaceSettings.managesSharedLists(doc, member);
 const catalogFor = async (ctx, body) => (body.icon !== undefined ? (await icons.readCatalog(ctx.storage)).catalog : null);
@@ -104,8 +105,19 @@ async function patch(ctx, req) {
   return { body: result };
 }
 
+// Permanent deletion (BT-023): a built-in type can never be permanently deleted (mirrors "can never
+// be retired"); a custom type in use is never blocked — every category carrying it is severed
+// (`categoryTypeId` reset to null), never removed, since the link is only an optional label.
+const permanentRoutes = deletion.makeRoutes({
+  type: 'category-type', idField: 'typeId',
+  find: (doc, id, ctx) => categoryTypes.findEffectiveType(doc, id, ctx.nowIso()),
+  authorize: (doc, member) => { if (!mayManage(doc, member)) throw forbidden('Only owners and managers can change category types in this workspace.'); },
+});
+
 async function post(ctx, req) {
   const action = query(req, 'action');
+  if (action === 'delete-impact') return permanentRoutes.impactRoute(ctx, req);
+  if (action === 'delete-permanent') return permanentRoutes.permanentRoute(ctx, req);
   if (action !== undefined) throw notFound();
   return create(ctx, req);
 }

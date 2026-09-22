@@ -193,5 +193,87 @@ export async function run(h, t) {
     expected: true, actual: landedOnCategories,
   });
 
+  // ---- BT-023 (Terry, 2026-09-22): "anything created needs to be able to be deleted. However, if
+  // there are any items attached to it, warn the user X number of records will be unset or have to
+  // be rechosen, and show which items are affected." Real permanent deletion of a category, in the
+  // real browser: one with nothing attached goes alone with no warning; one used by a real
+  // transaction shows exactly how many records are affected before deleting, and afterwards that
+  // transaction's category is unset (needing to be rechosen) rather than the transaction vanishing.
+  const DEL_UNUSED = "E2E Deletable Alone";
+  const DEL_USED = "E2E Deletable With Warning";
+  const openCategoryRow = async (s, catName) => {
+    await s.evaluate(`(() => {
+      const card = document.querySelector(${JSON.stringify(CATEGORIES_CARD)});
+      const row = [...card.querySelectorAll('.typerow')].find((r) => r.querySelector('summary').textContent.includes(${JSON.stringify(catName)}));
+      if (row && !row.open) row.querySelector('summary').click();
+    })()`);
+  };
+  await b.alice.goto("workspace");
+  await b.alice.click({ role: "tab", name: "Categories & types" });
+  // The "Add category" disclosure remembers its own open/closed state per browser (it was already
+  // opened once earlier in this very scenario) — check before clicking, since clicking an already-
+  // open toggle would close it instead of opening it.
+  const addCategoryAlreadyOpen = await b.alice.evaluate(`[...document.querySelectorAll(${JSON.stringify(CATEGORIES_CARD)} + ' label')].some((l) => l.textContent === 'New category name')`);
+  if (!addCategoryAlreadyOpen) await b.alice.click({ role: "button", name: "Add category", scope: CATEGORIES_CARD });
+  for (const n of [DEL_UNUSED, DEL_USED]) {
+    await b.alice.fill({ label: "New category name", scope: CATEGORIES_CARD }, n);
+    await b.alice.click({ role: "button", name: "Save category", scope: CATEGORIES_CARD });
+    await b.alice.waitForText(n, { scope: "main" });
+  }
+  await b.alice.settle();
+
+  // Use DEL_USED on a real transaction so the warning has something real to count.
+  await b.alice.goto("transactions");
+  await b.alice.click({ role: "button", name: "Add expense", scope: "main" });
+  await b.alice.waitFor("!!document.querySelector('.modal')", { what: "the Add expense dialog" });
+  await b.alice.fill({ css: 'input[placeholder="0.00 or 12.50+3.20"]', scope: ".modal" }, "12.00");
+  await b.alice.choose("Category", DEL_USED, { scope: ".modal" });
+  await b.alice.click({ role: "button", name: "Save expense", scope: ".modal" });
+  await b.alice.waitFor("!document.querySelector('.modal')", { what: "the dialog to close after saving" });
+  await b.alice.settle();
+
+  // The unused one: deleted alone, no warning about affected records.
+  await b.alice.goto("workspace");
+  await b.alice.click({ role: "tab", name: "Categories & types" });
+  await b.alice.waitForText(DEL_UNUSED, { scope: "main" });
+  await openCategoryRow(b.alice, DEL_UNUSED);
+  await b.alice.click({ role: "button", name: `Permanently delete ${DEL_UNUSED}` });
+  await b.alice.waitFor("!!document.querySelector('.modal')", { what: "the impact dialog for the unused category" });
+  await b.alice.waitForText("Nothing else references this. It will be permanently deleted alone.", { scope: ".modal" });
+  await b.alice.click({ role: "button", name: "Continue", scope: ".modal" });
+  await b.alice.fill({ label: `Type "${DEL_UNUSED}" to confirm`, scope: ".modal" }, DEL_UNUSED);
+  await b.alice.click({ role: "button", name: "Permanently delete", scope: ".modal" });
+  await b.alice.waitFor("!document.querySelector('.modal')", { what: "the dialog to close after deleting the unused category" });
+  await b.alice.settle();
+  const afterUnusedDelete = (await api("alice").ok("categories", { query: q })).categories;
+  t.check("a category with nothing attached is permanently deleted, alone, with no warning about affected records", {
+    expected: false, actual: afterUnusedDelete.some((x) => x.name === DEL_UNUSED),
+  });
+
+  // The used one: the review warns exactly how many records are affected, by name, before deleting.
+  await b.alice.waitForText(DEL_USED, { scope: "main" });
+  await openCategoryRow(b.alice, DEL_USED);
+  await b.alice.click({ role: "button", name: `Permanently delete ${DEL_USED}` });
+  await b.alice.waitFor("!!document.querySelector('.modal')", { what: "the impact dialog for the used category" });
+  await b.alice.waitForText("1 transaction will keep everything else and only lose the link.", { scope: ".modal" });
+  const shotWarning = await b.alice.shot("6-category-delete-warning");
+  t.note(`screenshot of the "will be unset" warning before permanently deleting a used category: ${shotWarning}`);
+  await b.alice.click({ role: "button", name: "Continue", scope: ".modal" });
+  await b.alice.fill({ label: `Type "${DEL_USED}" to confirm`, scope: ".modal" }, DEL_USED);
+  await b.alice.click({ role: "button", name: "Permanently delete", scope: ".modal" });
+  await b.alice.waitFor("!document.querySelector('.modal')", { what: "the dialog to close after deleting the used category" });
+  await b.alice.settle();
+  const catsAfter = (await api("alice").ok("categories", { query: q })).categories;
+  const txnAfter = (await api("alice").ok("transactions", { query: q })).transactions.find((x) => x.amount === "-12.00");
+  t.check("after confirming, the category is gone but the transaction that used it survives, with its category unset — needing to be rechosen, never silently deleting the entry itself", {
+    expected: { categoryGone: true, txnSurvives: true, categoryId: null },
+    actual: { categoryGone: !catsAfter.some((x) => x.name === DEL_USED), txnSurvives: !!txnAfter, categoryId: txnAfter && txnAfter.categoryId },
+  });
+  // Uncategorized in the real browser too, not merely in the API response.
+  await b.alice.goto("transactions");
+  await b.alice.waitForText("Uncategorized", { scope: "main" });
+  const shotUncategorized = await b.alice.shot("7-transaction-needs-recategorising");
+  t.note(`screenshot of the affected transaction, needing to be rechosen: ${shotUncategorized}`);
+
   for (const s of Object.values(b)) { await s.settle(); t.check(`${s.name}: no exceptions, console errors or failed requests in the browser`, { expected: [], actual: s.problems() }); }
 }

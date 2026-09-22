@@ -17,7 +17,7 @@ import { ACCOUNT_TYPE_LABELS, BILL_TYPE_LABELS, MERCHANT_TYPE_LABELS } from "../
 import { createIconPicker } from "../iconpicker.js";
 import { builtInIconFor, withIcon } from "../icons.js";
 import { managesSharedLists } from "../../core/workspacesettings.js";
-import { openWorkspacePermanentDeleteDialog } from "../permanentdelete.js";
+import { openDeleteDialog as openPermanentDeleteDialog, openWorkspacePermanentDeleteDialog } from "../permanentdelete.js";
 import { createLayoutPicker } from "./layoutpicker.js";
 import { effectiveLayoutId, layoutAccentVars } from "../../core/layoutmeta.js";
 
@@ -84,6 +84,25 @@ const WORKSPACE_GROUP_KEY = "settings.workspace.groups";
 // field, help sentence, refresh key and API call below is copied verbatim from the three
 // once-separate render functions this replaces — nothing about validation, permissions, wording or
 // behaviour changed, only how densely it is shown.
+// BT-023 (Terry, 2026-09-22): permanent deletion for a custom account/category/merchant type,
+// mirroring `openCategoryPermanentDelete` above and payees.js's own `openPermanentDelete` exactly.
+// A built-in (system) type is never offered this at all (like Retire above it) — the backend
+// refuses it too (api/_shared/deletion.js), but hiding the control here matches the existing
+// treatment of "Built-in — always available" rather than surfacing a dialog that can only refuse.
+function openTypePermanentDelete(ctx, cfg, t, wsId) {
+  openPermanentDeleteDialog(ctx, {
+    title: `Permanently delete ${t.name}?`,
+    fetchImpact: async () => (await ctx.api.permanentDeleteImpact(cfg.deleteRoute, { workspaceId: wsId }, { typeId: t.id })).impact,
+    execute: async (impact, typedConfirmation) => {
+      const out = await ctx.store.actions.write(
+        (ws) => ctx.api.permanentDeleteExecute(cfg.deleteRoute, { workspaceId: ws }, { typeId: t.id, impactToken: impact.token, typedConfirmation }),
+        cfg.deleteRefresh,
+      );
+      if (!out.ok) throw out.error;
+    },
+  });
+}
+
 function createTypeManager(ctx, cfg) {
   const { store, api } = ctx;
   const intro = el("p", { class: "field__help" });
@@ -102,7 +121,7 @@ function createTypeManager(ctx, cfg) {
   const openRows = new Set();
   let sig = "";
 
-  function buildRow(t, data) {
+  function buildRow(t, data, wsId) {
     const labelId = `${cfg.rowPrefix}-${t.id}`;
     const error = el("p", { class: "error-text small", role: "alert", hidden: true });
     let picker = null;
@@ -154,6 +173,10 @@ function createTypeManager(ctx, cfg) {
         if (!out.ok) { error.textContent = messageFor(out.error); error.hidden = false; return; }
         announce(t.retired ? cfg.reactivateAnnounce(t.name) : cfg.retireAnnounce(t.name));
       }, { small: true, variant: "ghost" });
+    // BT-023: "anything created needs to be able to be deleted." Never offered for a built-in type
+    // (matches Retire's own treatment above); a custom type already in use is never blocked by
+    // this — the review dialog shows exactly how many records will lose this optional label.
+    const deleteBtn = t.system ? null : button("Delete permanently", () => { openTypePermanentDelete(ctx, cfg, t, wsId); }, { small: true, variant: "danger", attrs: { "aria-label": `Permanently delete ${t.name}` } });
     const summary = el("summary", {}, [
       el("h3", { class: "typerow__name" }, [categoryLabel(t.name, t.color, t.icon)]),
       badge(cfg.classLabel(t[cfg.classField]), "source"),
@@ -176,7 +199,7 @@ function createTypeManager(ctx, cfg) {
           badge(t.colorSource === "workspace" ? "Custom colour" : "Default colour", "source"),
           t.colorSource === "workspace" ? button("Reset colour", () => { void patchColour(null); }, { small: true, variant: "ghost", attrs: { "aria-label": `Reset to default: ${t.name} colour` } }) : null,
           badge(chosenIcon ? "Custom icon" : "Default icon", "source"),
-          el("span", { class: "app__spacer" }), retireBtn,
+          el("span", { class: "app__spacer" }), retireBtn, deleteBtn,
         ]),
       ]),
     ]);
@@ -223,7 +246,7 @@ function createTypeManager(ctx, cfg) {
       newName.value = "";
     }, { variant: "primary" });
     mount(addBox, el("div", { class: "form-grid" }, [field("New type name", newName), field(cfg.classFieldLabel, newClass), createBtn]), createError);
-    mount(listBox, ...types.map((t) => buildRow(t, data)));
+    mount(listBox, ...types.map((t) => buildRow(t, data, state.selectedWorkspaceId)));
   }
 
   return { element, render };
@@ -238,6 +261,25 @@ function createTypeManager(ctx, cfg) {
 // reads from via `sliceFor(state, "categories")`), so a new category appears everywhere the
 // moment `store.actions.write(fn, ["categories"])` refreshes that one shared slice — no separate
 // per-page wiring, exactly like every other page on this shared-slice architecture already works.
+// BT-023 (Terry, 2026-09-22): permanent deletion, distinct from Archive above (which is
+// recoverable). Mirrors payees.js's openPermanentDelete exactly: a transaction, bill or merchant
+// default that used this category keeps everything else and only loses the link
+// (api/_shared/deletion.js's categoryImpact/categoryApply already implement the warn-and-show-what-
+// is-affected preview this needs — this just wires the existing generic dialog to it).
+function openCategoryPermanentDelete(ctx, category, wsId) {
+  openPermanentDeleteDialog(ctx, {
+    title: `Permanently delete ${category.name}?`,
+    fetchImpact: async () => (await ctx.api.permanentDeleteImpact("categories", { workspaceId: wsId }, { categoryId: category.id })).impact,
+    execute: async (impact, typedConfirmation) => {
+      const out = await ctx.store.actions.write(
+        (ws) => ctx.api.permanentDeleteExecute("categories", { workspaceId: ws }, { categoryId: category.id, impactToken: impact.token, typedConfirmation }),
+        ["categories", "transactions", "bills", "payees"],
+      );
+      if (!out.ok) throw out.error;
+    },
+  });
+}
+
 function createCategoryManager(ctx) {
   const { store, api } = ctx;
   const intro = el("p", { class: "field__help" });
@@ -249,7 +291,7 @@ function createCategoryManager(ctx) {
   let sig = "";
   const openRows = new Set();
 
-  function buildRow(c, data, catTypes) {
+  function buildRow(c, data, catTypes, wsId) {
     const labelId = `ws-cat-${c.id}`;
     const error = el("p", { class: "error-text small", role: "alert", hidden: true });
     let picker = null;
@@ -302,6 +344,11 @@ function createCategoryManager(ctx) {
       if (!out.ok) { error.textContent = messageFor(out.error); error.hidden = false; return; }
       announce(c.archived ? `${c.name} is available for new entries again.` : `${c.name} archived. It stays on anything that already uses it, but is no longer offered for new entries.`);
     }, { small: true, variant: "ghost" });
+    // BT-023: "anything created needs to be able to be deleted." Distinct from Archive above
+    // (recoverable, keeps history offered nowhere new): this is permanent, reviewed first (what it
+    // would affect, shown in plain language and by count) and double-confirmed by typing the
+    // category's name, via the same generic dialog every other permanently-deletable record uses.
+    const deleteBtn = button("Delete permanently", () => { openCategoryPermanentDelete(ctx, c, wsId); }, { small: true, variant: "danger", attrs: { "aria-label": `Permanently delete ${c.name}` } });
     const summary = el("summary", {}, [
       el("h3", { class: "typerow__name" }, [categoryLabel(c.name, c.color, c.icon)]),
       badge(c.type === "income" ? "Income" : "Expense", "source"),
@@ -322,7 +369,7 @@ function createCategoryManager(ctx) {
           badge(c.colorSource === "workspace" ? "Custom colour" : "Default colour", "source"),
           c.colorSource === "workspace" ? button("Reset colour", () => { void patchColour(null); }, { small: true, variant: "ghost", attrs: { "aria-label": `Reset to default: ${c.name} colour` } }) : null,
           badge(chosenIcon ? "Custom icon" : "Default icon", "source"),
-          el("span", { class: "app__spacer" }), archiveBtn,
+          el("span", { class: "app__spacer" }), archiveBtn, deleteBtn,
         ]),
       ]),
     ]);
@@ -372,7 +419,7 @@ function createCategoryManager(ctx) {
       newName.value = "";
     }, { variant: "primary" });
     mount(addBox, el("div", { class: "form-grid" }, [field("New category name", newName), field("Income or expense", newType), createBtn]), createError);
-    mount(listBox, ...cats.map((c) => buildRow(c, data, catTypes)));
+    mount(listBox, ...cats.map((c) => buildRow(c, data, catTypes, state.selectedWorkspaceId)));
   }
 
   return { element, render };
@@ -458,6 +505,7 @@ export function createView(ctx) {
     reactivateAnnounce: (name) => `${name} is available for new accounts again.`,
     apiCreate: (api, ws, body) => api.createAccountType(ws, body), apiPatch: (api, ws, body) => api.patchAccountType(ws, body),
     createRefresh: ["accountTypes"], patchRefresh: ["accountTypes", "accounts"],
+    deleteRoute: "account-types", deleteRefresh: ["accountTypes", "accounts"],
   });
   const categoryTypeManager = createTypeManager(ctx, {
     sliceKey: "categoryTypes", classesKey: "categoryClasses", classField: "categoryClass",
@@ -474,6 +522,7 @@ export function createView(ctx) {
     reactivateAnnounce: (name) => `${name} is available for new categories again.`,
     apiCreate: (api, ws, body) => api.createCategoryType(ws, body), apiPatch: (api, ws, body) => api.patchCategoryType(ws, body),
     createRefresh: ["categoryTypes"], patchRefresh: ["categoryTypes", "categories"],
+    deleteRoute: "category-types", deleteRefresh: ["categoryTypes", "categories"],
   });
   const merchantTypeManager = createTypeManager(ctx, {
     sliceKey: "merchantTypes", classesKey: "merchantClasses", classField: "merchantClass",
@@ -490,6 +539,7 @@ export function createView(ctx) {
     reactivateAnnounce: (name) => `${name} is available for new merchants again.`,
     apiCreate: (api, ws, body) => api.createMerchantType(ws, body), apiPatch: (api, ws, body) => api.patchMerchantType(ws, body),
     createRefresh: ["merchantTypes"], patchRefresh: ["merchantTypes", "payees"],
+    deleteRoute: "merchant-types", deleteRefresh: ["merchantTypes", "payees"],
   });
   // "Soft Delete Workspace" and the PERMANENT deletion card (owners only) now live together on
   // their own "Management" tab (BT-022, Terry, 2026-09-22) rather than always-visible outside the

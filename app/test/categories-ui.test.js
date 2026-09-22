@@ -196,4 +196,55 @@ describe("BT-022 Workspace page: real category management (Categories & types ta
     await settle();
     assert.deepEqual(calls.patched.at(-1), { categoryId: "cat_groceries", categoryTypeId: null });
   });
+
+  // BT-023 (Terry, 2026-09-22): "anything created needs to be able to be deleted. However, if
+  // there are any items attached to it, warn the user X number of records will be unset or have
+  // to be rechosen, and show which items are affected." Distinct from Archive above (recoverable):
+  // this is permanent, reviewed first and double-confirmed, via the same generic dialog every
+  // other permanently-deletable record already uses (api/_shared/deletion.js's existing
+  // categoryImpact/categoryApply, now wired to a real button here for the first time).
+  test("Delete permanently reviews the impact, shows how many records will lose the link, re-checks fresh before the final step, and only then permanently deletes once the name is typed to confirm", async () => {
+    const { ctx, state } = categoryPage();
+    let impactCalls = 0;
+    ctx.api.permanentDeleteImpact = async (route, query, body) => {
+      impactCalls += 1;
+      assert.equal(route, "categories");
+      assert.equal(query.workspaceId, "ws_1");
+      assert.equal(body.categoryId, "cat_groceries");
+      return {
+        impact: {
+          type: "category", id: "cat_groceries", label: "Groceries", confirmPhrase: "Groceries",
+          blocked: false, blockers: [], cascade: [], together: [],
+          severed: [{ type: "transaction", field: "categoryId", count: 3 }], autoCleanup: [], token: "tok1",
+        },
+      };
+    };
+    const executed = [];
+    ctx.api.permanentDeleteExecute = async (route, query, body) => { executed.push({ route, query, body }); return { deleted: true }; };
+    const view = createWorkspace(ctx);
+    dom.body.appendChild(view.element);
+    view.update(state);
+    await settle();
+    const card = categoriesCard(view.element);
+    const row = card.querySelectorAll(".typerow").find((r) => r.querySelector("summary").textContent.includes("Groceries"));
+    row.querySelector("summary").click();
+    const body = row.querySelector(".catrow");
+    const deleteBtn = [...body.querySelectorAll("button")].find((b) => b.textContent === "Delete permanently");
+    assert.ok(deleteBtn, "a permanent-delete action exists alongside Archive");
+    deleteBtn.click();
+    await settle();
+    assert.equal(impactCalls, 1);
+    const dialog = dom.body.querySelector(".modal");
+    assert.equal(dialog.querySelector("h2").textContent, "Permanently delete Groceries?");
+    assert.ok(dialog.textContent.includes("3 transactions will keep everything else and only lose the link."), "shows which records are affected and how many");
+    buttonNamed(dialog, "Continue").click();
+    await settle();
+    assert.equal(impactCalls, 2, "re-checks fresh right before the destructive step, never trusting a stale review");
+    const confirmInput = dialog.querySelector("input");
+    confirmInput.value = "Groceries";
+    buttonNamed(dialog, "Permanently delete").click();
+    await settle();
+    assert.equal(executed.length, 1);
+    assert.deepEqual(executed[0].body, { categoryId: "cat_groceries", impactToken: "tok1", typedConfirmation: "Groceries" });
+  });
 });

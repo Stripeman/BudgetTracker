@@ -138,6 +138,52 @@ describe("BT-019-02 Workspace page: Account types management card", () => {
     assert.equal(calls.patched.length, 1);
     assert.equal(calls.patched[0].color, "#16a34a");
   });
+
+  // BT-023 (Terry, 2026-09-22): "anything created needs to be able to be deleted." Account,
+  // category and merchant types share this one generic manager, so proving it here proves it for
+  // all three (see the identical wiring exercised for categories themselves in categories-
+  // ui.test.js). A built-in type never even offers the control (mirrors Retire's own treatment).
+  test("a built-in type has no Delete permanently button; a custom type's does, and reviews the impact before permanently deleting it", async () => {
+    const { ctx, state } = workspaceCtx();
+    let impactCalls = 0;
+    ctx.api.permanentDeleteImpact = async (route, query, body) => {
+      impactCalls += 1;
+      assert.equal(route, "account-types");
+      assert.equal(body.typeId, "atype_custom_1");
+      return {
+        impact: {
+          type: "account-type", id: "atype_custom_1", label: "Store card", confirmPhrase: "Store card",
+          blocked: false, blockers: [], cascade: [], together: [],
+          severed: [{ type: "account", field: "accountTypeId", count: 2 }], autoCleanup: [], token: "tok9",
+        },
+      };
+    };
+    const executed = [];
+    ctx.api.permanentDeleteExecute = async (route, query, body) => { executed.push({ route, body }); return { deleted: true }; };
+    const view = createWorkspace(ctx);
+    dom.body.appendChild(view.element);
+    view.update(state);
+    await settle();
+    const card = accountTypesCard(view.element);
+    const checkingRow = card.querySelectorAll(".typerow").find((r) => r.textContent.includes("Checking"));
+    assert.equal([...checkingRow.querySelectorAll("button")].find((b) => b.textContent === "Delete permanently"), undefined, "a built-in type is never offered permanent deletion");
+    const storeRow = card.querySelectorAll(".typerow").find((r) => r.textContent.includes("Store card"));
+    const deleteBtn = [...storeRow.querySelectorAll("button")].find((b) => b.textContent === "Delete permanently");
+    assert.ok(deleteBtn, "a custom type offers permanent deletion");
+    deleteBtn.click();
+    await settle();
+    assert.equal(impactCalls, 1);
+    const dialog = dom.body.querySelector(".modal");
+    assert.equal(dialog.querySelector("h2").textContent, "Permanently delete Store card?");
+    assert.ok(dialog.textContent.includes("2 accounts will keep everything else and only lose the link."), "an optional label in use is never blocked — shown and severed instead");
+    buttonNamed(dialog, "Continue").click();
+    await settle();
+    dialog.querySelector("input").value = "Store card";
+    buttonNamed(dialog, "Permanently delete").click();
+    await settle();
+    assert.equal(executed.length, 1);
+    assert.deepEqual(executed[0].body, { typeId: "atype_custom_1", impactToken: "tok9", typedConfirmation: "Store card" });
+  });
 });
 
 function accountsCtx({ types = [CHECKING, SAVINGS, STORE_CARD] } = {}) {

@@ -328,3 +328,102 @@ describe('BT-014 permanent deletion — cascade rule', () => {
     assert.equal(cat.name, 'Renamed Category');
   });
 });
+
+// BT-023 (Terry, 2026-09-22): "anything created needs to be able to be deleted. However, if there
+// are any items attached to it, warn the user X number of records will be unset or have to be
+// rechosen, and show which items are affected." Account/category/merchant types (BT-019-01/02/03)
+// were the last "created but retire-only" gap. A system default can never be permanently deleted
+// (mirrors "can never be retired"); a custom type already in use is never blocked — every record
+// carrying it is severed (its own [x]TypeId reset to null), never removed, since the link is only
+// an optional presentation label.
+describe('BT-023 permanent deletion of account/category/merchant types', () => {
+  test('a built-in (system) account/category/merchant type can never be permanently deleted, even completely unused', async () => {
+    const h = harness();
+    const f = await household(h);
+    const acctTypes = ok(await h.call('account-types', 'GET', { as: 'alice', query: f.q })).types;
+    const impAcct = await impact(h, 'account-types', 'typeId', acctTypes.find((t) => t.system).id, 'alice', f.q);
+    assert.equal(impAcct.blocked, true);
+    assert.match(impAcct.blockers.join(' '), /built-in account type can never be permanently deleted/);
+
+    const catTypes = ok(await h.call('category-types', 'GET', { as: 'alice', query: f.q })).types;
+    const impCat = await impact(h, 'category-types', 'typeId', catTypes.find((t) => t.system).id, 'alice', f.q);
+    assert.equal(impCat.blocked, true);
+    assert.match(impCat.blockers.join(' '), /built-in category type can never be permanently deleted/);
+
+    const merchTypes = ok(await h.call('merchant-types', 'GET', { as: 'alice', query: f.q })).types;
+    const impMerch = await impact(h, 'merchant-types', 'typeId', merchTypes.find((t) => t.system).id, 'alice', f.q);
+    assert.equal(impMerch.blocked, true);
+    assert.match(impMerch.blockers.join(' '), /built-in merchant type can never be permanently deleted/);
+
+    // Confirms this is a real refusal, not merely an unchecked impact preview.
+    const res = await execute(h, 'account-types', 'typeId', acctTypes.find((t) => t.system).id, 'alice', f.q, impAcct);
+    assert.equal(res.status, 409);
+  });
+
+  test('a custom account type with nothing using it is deleted alone, with no severed records', async () => {
+    const h = harness();
+    const f = await household(h);
+    const t = ok(await h.call('account-types', 'POST', { as: 'alice', query: f.q, body: { name: 'Store card', accountingClass: 'credit-card' } }), 201).type;
+    const imp = await impact(h, 'account-types', 'typeId', t.id, 'alice', f.q);
+    assert.equal(imp.blocked, false);
+    assert.deepEqual(imp.severed, []);
+    await execute(h, 'account-types', 'typeId', t.id, 'alice', f.q, imp);
+    const doc = await rawDoc(h, f.ws.id);
+    assert.equal(doc.accountTypes.some((x) => x.id === t.id), false);
+  });
+
+  test('a custom account type used by two accounts is never blocked: deleting it shows and then severs both, resetting accountTypeId to null (never touching the accounts themselves)', async () => {
+    const h = harness();
+    const f = await household(h);
+    const t = ok(await h.call('account-types', 'POST', { as: 'alice', query: f.q, body: { name: 'Store card', accountingClass: 'credit-card' } }), 201).type;
+    const a1 = ok(await h.call('accounts', 'POST', { as: 'alice', query: f.q, body: { name: 'Card A', type: 'credit-card', accountTypeId: t.id, currency: 'EUR' } }), 201).account;
+    const a2 = ok(await h.call('accounts', 'POST', { as: 'alice', query: f.q, body: { name: 'Card B', type: 'credit-card', accountTypeId: t.id, currency: 'EUR' } }), 201).account;
+    const imp = await impact(h, 'account-types', 'typeId', t.id, 'alice', f.q);
+    assert.equal(imp.blocked, false, 'an optional label in use is severed, never blocked');
+    assert.deepEqual(imp.severed, [{ type: 'account', field: 'accountTypeId', count: 2 }]);
+    await execute(h, 'account-types', 'typeId', t.id, 'alice', f.q, imp);
+    const doc = await rawDoc(h, f.ws.id);
+    assert.equal(doc.accountTypes.some((x) => x.id === t.id), false);
+    assert.equal(doc.accounts.find((a) => a.id === a1.id).accountTypeId, null);
+    assert.equal(doc.accounts.find((a) => a.id === a2.id).accountTypeId, null, 'the accounts and their history are completely untouched otherwise');
+    assert.equal(doc.accounts.find((a) => a.id === a1.id).name, 'Card A');
+  });
+
+  test('a custom category type used by a category is severed (categoryTypeId unset), and the category keeps its own income/expense class unchanged', async () => {
+    const h = harness();
+    const f = await household(h);
+    const t = ok(await h.call('category-types', 'POST', { as: 'alice', query: f.q, body: { name: 'Side project income', categoryClass: 'income' } }), 201).type;
+    const cat = ok(await h.call('categories', 'POST', { as: 'alice', query: f.q, body: { name: 'Web Development', type: 'income', categoryTypeId: t.id } }), 201).category;
+    const imp = await impact(h, 'category-types', 'typeId', t.id, 'alice', f.q);
+    assert.equal(imp.blocked, false);
+    assert.deepEqual(imp.severed, [{ type: 'category', field: 'categoryTypeId', count: 1 }]);
+    await execute(h, 'category-types', 'typeId', t.id, 'alice', f.q, imp);
+    const doc = await rawDoc(h, f.ws.id);
+    assert.equal(doc.categoryTypes.some((x) => x.id === t.id), false);
+    const after = doc.categories.find((c) => c.id === cat.id);
+    assert.equal(after.categoryTypeId, null);
+    assert.equal(after.type, 'income', 'the category\'s own fixed class survives deleting its optional type label');
+  });
+
+  test('a custom merchant type used by a merchant is severed (merchantTypeId unset), and its transaction history is unaffected', async () => {
+    const h = harness();
+    const f = await household(h);
+    const t = ok(await h.call('merchant-types', 'POST', { as: 'alice', query: f.q, body: { name: 'Streaming service', merchantClass: 'subscription' } }), 201).type;
+    ok(await h.call('payees', 'PATCH', { as: 'alice', query: f.q, body: { payeeId: f.merchants.grocer.id, revision: f.merchants.grocer.revision, merchantTypeId: t.id } }));
+    const imp = await impact(h, 'merchant-types', 'typeId', t.id, 'alice', f.q);
+    assert.equal(imp.blocked, false);
+    assert.deepEqual(imp.severed, [{ type: 'payee', field: 'merchantTypeId', count: 1 }]);
+    await execute(h, 'merchant-types', 'typeId', t.id, 'alice', f.q, imp);
+    const doc = await rawDoc(h, f.ws.id);
+    assert.equal(doc.merchantTypes.some((x) => x.id === t.id), false);
+    assert.equal(doc.payees.find((p) => p.id === f.merchants.grocer.id).merchantTypeId, null);
+  });
+
+  test('a viewer cannot even preview permanently deleting a type; a member with shared-list management may', async () => {
+    const h = harness();
+    const f = await household(h);
+    const t = ok(await h.call('category-types', 'POST', { as: 'alice', query: f.q, body: { name: 'Essential', categoryClass: 'expense' } }), 201).type;
+    const denied = await h.call('category-types', 'POST', { as: 'carol', query: { ...f.q, action: 'delete-impact' }, body: { typeId: t.id } });
+    assert.equal(denied.status, 403);
+  });
+});

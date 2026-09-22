@@ -7089,6 +7089,83 @@ Its diff against `main` will therefore also include PR #50's own one-paragraph d
 merged when this branch split off) — harmless and already accurate, disclosed here and in the PR
 description rather than solved with a risky rebase.
 
-**Exact next step:** confirm the full `npm run e2e` background run finished clean; commit this work
-on `feature/category-management-BT-022`; push and open a PR; report to Terry with before/after
-screenshots. No `main` merge, no deploy — both remain Terry's own action.
+**Closed out:** full `npm run e2e` finished clean (1114 passed, 0 failed, 0 skipped, exit 0);
+committed on `feature/category-management-BT-022` (`9c43db5`); pushed; **PR #51 opened** against
+`main` (disclosing the carried-forward PR #50 docs commit in its own description). Not merged, not
+deployed — both remain Terry's own action. See BT-023 immediately below for the follow-up work
+(permanent category/type deletion) done in the same session, on the same branch, before that PR.
+
+## BT-023: permanent deletion for categories, account/category/merchant types (2026-09-22)
+
+**Terry's instruction, verbatim:** "anything created needs to be able to be deleted. however, if
+there are any items attached to it, then it need to warn the user x number of records will be unset
+or have to be rechosen. and show which items are affected." — a direct, immediate follow-up to
+BT-022's own disclosed gap ("permanent category deletion was not requested and was not built").
+
+**Source inspection first:** `api/_shared/deletion.js` (BT-014) already had a complete, generic
+impact/apply/audit engine — `categoryImpact`/`categoryApply` already existed and already did
+exactly what Terry described (severs `categoryId` on transactions/bills, `defaultCategoryId` on
+payees, blocks on a budget still using it) — but **no frontend button ever called it** for
+categories. Checking the other three "Add X" workflows on the same Workspace page
+(`createTypeManager`, BT-021: account/category/merchant types) found the identical gap one level
+up: retire-only, never permanently deletable, with no backend route for it either.
+
+**Built:**
+1. **Categories:** `createCategoryManager()` gained a "Delete permanently" button (danger variant)
+   beside Archive on every row, wired to the existing generic `openDeleteDialog`
+   (`app/js/ui/permanentdelete.js`) via a new small `openCategoryPermanentDelete(ctx, category,
+   wsId)` helper — no new dialog, no new wording, the exact same review/double-confirm flow every
+   other permanently-deletable record already uses.
+2. **Backend, account/category/merchant types:** `api/_shared/deletion.js` gained three more
+   `TYPES` entries — `account-type`, `category-type`, `merchant-type` — each blocking a **system**
+   type outright ("A built-in account type can never be permanently deleted — a workspace always
+   keeps its basic set available," mirroring the existing "can never be retired" wording exactly)
+   and, for a **custom** type, never blocking on usage: every account/category/merchant carrying it
+   has that one field reset to `null` (severed — "will be unset"), never cascaded, never touching
+   the record's own fixed accounting/income-expense/merchant class. `api/{account-types,
+   category-types,merchant-types}/handler.js` each gained a `delete-impact`/`delete-permanent`
+   dispatch identical to `api/categories/handler.js`'s existing one.
+3. **Frontend, generic:** the one shared `createTypeManager(ctx, cfg)` (BT-021) gained a generic
+   `openTypePermanentDelete(ctx, cfg, t, wsId)` plus two new `cfg` keys (`deleteRoute`,
+   `deleteRefresh`) supplied once per manager instance (account/category/merchant) — proving the
+   genericity BT-021 built this manager for actually holds. A built-in type never shows the button
+   at all (mirrors Retire's own "Built-in — always available" treatment) rather than a control that
+   could only ever refuse.
+
+**Real interaction verified in real browsers, not assumed:** `scripts/dev/e2e/categories.mjs`
+extended — an unused category is deleted alone with no warning about affected records; a category
+used by one real transaction shows "1 transaction will keep everything else and only lose the
+link." before deleting, and afterwards that transaction survives on the real Transactions page
+showing "Uncategorized" (needing to be rechosen), never silently deleted itself.
+`scripts/dev/e2e/accounttypes.mjs` extended — a built-in type (Checking) has no delete button
+anywhere in the real DOM, a custom type in use shows "1 account will keep everything else and only
+lose the link.", and afterwards the account survives with `accountTypeId: null` and its fixed
+accounting class (`cash`) completely unchanged.
+
+**A real test-writing bug found and fixed while extending both e2e scenarios (not a product bug):**
+the "Add category"/"Add account type" disclosure remembers its own open/closed state per browser
+(BT-021); a browser that already opened it once earlier in the same scenario would have a second,
+unconditional click on it CLOSE it instead of opening it. Fixed by checking whether the create
+field is already visible before clicking, in both `categories.mjs` and `accounttypes.mjs`.
+
+**Evidence:** `api/test/deletion.test.js` new "BT-023" describe block, 6 tests (all three system
+types refused with a real 409 and the correct message; a custom account type with nothing using it
+deleted alone; a custom account type used by two accounts severed with the exact count and the
+accounts otherwise completely untouched; a custom category type severed with the category's own
+income/expense class provably unchanged; a custom merchant type severed; a viewer refused even the
+impact preview) — `npm --prefix api test` **798/798, exit 0**. `app/test/categories-ui.test.js` and
+`app/test/accounttypes-ui.test.js` each gained one new test exercising the full impact-review-then-
+confirm flow against a mocked API — `npm test` **732/732, exit 0**. `npm run e2e -- --only
+categories` **18/18**, `-- --only accounttypes` **12/12**, both exit 0. Full combined `npm run e2e`
+launched as the last gate before committing (background PID recorded at commit time; see the git
+log / PR description for its final result if this note has not yet been updated with it).
+
+**Not yet done:** recurring bills, budgets, contacts and whole-workspace scope already had full
+permanent deletion from BT-014 and needed no change here; no dedicated screen-reader audit of the
+(unchanged) dialog component itself.
+
+**Exact next step:** confirm the full `npm run e2e` background run (started immediately after this
+checkpoint) finishes clean; commit this work (still on `feature/category-management-BT-022`, the
+same branch PR #51 is open from — this is an addition to that same PR, not a new one, unless Terry
+asks otherwise); push; update PR #51's description; report to Terry with the browser evidence above.
+No `main` merge, no deploy — both remain Terry's own action.
