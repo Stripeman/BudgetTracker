@@ -6940,3 +6940,25 @@ requested as part of this task.
 **Exact next step:** report the before/after screenshots, page-height reduction and this checkpoint
 to Terry; open one PR for `feature/workspace-page-reorg-BT-021` → `main` if/when he asks for one
 (not requested this session; do not merge or deploy without his explicit instruction).
+
+**Done, same session — PR, Terry's merge, and Preview (all his own authorization, asked for
+explicitly after the report above):** PR #49 opened
+(https://github.com/Stripeman/BudgetTracker/pull/49); Terry merged it himself into `main` as
+`95b0eba` (confirmed via `git fetch` + `origin/main`, never merged by the agent). Preview deployed
+from that same commit via `scripts/deploy/deploy.ps1 -Environment preview` — full gate chain
+(`gitState`, `confirmation`, `azureResource`, `settings`, `test` 725/725, `validate` ok 29 routes,
+`build`, `secretScan` no leaks, `upload`, `commitSetting`, `healthCheck`) all `ok`, result
+`SUCCESS`. Independently re-verified (not just the receipt): `curl` of
+`https://polite-plant-03bb7570f-preview.eastus2.3.azurestaticapps.net/api/site-settings` returns
+`"commit":"95b0eba..."` (matches `main` exactly) and `"environment":"preview"`; `/` returns HTTP
+200. Production untouched — still exclusively Terry's own action, not requested this session.
+
+**Genuinely open items, stated plainly when Terry asked "anything else left open?":**
+- BT-021's own two disclosed gaps, unchanged since the row above: no dedicated screen-reader/
+  accessibility-tree-specific audit beyond the ARIA-pattern and real keyboard checks already run;
+  the workspace-default colour scheme (pre-existing BT-013-16 gap) still unread by any renderer.
+- Carried forward from BT-013-16, still true, not touched by BT-021: no flagship-specific dedicated
+  keyboard/dropdown-only assertions; no flagship-specific large-dataset/multi-currency stress test;
+  no drag-and-drop combined-layout editor (deliberately deferred, Terry's own "not now").
+- Production deployment: not requested, not performed, remains exclusively Terry's own action
+  whenever he chooses to authorize it.
