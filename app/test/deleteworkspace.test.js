@@ -197,8 +197,8 @@ describe("Delete workspace, on the Workspace page, for owners only", () => {
     // BT-014-04: the PERMANENT deletion card (a separate, unmistakably distinct action) is now the
     // very last card on the page; this recoverable one is immediately before it.
     assert.ok(cards[cards.length - 2] === card, "the second-to-last card on the page");
-    assert.equal(card.querySelector("h2").textContent, "Delete workspace");
-    const del = buttonNamed(card, "Delete workspace…");
+    assert.equal(card.querySelector("h2").textContent, "Soft Delete Workspace");
+    const del = buttonNamed(card, "Soft delete workspace…");
     assert.ok(del.classList.contains("btn--danger"));
     assert.ok(card.classList.contains("card--danger"));
     for (const role of ["manager", "member", "viewer"]) {
@@ -214,11 +214,11 @@ describe("Delete workspace, on the Workspace page, for owners only", () => {
     const cards = view.element.querySelectorAll("section.card");
     assert.ok(cards[cards.length - 1] === permanentCard, "the last card on the page");
     assert.notEqual(permanentCard, card, "a distinct card, not a re-labelled version of the recoverable one");
-    assert.equal(permanentCard.querySelector("h2").textContent, "Permanently delete workspace (cannot be undone)");
+    assert.equal(permanentCard.querySelector("h2").textContent, "Permanently Delete This workspace- (Cannot be undone)");
     assert.notEqual(permanentCard.querySelector("h2").textContent, card.querySelector("h2").textContent);
     assert.ok(permanentCard.classList.contains("card--danger-permanent"), "an extra class on top of the ordinary danger styling");
     assert.ok(buttonNamed(permanentCard, "Permanently delete workspace…"));
-    assert.notEqual(buttonNamed(permanentCard, "Permanently delete workspace…").textContent, "Delete workspace…");
+    assert.notEqual(buttonNamed(permanentCard, "Permanently delete workspace…").textContent, "Soft delete workspace…");
     for (const role of ["manager", "member", "viewer"]) {
       dom.teardown(); dom = installDom();
       const other = await openWorkspace({ role });
@@ -228,14 +228,14 @@ describe("Delete workspace, on the Workspace page, for owners only", () => {
 
   test("the dialog names the workspace, says what happens, has the reason filled in and needs the name typed; mistakes are said inside it", async () => {
     const { card, calls } = await openWorkspace();
-    buttonNamed(card, "Delete workspace…").click();
+    buttonNamed(card, "Soft delete workspace…").click();
     const dialog = dom.body.querySelector(".modal");
-    assert.equal(dialog.querySelector("h2").textContent, "Delete Fictional household?");
+    assert.equal(dialog.querySelector("h2").textContent, "Soft delete Fictional household?");
     assert.ok(dialog.querySelectorAll("p").some((p) => p.textContent === MESSAGE));
     assert.equal(labelled(dialog, "Reason").value, "No longer needed");
     const confirm = labelled(dialog, "Type Fictional household to confirm");
     assert.equal(confirm.value, "");
-    const go = buttonNamed(dialog, "Delete workspace");
+    const go = buttonNamed(dialog, "Soft delete workspace");
     assert.ok(go.classList.contains("btn--danger"));
     for (const typed of ["", "fictional household", "Fictional"]) {
       confirm.value = typed;
@@ -259,10 +259,10 @@ describe("Delete workspace, on the Workspace page, for owners only", () => {
   test("a refusal from the server is shown inside the dialog, which stays open with what was typed", async () => {
     const refusal = Object.assign(new Error("Only an owner can archive a workspace."), { kind: "forbidden", status: 403 });
     const { card } = await openWorkspace({ refuse: refusal });
-    buttonNamed(card, "Delete workspace…").click();
+    buttonNamed(card, "Soft delete workspace…").click();
     const dialog = dom.body.querySelector(".modal");
     labelled(dialog, "Type Fictional household to confirm").value = "Fictional household";
-    buttonNamed(dialog, "Delete workspace").click();
+    buttonNamed(dialog, "Soft delete workspace").click();
     await settle();
     assert.ok(dom.body.querySelector(".modal"), "still open");
     assert.equal(dialog.querySelector(".modal__error").textContent, "Only an owner can archive a workspace.");

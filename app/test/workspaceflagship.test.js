@@ -1,9 +1,8 @@
 // BT-013-16 — Workspace settings (the page where the real Layout Picker itself lives) under each
-// flagship layout. This page is already a `.grid.grid--two` of individually-carded sections
-// (Members, Invite, Workspace settings, Layout, Backups and restore, Recent activity, Former
-// members, Workspace changes, Category colours and icons, Account/Category/Merchant types, Icons for
-// types); every one of them, and everything inside them, stays completely shared and unchanged. The
-// SAME grid is reparented into a `.dashflag` accent wrapper for flagship layouts, the same minimal,
+// flagship layout. Since BT-021/BT-022 this page is real sub-tabs (General/Layout & colours/
+// Categories & types/Management) rather than one flat grid; every section inside them, and
+// everything inside those, stays completely shared and unchanged. The whole tab bar + panel
+// structure is reparented into a `.dashflag` accent wrapper for flagship layouts, the same minimal,
 // low-risk pattern already used for Shared expenses and My Settings, given this page's size and
 // permission-sensitive content (members, invitations, backups/restore, permanent deletion).
 // Fictional data only.

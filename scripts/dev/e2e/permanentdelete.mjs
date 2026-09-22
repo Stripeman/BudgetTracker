@@ -134,21 +134,26 @@ export async function run(h, t) {
   });
 
   // ---- 4. the PERMANENT workspace-deletion card: unmistakably distinct, owner only ----------------
+  // BT-022 (2026-09-22): both deletion cards now live together on their own "Management" sub-tab
+  // (renamed "Soft Delete Workspace" / "Permanently Delete This workspace- (Cannot be undone)"),
+  // moved off every other tab.
   await b.carol.goto("workspace");
-  await b.carol.waitForText("Permanently delete workspace (cannot be undone)", { scope: "main" });
+  await b.carol.click({ role: "tab", name: "Management" });
+  await b.carol.waitForText("Permanently Delete This workspace- (Cannot be undone)", { scope: "main" });
   const cardHeadings = await b.carol.evaluate("[...document.querySelectorAll('section.card h2')].map((h) => h.textContent)");
   const permCardClass = await b.carol.evaluate("(() => { const s = document.querySelector('section[aria-labelledby=\"ws-delete-permanent\"]'); return s ? s.className : ''; })()");
   t.note(`screenshot of both workspace-deletion cards: ${await b.carol.shot("permdel-workspace-cards")}`);
-  t.check("both the recoverable 'Delete workspace' card and the new PERMANENT one are present, with different headings and an extra style class on the permanent one", {
+  t.check("both the recoverable 'Soft Delete Workspace' card and the new PERMANENT one are present, with different headings and an extra style class on the permanent one", {
     expected: { hasRecoverable: true, hasPermanent: true, extraClass: true },
-    actual: { hasRecoverable: cardHeadings.includes("Delete workspace"), hasPermanent: cardHeadings.includes("Permanently delete workspace (cannot be undone)"), extraClass: permCardClass.includes("card--danger-permanent") },
+    actual: { hasRecoverable: cardHeadings.includes("Soft Delete Workspace"), hasPermanent: cardHeadings.includes("Permanently Delete This workspace- (Cannot be undone)"), extraClass: permCardClass.includes("card--danger-permanent") },
   });
-  // Bob, a plain member, sees neither the recoverable nor the PERMANENT card.
+  // Bob, a plain member, sees neither the recoverable nor the PERMANENT card (they do not exist in
+  // the DOM for him at all, regardless of which tab his browser happens to be on).
   await b.bob.goto("workspace");
   const bobHeadings = await b.bob.evaluate("[...document.querySelectorAll('section.card h2')].map((h) => h.textContent)");
   t.check("a member sees neither the recoverable nor the PERMANENT deletion card", {
     expected: { hasRecoverable: false, hasPermanent: false },
-    actual: { hasRecoverable: bobHeadings.includes("Delete workspace"), hasPermanent: bobHeadings.includes("Permanently delete workspace (cannot be undone)") },
+    actual: { hasRecoverable: bobHeadings.includes("Soft Delete Workspace"), hasPermanent: bobHeadings.includes("Permanently Delete This workspace- (Cannot be undone)") },
   });
 
   await b.carol.click({ role: "button", name: "Permanently delete workspace…" });

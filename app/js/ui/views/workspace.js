@@ -17,7 +17,7 @@ import { ACCOUNT_TYPE_LABELS, BILL_TYPE_LABELS, MERCHANT_TYPE_LABELS } from "../
 import { createIconPicker } from "../iconpicker.js";
 import { builtInIconFor, withIcon } from "../icons.js";
 import { managesSharedLists } from "../../core/workspacesettings.js";
-import { openWorkspacePermanentDeleteDialog } from "../permanentdelete.js";
+import { openDeleteDialog as openPermanentDeleteDialog, openWorkspacePermanentDeleteDialog } from "../permanentdelete.js";
 import { createLayoutPicker } from "./layoutpicker.js";
 import { effectiveLayoutId, layoutAccentVars } from "../../core/layoutmeta.js";
 
@@ -69,7 +69,7 @@ const INTRO_CHANGE = "These decide how everyone in this workspace works. Owners 
 const INTRO_READ = "These decide how everyone in this workspace works. Owners and managers change them; you can see how it is set up and every change below.";
 
 // Shared per-browser remembered-open storage for every collapsible section on this page (BT-019-04,
-// BT-021): Category colours and icons, each "Add … type" creation form, and this page's own tab.
+// BT-021, BT-022): each "Add …" creation form (categories, account/category/merchant types).
 const WORKSPACE_GROUP_KEY = "settings.workspace.groups";
 
 // BT-021 (Terry, 2026-09-22: "make categories and types easy to understand and manage... separate
@@ -84,6 +84,25 @@ const WORKSPACE_GROUP_KEY = "settings.workspace.groups";
 // field, help sentence, refresh key and API call below is copied verbatim from the three
 // once-separate render functions this replaces — nothing about validation, permissions, wording or
 // behaviour changed, only how densely it is shown.
+// BT-023 (Terry, 2026-09-22): permanent deletion for a custom account/category/merchant type,
+// mirroring `openCategoryPermanentDelete` above and payees.js's own `openPermanentDelete` exactly.
+// A built-in (system) type is never offered this at all (like Retire above it) — the backend
+// refuses it too (api/_shared/deletion.js), but hiding the control here matches the existing
+// treatment of "Built-in — always available" rather than surfacing a dialog that can only refuse.
+function openTypePermanentDelete(ctx, cfg, t, wsId) {
+  openPermanentDeleteDialog(ctx, {
+    title: `Permanently delete ${t.name}?`,
+    fetchImpact: async () => (await ctx.api.permanentDeleteImpact(cfg.deleteRoute, { workspaceId: wsId }, { typeId: t.id })).impact,
+    execute: async (impact, typedConfirmation) => {
+      const out = await ctx.store.actions.write(
+        (ws) => ctx.api.permanentDeleteExecute(cfg.deleteRoute, { workspaceId: ws }, { typeId: t.id, impactToken: impact.token, typedConfirmation }),
+        cfg.deleteRefresh,
+      );
+      if (!out.ok) throw out.error;
+    },
+  });
+}
+
 function createTypeManager(ctx, cfg) {
   const { store, api } = ctx;
   const intro = el("p", { class: "field__help" });
@@ -102,7 +121,7 @@ function createTypeManager(ctx, cfg) {
   const openRows = new Set();
   let sig = "";
 
-  function buildRow(t, data) {
+  function buildRow(t, data, wsId) {
     const labelId = `${cfg.rowPrefix}-${t.id}`;
     const error = el("p", { class: "error-text small", role: "alert", hidden: true });
     let picker = null;
@@ -154,6 +173,10 @@ function createTypeManager(ctx, cfg) {
         if (!out.ok) { error.textContent = messageFor(out.error); error.hidden = false; return; }
         announce(t.retired ? cfg.reactivateAnnounce(t.name) : cfg.retireAnnounce(t.name));
       }, { small: true, variant: "ghost" });
+    // BT-023: "anything created needs to be able to be deleted." Never offered for a built-in type
+    // (matches Retire's own treatment above); a custom type already in use is never blocked by
+    // this — the review dialog shows exactly how many records will lose this optional label.
+    const deleteBtn = t.system ? null : button("Delete permanently", () => { openTypePermanentDelete(ctx, cfg, t, wsId); }, { small: true, variant: "danger", attrs: { "aria-label": `Permanently delete ${t.name}` } });
     const summary = el("summary", {}, [
       el("h3", { class: "typerow__name" }, [categoryLabel(t.name, t.color, t.icon)]),
       badge(cfg.classLabel(t[cfg.classField]), "source"),
@@ -176,7 +199,7 @@ function createTypeManager(ctx, cfg) {
           badge(t.colorSource === "workspace" ? "Custom colour" : "Default colour", "source"),
           t.colorSource === "workspace" ? button("Reset colour", () => { void patchColour(null); }, { small: true, variant: "ghost", attrs: { "aria-label": `Reset to default: ${t.name} colour` } }) : null,
           badge(chosenIcon ? "Custom icon" : "Default icon", "source"),
-          el("span", { class: "app__spacer" }), retireBtn,
+          el("span", { class: "app__spacer" }), retireBtn, deleteBtn,
         ]),
       ]),
     ]);
@@ -223,7 +246,180 @@ function createTypeManager(ctx, cfg) {
       newName.value = "";
     }, { variant: "primary" });
     mount(addBox, el("div", { class: "form-grid" }, [field("New type name", newName), field(cfg.classFieldLabel, newClass), createBtn]), createError);
-    mount(listBox, ...types.map((t) => buildRow(t, data)));
+    mount(listBox, ...types.map((t) => buildRow(t, data, state.selectedWorkspaceId)));
+  }
+
+  return { element, render };
+}
+
+// BT-022 (Terry, 2026-09-22): real CATEGORY management — genuinely distinct from category TYPES
+// above. A category is what is actually chosen when labelling a bill or transaction (e.g.
+// "Groceries", "Web Development"); a category type is an OPTIONAL grouping/reporting label a
+// category may carry (like an account's own type groups accounts) — never required to add an
+// ordinary category. This creates real categories directly against the existing `POST/PATCH
+// /api/categories` route (the exact one every bill/transaction/budget category picker already
+// reads from via `sliceFor(state, "categories")`), so a new category appears everywhere the
+// moment `store.actions.write(fn, ["categories"])` refreshes that one shared slice — no separate
+// per-page wiring, exactly like every other page on this shared-slice architecture already works.
+// BT-023 (Terry, 2026-09-22): permanent deletion, distinct from Archive above (which is
+// recoverable). Mirrors payees.js's openPermanentDelete exactly: a transaction, bill or merchant
+// default that used this category keeps everything else and only loses the link
+// (api/_shared/deletion.js's categoryImpact/categoryApply already implement the warn-and-show-what-
+// is-affected preview this needs — this just wires the existing generic dialog to it).
+function openCategoryPermanentDelete(ctx, category, wsId) {
+  openPermanentDeleteDialog(ctx, {
+    title: `Permanently delete ${category.name}?`,
+    fetchImpact: async () => (await ctx.api.permanentDeleteImpact("categories", { workspaceId: wsId }, { categoryId: category.id })).impact,
+    execute: async (impact, typedConfirmation) => {
+      const out = await ctx.store.actions.write(
+        (ws) => ctx.api.permanentDeleteExecute("categories", { workspaceId: ws }, { categoryId: category.id, impactToken: impact.token, typedConfirmation }),
+        ["categories", "transactions", "bills", "payees"],
+      );
+      if (!out.ok) throw out.error;
+    },
+  });
+}
+
+function createCategoryManager(ctx) {
+  const { store, api } = ctx;
+  const intro = el("p", { class: "field__help" });
+  const addBox = el("div", { class: "typeadd" });
+  const addGroup = createSettingsGroup({ id: "ws-add-category", storageKey: WORKSPACE_GROUP_KEY, name: "Add category", defaultOpen: false, nodes: [addBox] });
+  const addSlot = el("div");
+  const listBox = el("div");
+  const element = el("div", { class: "stack" }, [intro, addSlot, listBox]);
+  let sig = "";
+  const openRows = new Set();
+
+  function buildRow(c, data, catTypes, wsId) {
+    const labelId = `ws-cat-${c.id}`;
+    const error = el("p", { class: "error-text small", role: "alert", hidden: true });
+    let picker = null;
+    const patchColour = async (color) => {
+      const out = await store.actions.write((ws) => api.request("categories", { method: "PATCH", query: { workspaceId: ws }, body: { categoryId: c.id, color } }), ["categories"]);
+      if (out.ok) { announce(`${c.name}: colour ${color ? "saved" : "reset to default"}.`); return; }
+      if (picker) picker.select(c.color);
+      error.textContent = messageFor(out.error);
+      error.hidden = false;
+    };
+    picker = createThemePicker({
+      value: c.color, entries: colourEntries(data.palette, c.color), labelledBy: labelId,
+      listLabel: `Colours for ${c.name}`, namePrefix: `${c.name} colour`, onPick: (hex) => { void patchColour(hex); },
+    });
+    const chosenIcon = c.iconSource === "workspace" ? c.icon : null;
+    const iconPick = createIconPicker({
+      value: chosenIcon, inherited: c.defaultIcon, name: c.name, label: "Icon", tint: c.color,
+      onPick: async (id) => {
+        const out = await store.actions.write((ws) => api.request("categories", { method: "PATCH", query: { workspaceId: ws }, body: { categoryId: c.id, icon: id || null } }), ["categories"]);
+        if (out.ok) { announce(`${c.name}: icon ${id ? "saved" : "reset to default"}.`); return; }
+        iconPick.select(chosenIcon);
+        error.textContent = messageFor(out.error);
+        error.hidden = false;
+      },
+    });
+    const nameInput = input({ maxlength: "60", value: c.name, autocomplete: "off" });
+    const saveName = button("Save name", async () => {
+      const value = nameInput.value.trim();
+      if (!value || value === c.name) { nameInput.value = c.name; return; }
+      const out = await store.actions.write((ws) => api.request("categories", { method: "PATCH", query: { workspaceId: ws }, body: { categoryId: c.id, name: value } }), ["categories"]);
+      if (!out.ok) { nameInput.value = c.name; error.textContent = messageFor(out.error); error.hidden = false; return; }
+      announce(`Renamed to ${value}.`);
+    }, { small: true });
+    // The optional category-type link (BT-019-01): a category's own income/expense class is fixed
+    // for good at creation, so only types of that SAME class are ever offered here — never a back
+    // door to reinterpret it. "None" clears the link without affecting the category's own class.
+    const typeOptions = [{ value: "", label: "None" }, ...catTypes.filter((t) => !t.retired && t.categoryClass === c.type).map((t) => ({ value: t.id, label: t.name }))];
+    const typeControl = pickerSelect(typeOptions, c.categoryTypeId || "", { "aria-label": `Category type for ${c.name}` }, { search: false });
+    typeControl.addEventListener("change", async () => {
+      const chosen = catTypes.find((t) => t.id === typeControl.value);
+      const out = await store.actions.write((ws) => api.request("categories", { method: "PATCH", query: { workspaceId: ws }, body: { categoryId: c.id, categoryTypeId: typeControl.value || null } }), ["categories"]);
+      if (!out.ok) { typeControl.value = c.categoryTypeId || ""; error.textContent = messageFor(out.error); error.hidden = false; }
+      else announce(chosen ? `${c.name} is now grouped under the category type ${chosen.name}.` : `${c.name} no longer has a category type.`);
+    });
+    // Categories are archived, never deleted (matches every other shared list here): an archived
+    // category leaves new-entry choices but stays wherever it is already used, in history, reports
+    // and audits.
+    const archiveBtn = button(c.archived ? "Reopen" : "Archive", async () => {
+      const out = await store.actions.write((ws) => api.request("categories", { method: "PATCH", query: { workspaceId: ws }, body: { categoryId: c.id, archived: !c.archived } }), ["categories"]);
+      if (!out.ok) { error.textContent = messageFor(out.error); error.hidden = false; return; }
+      announce(c.archived ? `${c.name} is available for new entries again.` : `${c.name} archived. It stays on anything that already uses it, but is no longer offered for new entries.`);
+    }, { small: true, variant: "ghost" });
+    // BT-023: "anything created needs to be able to be deleted." Distinct from Archive above
+    // (recoverable, keeps history offered nowhere new): this is permanent, reviewed first (what it
+    // would affect, shown in plain language and by count) and double-confirmed by typing the
+    // category's name, via the same generic dialog every other permanently-deletable record uses.
+    const deleteBtn = button("Delete permanently", () => { openCategoryPermanentDelete(ctx, c, wsId); }, { small: true, variant: "danger", attrs: { "aria-label": `Permanently delete ${c.name}` } });
+    const summary = el("summary", {}, [
+      el("h3", { class: "typerow__name" }, [categoryLabel(c.name, c.color, c.icon)]),
+      badge(c.type === "income" ? "Income" : "Expense", "source"),
+      c.categoryType ? badge(c.categoryType.name, "source") : null,
+      c.archived ? badge("Archived") : null,
+      el("span", { class: "typerow__spacer" }),
+      el("span", { class: "typerow__edit", "aria-hidden": "true", text: "Edit" }),
+    ]);
+    const details = el("details", { class: "typerow" }, [
+      summary,
+      el("div", { class: "catrow" }, [
+        el("div", { class: "row" }, [field("Name", nameInput), saveName]),
+        el("div", { class: "field" }, [el("p", { class: "field__label", id: labelId, text: "Colour" }), picker.element]),
+        iconPick.element,
+        field("Category type (optional)", typeControl, { help: "An optional grouping label for reports — like Account types group accounts. Never required to use this category for a bill, transaction or budget." }),
+        error,
+        el("div", { class: "row catrow__meta" }, [
+          badge(c.colorSource === "workspace" ? "Custom colour" : "Default colour", "source"),
+          c.colorSource === "workspace" ? button("Reset colour", () => { void patchColour(null); }, { small: true, variant: "ghost", attrs: { "aria-label": `Reset to default: ${c.name} colour` } }) : null,
+          badge(chosenIcon ? "Custom icon" : "Default icon", "source"),
+          el("span", { class: "app__spacer" }), archiveBtn, deleteBtn,
+        ]),
+      ]),
+    ]);
+    if (openRows.has(c.id)) details.open = true;
+    details.addEventListener("toggle", () => { if (details.open) openRows.add(c.id); else openRows.delete(c.id); });
+    return details;
+  }
+
+  function render(state) {
+    const data = sliceFor(state, "categories").data;
+    if (!data) return;
+    const catTypes = ((sliceFor(state, "categoryTypes").data || {}).types || []);
+    const selfMember = ((sliceFor(state, "members").data || {}).members || []).find((m) => m.self);
+    const role = selfMember ? selfMember.role : "viewer";
+    const canEdit = ["owner", "manager"].includes(role) || (role === "member" && managesSharedLists(state));
+    const key = JSON.stringify([data.categories, canEdit, catTypes]);
+    if (key === sig) return;
+    sig = key;
+    const cats = data.categories.slice().sort((a, b) => (a.archived === b.archived ? a.name.localeCompare(b.name) : a.archived ? 1 : -1));
+    intro.textContent = canEdit
+      ? "Categories are what you actually choose when labelling a bill or transaction — for example Groceries or Web Development. Create, colour, icon and archive them here. Category types (below) are an optional grouping label; you never need one to add an ordinary category."
+      : "Owners and managers create and edit categories here. You can pick your own colours and icons in My settings.";
+    if (!canEdit) {
+      mount(addSlot);
+      mount(listBox, el("ul", { class: "stack" }, cats.filter((c) => !c.archived).map((c) => el("li", { class: "row" }, [
+        categoryLabel(c.name, c.color, c.icon), badge(c.type === "income" ? "Income" : "Expense", "source"),
+      ]))));
+      return;
+    }
+    mount(addSlot, addGroup.element);
+    const newName = input({ maxlength: "60", placeholder: "e.g. Web Development", autocomplete: "off" });
+    const newType = pickerSelect([{ value: "expense", label: "Expense" }, { value: "income", label: "Income" }], "expense", {}, { search: false });
+    const createError = el("p", { class: "error-text small", role: "alert", hidden: true });
+    const createBtn = button("Save category", async () => {
+      createError.hidden = true;
+      if (!newName.value.trim()) {
+        newName.setAttribute("aria-invalid", "true");
+        createError.textContent = "Give the category a name.";
+        createError.hidden = false;
+        newName.focus();
+        return;
+      }
+      const out = await store.actions.write((ws) => api.request("categories", { method: "POST", query: { workspaceId: ws }, body: { name: newName.value.trim(), type: newType.value } }), ["categories"]);
+      if (!out.ok) { createError.textContent = messageFor(out.error); createError.hidden = false; return; }
+      announce(`${newName.value.trim()} added as a category. Open it below to choose a colour or icon.`);
+      newName.removeAttribute("aria-invalid");
+      newName.value = "";
+    }, { variant: "primary" });
+    mount(addBox, el("div", { class: "form-grid" }, [field("New category name", newName), field("Income or expense", newType), createBtn]), createError);
+    mount(listBox, ...cats.map((c) => buildRow(c, data, catTypes, state.selectedWorkspaceId)));
   }
 
   return { element, render };
@@ -240,13 +436,13 @@ function openDeleteDialog(ctx, workspace) {
   reason.value = "No longer needed";
   const confirmName = input({ maxlength: "80", autocomplete: "off" });
   const formId = `delete-workspace-${workspace.id}`;
-  const go = el("button", { type: "submit", class: "btn btn--danger", text: "Delete workspace", form: formId });
+  const go = el("button", { type: "submit", class: "btn btn--danger", text: "Soft delete workspace", form: formId });
   const form = el("form", { class: "form-grid", novalidate: true, id: formId }, [
     field("Reason", reason),
     field(`Type ${workspace.name} to confirm`, confirmName),
   ]);
   const modal = openModal({
-    title: `Delete ${workspace.name}?`,
+    title: `Soft delete ${workspace.name}?`,
     body: [el("p", { text: DELETE_MESSAGE }), form],
     actions: [button("Cancel", () => modal.close()), go],
   });
@@ -285,18 +481,12 @@ export function createView(ctx) {
   const historyBox = el("div");
   const settingsBox = el("div", { class: "stack" });
   const layoutPicker = createLayoutPicker(ctx);
-  const coloursBox = el("div", { class: "stack" });
   const typesBox = el("div", { class: "stack" });
-  // BT-019-04 (Terry, 2026-09-19): the "Category colours and icons" panel made collapsible here
-  // too, consistent with My Settings' own personal-override version of it (already collapsible via
-  // this exact shared shell, BT-017). Every pick inside `coloursBox` already saves immediately
-  // (no draft/unsaved state exists to lose — see the PATCH calls below), and this shell never
-  // rebuilds `nodes`, only toggles their visibility, so an in-flight save or a validation error
-  // already shown inline survives a collapse/reopen untouched. BT-021 (2026-09-22): now that this
-  // lives on its own "Layout & colours" tab (already hidden until chosen) it starts CLOSED like every
-  // other secondary section on this page, with a live count of workspace categories shown even
-  // while collapsed; still remembered per browser, separately from My Settings' own groups.
-  const groupColours = createSettingsGroup({ id: "ws-g-colours", storageKey: WORKSPACE_GROUP_KEY, name: "Category colours and icons", defaultOpen: false, nodes: [coloursBox] });
+  // BT-022 (Terry, 2026-09-22): real category management, consolidated with what was previously a
+  // colour/icon-only editor here (now folded into `createCategoryManager`'s fuller create/name/
+  // colour/icon/archive manager on the "Categories & types" tab, to close exactly the "two places
+  // both called Category colours" confusion Terry reported) — see that function above.
+  const categoryManager = createCategoryManager(ctx);
   // BT-021: Account/Category/Merchant types (BT-019-01/02/03) share one generic manager — see
   // `createTypeManager` above — configured once per kind with the exact wording, API calls and
   // refresh keys the three former render functions used.
@@ -315,6 +505,7 @@ export function createView(ctx) {
     reactivateAnnounce: (name) => `${name} is available for new accounts again.`,
     apiCreate: (api, ws, body) => api.createAccountType(ws, body), apiPatch: (api, ws, body) => api.patchAccountType(ws, body),
     createRefresh: ["accountTypes"], patchRefresh: ["accountTypes", "accounts"],
+    deleteRoute: "account-types", deleteRefresh: ["accountTypes", "accounts"],
   });
   const categoryTypeManager = createTypeManager(ctx, {
     sliceKey: "categoryTypes", classesKey: "categoryClasses", classField: "categoryClass",
@@ -331,6 +522,7 @@ export function createView(ctx) {
     reactivateAnnounce: (name) => `${name} is available for new categories again.`,
     apiCreate: (api, ws, body) => api.createCategoryType(ws, body), apiPatch: (api, ws, body) => api.patchCategoryType(ws, body),
     createRefresh: ["categoryTypes"], patchRefresh: ["categoryTypes", "categories"],
+    deleteRoute: "category-types", deleteRefresh: ["categoryTypes", "categories"],
   });
   const merchantTypeManager = createTypeManager(ctx, {
     sliceKey: "merchantTypes", classesKey: "merchantClasses", classField: "merchantClass",
@@ -347,21 +539,25 @@ export function createView(ctx) {
     reactivateAnnounce: (name) => `${name} is available for new merchants again.`,
     apiCreate: (api, ws, body) => api.createMerchantType(ws, body), apiPatch: (api, ws, body) => api.patchMerchantType(ws, body),
     createRefresh: ["merchantTypes"], patchRefresh: ["merchantTypes", "payees"],
+    deleteRoute: "merchant-types", deleteRefresh: ["merchantTypes", "payees"],
   });
-  // "Delete workspace" (owners only): a separate danger-style card at the bottom of the page, outside
-  // the tabs, built only for an owner (finding: it must not exist in the DOM for anyone else).
+  // "Soft Delete Workspace" and the PERMANENT deletion card (owners only) now live together on
+  // their own "Management" tab (BT-022, Terry, 2026-09-22) rather than always-visible outside the
+  // tabs — still built only for an owner, so the cards do not exist in the DOM for anyone else.
   const deleteBox = el("div");
 
   // BT-021 (Terry, 2026-09-22): "the Layout panel takes up too much space... everything below that
   // needs a substantial organization and alignment pass". This page's ~14 sections are now grouped
-  // into three real, same-page sub-tabs (the same visual idiom as the app's own site-admin sub-tabs,
+  // into real, same-page sub-tabs (the same visual idiom as the app's own site-admin sub-tabs,
   // `.app__nav--sub` in app/js/ui/shell.js, but genuine ARIA tabs — role="tablist"/"tab"/"tabpanel" —
   // since these toggle panels here rather than navigating to a new route): "General" (membership,
   // workspace settings, backups, activity — everything already reviewed as a good visual reference),
-  // "Layout & colours" (Layout, category colours, type icons — Terry's own suggested grouping), and
-  // "Categories & types" (the three managed-type lists, item 6's specific focus). Automatic
-  // activation (arrow keys both move and select, matching the WAI-ARIA APG tabs pattern), Home/End,
-  // and the choice is remembered per browser like every other preference on this page.
+  // "Layout & colours" (Layout, type icons — Terry's own suggested grouping), "Categories & types"
+  // (real categories plus the three managed-type lists, item 6's specific focus), and "Management"
+  // (BT-022: the two workspace-deletion cards, moved off every other tab so they show in exactly
+  // one place). Automatic activation (arrow keys both move and select, matching the WAI-ARIA APG
+  // tabs pattern), Home/End, and the choice is remembered per browser like every other preference
+  // on this page.
   const TABS = [
     { id: "general", label: "General" },
     // Named "Layout & colours" rather than a bare "Appearance": the Workspace settings card (on
@@ -370,6 +566,7 @@ export function createView(ctx) {
     // control on the same page would be a genuine ambiguity, for assistive tech and automation alike.
     { id: "appearance", label: "Layout & colours" },
     { id: "types", label: "Categories & types" },
+    { id: "management", label: "Management" },
   ];
   function readTab() {
     try {
@@ -383,7 +580,12 @@ export function createView(ctx) {
   // A link that names a setting (e.g. the Shared expenses "off" page) always lands on General, where
   // the Workspace settings card — and the field it focuses — actually lives, whatever tab was last
   // remembered; otherwise the focus this page already promises would land inside a hidden panel.
-  let activeTab = (ctx.params && ctx.params.setting) ? "general" : readTab();
+  // BT-022: a link may instead name a real TAB directly (`?tab=types`, e.g. My Settings' own
+  // "Manage workspace categories" link) — `setting` still wins if both are somehow present, since
+  // it targets one exact field.
+  let activeTab = (ctx.params && ctx.params.setting) ? "general"
+    : (ctx.params && TABS.some((t) => t.id === ctx.params.tab)) ? ctx.params.tab
+      : readTab();
   const tabButtons = {};
   const panels = {};
   function selectTab(id) {
@@ -436,25 +638,41 @@ export function createView(ctx) {
     el("section", { class: "card", "aria-labelledby": "ws-former" }, [el("h2", { class: "card__title", id: "ws-former", text: "Former members" }), formerBox]),
     el("section", { class: "card", "aria-labelledby": "ws-history" }, [el("h2", { class: "card__title", id: "ws-history", text: "Workspace changes" }), historyBox]),
   ])]);
-  // "Layout & colours" (Terry's own suggested grouping): the real Layout Picker — a separate, richer control from
-  // the plain "Layout theme" dropdown inside the Workspace settings card on General (which keeps
-  // working; both change the same setting) — plus category colours/icons and type icons.
+  // "Layout & colours" (Terry's own suggested grouping): the real Layout Picker — a separate, richer
+  // control from the plain "Layout theme" dropdown inside the Workspace settings card on General
+  // (which keeps working; both change the same setting) — plus type icons. BT-022: category
+  // colours/icons moved to the fuller Categories manager on "Categories & types" (below), closing
+  // the "two places both called Category colours" duplication Terry reported; a short pointer stays
+  // here since this tab's own name still says "colours".
   const appearancePanel = panel("appearance", [el("div", { class: "stack" }, [
     el("section", { class: "card card--full", "aria-labelledby": "ws-layout" }, [el("h2", { class: "card__title", id: "ws-layout", text: "Layout" }), layoutPicker.element]),
-    el("section", { class: "card card--full" }, [groupColours.element]),
+    el("div", { class: "row" }, [
+      el("p", { class: "field__help", text: "Category colours and icons are managed together with categories themselves." }),
+      button("Go to Categories & types", () => selectTab("types"), { small: true, variant: "ghost" }),
+    ]),
     el("section", { class: "card", "aria-labelledby": "ws-types" }, [el("h2", { class: "card__title", id: "ws-types", text: "Icons for types" }), typesBox]),
   ])]);
-  // "Categories & types" (item 6's specific focus): each manager already separates its compact
-  // existing-items list from its own collapsed "+ Add …" creation form.
+  // "Categories & types" (item 6's specific focus): CATEGORIES (what is actually chosen on a bill,
+  // transaction or budget) come first, with their own real create/colour/icon/archive management
+  // (BT-022); the three managed-TYPE lists (an optional grouping label, never required to use an
+  // ordinary category/account/merchant) follow, each already separating its compact existing-items
+  // list from its own collapsed "+ Add …" creation form.
   const typesPanel = panel("types", [el("div", { class: "stack" }, [
+    el("p", { class: "field__help" }, "Categories are what you choose when labelling a bill or transaction — for example Groceries or Web Development. Account types, Category types and Merchant types below are an OPTIONAL grouping label for accounts, categories and merchants — like a tag used for reporting — never required to add or use an ordinary one."),
+    el("section", { class: "card card--full", "aria-labelledby": "ws-categories" }, [el("h2", { class: "card__title", id: "ws-categories", text: "Categories" }), categoryManager.element]),
     el("section", { class: "card card--full", "aria-labelledby": "ws-account-types" }, [el("h2", { class: "card__title", id: "ws-account-types", text: "Account types" }), accountTypeManager.element]),
     el("section", { class: "card card--full", "aria-labelledby": "ws-category-types" }, [el("h2", { class: "card__title", id: "ws-category-types", text: "Category types" }), categoryTypeManager.element]),
     el("section", { class: "card card--full", "aria-labelledby": "ws-merchant-types" }, [el("h2", { class: "card__title", id: "ws-merchant-types", text: "Merchant types" }), merchantTypeManager.element]),
   ])]);
-  const pageBody = el("div", {}, [tablist, generalPanel, appearancePanel, typesPanel]);
+  // "Management" (BT-022, Terry, 2026-09-22): the two workspace-deletion cards, moved here from
+  // always-visible-outside-every-tab so they show in exactly one place; `renderDelete` below still
+  // builds nothing at all into `deleteBox` for a non-owner (must not exist in the DOM for anyone
+  // else), so this tab shows a plain explanation instead of an empty panel for them.
+  const managementPanel = panel("management", [deleteBox]);
+  const pageBody = el("div", {}, [tablist, generalPanel, appearancePanel, typesPanel, managementPanel]);
 
   const bodyHost = el("div");
-  const element = el("section", {}, [pageHead("Workspace"), bodyHost, deleteBox]);
+  const element = el("section", {}, [pageHead("Workspace"), bodyHost]);
   const classicArrangement = pageBody;
   const FLAGSHIP_IDS = new Set(["ledgerfly-forecast", "finexa-budget", "acru-overview"]);
   let mountedLayout = null;
@@ -682,81 +900,6 @@ export function createView(ctx) {
   }
   let linkedFocusDone = false;
 
-  // Workspace category colours (BT-011-04): owners and managers choose them; everyone sees them.
-  // Each member may still pick personal colours in My settings.
-  let colourSig = "";
-  function renderColours(state) {
-    const data = sliceFor(state, "categories").data;
-    if (!data || !sliceFor(state, "members").data) return;
-    // Categories are a shared list (workspace setting "Who manages shared lists"); the server decides.
-    const canEdit = ["owner", "manager"].includes(me().role) || (me().role === "member" && managesSharedLists(state));
-    const cats = data.categories.filter((c) => !c.archived);
-    const iconsData = sliceFor(state, "icons").data;
-    const sig = JSON.stringify([cats.map((c) => [c.id, c.name, c.color, c.colorSource, c.icon, c.iconSource]), canEdit, iconsData ? iconsData.catalog : null]);
-    if (sig === colourSig) return;
-    colourSig = sig;
-    // A useful summary even while collapsed (BT-021, Terry: "keep... useful summaries visible when
-    // collapsed"): how many categories, and whether any already has a workspace-chosen colour/icon.
-    const customCount = cats.filter((c) => c.colorSource === "workspace" || (c.iconSource === "workspace" && c.icon)).length;
-    groupColours.setSummary(`${cats.length} categor${cats.length === 1 ? "y" : "ies"}${customCount ? `, ${customCount} customized` : ""}`);
-    if (!canEdit) {
-      mount(coloursBox, el("p", { class: "field__help", text: "Owners and managers choose these. You can pick your own colours and icons in My settings." }),
-        el("ul", { class: "stack" }, cats.map((c) => el("li", {}, [categoryLabel(c.name, c.color, c.icon)]))));
-      return;
-    }
-    // Focus returns to the same picker (colour or icon) of the same category after a save.
-    const active = document.activeElement;
-    const focused = active && coloursBox.contains(active) && active.closest ? active.closest("[data-category]") : null;
-    const focusId = focused ? focused.dataset.category : null;
-    const focusIndex = focused ? [...focused.querySelectorAll(".themepick__toggle")].indexOf(active) : -1;
-    const rows = cats.map((c) => {
-      const labelId = `ws-colour-${c.id}`;
-      // A failed save puts the previous colour back and says so beside the picker (A11Y2-006).
-      const error = el("p", { class: "error-text small", role: "alert", hidden: true });
-      let picker = null;
-      const patchColour = async (color) => {
-        const out = await store.actions.write((ws) => api.request("categories", { method: "PATCH", query: { workspaceId: ws }, body: { categoryId: c.id, color } }), ["categories"]);
-        if (out.ok) { announce(`${c.name}: colour ${color ? "saved" : "reset to default"}.`); return; }
-        if (picker) picker.select(c.color);
-        error.textContent = messageFor(out.error);
-        error.hidden = false;
-      };
-      picker = createThemePicker({
-        value: c.color, entries: colourEntries(data.palette, c.color), labelledBy: labelId,
-        listLabel: `Colours for ${c.name}`, namePrefix: `${c.name} colour`, onPick: (hex) => { void patchColour(hex); },
-      });
-      // The category icon (BT-011-05): same rules as the colour; "Default" is the icon it was created with.
-      const chosenIcon = c.iconSource === "workspace" ? c.icon : null;
-      const iconPick = createIconPicker({
-        value: chosenIcon, inherited: c.defaultIcon, name: c.name, label: "Icon", tint: c.color,
-        onPick: async (id) => {
-          const out = await store.actions.write((ws) => api.request("categories", { method: "PATCH", query: { workspaceId: ws }, body: { categoryId: c.id, icon: id || null } }), ["categories"]);
-          if (out.ok) { announce(`${c.name}: icon ${id ? "saved" : "reset to default"}.`); return; }
-          iconPick.select(chosenIcon);
-          error.textContent = messageFor(out.error);
-          error.hidden = false;
-        },
-      });
-      // One compact row per category, named by a heading and grouped, so the list scans quickly
-      // (UXI-3); the colour and icon pickers sit side by side on wide screens.
-      return el("div", { class: "catrow", role: "group", "aria-labelledby": `${labelId}-name`, dataset: { category: c.id } }, [
-        el("h3", { class: "catrow__name", id: `${labelId}-name` }, [categoryLabel(c.name, c.color, c.icon)]),
-        el("div", { class: "field" }, [el("p", { class: "field__label", id: labelId, text: "Colour" }), picker.element]),
-        iconPick.element, error,
-        el("div", { class: "row catrow__meta" }, [badge(c.colorSource === "workspace" ? "Workspace colour" : "Default colour", "source"),
-          c.colorSource === "workspace" ? button("Reset to default", () => { void patchColour(null); }, { small: true, variant: "ghost", attrs: { "aria-label": `Reset to default: ${c.name} colour` } }) : null,
-          badge(chosenIcon ? "Workspace icon" : "Default icon", "source")]),
-      ]);
-    });
-    mount(coloursBox, el("p", { class: "field__help", text: "Everyone in the workspace sees these colours and icons unless they pick their own in My settings. Colours are checked so they stay visible on light and dark backgrounds. Renaming or archiving a category keeps its colour and icon." }), ...rows);
-    if (focusId) {
-      const row = rows.find((r) => r.dataset.category === focusId);
-      const toggles = row ? [...row.querySelectorAll(".themepick__toggle")] : [];
-      const toggle = toggles[Math.max(0, focusIndex)];
-      if (toggle) toggle.focus();
-    }
-  }
-
   // Icons for the workspace's account, bill and merchant types (BT-011-05). Owners and managers
   // choose; everyone else sees the result. Each group is collapsed so the card stays short.
   let typesSig = "";
@@ -811,7 +954,7 @@ export function createView(ctx) {
     const ws = (state.workspaces || []).find((w) => w.id === state.selectedWorkspaceId);
     const layoutId = effectiveLayoutId(state, ws);
     if (mountedLayout !== layoutId) { mount(bodyHost, arrangementFor(layoutId)); mountedLayout = layoutId; }
-    renderColours(state);
+    categoryManager.render(state);
     accountTypeManager.render(state);
     categoryTypeManager.render(state);
     merchantTypeManager.render(state);
@@ -894,8 +1037,10 @@ export function createView(ctx) {
     renderDelete(state, role);
   }
 
-  // "Delete workspace" (owners only). Built only when this person owns the current workspace, so the
-  // card and its button do not exist in the DOM for anyone else (not merely hidden).
+  // "Soft Delete Workspace" (renamed from "Delete workspace", BT-022) and the PERMANENT deletion
+  // card (owners only). Built only when this person owns the current workspace, so the cards and
+  // their buttons do not exist in the DOM for anyone else (not merely hidden) — a non-owner instead
+  // gets one plain explanatory line, so the Management tab is never a silent blank panel for them.
   let deleteSig = "";
   function renderDelete(state, role) {
     const workspace = (state.workspaces || []).find((w) => w.id === wsId);
@@ -903,18 +1048,21 @@ export function createView(ctx) {
     const sig = JSON.stringify([owner, workspace ? workspace.name : null]);
     if (sig === deleteSig) return;
     deleteSig = sig;
-    if (!owner) { mount(deleteBox); return; }
+    if (!owner) {
+      mount(deleteBox, el("p", { class: "field__help", text: "Only this workspace's owner can soft delete or permanently delete it." }));
+      return;
+    }
     mount(deleteBox,
       el("section", { class: "card card--danger", "aria-labelledby": "ws-delete" }, [
-        el("h2", { class: "card__title", id: "ws-delete", text: "Delete workspace" }),
+        el("h2", { class: "card__title", id: "ws-delete", text: "Soft Delete Workspace" }),
         el("p", { class: "field__help", text: "Everyone in this workspace loses access. It can be brought back from Deleted workspaces in My settings." }),
-        button("Delete workspace…", () => { openDeleteDialog(ctx, workspace); }, { variant: "danger" }),
+        button("Soft delete workspace…", () => { openDeleteDialog(ctx, workspace); }, { variant: "danger" }),
       ]),
-      // BT-014-04: an UNMISTAKABLY distinct action from "Delete workspace" above — this one has no
-      // undo, no "Bring back". Different heading, wording, icon and a stronger border/background
+      // BT-014-04: an UNMISTAKABLY distinct action from "Soft Delete Workspace" above — this one has
+      // no undo, no "Bring back". Different heading, wording, icon and a stronger border/background
       // (flagged by the backend implementer as a terminology-confusion risk to avoid).
       el("section", { class: "card card--danger card--danger-permanent", "aria-labelledby": "ws-delete-permanent" }, [
-        el("h2", { class: "card__title", id: "ws-delete-permanent" }, [withIcon("alert", "Permanently delete workspace (cannot be undone)")]),
+        el("h2", { class: "card__title", id: "ws-delete-permanent" }, [withIcon("alert", "Permanently Delete This workspace- (Cannot be undone)")]),
         el("p", { class: "field__help", text: "This is not the recoverable action above. Once confirmed, this workspace and everything in it are gone for good — no \"Bring back\". You can take a backup first." }),
         button("Permanently delete workspace…", () => { openWorkspacePermanentDeleteDialog(ctx, { wsId: workspace.id, onDeleted: () => { if (ctx.navigate) ctx.navigate("dashboard"); } }); }, { variant: "danger" }),
       ]));

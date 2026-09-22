@@ -40,16 +40,16 @@ export async function run(h, t) {
   // grouping/order, which is what this check verifies.
   const groups = await groupState(s);
   const byName = (n) => groups.find((g) => g.name === n);
-  const CORE = ["Profile & appearance", "Display, privacy & contacts", "Staging link", "Category colours & icons"];
+  const CORE = ["Profile & appearance", "Display, privacy & contacts", "Staging link", "My category appearance"];
   t.check("My Settings is organized into named, collapsible sections in a sensible task order", {
     expected: CORE, actual: groups.map((g) => g.name).filter((n) => CORE.includes(n)),
   });
   t.check("only the genuinely advanced section (category colours and icons) starts collapsed; the everyday ones start open, exactly as visible as before", {
     expected: { profile: "true", display: "true", staging: "true", colours: "false" },
-    actual: { profile: byName("Profile & appearance").expanded, display: byName("Display, privacy & contacts").expanded, staging: byName("Staging link").expanded, colours: byName("Category colours & icons").expanded },
+    actual: { profile: byName("Profile & appearance").expanded, display: byName("Display, privacy & contacts").expanded, staging: byName("Staging link").expanded, colours: byName("My category appearance").expanded },
   });
   t.check("a collapsed section's content is not merely styled shut — it is actually hidden from the page", {
-    expected: true, actual: byName("Category colours & icons").bodyHidden,
+    expected: true, actual: byName("My category appearance").bodyHidden,
   });
 
   // ---- no regression: every existing card still renders and works inside its new section ------------
@@ -61,7 +61,7 @@ export async function run(h, t) {
   });
 
   // ---- expanding the advanced section reveals its own, already-existing content ----------------------
-  await s.click({ role: "button", name: "Category colours & icons", scope: "main" });
+  await s.click({ role: "button", name: "My category appearance", scope: "main" });
   await s.waitFor("(() => { const b = document.querySelector('main .settings-group__body #set-colours'); return !!b; })()", { what: "the Category colours and icons card to be visible after expanding its section" });
   const afterExpand = await s.evaluate("(() => { const b = document.getElementById('set-colours'); return b ? !b.closest('.settings-group__body').hidden : false; })()");
   t.check("expanding the advanced section shows its real content (Category colours and icons)", { expected: true, actual: afterExpand });
@@ -79,7 +79,7 @@ export async function run(h, t) {
   // Leave this browser's remembered state as it was found, so a re-run of this scenario alone (not
   // through the full suite's fresh-seed-per-scenario isolation) still sees the same defaults.
   await s.click({ role: "button", name: "Staging link", scope: "main" });
-  await s.click({ role: "button", name: "Category colours & icons", scope: "main" });
+  await s.click({ role: "button", name: "My category appearance", scope: "main" });
 
   await s.settle();
   t.check("alice: no exceptions, console errors or failed requests in the browser", { expected: [], actual: s.problems() });

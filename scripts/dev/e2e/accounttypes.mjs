@@ -158,6 +158,58 @@ export async function run(h, t) {
   const afterRetireText = await b.alice.text("main");
   t.check("the account created with the now-retired type still shows that type's name on the Accounts list", { expected: true, actual: afterRetireText.includes(CARD_NAME) });
 
+  // ---- BT-023 (Terry, 2026-09-22): "anything created needs to be able to be deleted. However, if
+  // there are any items attached to it, warn the user X number of records will be unset or have to
+  // be rechosen, and show which items are affected." A built-in type never offers this at all; a
+  // custom type in use is never blocked — the review shows exactly how many accounts would lose
+  // this optional label before it is permanently deleted. Account/Category/Merchant types all share
+  // this one generic manager, so real-browser proof here is real-browser proof for all three.
+  const DEL_TYPE = "E2E Deletable Account Type";
+  await b.alice.goto("workspace");
+  await b.alice.click({ role: "tab", name: "Categories & types" });
+  await b.alice.waitForText("Account types", { scope: "main" });
+  // The "Add account type" disclosure remembers its own open/closed state per browser (it was
+  // already opened once earlier in this very scenario) — check before clicking, since clicking an
+  // already-open toggle would close it instead of opening it.
+  const addTypeAlreadyOpen = await b.alice.evaluate(`[...document.querySelectorAll(${JSON.stringify(ACCOUNT_TYPES_CARD)} + ' label')].some((l) => l.textContent === 'New type name')`);
+  if (!addTypeAlreadyOpen) await b.alice.click({ role: "button", name: "Add account type", scope: ACCOUNT_TYPES_CARD });
+  await b.alice.fill({ label: "New type name", scope: ACCOUNT_TYPES_CARD }, DEL_TYPE);
+  await b.alice.choose("Accounting behaviour", "Cash", { scope: ACCOUNT_TYPES_CARD });
+  await b.alice.click({ role: "button", name: "Save account type", scope: ACCOUNT_TYPES_CARD });
+  await b.alice.waitForText(DEL_TYPE, { scope: "main" });
+  await b.alice.settle();
+  await api("alice").ok("accounts", { method: "POST", query: q, body: { name: "E2E Cash With Deletable Type", type: "cash", currency: "USD", accountTypeId: (await api("alice").ok("account-types", { query: q })).types.find((x) => x.name === DEL_TYPE).id } });
+  await b.alice.reload();
+  await b.alice.click({ role: "tab", name: "Categories & types" });
+  await b.alice.waitForText(DEL_TYPE, { scope: "main" });
+  const noDeleteOnBuiltin = await b.alice.evaluate(`(() => {
+    const rows = [...document.querySelectorAll(${JSON.stringify(ACCOUNT_TYPES_CARD)} + ' .typerow')];
+    const checking = rows.find((r) => r.querySelector('summary').textContent.includes('Checking'));
+    return checking ? [...checking.querySelectorAll('button')].some((b) => b.textContent === 'Delete permanently') : null;
+  })()`);
+  t.check("a built-in account type never offers permanent deletion at all", { expected: false, actual: noDeleteOnBuiltin });
+  await b.alice.evaluate(`(() => {
+    const rows = [...document.querySelectorAll(${JSON.stringify(ACCOUNT_TYPES_CARD)} + ' .typerow')];
+    const row = rows.find((r) => r.querySelector('summary').textContent.includes(${JSON.stringify(DEL_TYPE)}));
+    if (row && !row.open) row.querySelector('summary').click();
+  })()`);
+  await b.alice.click({ role: "button", name: `Permanently delete ${DEL_TYPE}` });
+  await b.alice.waitFor("!!document.querySelector('.modal')", { what: "the impact dialog for the deletable account type" });
+  await b.alice.waitForText("1 account will keep everything else and only lose the link.", { scope: ".modal" });
+  const shotWarning = await b.alice.shot("3-type-delete-warning");
+  t.note(`screenshot of the "will be unset" warning before permanently deleting an in-use account type: ${shotWarning}`);
+  await b.alice.click({ role: "button", name: "Continue", scope: ".modal" });
+  await b.alice.fill({ label: `Type "${DEL_TYPE}" to confirm`, scope: ".modal" }, DEL_TYPE);
+  await b.alice.click({ role: "button", name: "Permanently delete", scope: ".modal" });
+  await b.alice.waitFor("!document.querySelector('.modal')", { what: "the dialog to close after deleting the account type" });
+  await b.alice.settle();
+  const typesAfter = (await api("alice").ok("account-types", { query: q })).types;
+  const cashAfter = (await api("alice").ok("accounts", { query: q })).accounts.find((a) => a.name === "E2E Cash With Deletable Type");
+  t.check("the type is permanently gone, and the account that used it survives with its optional accountTypeId unset — never touching the account, its balance or its fixed accounting class", {
+    expected: { typeGone: true, accountSurvives: true, accountTypeId: null, type: "cash" },
+    actual: { typeGone: !typesAfter.some((x) => x.name === DEL_TYPE), accountSurvives: !!cashAfter, accountTypeId: cashAfter && cashAfter.accountTypeId, type: cashAfter && cashAfter.type },
+  });
+
   // ---- every browser stayed clean ---------------------------------------------------------------------
   for (const s of Object.values(b)) { await s.settle(); t.check(`${s.name}: no exceptions, console errors or failed requests in the browser`, { expected: [], actual: s.problems() }); }
 }
