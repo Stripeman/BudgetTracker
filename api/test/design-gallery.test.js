@@ -36,7 +36,14 @@ describe('BT-013 design gallery: permissions', () => {
     const data = ok(await h.call('design-gallery', 'GET', { as: 'dave' }));
     assert.equal(data.concepts.length, 15);
     assert.deepEqual(data.requiredPages, ['dashboard', 'transactions', 'bills', 'budget', 'accounts', 'shared', 'trips', 'mysettings', 'worksettings']);
-    assert.deepEqual(data.realLayoutOptions, [{ value: 'classic', label: 'Classic (current)' }]);
+    // BT-013-16: the three flagship reference-matched concepts became real, selectable workspace
+    // layout options alongside Classic; the other twelve stay review-only in this Gallery.
+    assert.deepEqual(data.realLayoutOptions, [
+      { value: 'classic', label: 'Classic (current)' },
+      { value: 'ledgerfly-forecast', label: 'Executive Forecast' },
+      { value: 'finexa-budget', label: 'Budget Workspace' },
+      { value: 'acru-overview', label: 'Financial Overview' },
+    ]);
     assert.deepEqual(data.picks, { selectedIds: [], note: '', updatedAt: null, updatedBy: null });
     for (const c of data.concepts) assert.deepEqual(c.catalog, { status: 'review', replacementId: null, note: '' });
   });

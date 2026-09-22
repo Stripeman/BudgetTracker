@@ -73,18 +73,21 @@ const SETTINGS = freezeAll({
     options: [opt('confirm', 'Allowed after a confirmation'), opt('never', 'Not allowed')],
     explanation: 'Whether a change to a budget’s plan may reach back into periods that have already finished. With “Allowed after a confirmation” the person changing it must tick a box to say it is intended; with “Not allowed” a change always starts in the current period or later, so finished periods keep the plan they had.',
   },
-  // Layout theme (BT-013, Terry's 2026-09-16 design brief). The real, selectable mechanism for the
-  // "workspace Layout setting" the brief asks for: stable id (never a display name), owners/managers
-  // change it, audited with before/after like every other setting, returned in the workspace GET.
-  // Only one real option exists today — `classic`, the application's one existing implicit layout —
-  // because the 20 new concepts under review in the Design Gallery (site administrators only) are not
-  // yet selectable on any real workspace; Terry has not chosen which to keep. When he does, their ids
-  // join `options` here unchanged — no new mechanism, no migration of this setting's shape.
+  // Layout theme (BT-013, Terry's 2026-09-16 design brief; made real by BT-013-16). The real,
+  // selectable mechanism for the "workspace Layout setting" the brief asks for: stable id (never a
+  // display name), owners/managers change it, audited with before/after like every other setting,
+  // returned in the workspace GET. `classic` (today's implicit application layout) plus the three
+  // flagship reference-matched Gallery concepts (Executive Forecast, Budget Workspace, Financial
+  // Overview) are real options; the twelve remaining Gallery concepts stay "Demo only" until
+  // genuinely integrated. This entry only enforces the generic shape (one of the four known ids);
+  // the extra rule that a site-retired or workspace-hidden id may not be newly chosen (an
+  // already-applied value always stays accepted) is enforced in api/workspaces/handler.js `patch()`,
+  // the same layered pattern `reportingCurrency` already uses for its own extra business rule.
   layoutId: {
     group: 'Appearance', type: 'choice', default: REAL_DEFAULT_LAYOUT_ID, changedBy: 'manager',
     label: 'Layout theme',
     options: REAL_LAYOUT_OPTIONS.map((o) => opt(o.value, o.label)),
-    explanation: 'How this workspace’s pages are organised: navigation, density and dashboard composition. This never changes financial records, permissions, calculations or filters, and never changes anyone’s personal light/dark or colour-palette choice. Terry is reviewing 20 new layout concepts in the Design Gallery (site administrators only); once he chooses which to keep, they will appear here as options for every workspace.',
+    explanation: 'How this workspace’s pages are organised: navigation, density and dashboard composition. This never changes financial records, permissions, calculations or filters, and never changes anyone’s personal light/dark or colour-palette choice. The Layout Picker in Workspace Settings shows each option’s preview, colour customization and removal choice; the other Gallery concepts stay labelled "Demo only" until they are genuinely integrated.',
   },
   // (j) Bill defaults. Each bill's own reminder still wins; an entered date always wins.
   billReminderDays: {

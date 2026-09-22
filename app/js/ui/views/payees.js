@@ -13,6 +13,7 @@ import { normalize } from "../merchantselect.js";
 import { icon, withIcon, iconLabel, defaultIconFor } from "../icons.js";
 import { createIconPicker, iconChange } from "../iconpicker.js";
 import { createActionsMenu } from "../actionsmenu.js";
+import { effectiveLayoutId, layoutAccentVars } from "../../core/layoutmeta.js";
 
 const FIELD_LABELS = {
   name: "Name", aliases: "Other names", type: "Type", contact: "Contact details", customerNumber: "Customer number",
@@ -29,13 +30,23 @@ export function createView(ctx) {
   const show = pickerSelect([{ value: "active", label: "Active" }, { value: "closed", label: "Closed" }, { value: "all", label: "All" }], "active", {}, { search: false });
   const search = input({ type: "search", placeholder: "Name or other name" });
   const add = el("div", { class: "page-head__actions" });
-  const element = el("section", {}, [
-    el("div", { class: "page-head" }, [el("h1", { text: "Merchants" }), add]),
-    el("p", { class: "muted", text: "Totals include only entries you are allowed to see. Merchants are never deleted: close one you no longer use and its history stays." }),
-    missingBox,
-    el("div", { class: "filters" }, [field("Show", show), field("Search", search)]),
-    box,
-  ]);
+  const intro = el("p", { class: "muted", text: "Totals include only entries you are allowed to see. Merchants are never deleted: close one you no longer use and its history stays." });
+  const filtersRow = el("div", { class: "filters" }, [field("Show", show), field("Search", search)]);
+  // BT-013-16: the SAME persistent elements every layout reuses (the real merchant list, every real
+  // action — Edit, History, Close/Reopen, Delete permanently — and the pending-merchants panel) —
+  // only the surrounding card wrapper per layout differs, exactly like the other real pages.
+  const bodyHost = el("div");
+  const element = el("section", {}, [el("div", { class: "page-head" }, [el("h1", { text: "Merchants" }), add]), bodyHost]);
+  const classicArrangement = el("div", {}, [intro, missingBox, filtersRow, box]);
+  const FLAGSHIP_IDS = new Set(["ledgerfly-forecast", "finexa-budget", "acru-overview"]);
+  let mountedLayout = null;
+  function arrangementFor(layoutId) {
+    if (!FLAGSHIP_IDS.has(layoutId)) return classicArrangement;
+    return el("div", { class: "dashflag", vars: layoutAccentVars(ctx.store.getState(), layoutId) }, [
+      intro, missingBox,
+      el("section", { class: "card", "aria-labelledby": "merch-list" }, [el("h2", { class: "card__title", id: "merch-list", text: "Merchants" }), filtersRow, box]),
+    ]);
+  }
   let last = null;
   show.addEventListener("change", () => { if (last) render(last); });
   // The number of results is announced after typing pauses (A11Y2-007).
@@ -171,9 +182,16 @@ export function createView(ctx) {
 
   function update(state) {
     last = state;
+    const ws = (state.workspaces || []).find((w) => w.id === state.selectedWorkspaceId);
+    const layoutId = effectiveLayoutId(state, ws);
+    if (mountedLayout !== layoutId) { mount(bodyHost, arrangementFor(layoutId)); mountedLayout = layoutId; }
     // A viewer cannot add entries, so a merchant of theirs could never be used (UX2-009).
-    const role = ((state.workspaces || []).find((w) => w.id === state.selectedWorkspaceId) || {}).role;
-    mount(add, role && role !== "viewer" ? button("Add merchant", () => openMerchantEditor(ctx), { variant: "primary" }) : null);
+    const role = ws ? ws.role : null;
+    mount(add, role && role !== "viewer"
+      ? (state.layoutPreview
+        ? button("Add merchant", () => {}, { variant: "primary", attrs: { disabled: true, "aria-disabled": "true", title: "This is a read-only layout preview. Exit preview to make changes." } })
+        : button("Add merchant", () => openMerchantEditor(ctx), { variant: "primary" }))
+      : null);
     renderMissing(state);
     render(state);
   }

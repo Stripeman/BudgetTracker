@@ -665,11 +665,13 @@ describe('Workspace settings: older documents, backups and restores', () => {
   });
 });
 
-// BT-013 (Terry's 2026-09-16 design brief): the real plumbing for the workspace "Layout theme"
-// setting — schema, API, audit, permissions, generic UI — proven now with the one real option
-// ("classic", today's existing implicit layout). The 20 concepts under review in the Design Gallery
-// (site administrators only, /api/design-gallery) are deliberately NOT options here yet.
-describe('BT-013 layout theme: the workspace setting\'s real plumbing (only "classic" is a real option today)', () => {
+// BT-013 (Terry's 2026-09-16 design brief), extended real by BT-013-16 (Terry, 2026-09-21: "a real,
+// user-facing Layout Picker... using the designs already created"): the real plumbing for the
+// workspace "Layout theme" setting — schema, API, audit, permissions, generic UI — with Classic plus
+// the three flagship reference-matched Gallery concepts now real, selectable options. The other
+// twelve concepts under review in the Design Gallery (site administrators only, /api/design-gallery)
+// are deliberately NOT options here yet ("Demo only").
+describe('BT-013/BT-013-16 layout theme: the workspace setting\'s real plumbing (Classic and the three flagship layouts are real options)', () => {
   test('every workspace starts on "classic"; only owners and managers may change it; changing it is audited like every other setting', async () => {
     const { h, id } = await setup();
     const alice = ok(await getWs(h, 'alice', id)).workspace;
@@ -677,11 +679,49 @@ describe('BT-013 layout theme: the workspace setting\'s real plumbing (only "cla
     assert.ok(setting, 'layoutId is in the one settings list');
     assert.equal(setting.value, 'classic');
     assert.equal(setting.default, 'classic');
-    assert.deepEqual(setting.options.map((o) => o.value), ['classic']);
+    assert.deepEqual(setting.options.map((o) => o.value), ['classic', 'ledgerfly-forecast', 'finexa-budget', 'acru-overview']);
     assert.equal(setting.changedBy, 'manager');
     assert.equal(setting.canChange, true, 'the owner may change it');
     const bob = ok(await getWs(h, 'bob', id)).workspace;
     assert.equal(bob.settingsList.find((s) => s.key === 'layoutId').canChange, false, 'a member may not');
+  });
+
+  test('BT-013-16: a manager may switch to a real flagship layout, and it is audited like every other setting change', async () => {
+    const { h, id } = await setup();
+    ok(await patchSettings(h, 'alice', id, { layoutId: 'ledgerfly-forecast' }, 'Trying Executive Forecast'));
+    const alice = ok(await getWs(h, 'alice', id)).workspace;
+    assert.equal(valueOf(alice, 'layoutId'), 'ledgerfly-forecast');
+    const doc = await readDoc(h, id);
+    const change = doc.history.at(-1).changes.find((c) => c.field === 'settings.layoutId');
+    assert.deepEqual(change, { field: 'settings.layoutId', from: 'classic', to: 'ledgerfly-forecast' });
+    assert.ok(doc.audit.some((a) => a.action === 'workspace.update' && a.fields.includes('settings.layoutId')));
+  });
+
+  test('BT-013-16: a site-retired layout may not be newly chosen, but a workspace already using it keeps working', async () => {
+    const { h, id } = await setup();
+    ok(await patchSettings(h, 'alice', id, { layoutId: 'finexa-budget' }));
+    const retire = await h.call('site-layouts', 'POST', { as: 'dave', query: { action: 'retire' }, body: { layoutId: 'finexa-budget' } });
+    assert.equal(retire.status, 200, JSON.stringify(retire.body));
+    // Already applied: re-saving the same value is still accepted (no-op).
+    ok(await patchSettings(h, 'alice', id, { layoutId: 'finexa-budget' }));
+    // A different workspace choosing it for the first time is refused — the same harness/storage so
+    // it shares the one site-wide layout catalogue.
+    const other = await household(h);
+    const res = await patchSettings(h, 'alice', other.ws.id, { layoutId: 'finexa-budget' });
+    assert.equal(res.status, 400);
+    assert.equal(res.body.error.code, 'layout_retired');
+  });
+
+  test('BT-013-16: a layout removed from this workspace\'s choices may not be newly chosen here until restored', async () => {
+    const { h, id } = await setup();
+    const hide = await h.call('workspace-layouts', 'PATCH', { as: 'alice', query: { workspaceId: id }, body: { action: 'hide', layoutId: 'acru-overview' } });
+    assert.equal(hide.status, 200, JSON.stringify(hide.body));
+    const res = await patchSettings(h, 'alice', id, { layoutId: 'acru-overview' });
+    assert.equal(res.status, 400);
+    assert.equal(res.body.error.code, 'layout_hidden');
+    const restore = await h.call('workspace-layouts', 'PATCH', { as: 'alice', query: { workspaceId: id }, body: { action: 'restore', layoutId: 'acru-overview' } });
+    assert.equal(restore.status, 200);
+    ok(await patchSettings(h, 'alice', id, { layoutId: 'acru-overview' }));
   });
 
   test('an unknown or not-yet-approved layout id is refused (none of the 20 gallery concepts are selectable here)', async () => {

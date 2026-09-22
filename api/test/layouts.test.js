@@ -89,9 +89,18 @@ describe('BT-013 layout manifests', () => {
     assert.deepEqual(REQUIRED_PAGES, ['dashboard', 'transactions', 'bills', 'budget', 'accounts', 'shared', 'trips', 'mysettings', 'worksettings']);
   });
 
-  test('today\'s one real, selectable layout is "classic" and nothing else — none of the 15 concepts are live-selectable yet', () => {
-    assert.deepEqual(REAL_LAYOUT_OPTIONS, [{ value: 'classic', label: 'Classic (current)' }]);
+  test('BT-013-16: Classic plus the three flagship reference-matched concepts are real, selectable layouts; the other twelve stay review-only', () => {
+    assert.deepEqual(REAL_LAYOUT_OPTIONS, [
+      { value: 'classic', label: 'Classic (current)' },
+      { value: 'ledgerfly-forecast', label: 'Executive Forecast' },
+      { value: 'finexa-budget', label: 'Budget Workspace' },
+      { value: 'acru-overview', label: 'Financial Overview' },
+    ]);
     assert.equal(REAL_DEFAULT_LAYOUT_ID, 'classic');
     assert.ok(!CONCEPT_IDS.includes('classic'));
+    const realIds = REAL_LAYOUT_OPTIONS.map((o) => o.value).filter((id) => id !== 'classic');
+    for (const id of realIds) assert.ok(CONCEPT_IDS.includes(id), `${id} must still be a real Gallery concept`);
+    const demoOnly = CONCEPT_IDS.filter((id) => !realIds.includes(id));
+    assert.equal(demoOnly.length, 12);
   });
 });

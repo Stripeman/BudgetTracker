@@ -32,6 +32,7 @@ import { createActionsMenu } from "../actionsmenu.js";
 // is the one place the dependency runs the other way, calling into it only from an onClick handler
 // (never at module-evaluation time), which ES modules resolve correctly either way.
 import { openBillEditor } from "./bills.js";
+import { effectiveLayoutId, layoutAccentVars } from "../../core/layoutmeta.js";
 
 export { amountWithDirection };
 
@@ -190,7 +191,39 @@ export function createView(ctx) {
   const summary = el("div", { class: "summary", "aria-live": "polite" });
   const tableBox = el("div");
   const actions = el("div", { class: "page-head__actions" });
-  const element = el("section", {}, [el("div", { class: "page-head" }, [el("h1", { text: "Transactions" }), actions]), filterBox, summary, tableBox]);
+  // BT-013-16: the workspace's real, applied (or previewed) layout picks how filterBox/summary/
+  // tableBox are ARRANGED below — the SAME persistent elements every layout reuses (filters, the
+  // table, every edit/reverse/move/delete/add-as-bill action stay completely shared and unchanged;
+  // `mount()` reparents these existing nodes rather than rebuilding them, so nothing inside is ever
+  // lost — an open filter panel or an in-progress action menu survives a layout switch). Only a KPI
+  // strip (the SAME real per-currency summary figures already computed below, never a second
+  // calculation) and the card styling around the table differ per flagship layout.
+  const kpiStrip = el("div");
+  const bodyHost = el("div");
+  const element = el("section", {}, [el("div", { class: "page-head" }, [el("h1", { text: "Transactions" }), actions]), bodyHost]);
+  const classicArrangement = el("div", {}, [filterBox, summary, tableBox]);
+  const FLAGSHIP_IDS = new Set(["ledgerfly-forecast", "finexa-budget", "acru-overview"]);
+  // Genuinely different subhead per flagship identity (matching each one's own Dashboard treatment,
+  // Terry's item 7: "organize reusable presentation components" — the same "Overview"/subhead idiom,
+  // reused here rather than a fourth new pattern invented for this one page).
+  const SUBHEAD = {
+    "finexa-budget": { title: "Overview", note: "Every entry, filtered and totalled." },
+    "acru-overview": { title: "Overview", note: null },
+  };
+  let mountedLayout = null;
+  function arrangementFor(layoutId) {
+    // Only the three real flagship ids get the flagship arrangement — an unknown or demo-only id
+    // (one of the twelve Gallery concepts not yet integrated, or a stale/rolled-back value) falls
+    // back to Classic, exactly like app/js/ui/views/dashboard.js's own `FLAGSHIP_RENDERERS[layoutId]`
+    // lookup, never treated as "anything that is not literally the string classic".
+    if (!FLAGSHIP_IDS.has(layoutId)) return classicArrangement;
+    const sub = SUBHEAD[layoutId];
+    return el("div", { class: "dashflag", vars: layoutAccentVars(ctx.store.getState(), layoutId) }, [
+      sub ? el("div", { class: "dashflag-subhead" }, [el("h2", { text: sub.title }), sub.note ? el("p", { class: "muted small", text: sub.note }) : null]) : null,
+      kpiStrip, filterBox,
+      el("section", { class: "card", "aria-labelledby": "txn-ledger" }, [el("h2", { class: "card__title", id: "txn-ledger", text: "Ledger" }), summary, tableBox]),
+    ]);
+  }
   let debounce = null;
   const controls = {};
   const activeCount = () => Object.values(filters).filter((v) => v !== undefined && v !== "").length;
@@ -244,9 +277,15 @@ export function createView(ctx) {
 
   function update(state) {
     renderFilters(state);
-    mount(actions, canAddEntries(state)
-      ? button("Add expense", () => openQuickEntry(ctx), { variant: "primary" })
-      : addEntriesBlocked(state));
+    const ws = (state.workspaces || []).find((w) => w.id === state.selectedWorkspaceId);
+    const layoutId = effectiveLayoutId(state, ws);
+    if (mountedLayout !== layoutId) { mount(bodyHost, arrangementFor(layoutId)); mountedLayout = layoutId; }
+    // Preview mode's own read-only guard (BT-013-16, whatever layout is being previewed, Classic
+    // included): mirrors app/js/ui/views/dashboard.js's own renderActions — a disabled, explained
+    // button rather than one that opens a form any submit would be refused for anyway.
+    mount(actions, state.layoutPreview
+      ? button("Add expense", () => {}, { variant: "primary", attrs: { disabled: true, "aria-disabled": "true", title: "This is a read-only layout preview. Exit preview to make changes." } })
+      : canAddEntries(state) ? button("Add expense", () => openQuickEntry(ctx), { variant: "primary" }) : addEntriesBlocked(state));
     const prefs = state.preferences;
     const effective = (prefs && prefs.effective) || {};
     const txns = sliceFor(state, "transactions");
@@ -263,6 +302,22 @@ export function createView(ctx) {
         ` (${x.count} ${x.count === 1 ? "entry" : "entries"})`,
       ])));
     } else mount(summary);
+    // BT-013-16: the flagship layouts' own KPI strip — the SAME real per-currency figures the plain
+    // summary line above already states, never a second calculation, just a more visual composition
+    // for the one currency with the most entries filtered (matching Dashboard's own single-currency
+    // KPI-strip convention). Not shown at all on Classic (kpiStrip is not in its DOM tree).
+    if (txns.data && txns.data.summary.length) {
+      const x = [...txns.data.summary].sort((a, b) => b.count - a.count)[0];
+      mount(kpiStrip, el("div", { class: "dashflag-kpis" }, [
+        { label: "Spent", value: fmt(x.gross, x.currency), emphasize: true },
+        { label: "Refunds", value: fmt(x.refunds, x.currency) },
+        { label: "Net", value: fmt(x.net, x.currency) },
+        { label: "Entries", value: String(x.count) },
+      ].map((k) => el("div", { class: ["dashflag-kpi", k.emphasize ? "dashflag-kpi--emphasis" : ""] }, [
+        el("p", { class: "dashflag-kpi__label", text: k.label }),
+        el("p", { class: "dashflag-kpi__value", text: k.value }),
+      ]))));
+    } else mount(kpiStrip);
     if (s) { mount(tableBox, s); return; }
     // Merchant and account icons come from the records themselves (BT-011-05).
     const merchantIcons = new Map(((sliceFor(state, "payees").data || {}).payees || []).map((p) => [p.id, p.icon || "store"]));

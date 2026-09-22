@@ -13,6 +13,7 @@ import { icon, withIcon, defaultIconFor } from "../icons.js";
 import { createIconPicker, iconChange } from "../iconpicker.js";
 import { managesSharedLists } from "../../core/workspacesettings.js";
 import { createActionsMenu } from "../actionsmenu.js";
+import { effectiveLayoutId, layoutAccentVars } from "../../core/layoutmeta.js";
 
 const CURRENCIES = ["EUR", "USD", "GBP", "CHF", "SEK", "NOK", "DKK", "PLN", "CZK", "HUF", "CAD", "AUD", "NZD", "JPY", "SGD", "HKD", "INR", "ZAR"];
 const GRANTABLE = [["view-balances", "See balance"], ["view-transactions", "See entries"], ["create", "Add entries"], ["edit", "Edit entries"], ["delete", "Delete entries"], ["comment", "Comment"], ["download-receipts", "Download receipts"], ["export", "Export"]];
@@ -159,7 +160,24 @@ export function createView(ctx) {
   }, { small: true, attrs: { "aria-expanded": "false" } });
   const toggleBox = el("div");
   const listBox = el("div");
-  const element = el("section", {}, [pageHead("Accounts", [button("Add account", () => openAddAccount(ctx), { variant: "primary" })]), el("div", { class: "stack" }, [box, toggleBox, listBox])]);
+  // BT-013-16: the SAME persistent `box` (the real accounts table, with every real action — Edit,
+  // Close/Reopen, debt actions, Who can see this, Remove, Delete permanently — unchanged) is
+  // reparented between arrangements; only the surrounding card wrapper per layout differs. "Add
+  // account" stays exactly as it was — a static button present immediately at createView time
+  // (several existing tests click it before any update() call) — never gated on preview here; the
+  // store's own write() guard is the authoritative protection for the dialog it opens.
+  const bodyHost = el("div", { class: "stack" });
+  const element = el("section", {}, [pageHead("Accounts", [button("Add account", () => openAddAccount(ctx), { variant: "primary" })]), bodyHost]);
+  const classicArrangement = el("div", { class: "stack" }, [box, toggleBox, listBox]);
+  const FLAGSHIP_IDS = new Set(["ledgerfly-forecast", "finexa-budget", "acru-overview"]);
+  let mountedLayout = null;
+  function arrangementFor(layoutId) {
+    if (!FLAGSHIP_IDS.has(layoutId)) return classicArrangement;
+    return el("div", { class: "dashflag", vars: layoutAccentVars(ctx.store.getState(), layoutId) }, [
+      el("section", { class: "card", "aria-labelledby": "acc-list" }, [el("h2", { class: "card__title", id: "acc-list", text: "Accounts" }), box]),
+      toggleBox, listBox,
+    ]);
+  }
   let lastState = null;
 
   async function loadRemoved() {
@@ -226,6 +244,9 @@ export function createView(ctx) {
 
   function update(state) {
     lastState = state;
+    const ws = (state.workspaces || []).find((w) => w.id === state.selectedWorkspaceId);
+    const layoutId = effectiveLayoutId(state, ws);
+    if (mountedLayout !== layoutId) { mount(bodyHost, arrangementFor(layoutId)); mountedLayout = layoutId; }
     if (state.selectedWorkspaceId !== removed.ws) {
       removed.ws = state.selectedWorkspaceId;
       removed.open = false;

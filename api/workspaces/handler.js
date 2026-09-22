@@ -25,6 +25,7 @@ const money = require('../_shared/money');
 const audit = require('../_shared/audit');
 const groups = require('../_shared/groups');
 const workspaceSettings = require('../_shared/workspace-settings');
+const layoutCatalog = require('../_shared/layout-catalog');
 const siteSettings = require('../_shared/site');
 const workspaceDeletion = require('../_shared/workspace-deletion');
 const siteDeletions = require('../_shared/site-deletions');
@@ -115,6 +116,10 @@ async function create(ctx, req) {
 async function patch(ctx, req) {
   const id = requireId(query(req, 'id'), 'id');
   const body = fields.onlyKeys(readBody(req), ['name', 'settings', 'reason']);
+  // Read the layout catalogue once, outside the workspace's own write, only when a `layoutId` change
+  // is actually requested — `mutateWorkspace`'s callback below must stay synchronous (BT-013-16).
+  const wantsLayout = !!(body.settings && typeof body.settings === 'object' && !Array.isArray(body.settings) && Object.prototype.hasOwnProperty.call(body.settings, 'layoutId'));
+  const layoutCatalogDoc = wantsLayout ? (await layoutCatalog.readCatalog(ctx.storage)).catalog : null;
   const { result } = await store.mutateWorkspace(ctx, id, (doc, member) => {
     if (!roleAtLeast(member.role, 'manager')) throw forbidden('Only owners and managers can change workspace settings.');
     const changed = [];
@@ -139,6 +144,17 @@ async function patch(ctx, req) {
         const open = s.reportingCurrency !== doc.settings.reportingCurrency ? groups.openCurrencies(doc) : [];
         if (open.length) throw conflict(`Shared expenses are not settled up in ${open.join(', ')}. Settle up first, then change the reporting currency.`, 'group_balances_open');
         set('settings.reportingCurrency', doc.settings.reportingCurrency, s.reportingCurrency, () => { doc.settings.reportingCurrency = s.reportingCurrency; });
+      }
+      // BT-013-16: the extra business rule layered onto `layoutId` beyond its generic allowed-ids
+      // shape — a site-retired or workspace-hidden id may not be NEWLY chosen; the value already
+      // applied always stays accepted (never breaks a workspace already using it), matching the
+      // "retire, never delete" behaviour icon selection already has.
+      if (parsed.layoutId !== undefined) {
+        const currentLayoutId = workspaceSettings.get(doc, 'layoutId');
+        layoutCatalog.validateChoice(layoutCatalogDoc, parsed.layoutId, { current: currentLayoutId });
+        if (parsed.layoutId !== currentLayoutId && (doc.hiddenLayouts || []).includes(parsed.layoutId)) {
+          throw badRequest('This layout has been removed from this workspace’s choices. Restore it in Workspace Settings first.', 'layout_hidden');
+        }
       }
       for (const c of workspaceSettings.changesFor(doc, parsed, member)) set(`settings.${c.key}`, c.from, c.to, () => { doc.settings[c.key] = c.to; });
     }

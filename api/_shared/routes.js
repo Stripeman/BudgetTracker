@@ -50,6 +50,19 @@ const ROUTES = Object.freeze({
   // returns the manifests, catalog overrides and Terry's recorded picks; PATCH records a catalog
   // change or a pick. Never financial data; never wired to a real workspace's data.
   'design-gallery': { methods: ['GET', 'PATCH'] },
+  // The real workspace Layout Picker (BT-013-16): members only. GET the real layout catalogue
+  // (built-ins, retirement/selectability, this workspace's hidden list and default colours); PATCH
+  // hides/restores a layout for this workspace, sets its workspace-default colour scheme, or
+  // publishes the caller's own personal Gallery colour choice as that default (manager+, explicit
+  // action). Applying a layout itself stays the existing `PATCH /api/workspaces?id=` (`layoutId`) —
+  // never duplicated here. No financial data.
+  'workspace-layouts': { methods: ['GET', 'PATCH'] },
+  // The site-wide layout catalogue (BT-013-16): site administrators only, mirrors api/icons for
+  // built-ins — retire/reinstate and an always-explained delete-blocked response (every real layout
+  // today is built-in, shipped code; genuine deletion needs a later code change). GET also reports
+  // usage counts (how many workspaces apply or have hidden each layout) via the same
+  // structure-only enumeration the workspace directory already uses. Never financial data.
+  'site-layouts': { methods: ['GET', 'POST'] },
 });
 
 module.exports = { ROUTES };

@@ -117,6 +117,38 @@ fieldset.budget-line { margin: 0; padding: var(--space-3); border: 1px solid var
 .badge--env { text-transform: uppercase; letter-spacing: 0.04em; }
 .badge--source { font-size: 0.7rem; }
 
+/* BT-013-16: the real workspace Layout Picker (Workspace settings). Plain app tokens only — the
+   Design Gallery's own `.g*` classes (app/styles/gallery.css) stay scoped to its fictional-data-only
+   preview pages, never reused here for a real-data view (see gallery.css's own header comment). */
+.layoutpicker-grid { display: grid; gap: var(--space-3); grid-template-columns: repeat(auto-fit, minmax(min(18rem, 100%), 1fr)); margin-block: var(--space-3); }
+.layoutpicker-card { display: flex; flex-direction: column; gap: var(--space-2); padding: var(--space-3); border: 1px solid var(--border); border-radius: var(--radius-lg); background: var(--surface); }
+.layoutpicker-card h3 { margin: 0; font-size: var(--text-base); }
+.layoutpicker-card--demo { opacity: 0.85; }
+.layoutpicker-thumb { height: 4.5rem; border-radius: var(--radius); background: linear-gradient(135deg, var(--lp-light, var(--accent)), var(--lp-dark, var(--accent))); }
+.layoutpicker-demoheading { margin-top: var(--space-4); font-size: var(--text-sm); color: var(--text-muted); }
+
+/* BT-013-16: the real per-layout Dashboard renderers (app/js/ui/views/dashboard.js). `--flag-accent`
+   resolves to the layout's own colour identity (personal override, else its built-in accent) for the
+   correct light/dark mode — plain app tokens otherwise, never the Gallery's fictional-data-only `.g*`
+   classes (app/styles/gallery.css). */
+.dashflag { --flag-accent: var(--flag-light, var(--accent)); }
+[data-color-scheme="dark"] .dashflag { --flag-accent: var(--flag-dark, var(--accent)); }
+.dashflag-kpis { display: grid; gap: var(--space-3); grid-template-columns: repeat(auto-fit, minmax(min(12rem, 100%), 1fr)); margin-bottom: var(--space-4); }
+.dashflag-kpi { padding: var(--space-3); border: 1px solid var(--border); border-radius: var(--radius-lg); background: var(--surface); }
+.dashflag-kpi--emphasis { border-color: var(--flag-accent); background: color-mix(in srgb, var(--flag-accent) 10%, var(--surface)); }
+.dashflag-kpi__label { margin: 0; font-size: var(--text-sm); color: var(--text-muted); }
+.dashflag-kpi__value { margin: var(--space-1) 0; font-size: var(--text-xl); font-weight: var(--weight-bold); font-variant-numeric: tabular-nums; }
+.dashflag-subhead { display: flex; align-items: baseline; justify-content: space-between; gap: var(--space-3); margin-bottom: var(--space-3); }
+.dashflag-subhead h2 { margin: 0; color: var(--flag-accent); }
+.dashflag-hero__figure { font-size: var(--text-2xl, 2rem); font-weight: var(--weight-bold); font-variant-numeric: tabular-nums; color: var(--flag-accent); }
+.dashflag-statrail { display: grid; gap: var(--space-3); grid-template-columns: repeat(auto-fit, minmax(min(10rem, 100%), 1fr)); margin-top: var(--space-3); }
+
+/* BT-013-16: the full-size Layout Preview banner (app/js/ui/shell.js) — present on every page while
+   previewing, so it is genuinely one continuous session across navigation, not a per-page state. */
+.preview-banner { background: var(--color-info-soft, var(--surface-sunken)); border-bottom: 1px solid var(--border); }
+.preview-banner__inner { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-3); max-width: var(--content-max); margin: 0 auto; padding: var(--space-2) var(--space-4); font-size: var(--text-sm); }
+.preview-banner__inner .row { margin-left: auto; }
+
 /* ---------- states ---------- */
 .state { padding: var(--space-6) var(--space-4); text-align: center; color: var(--text-muted); border: 1px dashed var(--border-strong); border-radius: var(--radius-lg); }
 .state--error { border-style: solid; border-color: var(--color-danger); color: var(--color-danger-text); background: var(--surface); }
