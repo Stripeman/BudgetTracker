@@ -46,13 +46,21 @@ export function createLayoutPicker(ctx) {
   const error = el("p", { class: "error-text", role: "alert", hidden: true });
   const grid = el("div", { class: "layoutpicker-grid" });
   const demoGrid = el("div", { class: "layoutpicker-grid layoutpicker-grid--demo" });
+  // BT-021 (Terry, 2026-09-22: "the Layout panel... takes up too much space"): the twelve demo-only
+  // concepts (not yet built against real data — nothing to preview or apply) are the bulk of that
+  // height, so they collapse behind a summary naming the real count, updated once loaded; the four
+  // real, selectable layouts above stay fully visible since those are the actual choice being made.
+  const demoSummary = el("summary", { text: "Other designs under review (demo only, not yet available to apply)" });
+  const demoDetails = el("details", { class: "more" }, [
+    demoSummary,
+    el("p", { class: "field__help small", text: "These are shown for reference only. They are not yet built against real data, so there is nothing to preview or apply here." }),
+    demoGrid,
+  ]);
   const element = el("div", { class: "stack" }, [
     el("p", { class: "field__help", text: "Choose how this workspace's pages are organised. Applying a layout changes navigation, density and dashboard composition for everyone in the workspace; it never changes financial records, permissions, calculations or filters, and never changes anyone's own light/dark or colour choice." }),
     status, error,
     grid,
-    el("h3", { class: "layoutpicker-demoheading", text: "Other designs under review (not yet available to apply)" }),
-    el("p", { class: "field__help small", text: "These are shown for reference only. They are not yet built against real data, so there is nothing to preview or apply here." }),
-    demoGrid,
+    demoDetails,
   ]);
 
   let data = null;
@@ -170,6 +178,7 @@ export function createLayoutPicker(ctx) {
   function render() {
     mount(grid, ...data.layouts.map(renderCard));
     mount(demoGrid, ...data.demoLayouts.map(renderDemoCard));
+    demoSummary.textContent = `Other designs under review (${data.demoLayouts.length}, demo only — not yet available to apply)`;
     status.textContent = "";
   }
 

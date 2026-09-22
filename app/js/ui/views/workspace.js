@@ -68,6 +68,167 @@ export { settingText };
 const INTRO_CHANGE = "These decide how everyone in this workspace works. Owners and managers change them; the ones marked “Owners only” can be changed by owners alone. Each one starts with how BudgetTracker has always worked. Privacy and safety rules are not settings: private accounts stay private, nothing is ever deleted and every change is kept.";
 const INTRO_READ = "These decide how everyone in this workspace works. Owners and managers change them; you can see how it is set up and every change below.";
 
+// Shared per-browser remembered-open storage for every collapsible section on this page (BT-019-04,
+// BT-021): Category colours and icons, each "Add … type" creation form, and this page's own tab.
+const WORKSPACE_GROUP_KEY = "settings.workspace.groups";
+
+// BT-021 (Terry, 2026-09-22: "make categories and types easy to understand and manage... separate
+// existing items from the action to add a new item... compact, consistently aligned rows with an
+// expandable inline creation or editing form"). Account types, Category types and Merchant types
+// (BT-019-01/02/03) are the SAME mechanism three times over — a name, an editable colour, an
+// optional icon and one fixed underlying class — differing only in labels, wording and which API
+// they call. One generic manager renders all three identically: a compact one-line row per type
+// (name, colour, class, Built-in/Retired), with the full edit form (name, colour, icon, class,
+// retire) tucked behind a native, keyboard-accessible <details> per row, and the creation form
+// collapsed behind its own named toggle so the page does not show every control at once. Every
+// field, help sentence, refresh key and API call below is copied verbatim from the three
+// once-separate render functions this replaces — nothing about validation, permissions, wording or
+// behaviour changed, only how densely it is shown.
+function createTypeManager(ctx, cfg) {
+  const { store, api } = ctx;
+  const intro = el("p", { class: "field__help" });
+  // The creation form is rebuilt fresh each render (exactly like the three functions this replaces
+  // always did), mounted into this one stable box so the surrounding collapsible section — created
+  // ONCE here — never needs to be recreated itself.
+  const addBox = el("div", { class: "typeadd" });
+  const addGroup = createSettingsGroup({ id: cfg.groupId, storageKey: WORKSPACE_GROUP_KEY, name: cfg.addGroupName, defaultOpen: false, nodes: [addBox] });
+  // A non-editor gets no creation control AT ALL — not merely a hidden one (the same "must not
+  // exist in the DOM for anyone else" rule this file already applies to Delete workspace) — so
+  // `addSlot` only ever holds `addGroup.element` while `canEdit` is true.
+  const addSlot = el("div");
+  const listBox = el("div");
+  const element = el("div", { class: "stack" }, [intro, addSlot, listBox]);
+
+  const openRows = new Set();
+  let sig = "";
+
+  function buildRow(t, data) {
+    const labelId = `${cfg.rowPrefix}-${t.id}`;
+    const error = el("p", { class: "error-text small", role: "alert", hidden: true });
+    let picker = null;
+    const patchColour = async (color) => {
+      const out = await store.actions.write((ws) => cfg.apiPatch(api, ws, { typeId: t.id, color }), cfg.patchRefresh);
+      if (out.ok) { announce(`${t.name}: colour ${color ? "saved" : "reset to default"}.`); return; }
+      if (picker) picker.select(t.color);
+      error.textContent = messageFor(out.error);
+      error.hidden = false;
+    };
+    picker = createThemePicker({
+      value: t.color, entries: colourEntries(data.palette, t.color), labelledBy: labelId,
+      listLabel: `Colours for ${t.name}`, namePrefix: `${t.name} colour`, onPick: (hex) => { void patchColour(hex); },
+    });
+    const chosenIcon = t.iconSource === "workspace" ? t.icon : null;
+    const iconPick = createIconPicker({
+      value: chosenIcon, inherited: t.defaultIcon, name: t.name, label: "Icon", tint: t.color,
+      onPick: async (id) => {
+        const out = await store.actions.write((ws) => cfg.apiPatch(api, ws, { typeId: t.id, icon: id || null }), cfg.patchRefresh);
+        if (out.ok) { announce(`${t.name}: icon ${id ? "saved" : "reset to default"}.`); return; }
+        iconPick.select(chosenIcon);
+        error.textContent = messageFor(out.error);
+        error.hidden = false;
+      },
+    });
+    const nameInput = input({ maxlength: "60", value: t.name, autocomplete: "off" });
+    const saveName = button("Save name", async () => {
+      const value = nameInput.value.trim();
+      if (!value || value === t.name) { nameInput.value = t.name; return; }
+      const out = await store.actions.write((ws) => cfg.apiPatch(api, ws, { typeId: t.id, name: value }), cfg.patchRefresh);
+      if (!out.ok) { nameInput.value = t.name; error.textContent = messageFor(out.error); error.hidden = false; return; }
+      announce(`Renamed to ${value}.`);
+    }, { small: true });
+    let classControl;
+    if (t.system || t.usageCount > 0) {
+      classControl = el("span", { class: "muted small", text: cfg.classLabel(t[cfg.classField]) });
+    } else {
+      classControl = pickerSelect(data[cfg.classesKey].map((c) => ({ value: c, label: cfg.classLabel(c) })), t[cfg.classField], { "aria-label": `${cfg.classFieldLabel} for ${t.name}` }, { search: false });
+      classControl.addEventListener("change", async () => {
+        const out = await store.actions.write((ws) => cfg.apiPatch(api, ws, { typeId: t.id, [cfg.classField]: classControl.value }), [cfg.sliceKey]);
+        if (!out.ok) { classControl.value = t[cfg.classField]; error.textContent = messageFor(out.error); error.hidden = false; }
+        else announce(cfg.classChangedAnnounce(t.name, cfg.classLabel(classControl.value)));
+      });
+    }
+    const retireBtn = t.system
+      ? el("span", { class: "muted small", text: "Built-in — always available" })
+      : button(t.retired ? "Reactivate" : "Retire", async () => {
+        const out = await store.actions.write((ws) => cfg.apiPatch(api, ws, { typeId: t.id, retired: !t.retired }), [cfg.sliceKey]);
+        if (!out.ok) { error.textContent = messageFor(out.error); error.hidden = false; return; }
+        announce(t.retired ? cfg.reactivateAnnounce(t.name) : cfg.retireAnnounce(t.name));
+      }, { small: true, variant: "ghost" });
+    const summary = el("summary", {}, [
+      el("h3", { class: "typerow__name" }, [categoryLabel(t.name, t.color, t.icon)]),
+      badge(cfg.classLabel(t[cfg.classField]), "source"),
+      t.system ? badge("Built-in", "source") : null,
+      t.retired ? badge("Retired") : null,
+      el("span", { class: "typerow__spacer" }),
+      el("span", { class: "typerow__edit", "aria-hidden": "true", text: "Edit" }),
+    ]);
+    const details = el("details", { class: "typerow" }, [
+      summary,
+      el("div", { class: "catrow" }, [
+        el("div", { class: "row" }, [field("Name", nameInput), saveName]),
+        el("div", { class: "field" }, [el("p", { class: "field__label", id: labelId, text: "Colour" }), picker.element]),
+        iconPick.element,
+        field(cfg.classFieldLabel, classControl, {
+          help: t.system ? cfg.systemHelp : t.usageCount > 0 ? cfg.lockedHelp(t.usageCount) : cfg.freeHelp,
+        }),
+        error,
+        el("div", { class: "row catrow__meta" }, [
+          badge(t.colorSource === "workspace" ? "Custom colour" : "Default colour", "source"),
+          t.colorSource === "workspace" ? button("Reset colour", () => { void patchColour(null); }, { small: true, variant: "ghost", attrs: { "aria-label": `Reset to default: ${t.name} colour` } }) : null,
+          badge(chosenIcon ? "Custom icon" : "Default icon", "source"),
+          el("span", { class: "app__spacer" }), retireBtn,
+        ]),
+      ]),
+    ]);
+    if (openRows.has(t.id)) details.open = true;
+    details.addEventListener("toggle", () => { if (details.open) openRows.add(t.id); else openRows.delete(t.id); });
+    return details;
+  }
+
+  function render(state) {
+    const data = sliceFor(state, cfg.sliceKey).data;
+    if (!data) return;
+    const selfMember = ((sliceFor(state, "members").data || {}).members || []).find((m) => m.self);
+    const role = selfMember ? selfMember.role : "viewer";
+    const canEdit = ["owner", "manager"].includes(role) || (role === "member" && managesSharedLists(state));
+    const key = JSON.stringify([data.types, canEdit]);
+    if (key === sig) return;
+    sig = key;
+    const types = data.types.slice().sort((a, b) => (a.system === b.system ? a.name.localeCompare(b.name) : a.system ? -1 : 1));
+    intro.textContent = canEdit ? cfg.editableIntro : cfg.readonlyIntro;
+    if (!canEdit) {
+      mount(addSlot);
+      mount(listBox, el("ul", { class: "stack" }, types.filter((t) => !t.retired).map((t) => el("li", { class: "row" }, [
+        categoryLabel(t.name, t.color, t.icon), badge(cfg.classLabel(t[cfg.classField]), "source"), t.system ? badge("Built-in") : null,
+      ]))));
+      return;
+    }
+    mount(addSlot, addGroup.element);
+    const newName = input({ maxlength: "60", placeholder: cfg.namePlaceholder, autocomplete: "off" });
+    const newClass = pickerSelect(data[cfg.classesKey].map((c) => ({ value: c, label: cfg.classLabel(c) })), data[cfg.classesKey][0], {}, { search: false });
+    const createError = el("p", { class: "error-text small", role: "alert", hidden: true });
+    const createBtn = button(cfg.createSubmitLabel, async () => {
+      createError.hidden = true;
+      if (!newName.value.trim()) {
+        newName.setAttribute("aria-invalid", "true");
+        createError.textContent = "Give the type a name.";
+        createError.hidden = false;
+        newName.focus();
+        return;
+      }
+      const out = await store.actions.write((ws) => cfg.apiCreate(api, ws, { name: newName.value.trim(), [cfg.classField]: newClass.value }), cfg.createRefresh);
+      if (!out.ok) { createError.textContent = messageFor(out.error); createError.hidden = false; return; }
+      announce(cfg.createdAnnounce(newName.value.trim()));
+      newName.removeAttribute("aria-invalid");
+      newName.value = "";
+    }, { variant: "primary" });
+    mount(addBox, el("div", { class: "form-grid" }, [field("New type name", newName), field(cfg.classFieldLabel, newClass), createBtn]), createError);
+    mount(listBox, ...types.map((t) => buildRow(t, data)));
+  }
+
+  return { element, render };
+}
+
 // "Delete workspace" (Terry, 2026-09-14: "the workspace owner should be able to delete their own
 // workspace(s)"). Underneath it stays the recoverable archive (BT-001-05: nothing is ever physically
 // deleted) — the dialog says so and names where it comes back. Owners only; a site administrator never
@@ -126,54 +287,180 @@ export function createView(ctx) {
   const layoutPicker = createLayoutPicker(ctx);
   const coloursBox = el("div", { class: "stack" });
   const typesBox = el("div", { class: "stack" });
-  const accountTypesBox = el("div", { class: "stack" });
-  const categoryTypesBox = el("div", { class: "stack" });
-  const merchantTypesBox = el("div", { class: "stack" });
   // BT-019-04 (Terry, 2026-09-19): the "Category colours and icons" panel made collapsible here
   // too, consistent with My Settings' own personal-override version of it (already collapsible via
   // this exact shared shell, BT-017). Every pick inside `coloursBox` already saves immediately
   // (no draft/unsaved state exists to lose — see the PATCH calls below), and this shell never
   // rebuilds `nodes`, only toggles their visibility, so an in-flight save or a validation error
-  // already shown inline survives a collapse/reopen untouched. Starts OPEN (never previously
-  // collapsible here, so nothing about today's visible behaviour changes until a person chooses to
-  // collapse it themselves) and remembers that choice per browser, separately from My Settings' own
-  // remembered groups.
-  const WORKSPACE_GROUP_KEY = "settings.workspace.groups";
-  const groupColours = createSettingsGroup({ id: "ws-g-colours", storageKey: WORKSPACE_GROUP_KEY, name: "Category colours and icons", defaultOpen: true, nodes: [coloursBox] });
+  // already shown inline survives a collapse/reopen untouched. BT-021 (2026-09-22): now that this
+  // lives on its own "Layout & colours" tab (already hidden until chosen) it starts CLOSED like every
+  // other secondary section on this page, with a live count of workspace categories shown even
+  // while collapsed; still remembered per browser, separately from My Settings' own groups.
+  const groupColours = createSettingsGroup({ id: "ws-g-colours", storageKey: WORKSPACE_GROUP_KEY, name: "Category colours and icons", defaultOpen: false, nodes: [coloursBox] });
+  // BT-021: Account/Category/Merchant types (BT-019-01/02/03) share one generic manager — see
+  // `createTypeManager` above — configured once per kind with the exact wording, API calls and
+  // refresh keys the three former render functions used.
+  const accountTypeManager = createTypeManager(ctx, {
+    sliceKey: "accountTypes", classesKey: "accountingClasses", classField: "accountingClass",
+    classLabel: (c) => ACCOUNT_TYPE_LABELS[c] || c, classFieldLabel: "Accounting behaviour",
+    namePlaceholder: "e.g. Store card", addGroupName: "Add account type", createSubmitLabel: "Save account type", groupId: "ws-add-atype", rowPrefix: "ws-atype",
+    readonlyIntro: "Owners and managers create and edit account types here. Each one maps to one of BudgetTracker's underlying accounting behaviours, so renaming or recolouring it never changes a balance or any history.",
+    editableIntro: "Each account type has a name, colour and optional icon and maps to one of BudgetTracker's underlying accounting behaviours. Renaming or recolouring never changes a balance, direction or history. A retired type stops appearing for new accounts but stays visible on any account that already uses it.",
+    systemHelp: "A built-in type's own accounting behaviour never changes.",
+    lockedHelp: (n) => `Used by ${n} account${n === 1 ? "" : "s"} already — locked so a change can never silently reinterpret their history. Create a new type instead.`,
+    freeHelp: "Change freely until an account uses this type.",
+    createdAnnounce: (name) => `${name} added as an account type.`,
+    classChangedAnnounce: (name, label) => `${name} now behaves as ${label}.`,
+    retireAnnounce: (name) => `${name} retired. It stays on any account that already uses it, but is no longer offered for new ones.`,
+    reactivateAnnounce: (name) => `${name} is available for new accounts again.`,
+    apiCreate: (api, ws, body) => api.createAccountType(ws, body), apiPatch: (api, ws, body) => api.patchAccountType(ws, body),
+    createRefresh: ["accountTypes"], patchRefresh: ["accountTypes", "accounts"],
+  });
+  const categoryTypeManager = createTypeManager(ctx, {
+    sliceKey: "categoryTypes", classesKey: "categoryClasses", classField: "categoryClass",
+    classLabel: (c) => (c === "income" ? "Income" : "Expense"), classFieldLabel: "Expense or income",
+    namePlaceholder: "e.g. Essential spending", addGroupName: "Add category type", createSubmitLabel: "Save category type", groupId: "ws-add-ctype", rowPrefix: "ws-ctype",
+    readonlyIntro: "Owners and managers create and edit category types here. Each one maps to expense or income, so renaming or recolouring it never changes a calculation or any history.",
+    editableIntro: "Each category type has a name, colour and optional icon and maps to expense or income. Renaming or recolouring never changes a calculation, budget or history. A retired type stops appearing for new categories but stays visible on any category that already uses it.",
+    systemHelp: "A built-in type's own expense/income behaviour never changes.",
+    lockedHelp: (n) => `Used by ${n} categor${n === 1 ? "y" : "ies"} already — locked so a change can never silently reinterpret their history. Create a new type instead.`,
+    freeHelp: "Change freely until a category uses this type.",
+    createdAnnounce: (name) => `${name} added as a category type.`,
+    classChangedAnnounce: (name, label) => `${name} is now ${label.toLowerCase()}.`,
+    retireAnnounce: (name) => `${name} retired. It stays on any category that already uses it, but is no longer offered for new ones.`,
+    reactivateAnnounce: (name) => `${name} is available for new categories again.`,
+    apiCreate: (api, ws, body) => api.createCategoryType(ws, body), apiPatch: (api, ws, body) => api.patchCategoryType(ws, body),
+    createRefresh: ["categoryTypes"], patchRefresh: ["categoryTypes", "categories"],
+  });
+  const merchantTypeManager = createTypeManager(ctx, {
+    sliceKey: "merchantTypes", classesKey: "merchantClasses", classField: "merchantClass",
+    classLabel: (c) => MERCHANT_TYPE_LABELS[c] || c, classFieldLabel: "Merchant class",
+    namePlaceholder: "e.g. Streaming service", addGroupName: "Add merchant type", createSubmitLabel: "Save merchant type", groupId: "ws-add-mtype", rowPrefix: "ws-mtype",
+    readonlyIntro: "Owners and managers create and edit merchant types here. Renaming or recolouring one never changes any merchant's history.",
+    editableIntro: "Each merchant type has a name, colour and optional icon. Renaming or recolouring never changes any merchant's history. A retired type stops appearing for new merchants but stays visible on any merchant that already uses it.",
+    systemHelp: "A built-in type's own class never changes.",
+    lockedHelp: (n) => `Used by ${n} merchant${n === 1 ? "" : "s"} already — locked so a change can never silently reinterpret their history. Create a new type instead.`,
+    freeHelp: "Change freely until a merchant uses this type.",
+    createdAnnounce: (name) => `${name} added as a merchant type.`,
+    classChangedAnnounce: (name, label) => `${name} is now classed as ${label}.`,
+    retireAnnounce: (name) => `${name} retired. It stays on any merchant that already uses it, but is no longer offered for new ones.`,
+    reactivateAnnounce: (name) => `${name} is available for new merchants again.`,
+    apiCreate: (api, ws, body) => api.createMerchantType(ws, body), apiPatch: (api, ws, body) => api.patchMerchantType(ws, body),
+    createRefresh: ["merchantTypes"], patchRefresh: ["merchantTypes", "payees"],
+  });
   // "Delete workspace" (owners only): a separate danger-style card at the bottom of the page, outside
-  // the two-column grid, built only for an owner (finding: it must not exist in the DOM for anyone else).
+  // the tabs, built only for an owner (finding: it must not exist in the DOM for anyone else).
   const deleteBox = el("div");
-  // BT-013-16: this page (where the real Layout Picker itself lives) is already a `.grid.grid--two`
-  // of individually-carded sections. Given its size and its permission-sensitive content (members,
-  // invitations, backups/restore, permanent workspace deletion), the SAME grid is reparented into a
-  // `.dashflag` accent wrapper for flagship layouts rather than restructured — the same minimal,
-  // low-risk pattern already used for Shared expenses and My Settings; nothing inside any card
-  // changes.
-  const grid = el("div", { class: "grid grid--two" }, [
+
+  // BT-021 (Terry, 2026-09-22): "the Layout panel takes up too much space... everything below that
+  // needs a substantial organization and alignment pass". This page's ~14 sections are now grouped
+  // into three real, same-page sub-tabs (the same visual idiom as the app's own site-admin sub-tabs,
+  // `.app__nav--sub` in app/js/ui/shell.js, but genuine ARIA tabs — role="tablist"/"tab"/"tabpanel" —
+  // since these toggle panels here rather than navigating to a new route): "General" (membership,
+  // workspace settings, backups, activity — everything already reviewed as a good visual reference),
+  // "Layout & colours" (Layout, category colours, type icons — Terry's own suggested grouping), and
+  // "Categories & types" (the three managed-type lists, item 6's specific focus). Automatic
+  // activation (arrow keys both move and select, matching the WAI-ARIA APG tabs pattern), Home/End,
+  // and the choice is remembered per browser like every other preference on this page.
+  const TABS = [
+    { id: "general", label: "General" },
+    // Named "Layout & colours" rather than a bare "Appearance": the Workspace settings card (on
+    // General) already has its own settings-group literally named "Appearance" (the plain "Layout
+    // theme" dropdown's group, api/_shared/workspace-settings.js) — a second, identically-named
+    // control on the same page would be a genuine ambiguity, for assistive tech and automation alike.
+    { id: "appearance", label: "Layout & colours" },
+    { id: "types", label: "Categories & types" },
+  ];
+  function readTab() {
+    try {
+      const v = globalThis.localStorage ? globalThis.localStorage.getItem("bt.workspace.tab") : null;
+      return TABS.some((t) => t.id === v) ? v : "general";
+    } catch { return "general"; }
+  }
+  function writeTab(id) {
+    try { if (globalThis.localStorage) globalThis.localStorage.setItem("bt.workspace.tab", id); } catch { /* not remembered */ }
+  }
+  // A link that names a setting (e.g. the Shared expenses "off" page) always lands on General, where
+  // the Workspace settings card — and the field it focuses — actually lives, whatever tab was last
+  // remembered; otherwise the focus this page already promises would land inside a hidden panel.
+  let activeTab = (ctx.params && ctx.params.setting) ? "general" : readTab();
+  const tabButtons = {};
+  const panels = {};
+  function selectTab(id) {
+    activeTab = id;
+    writeTab(id);
+    for (const t of TABS) {
+      const active = t.id === id;
+      tabButtons[t.id].setAttribute("aria-selected", active ? "true" : "false");
+      tabButtons[t.id].setAttribute("tabindex", active ? "0" : "-1");
+      panels[t.id].hidden = !active;
+    }
+  }
+  function focusTab(id) { selectTab(id); tabButtons[id].focus(); }
+  const tabIds = TABS.map((t) => t.id);
+  const tablist = el("div", { class: "tabbar", role: "tablist", "aria-label": "Workspace sections" },
+    TABS.map((t) => {
+      const b = el("button", {
+        type: "button", class: "tabbar__tab", role: "tab", id: `wstab-${t.id}`, "aria-controls": `wspanel-${t.id}`,
+        "aria-selected": t.id === activeTab ? "true" : "false", tabindex: t.id === activeTab ? "0" : "-1", text: t.label,
+      });
+      b.addEventListener("click", () => selectTab(t.id));
+      b.addEventListener("keydown", (e) => {
+        const i = tabIds.indexOf(t.id);
+        if (e.key === "ArrowRight") { e.preventDefault(); focusTab(tabIds[(i + 1) % tabIds.length]); }
+        else if (e.key === "ArrowLeft") { e.preventDefault(); focusTab(tabIds[(i - 1 + tabIds.length) % tabIds.length]); }
+        else if (e.key === "Home") { e.preventDefault(); focusTab(tabIds[0]); }
+        else if (e.key === "End") { e.preventDefault(); focusTab(tabIds[tabIds.length - 1]); }
+      });
+      tabButtons[t.id] = b;
+      return b;
+    }));
+  function panel(id, nodes) {
+    const p = el("div", { class: "tabbar__panel", role: "tabpanel", id: `wspanel-${id}`, "aria-labelledby": `wstab-${id}`, tabindex: "0" }, nodes);
+    // Set as a property, not an attrs entry (el() only ever sets `hidden` when it is truthy, since
+    // a falsy attrs value is skipped like every other falsy attribute) — matches
+    // settingsgroup.js's own `body.hidden = !initialOpen` for the identical reason.
+    p.hidden = id !== activeTab;
+    panels[id] = p;
+    return p;
+  }
+
+  // "General": membership, the Workspace settings card (Terry's own visual reference, unchanged),
+  // backups, activity and history — exactly as before, minus the sections moved below.
+  const generalPanel = panel("general", [el("div", { class: "grid grid--two" }, [
     el("section", { class: "card", "aria-labelledby": "ws-members" }, [el("h2", { class: "card__title", id: "ws-members", text: "Members" }), membersBox]),
     el("section", { class: "card", "aria-labelledby": "ws-invite" }, [el("h2", { class: "card__title", id: "ws-invite", text: "Invite someone" }), inviteBox]),
     el("section", { class: "card card--full", "aria-labelledby": "ws-settings" }, [el("h2", { class: "card__title", id: "ws-settings", text: "Workspace settings" }), settingsBox]),
-    // BT-013-16: the real Layout Picker — a separate, richer control from the plain "Layout theme"
-    // dropdown inside the settings card above (which keeps working; both change the same setting).
-    el("section", { class: "card card--full", "aria-labelledby": "ws-layout" }, [el("h2", { class: "card__title", id: "ws-layout", text: "Layout" }), layoutPicker.element]),
     el("section", { class: "card", "aria-labelledby": "ws-backups" }, [el("h2", { class: "card__title", id: "ws-backups", text: "Backups and restore" }), backupsBox]),
     el("section", { class: "card", "aria-labelledby": "ws-activity" }, [el("h2", { class: "card__title", id: "ws-activity", text: "Recent activity" }), auditBox]),
     el("section", { class: "card", "aria-labelledby": "ws-former" }, [el("h2", { class: "card__title", id: "ws-former", text: "Former members" }), formerBox]),
     el("section", { class: "card", "aria-labelledby": "ws-history" }, [el("h2", { class: "card__title", id: "ws-history", text: "Workspace changes" }), historyBox]),
+  ])]);
+  // "Layout & colours" (Terry's own suggested grouping): the real Layout Picker — a separate, richer control from
+  // the plain "Layout theme" dropdown inside the Workspace settings card on General (which keeps
+  // working; both change the same setting) — plus category colours/icons and type icons.
+  const appearancePanel = panel("appearance", [el("div", { class: "stack" }, [
+    el("section", { class: "card card--full", "aria-labelledby": "ws-layout" }, [el("h2", { class: "card__title", id: "ws-layout", text: "Layout" }), layoutPicker.element]),
     el("section", { class: "card card--full" }, [groupColours.element]),
-    el("section", { class: "card card--full", "aria-labelledby": "ws-account-types" }, [el("h2", { class: "card__title", id: "ws-account-types", text: "Account types" }), accountTypesBox]),
-    el("section", { class: "card card--full", "aria-labelledby": "ws-category-types" }, [el("h2", { class: "card__title", id: "ws-category-types", text: "Category types" }), categoryTypesBox]),
-    el("section", { class: "card card--full", "aria-labelledby": "ws-merchant-types" }, [el("h2", { class: "card__title", id: "ws-merchant-types", text: "Merchant types" }), merchantTypesBox]),
     el("section", { class: "card", "aria-labelledby": "ws-types" }, [el("h2", { class: "card__title", id: "ws-types", text: "Icons for types" }), typesBox]),
-  ]);
+  ])]);
+  // "Categories & types" (item 6's specific focus): each manager already separates its compact
+  // existing-items list from its own collapsed "+ Add …" creation form.
+  const typesPanel = panel("types", [el("div", { class: "stack" }, [
+    el("section", { class: "card card--full", "aria-labelledby": "ws-account-types" }, [el("h2", { class: "card__title", id: "ws-account-types", text: "Account types" }), accountTypeManager.element]),
+    el("section", { class: "card card--full", "aria-labelledby": "ws-category-types" }, [el("h2", { class: "card__title", id: "ws-category-types", text: "Category types" }), categoryTypeManager.element]),
+    el("section", { class: "card card--full", "aria-labelledby": "ws-merchant-types" }, [el("h2", { class: "card__title", id: "ws-merchant-types", text: "Merchant types" }), merchantTypeManager.element]),
+  ])]);
+  const pageBody = el("div", {}, [tablist, generalPanel, appearancePanel, typesPanel]);
+
   const bodyHost = el("div");
   const element = el("section", {}, [pageHead("Workspace"), bodyHost, deleteBox]);
-  const classicArrangement = grid;
+  const classicArrangement = pageBody;
   const FLAGSHIP_IDS = new Set(["ledgerfly-forecast", "finexa-budget", "acru-overview"]);
   let mountedLayout = null;
   function arrangementFor(layoutId) {
     if (!FLAGSHIP_IDS.has(layoutId)) return classicArrangement;
-    return el("div", { class: "dashflag", vars: layoutAccentVars(ctx.store.getState(), layoutId) }, [grid]);
+    return el("div", { class: "dashflag", vars: layoutAccentVars(ctx.store.getState(), layoutId) }, [pageBody]);
   }
 
   const me = () => ((sliceFor(store.getState(), "members").data || {}).members || []).find((m) => m.self) || { role: "viewer" };
@@ -408,6 +695,10 @@ export function createView(ctx) {
     const sig = JSON.stringify([cats.map((c) => [c.id, c.name, c.color, c.colorSource, c.icon, c.iconSource]), canEdit, iconsData ? iconsData.catalog : null]);
     if (sig === colourSig) return;
     colourSig = sig;
+    // A useful summary even while collapsed (BT-021, Terry: "keep... useful summaries visible when
+    // collapsed"): how many categories, and whether any already has a workspace-chosen colour/icon.
+    const customCount = cats.filter((c) => c.colorSource === "workspace" || (c.iconSource === "workspace" && c.icon)).length;
+    groupColours.setSummary(`${cats.length} categor${cats.length === 1 ? "y" : "ies"}${customCount ? `, ${customCount} customized` : ""}`);
     if (!canEdit) {
       mount(coloursBox, el("p", { class: "field__help", text: "Owners and managers choose these. You can pick your own colours and icons in My settings." }),
         el("ul", { class: "stack" }, cats.map((c) => el("li", {}, [categoryLabel(c.name, c.color, c.icon)]))));
@@ -466,370 +757,6 @@ export function createView(ctx) {
     }
   }
 
-  // Account TYPES (BT-019-02, Terry, 2026-09-19): a name, an editable colour and an optional icon,
-  // each mapped to one of BudgetTracker's fixed underlying accounting behaviours (asset, liability,
-  // ...). The mapping is set once, when a type is created or an account picks it; renaming or
-  // recolouring a type afterward never touches a single account or transaction. System defaults
-  // (one per accounting behaviour) always exist and cannot be retired or have their behaviour
-  // changed; a custom type's behaviour can change only while nothing uses it yet, refused and
-  // explained otherwise so it never silently reinterprets history already recorded against it.
-  let accountTypesSig = "";
-  function renderAccountTypes(state) {
-    const data = sliceFor(state, "accountTypes").data;
-    if (!data) return;
-    const canEdit = ["owner", "manager"].includes(me().role) || (me().role === "member" && managesSharedLists(state));
-    const sig = JSON.stringify([data.types, canEdit]);
-    if (sig === accountTypesSig) return;
-    accountTypesSig = sig;
-    const classLabel = (c) => ACCOUNT_TYPE_LABELS[c] || c;
-    const types = data.types.slice().sort((a, b) => (a.system === b.system ? a.name.localeCompare(b.name) : a.system ? -1 : 1));
-    if (!canEdit) {
-      mount(accountTypesBox,
-        el("p", { class: "field__help", text: "Owners and managers create and edit account types here. Each one maps to one of BudgetTracker's underlying accounting behaviours, so renaming or recolouring it never changes a balance or any history." }),
-        el("ul", { class: "stack" }, types.filter((t) => !t.retired).map((t) => el("li", { class: "row" }, [
-          categoryLabel(t.name, t.color, t.icon), badge(classLabel(t.accountingClass), "source"), t.system ? badge("Built-in") : null,
-        ]))));
-      return;
-    }
-    const newName = input({ maxlength: "60", placeholder: "e.g. Store card", autocomplete: "off" });
-    const newClass = pickerSelect(data.accountingClasses.map((c) => ({ value: c, label: classLabel(c) })), data.accountingClasses[0], {}, { search: false });
-    const createError = el("p", { class: "error-text small", role: "alert", hidden: true });
-    const createBtn = button("Add account type", async () => {
-      createError.hidden = true;
-      if (!newName.value.trim()) {
-        newName.setAttribute("aria-invalid", "true");
-        createError.textContent = "Give the type a name.";
-        createError.hidden = false;
-        newName.focus();
-        return;
-      }
-      const out = await store.actions.write((ws) => api.createAccountType(ws, { name: newName.value.trim(), accountingClass: newClass.value }), ["accountTypes"]);
-      if (!out.ok) { createError.textContent = messageFor(out.error); createError.hidden = false; return; }
-      announce(`${newName.value.trim()} added as an account type.`);
-      newName.removeAttribute("aria-invalid");
-      newName.value = "";
-    }, { variant: "primary" });
-
-    const rows = types.map((t) => {
-      const labelId = `ws-atype-${t.id}`;
-      const error = el("p", { class: "error-text small", role: "alert", hidden: true });
-      let picker = null;
-      const patchColour = async (color) => {
-        const out = await store.actions.write((ws) => api.patchAccountType(ws, { typeId: t.id, color }), ["accountTypes", "accounts"]);
-        if (out.ok) { announce(`${t.name}: colour ${color ? "saved" : "reset to default"}.`); return; }
-        if (picker) picker.select(t.color);
-        error.textContent = messageFor(out.error);
-        error.hidden = false;
-      };
-      picker = createThemePicker({
-        value: t.color, entries: colourEntries(data.palette, t.color), labelledBy: labelId,
-        listLabel: `Colours for ${t.name}`, namePrefix: `${t.name} colour`, onPick: (hex) => { void patchColour(hex); },
-      });
-      const chosenIcon = t.iconSource === "workspace" ? t.icon : null;
-      const iconPick = createIconPicker({
-        value: chosenIcon, inherited: t.defaultIcon, name: t.name, label: "Icon", tint: t.color,
-        onPick: async (id) => {
-          const out = await store.actions.write((ws) => api.patchAccountType(ws, { typeId: t.id, icon: id || null }), ["accountTypes", "accounts"]);
-          if (out.ok) { announce(`${t.name}: icon ${id ? "saved" : "reset to default"}.`); return; }
-          iconPick.select(chosenIcon);
-          error.textContent = messageFor(out.error);
-          error.hidden = false;
-        },
-      });
-      const nameInput = input({ maxlength: "60", value: t.name, autocomplete: "off" });
-      const saveName = button("Save name", async () => {
-        const value = nameInput.value.trim();
-        if (!value || value === t.name) { nameInput.value = t.name; return; }
-        const out = await store.actions.write((ws) => api.patchAccountType(ws, { typeId: t.id, name: value }), ["accountTypes", "accounts"]);
-        if (!out.ok) { nameInput.value = t.name; error.textContent = messageFor(out.error); error.hidden = false; return; }
-        announce(`Renamed to ${value}.`);
-      }, { small: true });
-      let classControl;
-      if (t.system) {
-        classControl = el("span", { class: "muted small", text: classLabel(t.accountingClass) });
-      } else if (t.usageCount > 0) {
-        classControl = el("span", { class: "muted small", text: classLabel(t.accountingClass) });
-      } else {
-        classControl = pickerSelect(data.accountingClasses.map((c) => ({ value: c, label: classLabel(c) })), t.accountingClass, { "aria-label": `Accounting behaviour for ${t.name}` }, { search: false });
-        classControl.addEventListener("change", async () => {
-          const out = await store.actions.write((ws) => api.patchAccountType(ws, { typeId: t.id, accountingClass: classControl.value }), ["accountTypes"]);
-          if (!out.ok) { classControl.value = t.accountingClass; error.textContent = messageFor(out.error); error.hidden = false; }
-          else announce(`${t.name} now behaves as ${classLabel(classControl.value)}.`);
-        });
-      }
-      const retireBtn = t.system
-        ? el("span", { class: "muted small", text: "Built-in — always available" })
-        : button(t.retired ? "Reactivate" : "Retire", async () => {
-          const out = await store.actions.write((ws) => api.patchAccountType(ws, { typeId: t.id, retired: !t.retired }), ["accountTypes"]);
-          if (!out.ok) { error.textContent = messageFor(out.error); error.hidden = false; return; }
-          announce(t.retired ? `${t.name} is available for new accounts again.` : `${t.name} retired. It stays on any account that already uses it, but is no longer offered for new ones.`);
-        }, { small: true, variant: "ghost" });
-      return el("div", { class: "catrow", role: "group", "aria-labelledby": `${labelId}-name` }, [
-        el("h3", { class: "catrow__name", id: `${labelId}-name` }, [categoryLabel(t.name, t.color, t.icon), t.system ? badge("Built-in", "source") : null, t.retired ? badge("Retired") : null]),
-        el("div", { class: "row" }, [field("Name", nameInput), saveName]),
-        el("div", { class: "field" }, [el("p", { class: "field__label", id: labelId, text: "Colour" }), picker.element]),
-        iconPick.element,
-        field("Accounting behaviour", classControl, {
-          help: t.system ? "A built-in type's own accounting behaviour never changes."
-            : t.usageCount > 0 ? `Used by ${t.usageCount} account${t.usageCount === 1 ? "" : "s"} already — locked so a change can never silently reinterpret their history. Create a new type instead.`
-              : "Change freely until an account uses this type.",
-        }),
-        error,
-        el("div", { class: "row catrow__meta" }, [
-          badge(t.colorSource === "workspace" ? "Custom colour" : "Default colour", "source"),
-          t.colorSource === "workspace" ? button("Reset colour", () => { void patchColour(null); }, { small: true, variant: "ghost", attrs: { "aria-label": `Reset to default: ${t.name} colour` } }) : null,
-          badge(chosenIcon ? "Custom icon" : "Default icon", "source"),
-          el("span", { class: "app__spacer" }), retireBtn,
-        ]),
-      ]);
-    });
-    mount(accountTypesBox,
-      el("p", { class: "field__help", text: "Each account type has a name, colour and optional icon and maps to one of BudgetTracker's underlying accounting behaviours. Renaming or recolouring never changes a balance, direction or history. A retired type stops appearing for new accounts but stays visible on any account that already uses it." }),
-      el("div", { class: "form-grid" }, [field("New type name", newName), field("Accounting behaviour", newClass), createBtn]), createError,
-      ...rows);
-  }
-
-  // Category TYPES (BT-019-01, Terry, 2026-09-19): the same mechanism as account types above, mapped
-  // to the two fixed category classes (expense/income) instead. Distinct from individual categories:
-  // a category's own income/expense class is fixed at creation and never re-derived from a type
-  // record afterward, so today's income/expense behaviour is preserved rather than a custom type
-  // label bypassing it.
-  let categoryTypesSig = "";
-  function renderCategoryTypes(state) {
-    const data = sliceFor(state, "categoryTypes").data;
-    if (!data) return;
-    const canEdit = ["owner", "manager"].includes(me().role) || (me().role === "member" && managesSharedLists(state));
-    const sig = JSON.stringify([data.types, canEdit]);
-    if (sig === categoryTypesSig) return;
-    categoryTypesSig = sig;
-    const classLabel = (c) => (c === "income" ? "Income" : "Expense");
-    const types = data.types.slice().sort((a, b) => (a.system === b.system ? a.name.localeCompare(b.name) : a.system ? -1 : 1));
-    if (!canEdit) {
-      mount(categoryTypesBox,
-        el("p", { class: "field__help", text: "Owners and managers create and edit category types here. Each one maps to expense or income, so renaming or recolouring it never changes a calculation or any history." }),
-        el("ul", { class: "stack" }, types.filter((t) => !t.retired).map((t) => el("li", { class: "row" }, [
-          categoryLabel(t.name, t.color, t.icon), badge(classLabel(t.categoryClass), "source"), t.system ? badge("Built-in") : null,
-        ]))));
-      return;
-    }
-    const newName = input({ maxlength: "60", placeholder: "e.g. Essential spending", autocomplete: "off" });
-    const newClass = pickerSelect(data.categoryClasses.map((c) => ({ value: c, label: classLabel(c) })), data.categoryClasses[0], {}, { search: false });
-    const createError = el("p", { class: "error-text small", role: "alert", hidden: true });
-    const createBtn = button("Add category type", async () => {
-      createError.hidden = true;
-      if (!newName.value.trim()) {
-        newName.setAttribute("aria-invalid", "true");
-        createError.textContent = "Give the type a name.";
-        createError.hidden = false;
-        newName.focus();
-        return;
-      }
-      const out = await store.actions.write((ws) => api.createCategoryType(ws, { name: newName.value.trim(), categoryClass: newClass.value }), ["categoryTypes"]);
-      if (!out.ok) { createError.textContent = messageFor(out.error); createError.hidden = false; return; }
-      announce(`${newName.value.trim()} added as a category type.`);
-      newName.removeAttribute("aria-invalid");
-      newName.value = "";
-    }, { variant: "primary" });
-
-    const rows = types.map((t) => {
-      const labelId = `ws-ctype-${t.id}`;
-      const error = el("p", { class: "error-text small", role: "alert", hidden: true });
-      let picker = null;
-      const patchColour = async (color) => {
-        const out = await store.actions.write((ws) => api.patchCategoryType(ws, { typeId: t.id, color }), ["categoryTypes", "categories"]);
-        if (out.ok) { announce(`${t.name}: colour ${color ? "saved" : "reset to default"}.`); return; }
-        if (picker) picker.select(t.color);
-        error.textContent = messageFor(out.error);
-        error.hidden = false;
-      };
-      picker = createThemePicker({
-        value: t.color, entries: colourEntries(data.palette, t.color), labelledBy: labelId,
-        listLabel: `Colours for ${t.name}`, namePrefix: `${t.name} colour`, onPick: (hex) => { void patchColour(hex); },
-      });
-      const chosenIcon = t.iconSource === "workspace" ? t.icon : null;
-      const iconPick = createIconPicker({
-        value: chosenIcon, inherited: t.defaultIcon, name: t.name, label: "Icon", tint: t.color,
-        onPick: async (id) => {
-          const out = await store.actions.write((ws) => api.patchCategoryType(ws, { typeId: t.id, icon: id || null }), ["categoryTypes", "categories"]);
-          if (out.ok) { announce(`${t.name}: icon ${id ? "saved" : "reset to default"}.`); return; }
-          iconPick.select(chosenIcon);
-          error.textContent = messageFor(out.error);
-          error.hidden = false;
-        },
-      });
-      const nameInput = input({ maxlength: "60", value: t.name, autocomplete: "off" });
-      const saveName = button("Save name", async () => {
-        const value = nameInput.value.trim();
-        if (!value || value === t.name) { nameInput.value = t.name; return; }
-        const out = await store.actions.write((ws) => api.patchCategoryType(ws, { typeId: t.id, name: value }), ["categoryTypes", "categories"]);
-        if (!out.ok) { nameInput.value = t.name; error.textContent = messageFor(out.error); error.hidden = false; return; }
-        announce(`Renamed to ${value}.`);
-      }, { small: true });
-      let classControl;
-      if (t.system) {
-        classControl = el("span", { class: "muted small", text: classLabel(t.categoryClass) });
-      } else if (t.usageCount > 0) {
-        classControl = el("span", { class: "muted small", text: classLabel(t.categoryClass) });
-      } else {
-        classControl = pickerSelect(data.categoryClasses.map((c) => ({ value: c, label: classLabel(c) })), t.categoryClass, { "aria-label": `Expense or income for ${t.name}` }, { search: false });
-        classControl.addEventListener("change", async () => {
-          const out = await store.actions.write((ws) => api.patchCategoryType(ws, { typeId: t.id, categoryClass: classControl.value }), ["categoryTypes"]);
-          if (!out.ok) { classControl.value = t.categoryClass; error.textContent = messageFor(out.error); error.hidden = false; }
-          else announce(`${t.name} is now ${classLabel(classControl.value).toLowerCase()}.`);
-        });
-      }
-      const retireBtn = t.system
-        ? el("span", { class: "muted small", text: "Built-in — always available" })
-        : button(t.retired ? "Reactivate" : "Retire", async () => {
-          const out = await store.actions.write((ws) => api.patchCategoryType(ws, { typeId: t.id, retired: !t.retired }), ["categoryTypes"]);
-          if (!out.ok) { error.textContent = messageFor(out.error); error.hidden = false; return; }
-          announce(t.retired ? `${t.name} is available for new categories again.` : `${t.name} retired. It stays on any category that already uses it, but is no longer offered for new ones.`);
-        }, { small: true, variant: "ghost" });
-      return el("div", { class: "catrow", role: "group", "aria-labelledby": `${labelId}-name` }, [
-        el("h3", { class: "catrow__name", id: `${labelId}-name` }, [categoryLabel(t.name, t.color, t.icon), t.system ? badge("Built-in", "source") : null, t.retired ? badge("Retired") : null]),
-        el("div", { class: "row" }, [field("Name", nameInput), saveName]),
-        el("div", { class: "field" }, [el("p", { class: "field__label", id: labelId, text: "Colour" }), picker.element]),
-        iconPick.element,
-        field("Expense or income", classControl, {
-          help: t.system ? "A built-in type's own expense/income behaviour never changes."
-            : t.usageCount > 0 ? `Used by ${t.usageCount} categor${t.usageCount === 1 ? "y" : "ies"} already — locked so a change can never silently reinterpret their history. Create a new type instead.`
-              : "Change freely until a category uses this type.",
-        }),
-        error,
-        el("div", { class: "row catrow__meta" }, [
-          badge(t.colorSource === "workspace" ? "Custom colour" : "Default colour", "source"),
-          t.colorSource === "workspace" ? button("Reset colour", () => { void patchColour(null); }, { small: true, variant: "ghost", attrs: { "aria-label": `Reset to default: ${t.name} colour` } }) : null,
-          badge(chosenIcon ? "Custom icon" : "Default icon", "source"),
-          el("span", { class: "app__spacer" }), retireBtn,
-        ]),
-      ]);
-    });
-    mount(categoryTypesBox,
-      el("p", { class: "field__help", text: "Each category type has a name, colour and optional icon and maps to expense or income. Renaming or recolouring never changes a calculation, budget or history. A retired type stops appearing for new categories but stays visible on any category that already uses it." }),
-      el("div", { class: "form-grid" }, [field("New type name", newName), field("Expense or income", newClass), createBtn]), createError,
-      ...rows);
-  }
-
-  // Merchant TYPES (BT-019-03, Terry, 2026-09-19): the same mechanism again, mapped to the fixed
-  // merchant classes (`api/_shared/merchants.js` MERCHANT_TYPES) — the smallest and least risky of
-  // the three, since a merchant's own type carries no derived financial behaviour, only a
-  // descriptive/analytics label.
-  let merchantTypesSig = "";
-  function renderMerchantTypes(state) {
-    const data = sliceFor(state, "merchantTypes").data;
-    if (!data) return;
-    const canEdit = ["owner", "manager"].includes(me().role) || (me().role === "member" && managesSharedLists(state));
-    const sig = JSON.stringify([data.types, canEdit]);
-    if (sig === merchantTypesSig) return;
-    merchantTypesSig = sig;
-    const classLabel = (c) => MERCHANT_TYPE_LABELS[c] || c;
-    const types = data.types.slice().sort((a, b) => (a.system === b.system ? a.name.localeCompare(b.name) : a.system ? -1 : 1));
-    if (!canEdit) {
-      mount(merchantTypesBox,
-        el("p", { class: "field__help", text: "Owners and managers create and edit merchant types here. Renaming or recolouring one never changes any merchant's history." }),
-        el("ul", { class: "stack" }, types.filter((t) => !t.retired).map((t) => el("li", { class: "row" }, [
-          categoryLabel(t.name, t.color, t.icon), badge(classLabel(t.merchantClass), "source"), t.system ? badge("Built-in") : null,
-        ]))));
-      return;
-    }
-    const newName = input({ maxlength: "60", placeholder: "e.g. Streaming service", autocomplete: "off" });
-    const newClass = pickerSelect(data.merchantClasses.map((c) => ({ value: c, label: classLabel(c) })), data.merchantClasses[0], {}, { search: false });
-    const createError = el("p", { class: "error-text small", role: "alert", hidden: true });
-    const createBtn = button("Add merchant type", async () => {
-      createError.hidden = true;
-      if (!newName.value.trim()) {
-        newName.setAttribute("aria-invalid", "true");
-        createError.textContent = "Give the type a name.";
-        createError.hidden = false;
-        newName.focus();
-        return;
-      }
-      const out = await store.actions.write((ws) => api.createMerchantType(ws, { name: newName.value.trim(), merchantClass: newClass.value }), ["merchantTypes"]);
-      if (!out.ok) { createError.textContent = messageFor(out.error); createError.hidden = false; return; }
-      announce(`${newName.value.trim()} added as a merchant type.`);
-      newName.removeAttribute("aria-invalid");
-      newName.value = "";
-    }, { variant: "primary" });
-
-    const rows = types.map((t) => {
-      const labelId = `ws-mtype-${t.id}`;
-      const error = el("p", { class: "error-text small", role: "alert", hidden: true });
-      let picker = null;
-      const patchColour = async (color) => {
-        const out = await store.actions.write((ws) => api.patchMerchantType(ws, { typeId: t.id, color }), ["merchantTypes", "payees"]);
-        if (out.ok) { announce(`${t.name}: colour ${color ? "saved" : "reset to default"}.`); return; }
-        if (picker) picker.select(t.color);
-        error.textContent = messageFor(out.error);
-        error.hidden = false;
-      };
-      picker = createThemePicker({
-        value: t.color, entries: colourEntries(data.palette, t.color), labelledBy: labelId,
-        listLabel: `Colours for ${t.name}`, namePrefix: `${t.name} colour`, onPick: (hex) => { void patchColour(hex); },
-      });
-      const chosenIcon = t.iconSource === "workspace" ? t.icon : null;
-      const iconPick = createIconPicker({
-        value: chosenIcon, inherited: t.defaultIcon, name: t.name, label: "Icon", tint: t.color,
-        onPick: async (id) => {
-          const out = await store.actions.write((ws) => api.patchMerchantType(ws, { typeId: t.id, icon: id || null }), ["merchantTypes", "payees"]);
-          if (out.ok) { announce(`${t.name}: icon ${id ? "saved" : "reset to default"}.`); return; }
-          iconPick.select(chosenIcon);
-          error.textContent = messageFor(out.error);
-          error.hidden = false;
-        },
-      });
-      const nameInput = input({ maxlength: "60", value: t.name, autocomplete: "off" });
-      const saveName = button("Save name", async () => {
-        const value = nameInput.value.trim();
-        if (!value || value === t.name) { nameInput.value = t.name; return; }
-        const out = await store.actions.write((ws) => api.patchMerchantType(ws, { typeId: t.id, name: value }), ["merchantTypes", "payees"]);
-        if (!out.ok) { nameInput.value = t.name; error.textContent = messageFor(out.error); error.hidden = false; return; }
-        announce(`Renamed to ${value}.`);
-      }, { small: true });
-      let classControl;
-      if (t.system) {
-        classControl = el("span", { class: "muted small", text: classLabel(t.merchantClass) });
-      } else if (t.usageCount > 0) {
-        classControl = el("span", { class: "muted small", text: classLabel(t.merchantClass) });
-      } else {
-        classControl = pickerSelect(data.merchantClasses.map((c) => ({ value: c, label: classLabel(c) })), t.merchantClass, { "aria-label": `Merchant class for ${t.name}` }, { search: false });
-        classControl.addEventListener("change", async () => {
-          const out = await store.actions.write((ws) => api.patchMerchantType(ws, { typeId: t.id, merchantClass: classControl.value }), ["merchantTypes"]);
-          if (!out.ok) { classControl.value = t.merchantClass; error.textContent = messageFor(out.error); error.hidden = false; }
-          else announce(`${t.name} is now classed as ${classLabel(classControl.value)}.`);
-        });
-      }
-      const retireBtn = t.system
-        ? el("span", { class: "muted small", text: "Built-in — always available" })
-        : button(t.retired ? "Reactivate" : "Retire", async () => {
-          const out = await store.actions.write((ws) => api.patchMerchantType(ws, { typeId: t.id, retired: !t.retired }), ["merchantTypes"]);
-          if (!out.ok) { error.textContent = messageFor(out.error); error.hidden = false; return; }
-          announce(t.retired ? `${t.name} is available for new merchants again.` : `${t.name} retired. It stays on any merchant that already uses it, but is no longer offered for new ones.`);
-        }, { small: true, variant: "ghost" });
-      return el("div", { class: "catrow", role: "group", "aria-labelledby": `${labelId}-name` }, [
-        el("h3", { class: "catrow__name", id: `${labelId}-name` }, [categoryLabel(t.name, t.color, t.icon), t.system ? badge("Built-in", "source") : null, t.retired ? badge("Retired") : null]),
-        el("div", { class: "row" }, [field("Name", nameInput), saveName]),
-        el("div", { class: "field" }, [el("p", { class: "field__label", id: labelId, text: "Colour" }), picker.element]),
-        iconPick.element,
-        field("Merchant class", classControl, {
-          help: t.system ? "A built-in type's own class never changes."
-            : t.usageCount > 0 ? `Used by ${t.usageCount} merchant${t.usageCount === 1 ? "" : "s"} already — locked so a change can never silently reinterpret their history. Create a new type instead.`
-              : "Change freely until a merchant uses this type.",
-        }),
-        error,
-        el("div", { class: "row catrow__meta" }, [
-          badge(t.colorSource === "workspace" ? "Custom colour" : "Default colour", "source"),
-          t.colorSource === "workspace" ? button("Reset colour", () => { void patchColour(null); }, { small: true, variant: "ghost", attrs: { "aria-label": `Reset to default: ${t.name} colour` } }) : null,
-          badge(chosenIcon ? "Custom icon" : "Default icon", "source"),
-          el("span", { class: "app__spacer" }), retireBtn,
-        ]),
-      ]);
-    });
-    mount(merchantTypesBox,
-      el("p", { class: "field__help", text: "Each merchant type has a name, colour and optional icon. Renaming or recolouring never changes any merchant's history. A retired type stops appearing for new merchants but stays visible on any merchant that already uses it." }),
-      el("div", { class: "form-grid" }, [field("New type name", newName), field("Merchant class", newClass), createBtn]), createError,
-      ...rows);
-  }
-
   // Icons for the workspace's account, bill and merchant types (BT-011-05). Owners and managers
   // choose; everyone else sees the result. Each group is collapsed so the card stays short.
   let typesSig = "";
@@ -885,9 +812,9 @@ export function createView(ctx) {
     const layoutId = effectiveLayoutId(state, ws);
     if (mountedLayout !== layoutId) { mount(bodyHost, arrangementFor(layoutId)); mountedLayout = layoutId; }
     renderColours(state);
-    renderAccountTypes(state);
-    renderCategoryTypes(state);
-    renderMerchantTypes(state);
+    accountTypeManager.render(state);
+    categoryTypeManager.render(state);
+    merchantTypeManager.render(state);
     renderTypes(state);
     const members = sliceFor(state, "members");
     const s = stateView(members);

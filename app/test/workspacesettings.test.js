@@ -81,7 +81,9 @@ async function open(options) {
   return { view, calls, card: settingsCard(view.element) };
 }
 const settle = async () => { for (let i = 0; i < 6; i += 1) await tick(); };
-const groupToggle = (card, name) => card.querySelectorAll("button.settings-group__toggle").find((b) => b.textContent === name);
+// BT-021: the toggle's own text may carry a live trailing summary (e.g. a count) after its name, so
+// match by prefix rather than exact equality.
+const groupToggle = (card, name) => card.querySelectorAll("button.settings-group__toggle").find((b) => b.textContent === name || b.textContent.startsWith(`${name} —`));
 const bodyOf = (card, name) => card.querySelector(`#${groupToggle(card, name).getAttribute("aria-controls")}`);
 const numberField = (card) => card.querySelector('input[type="number"]');
 const fire = (node, type) => node.dispatchEvent(new DomEvent(type, { bubbles: true }));
@@ -618,7 +620,11 @@ describe("Settings card (shared by the workspace and group settings; UX review o
 
 // BT-019-04 (Terry, 2026-09-19): the "Category colours and icons" panel, made collapsible here too
 // — consistent with My Settings' own personal-override version of it (already collapsible via the
-// same shared shell, BT-017). All data is fictional.
+// same shared shell, BT-017). BT-021 (Terry, 2026-09-22, "collapsible sections for secondary
+// settings... keep section headings and useful summaries visible when collapsed") supersedes this
+// panel's own earlier "starts open" choice now that it lives on its own Appearance tab: it starts
+// CLOSED like every other secondary section on that tab, and its toggle carries a live count of
+// workspace categories even while collapsed. All data is fictional.
 describe("BT-019-04 Workspace page: the Category colours and icons panel is collapsible", () => {
   afterEach(() => { delete globalThis.localStorage; });
 
@@ -640,36 +646,44 @@ describe("BT-019-04 Workspace page: the Category colours and icons panel is coll
     return { view, calls, root: view.element };
   }
 
-  test("has a real, labelled toggle; starts open (never previously collapsible, so nothing visible changes until a person collapses it); shows the real category colour picker", async () => {
+  test("has a real, labelled toggle with a live category count; starts CLOSED (BT-021: a secondary section on its own Appearance tab); opening it shows the real category colour picker", async () => {
     const { root } = await openWithColours();
     const toggle = groupToggle(root, "Category colours and icons");
     assert.ok(toggle, "a real toggle button exists");
-    assert.equal(toggle.getAttribute("aria-expanded"), "true");
+    assert.match(toggle.textContent, /1 categor/, "a useful summary stays visible even while collapsed");
+    assert.equal(toggle.getAttribute("aria-expanded"), "false");
     const body = bodyOf(root, "Category colours and icons");
-    assert.equal(body.hidden, false);
+    assert.equal(body.hidden, true);
+    // Collapsing never empties the panel (BT-019-04's own guarantee, unchanged): the content is
+    // already there, only visually hidden.
     assert.match(body.textContent, /Groceries/);
+    toggle.click();
+    assert.equal(toggle.getAttribute("aria-expanded"), "true");
+    assert.equal(body.hidden, false);
     assert.ok(body.querySelector(".themepick__toggle"), "the real colour picker is inside");
   });
 
-  test("collapsing hides the body without removing it, and the choice is remembered in this browser across a fresh page instance", async () => {
+  test("opening it is remembered in this browser across a fresh page instance", async () => {
     const store = {};
     globalThis.localStorage = { getItem: (k) => (k in store ? store[k] : null), setItem: (k, v) => { store[k] = String(v); } };
     const { root } = await openWithColours();
     const toggle = groupToggle(root, "Category colours and icons");
     const body = bodyOf(root, "Category colours and icons");
+    assert.equal(toggle.getAttribute("aria-expanded"), "false", "BT-021: closed by default");
     toggle.click();
-    assert.equal(toggle.getAttribute("aria-expanded"), "false");
-    assert.equal(body.hidden, true);
-    assert.match(body.textContent, /Groceries/, "collapsing hides the panel, it does not empty it");
+    assert.equal(toggle.getAttribute("aria-expanded"), "true");
+    assert.equal(body.hidden, false);
+    assert.match(body.textContent, /Groceries/);
 
     const { root: root2 } = await openWithColours();
-    assert.equal(groupToggle(root2, "Category colours and icons").getAttribute("aria-expanded"), "false", "remembered closed, per browser");
+    assert.equal(groupToggle(root2, "Category colours and icons").getAttribute("aria-expanded"), "true", "remembered open, per browser");
   });
 
   test("collapsing and reopening never rebuilds the panel's own content: the exact same picker and error-slot nodes survive, so nothing already typed or shown can be lost", async () => {
     const { root } = await openWithColours();
     const toggle = groupToggle(root, "Category colours and icons");
     const body = bodyOf(root, "Category colours and icons");
+    toggle.click(); // open (BT-021: starts closed)
     const pickerBefore = body.querySelector(".themepick__toggle");
     const errorBefore = body.querySelector(".error-text");
     assert.ok(pickerBefore && errorBefore, "fixture sanity: the real picker and its inline-error slot both exist");

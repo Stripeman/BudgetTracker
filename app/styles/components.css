@@ -97,6 +97,48 @@ fieldset.budget-line { margin: 0; padding: var(--space-3); border: 1px solid var
 .catrow { display: grid; gap: var(--space-2) var(--space-3); align-items: start; grid-template-columns: repeat(auto-fit, minmax(min(13rem, 100%), 1fr)); padding-block: var(--space-2); border-top: 1px solid var(--border); }
 .catrow__name { margin: 0; padding-top: var(--space-4); font-size: var(--text-base); }
 .catrow__meta, .catrow > .error-text { grid-column: 1 / -1; }
+
+/* BT-021 (Terry, 2026-09-22): a compact, consistently aligned row for a managed type (account/
+   category/merchant), separating the existing list from editing — one line naming, colouring and
+   classifying the type, with the full name/colour/icon/behaviour controls tucked behind it as an
+   expandable inline form (a native <details>, so it is keyboard- and screen-reader-accessible for
+   free, matching the app's existing disclosure idiom for "Icons for types" and "Restore history"). */
+.typerow { border-top: 1px solid var(--border); }
+.typerow:first-of-type { border-top: 0; }
+.typerow > summary {
+  display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2);
+  padding-block: var(--space-2); cursor: pointer; list-style: none;
+}
+.typerow > summary::-webkit-details-marker { display: none; }
+.typerow__name { margin: 0; font-size: var(--text-base); font-weight: var(--weight-medium); }
+.typerow__spacer { flex: 1 1 auto; }
+.typerow__edit { flex: 0 0 auto; color: var(--accent-text); font-size: var(--text-sm); font-weight: var(--weight-medium); }
+.typerow[open] > summary .typerow__edit::after { content: " ▾"; }
+.typerow:not([open]) > summary .typerow__edit::after { content: " ▸"; }
+.typerow > .catrow { padding-bottom: var(--space-3); }
+/* The collapsed "+ Add …" creation form (BT-021): a lighter, dashed treatment so it reads as an
+   action to open rather than another data row. */
+.typeadd { border: 1px dashed var(--border-strong); border-radius: var(--radius); padding: 0 var(--space-3); margin-bottom: var(--space-3); }
+.typeadd .settings-group__toggle { font-weight: var(--weight-medium); }
+
+/* BT-021: the Workspace page's own General/"Layout & colours"/"Categories & types" sub-tabs — same
+   visual language as the app's top navigation (a bottom border on the active tab) but real ARIA
+   tabs (role="tablist"/"tab"/"tabpanel"), since these toggle panels on the SAME page rather than
+   navigating to a new route. The panel itself keeps the app's ordinary global focus-visible ring
+   (base.css) rather than suppressing it — unlike `.app__main`'s one-time programmatic focus on a
+   route change, a person really can reach this panel by pressing Tab, and it may hold no other
+   immediately-focusable content of its own. */
+.tabbar { display: flex; flex-wrap: wrap; gap: var(--space-1); border-bottom: 1px solid var(--border); margin-bottom: var(--space-4); }
+.tabbar__tab {
+  padding: var(--space-3) var(--space-3); border: 0; border-bottom: 2px solid transparent; background: transparent;
+  color: var(--text-muted); font: inherit; font-size: var(--text-sm); font-weight: var(--weight-medium); cursor: pointer;
+}
+.tabbar__tab:hover { color: var(--text); }
+.tabbar__tab[aria-selected="true"] { color: var(--text); border-bottom-color: var(--accent); }
+@media (max-width: 40rem) {
+  .tabbar { flex-wrap: wrap; }
+  .tabbar__tab { padding: var(--space-2); }
+}
 .plain-fieldset { border: 0; margin: 0; padding: 0; min-width: 0; }
 .themepick__icon .icon { width: 1.25rem; height: 1.25rem; }
 .amount-dir { display: inline-flex; align-items: center; gap: var(--space-1); justify-content: flex-end; }
@@ -848,6 +890,8 @@ fieldset.budget-line { margin: 0; padding: var(--space-3); border: 1px solid var
 /* The arrow follows aria-expanded and has no text alternative, so the button is named by the group alone. */
 .settings-group__toggle::before { content: "▸" / ""; display: inline-block; width: 1em; color: var(--text-muted); }
 .settings-group__toggle[aria-expanded="true"]::before { content: "▾" / ""; }
+/* An optional trailing summary (BT-021), e.g. a count, visible whether the group is open or closed. */
+.settings-group__hint { color: var(--text-muted); font-weight: var(--weight-normal); }
 .settings-group__body { display: flex; flex-direction: column; gap: var(--space-4); padding: 0 0 var(--space-4); }
 .settings-group__body[hidden] { display: none; }
 /* Responsive two-column layout for Workspace/Shared-expenses settings (item 5, review 2026-09-18):

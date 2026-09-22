@@ -95,7 +95,7 @@ describe("BT-019-02 Workspace page: Account types management card", () => {
     const card = accountTypesCard(view.element);
     const nameField = card.querySelectorAll("label").find((l) => l.textContent === "New type name");
     card.querySelector(`#${nameField.getAttribute("for")}`).value = "Fictional Wallet";
-    buttonNamed(card, "Add account type").click();
+    buttonNamed(card, "Save account type").click();
     await settle();
     assert.equal(calls.created.length, 1);
     assert.equal(calls.created[0].name, "Fictional Wallet");
@@ -124,7 +124,10 @@ describe("BT-019-02 Workspace page: Account types management card", () => {
     view.update(state);
     await settle();
     const card = accountTypesCard(view.element);
-    const storeRow = card.querySelectorAll(".catrow").find((r) => r.textContent.includes("Store card"));
+    // BT-021: the name now lives in the row's own <details><summary>, with the editable fields
+    // (including the colour picker) in the sibling .catrow body.
+    const storeTyperow = card.querySelectorAll(".typerow").find((r) => r.textContent.includes("Store card"));
+    const storeRow = storeTyperow.querySelector(".catrow");
     const toggle = storeRow.querySelector(".themepick__toggle");
     toggle.click();
     const options = dom.body.querySelectorAll('[role="option"]');

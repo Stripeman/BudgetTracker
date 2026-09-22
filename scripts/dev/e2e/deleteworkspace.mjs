@@ -43,6 +43,12 @@ export async function run(h, t) {
   // ---- Alice deletes it, from her own browser --------------------------------------------------------
   await b.alice.goto("workspace");
   await b.alice.waitForText("Delete workspace…", { scope: "main" });
+  // BT-021 (2026-09-22): the page's several loaders (invites, backups, audit, workspace info, the
+  // Layout Picker) still resolve for a moment after "Delete workspace…" itself first appears; each
+  // one that changes height above this button can shift it between locate()'s coordinate read and
+  // the dispatched click. Waiting for the network to go quiet first (the harness's own established
+  // pattern for this) avoids a real, reproduced click-vs-layout-shift race here.
+  await b.alice.settle();
   await b.alice.click({ role: "button", name: "Delete workspace…", scope: "main" });
   await b.alice.waitFor("!!document.querySelector('.modal')", { what: "the Delete workspace dialog" });
   // A wrong name is refused, in the dialog, before anything is sent.

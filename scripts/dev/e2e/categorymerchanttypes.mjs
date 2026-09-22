@@ -30,13 +30,17 @@ export async function run(h, t) {
 
   // ---- Alice creates a custom category type: name + expense/income class ---------------------------
   await b.alice.goto("workspace");
+  // BT-021 (2026-09-22): Account/Category/Merchant types now live on their own "Categories & types"
+  // sub-tab (real ARIA tabs), and each has its own collapsed "+ Add …" creation form.
+  await b.alice.click({ role: "tab", name: "Categories & types" });
   await b.alice.waitForText("Category types", { scope: "main" });
   const catCardBefore = await cardText(b.alice, "Category types");
   t.check("the Category types card exists and offers a create form", { expected: true, actual: !!catCardBefore && catCardBefore.includes("Add category type") });
   const CAT_CARD = 'section[aria-labelledby="ws-category-types"]';
+  await b.alice.click({ role: "button", name: "Add category type", scope: CAT_CARD });
   await b.alice.fill({ label: "New type name", scope: CAT_CARD }, CAT_NAME);
   await b.alice.choose("Expense or income", "Expense", { scope: CAT_CARD });
-  await b.alice.click({ role: "button", name: "Add category type", scope: CAT_CARD });
+  await b.alice.click({ role: "button", name: "Save category type", scope: CAT_CARD });
   await b.alice.waitForText(CAT_NAME, { scope: "main" });
   await b.alice.settle();
   const catType = (await api("alice").ok("category-types", { query: q })).types.find((x) => x.name === CAT_NAME);
@@ -50,9 +54,10 @@ export async function run(h, t) {
   // ---- Alice creates a custom merchant type, recolours it, and uses it on a real merchant -----------
   await b.alice.waitForText("Merchant types", { scope: "main" });
   const MERCH_CARD = 'section[aria-labelledby="ws-merchant-types"]';
+  await b.alice.click({ role: "button", name: "Add merchant type", scope: MERCH_CARD });
   await b.alice.fill({ label: "New type name", scope: MERCH_CARD }, MERCH_NAME);
   await b.alice.choose("Merchant class", "Subscription service", { scope: MERCH_CARD });
-  await b.alice.click({ role: "button", name: "Add merchant type", scope: MERCH_CARD });
+  await b.alice.click({ role: "button", name: "Save merchant type", scope: MERCH_CARD });
   await b.alice.waitForText(MERCH_NAME, { scope: "main" });
   await b.alice.settle();
   let merchType = (await api("alice").ok("merchant-types", { query: q })).types.find((x) => x.name === MERCH_NAME);
@@ -60,10 +65,14 @@ export async function run(h, t) {
     expected: { found: true, merchantClass: "subscription" }, actual: { found: !!merchType, merchantClass: merchType && merchType.merchantClass },
   });
 
+  // BT-021: the name now lives in the row's own <details><summary> (collapsed by default) — opened
+  // here with a plain script `.click()` on the summary (a real activation of the native disclosure).
   const rowColour = await b.alice.evaluate(`(() => {
-    const rows = [...document.querySelectorAll('main .catrow')];
-    const row = rows.find((r) => r.textContent.includes(${JSON.stringify(MERCH_NAME)}));
-    const toggle = row ? row.querySelector('.themepick__toggle') : null;
+    const rows = [...document.querySelectorAll('main .typerow')];
+    const row = rows.find((r) => r.querySelector('summary').textContent.includes(${JSON.stringify(MERCH_NAME)}));
+    if (!row) return null;
+    if (!row.open) row.querySelector('summary').click();
+    const toggle = row.querySelector('.themepick__toggle');
     if (!toggle) return null;
     toggle.scrollIntoView({ block: 'center' });
     const at = toggle.getBoundingClientRect();
@@ -107,6 +116,9 @@ export async function run(h, t) {
   // ---- Carol (a plain viewer, after a reload to pick up Alice's changes) sees read-only lists -------
   await b.carol.goto("workspace");
   await b.carol.reload();
+  // BT-021: Carol's own browser profile has never chosen a Workspace sub-tab before, so it starts on
+  // the default "General" one — a real click is needed to reach "Categories & types".
+  await b.carol.click({ role: "tab", name: "Categories & types" });
   await b.carol.waitForText("Category types", { scope: "main" });
   const carolCat = await cardText(b.carol, "Category types");
   const carolMerch = await cardText(b.carol, "Merchant types");
@@ -127,8 +139,8 @@ export async function run(h, t) {
   await b.alice.goto("workspace");
   await b.alice.waitForText(MERCH_NAME, { scope: "main" });
   await b.alice.evaluate(`(() => {
-    const rows = [...document.querySelectorAll('main .catrow')];
-    const row = rows.find((r) => r.textContent.includes(${JSON.stringify(MERCH_NAME)}));
+    const rows = [...document.querySelectorAll('main .typerow')];
+    const row = rows.find((r) => r.querySelector('summary').textContent.includes(${JSON.stringify(MERCH_NAME)}));
     const btn = row ? [...row.querySelectorAll('button')].find((x) => x.textContent === 'Retire') : null;
     if (btn) btn.click();
   })()`);
