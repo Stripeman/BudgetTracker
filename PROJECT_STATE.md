@@ -6797,3 +6797,146 @@ was already deployed at `56de292` earlier this session and still correctly refle
 functional in BT-013-16. Production remains untouched and still requires Terry's own separate, explicit
 authorization and his own run of `deploy.ps1 -Environment production -AuthorizedProduction` — not
 inferred from this merge, and not something I initiate on my own.
+
+## BT-021: Workspace page reorganization and compaction (2026-09-22)
+
+**Terry's instruction, verbatim intent:** review and improve the Workspace page using the running
+app on localhost; the "Workspace settings" panel is the good visual reference and should stay; the
+Layout panel is aligned but "takes up too much space"; everything below needs "a substantial
+organization and alignment pass, especially the controls for creating categories and types"; group
+related settings with consistent widths/spacing/alignment; consider an Appearance subtab for
+layout/colours/themes following existing conventions; use collapsible sections for secondary
+settings and creation forms, keeping headings and useful summaries visible when collapsed; separate
+existing categories/types from the "add new" action, with compact aligned rows and an expandable
+inline creation/editing form; align labels/inputs/selectors/buttons across comparable rows; preserve
+every function/label/keyboard path/validation/category-type distinction; choose the structure after
+inspecting localhost — not accordions around the same clutter.
+
+**Branch:** `feature/workspace-page-reorg-BT-021` (from `main` at `b8c65b2`, after Terry's own merge
+of PR #47/#48).
+
+**Real-browser inspection FIRST, before any code change** (own isolated dev server,
+`BT_DEV_DATA_ROOT=.local/agent-workspace-review BT_DEV_PORT=4390` — never Terry's own 4380 or
+`.local/dev-data`): the Workspace page was **12,794 px tall** in one continuous scroll. Layout's 12
+"under review" demo cards were always fully expanded; "Category colours and icons" (17 categories)
+was always fully expanded; Account/Category/Merchant types each showed every field (name, full
+colour picker, full icon picker, behaviour control, retire button) for every row, always expanded,
+with the create form always visible above them.
+
+**Redesign implemented** (full detail in `docs/REQUIREMENTS.md`'s new BT-021 row — this section is
+the session/process record, that one is the acceptance record):
+1. Three real same-page ARIA sub-tabs (`role="tablist"/"tab"/"tabpanel"`, automatic activation,
+   Home/End, remembered per browser) — visually matching the app's own site-admin sub-tab look
+   without reusing its route-based mechanism: **General** (unchanged reference: Members, Invite,
+   Workspace settings, Backups, Activity, Former members, Workspace changes; Delete/Permanently
+   delete stay OUTSIDE all tabs, always visible at the bottom); **"Layout & colours"** (renamed from
+   a literal "Appearance" specifically because the Workspace settings card already has its own
+   settings-group named "Appearance" — confirmed as a genuine accessible-name collision by
+   reproducing it breaking `scripts/dev/e2e/gallery.mjs` before renaming, not assumed) — Layout
+   Picker with its 12 demo concepts collapsed behind one `<details>` naming the real count, Category
+   colours and icons (now closed by default with a live count on its own toggle — a disclosed
+   supersession of BT-019-04's original "starts open" choice), Icons for types; **"Categories &
+   types"** — Account/Category/Merchant types rebuilt from one new shared `createTypeManager()`
+   factory (replacing three ~120-line near-duplicate functions), each type a compact one-line row
+   with a native per-row `<details>` for the full edit form and a collapsed "+ Add … type" creation
+   disclosure, separating existing items from the add action exactly as asked. A non-editor gets NO
+   creation control in the DOM at all (not merely hidden) and no per-row `<details>`, matching the
+   existing "must not exist in the DOM for anyone else" rule this file already uses for Delete
+   workspace.
+2. `app/js/ui/settingsgroup.js` gained an optional, backward-compatible `setSummary(text)` on the
+   shared collapsible shell (used by My Settings' 5 groups and this page's own, unaffected unless
+   called) — for "a useful summary visible when collapsed".
+3. `app/js/ui/views/layoutpicker.js`: the 12 demo concepts collapsed behind a `<details>` with a
+   live count in its summary.
+4. New CSS: `.tabbar`/`.tabbar__tab` (same visual language as `.app__nav`, genuine tabs not links),
+   `.typerow`/`.typerow__*` (compact row + chevron), `.typeadd` (dashed creation-form treatment),
+   `.settings-group__hint`.
+
+**Real page-height result** (same isolated server, same real browser): General ≈2,869 px, Layout &
+colours ≈1,531 px, Categories & types ≈2,160 px — each roughly 80-88% shorter than the original
+12,794 px single page. Screenshots at desktop light/dark and 390 px narrow show no horizontal
+overflow and a cleanly wrapping tab bar.
+
+**Real interaction verified in a real browser** (not assumed from source): a collapsed row expands
+to reveal its real name/colour/icon/behaviour fields; the collapsed "Add account type" form expands
+and a real fictional type ("E2E Verify Wallet") created through it appears in the list immediately;
+a viewer (Carol) sees zero creation/edit affordances, only the plain read-only list; keyboard
+ArrowRight/ArrowLeft/Home/End correctly move and activate tabs (automatic activation, WAI-ARIA APG);
+real Tab-key order reaches the tablist as ONE stop (roving tabindex: General→tabpanel→its own
+controls), never tabbing through all three tab buttons individually; zero console
+errors/exceptions across every tab, every flagship layout (BT-013-16 still applies its `.dashflag`
+wrapper around the whole tab+panel structure, unaffected), light/dark and 390 px.
+
+**A real, reproduced test-timing defect found and fixed while re-verifying, not a flake:**
+`scripts/dev/e2e/deleteworkspace.mjs` failed 2/2 runs with "timed out waiting for the Delete
+workspace dialog" after this page's restructuring, and passed 3/3 after the fix. Root cause,
+confirmed by instrumenting the actual failing run (not guessed): the page's several loaders
+(invites, backups, audit, workspace info, the Layout Picker) still resolve for a moment after
+"Delete workspace…" itself first becomes visible; one that changes height above the button can
+shift its screen position between the harness's coordinate read and the dispatched click. Fixed by
+waiting for the network to go quiet first (`session.settle()`, the harness's own established
+pattern for exactly this), not a sleep.
+
+**Real bugs found and fixed while building this, each confirmed by a failing-then-passing test
+(not merely inferred):**
+1. `field()` cannot be given a placeholder `<div>` in place of the real control (breaks label
+   association) — found via a first draft of the shared "Add … type" form, fixed by rebuilding the
+   whole small form fresh each render exactly like the three functions it replaces always did,
+   mounted into one stable box.
+2. The disclosure toggle and the form's own submit button both being labelled "Add account type"
+   made the submit action ambiguous/wrong for automation (the toggle, being first in DOM order, was
+   clicked instead of the real submit) — found via `app/test/accounttypes-ui.test.js`'s own create
+   test, fixed by giving the submit button a distinct label ("Save account type" etc.).
+3. A non-editor's "Add … type" toggle existed in the DOM merely `hidden`, not absent — found via
+   `assert.equal(buttonNamed(...), undefined)` unexpectedly returning a real node (which then hit
+   the SAME `assert.equal`-on-DOM-nodes catastrophic-inspect/OOM hazard from the BT-013-16 session,
+   in a completely different, older test file — confirms this is a general domdouble hazard, not
+   scenario-specific). Fixed at the root (the toggle is now only ever mounted into the DOM for an
+   editor at all), which also made the assertion pass normally without ever reaching the hazardous
+   path.
+4. `.typerow__name` as an `<h3>` needs its own margin/font-size reset (browsers' default heading
+   style looked wrong inside the compact flex row) — found via screenshot review, fixed with 3 lines
+   of CSS.
+5. The literal tab label "Appearance" collided with the Workspace settings card's own pre-existing
+   "Appearance" settings-group — found by actually running `gallery.mjs` (not merely reasoned about),
+   fixed by renaming the tab to "Layout & colours" and updating every e2e script/comment that
+   referenced the old name.
+6. `el()` skips a `false`-valued `hidden` attrs entry (matches every other falsy attrs value) — a
+   `panel()` built with `hidden: id !== activeTab` therefore never gets `.hidden` set to `false` on
+   the initially-active panel, only ever `true` when actually hidden. Not a real-browser bug
+   (`.hidden` still correctly defaults to `false` on a real DOM element), but a real domdouble-testing
+   gap that made `app/test/workspacetabs.test.js`'s own reasonable assertion fail; fixed by setting
+   `.hidden` as a property after construction, matching `settingsgroup.js`'s own established
+   `body.hidden = !initialOpen` pattern for the identical reason.
+
+**Evidence:** new `app/test/workspacetabs.test.js` (6/6: tab roles/aria-selected/roving-tabindex,
+panel visibility, keyboard automatic-activation including wraparound, per-browser persistence, the
+setting-deep-link-always-lands-on-General rule). Updated `app/test/{accounttypes-ui,
+categorymerchanttypes-ui,workspacesettings,workspaceflagship}.test.js` for the new structure (same
+behaviour asserted, new DOM shape). Updated real-browser `scripts/dev/e2e/{accounttypes,
+categorymerchanttypes,layoutpicker,layoutpreview,workspacecolours,workspaceflagship,
+deleteworkspace}.mjs`, each re-run individually to a clean PASS. Full `npm test` (repo+api+app)
+39/792/725, exit 0. `npm run validate` ok (29 routes), exit 0. **Full combined `npm run e2e` (every
+scenario in the app, not just this task's own ~7 changed scenarios): 1105 passed, 0 failed, 0
+skipped, exit 0** — confirms no cross-scenario regression from this page's restructuring.
+
+**A real focus-visibility regression found and fixed during this same final review pass, before any
+of the above was called done:** an early draft copied `.app__main:focus { outline: none; }` (a
+correct pattern for a route's one-time programmatic focus target) onto the new
+`.tabbar__panel:focus`, but real Tab-key navigation DOES reach this panel as an ordinary stop
+(confirmed directly), so suppressing its outline silently removed a keyboard user's only visual
+focus indicator there. Found by rereading the CSS diff, not by a failing test (no test in this
+codebase currently asserts on a visible focus ring's presence). Fixed by removing the override
+entirely, letting the app's existing global `:focus-visible` rule (`base.css`) apply normally —
+confirmed with a real-browser screenshot showing the ring around the panel after two real Tab
+presses. All tests re-run clean after this fix (see the totals above, taken after it).
+
+**Not yet done, disclosed honestly:** no dedicated, isolated screen-reader/accessibility-tree audit
+beyond the ARIA-pattern and real keyboard checks already run; the workspace-default colour scheme
+(a pre-existing, separately-disclosed BT-013-16 gap) is still not read by any renderer — unaffected
+by, and out of scope for, this change. No `main` merge, no Preview/Production deploy performed or
+requested as part of this task.
+
+**Exact next step:** report the before/after screenshots, page-height reduction and this checkpoint
+to Terry; open one PR for `feature/workspace-page-reorg-BT-021` → `main` if/when he asks for one
+(not requested this session; do not merge or deploy without his explicit instruction).

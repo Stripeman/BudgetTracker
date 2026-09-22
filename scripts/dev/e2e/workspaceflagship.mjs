@@ -25,6 +25,11 @@ export async function run(h, t) {
   const { alice } = await h.browsers(["alice"], { prefix: "workspaceflagship-", width: 1440, height: 1000 });
   await alice.open("workspace");
   await alice.useWorkspace(W.name);
+  // BT-021 (2026-09-22): the Layout card now lives on its own "Layout & colours" sub-tab, not the default
+  // "General" one — real ARIA tabs (role="tab"), so a real click is needed to reveal it. The choice
+  // is remembered per browser (localStorage), so this ONE switch stays in effect through every
+  // `reload()` below.
+  await alice.click({ role: "tab", name: "Layout & colours" });
   await alice.waitForText("Executive Forecast", { scope: LAYOUT_CARD });
   t.check("Classic (the default) never shows the flagship wrapper", { expected: false, actual: await alice.evaluate(`!!document.querySelector('.dashflag')`) });
 
@@ -37,12 +42,21 @@ export async function run(h, t) {
     await applyLayout(api, W.ws.id, c.id);
     await alice.reload();
     await alice.waitFor("!!document.querySelector('.dashflag')", { what: `the ${c.name} flagship arrangement` });
-    const text = await alice.text(".dashflag");
-    t.check(`${c.name}: every real card is still present, including the Layout Picker card itself`, {
-      expected: true, actual: text.includes("Members") && text.includes("Layout") && text.includes("Backups and restore") && text.includes("Currently applied"),
+    // BT-021: Members/Backups (General) and Layout/Currently applied (Layout & colours) are now on
+    // separate real tabs — each checked on its own tab, both still inside the SAME `.dashflag`
+    // flagship wrapper (the tab bar and its panels are all reparented together as one unit).
+    const appearanceText = await alice.text(".dashflag");
+    t.check(`${c.name}: the Layout Picker card itself is still present and shows what is currently applied`, {
+      expected: true, actual: appearanceText.includes("Layout") && appearanceText.includes("Currently applied"),
+    });
+    await alice.click({ role: "tab", name: "General" });
+    const generalText = await alice.text(".dashflag");
+    t.check(`${c.name}: Members and Backups and restore are still present on General`, {
+      expected: true, actual: generalText.includes("Members") && generalText.includes("Backups and restore"),
     });
     const shot = await alice.shot(`${c.id}`);
-    t.note(`screenshot of Workspace settings under ${c.name}: ${shot}`);
+    t.note(`screenshot of Workspace settings (General tab) under ${c.name}: ${shot}`);
+    await alice.click({ role: "tab", name: "Layout & colours" });
   }
 
   // ---- the real Layout Picker card still lets Alice apply a different layout from here -------------

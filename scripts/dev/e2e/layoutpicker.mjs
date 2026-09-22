@@ -37,6 +37,9 @@ export async function run(h, t) {
 
   // ---- the real Layout Picker card renders the four real layouts, Classic currently applied --------
   await b.alice.goto("workspace");
+  // BT-021 (2026-09-22): the Layout card now lives on its own "Layout & colours" sub-tab (real ARIA tabs,
+  // remembered per browser via localStorage — Bob's separate profile below needs its own click too).
+  await b.alice.click({ role: "tab", name: "Layout & colours" });
   await b.alice.waitForText("Layout", { scope: "main" });
   await b.alice.waitForText("Executive Forecast", { scope: LAYOUT_CARD });
   const before = await cardText(b.alice);
@@ -63,6 +66,7 @@ export async function run(h, t) {
 
   // ---- Bob (member) sees the SAME applied layout everywhere, but cannot apply or manage -----------
   await b.bob.goto("workspace");
+  await b.bob.click({ role: "tab", name: "Layout & colours" });
   await b.bob.reload();
   await b.bob.waitForText("Executive Forecast", { scope: LAYOUT_CARD });
   const bobCard = await cardText(b.bob);

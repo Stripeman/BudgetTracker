@@ -36,6 +36,9 @@ export async function run(h, t) {
 
   // ---- Alice previews Executive Forecast from the real Layout Picker -------------------------------
   await b.alice.goto("workspace");
+  // BT-021 (2026-09-22): the Layout card now lives on its own "Layout & colours" sub-tab, remembered per
+  // browser for the rest of this session (including the later re-visit at line ~79 below).
+  await b.alice.click({ role: "tab", name: "Layout & colours" });
   await b.alice.waitForText("Executive Forecast", { scope: LAYOUT_CARD });
   await clickPreview(b.alice, "Executive Forecast");
   await b.alice.waitFor("!!document.querySelector('.dashflag')", { what: "the previewed flagship Dashboard" });
@@ -68,6 +71,7 @@ export async function run(h, t) {
 
   // ---- Bob (member) may preview too, but never sees Apply — only owners/managers change the default -
   await b.bob.goto("workspace");
+  await b.bob.click({ role: "tab", name: "Layout & colours" });
   await b.bob.waitForText("Financial Overview", { scope: LAYOUT_CARD });
   await clickPreview(b.bob, "Financial Overview");
   await b.bob.waitFor("!!document.querySelector('.dashflag')", { what: "Bob's previewed Dashboard" });

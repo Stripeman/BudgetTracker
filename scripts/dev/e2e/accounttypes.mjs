@@ -29,6 +29,9 @@ export async function run(h, t) {
 
   // ---- Alice creates a custom account type: name + accounting behaviour, colour and icon default --
   await b.alice.goto("workspace");
+  // BT-021 (2026-09-22): Account/Category/Merchant types now live on their own "Categories & types"
+  // sub-tab (real ARIA tabs), and each has its own collapsed "+ Add …" creation form.
+  await b.alice.click({ role: "tab", name: "Categories & types" });
   await b.alice.waitForText("Account types", { scope: "main" });
   const before = await accountTypesCardText(b.alice);
   t.check("the Account types card exists on the Workspace page and offers a create form", { expected: true, actual: !!before && before.includes("Add account type") });
@@ -36,9 +39,10 @@ export async function run(h, t) {
   // BT-019-01/03 later added their own "Category types"/"Merchant types" cards with the same field
   // labels ("New type name"), so this scenario scopes precisely to the Account types card itself.
   const ACCOUNT_TYPES_CARD = 'section[aria-labelledby="ws-account-types"]';
+  await b.alice.click({ role: "button", name: "Add account type", scope: ACCOUNT_TYPES_CARD });
   await b.alice.fill({ label: "New type name", scope: ACCOUNT_TYPES_CARD }, CARD_NAME);
   await b.alice.choose("Accounting behaviour", "Credit card", { scope: ACCOUNT_TYPES_CARD });
-  await b.alice.click({ role: "button", name: "Add account type", scope: ACCOUNT_TYPES_CARD });
+  await b.alice.click({ role: "button", name: "Save account type", scope: ACCOUNT_TYPES_CARD });
   await b.alice.waitForText(CARD_NAME, { scope: "main" });
   await b.alice.settle();
   const created = (await api("alice").ok("account-types", { query: q })).types.find((x) => x.name === CARD_NAME);
@@ -50,10 +54,16 @@ export async function run(h, t) {
   t.note(`screenshot after creating the type: ${shotCreated}`);
 
   // ---- Alice recolours it through the same colour picker categories use ---------------------------
+  // BT-021: the name now lives in the row's own <details><summary> (collapsed by default) — opened
+  // here with a plain script `.click()` on the summary, which real browsers treat as a genuine
+  // activation of the native disclosure (the same as a person clicking it), before reaching into the
+  // now-visible colour picker.
   const rowColour = await b.alice.evaluate(`(() => {
-    const rows = [...document.querySelectorAll('main .catrow')];
-    const row = rows.find((r) => r.textContent.includes(${JSON.stringify(CARD_NAME)}));
-    const toggle = row ? row.querySelector('.themepick__toggle') : null;
+    const rows = [...document.querySelectorAll('main .typerow')];
+    const row = rows.find((r) => r.querySelector('summary').textContent.includes(${JSON.stringify(CARD_NAME)}));
+    if (!row) return null;
+    if (!row.open) row.querySelector('summary').click();
+    const toggle = row.querySelector('.themepick__toggle');
     if (!toggle) return null;
     toggle.scrollIntoView({ block: 'center' });
     const at = toggle.getBoundingClientRect();
@@ -104,6 +114,9 @@ export async function run(h, t) {
   // above — a real reload re-reads them, exactly like opening the page fresh would.
   await b.carol.goto("workspace");
   await b.carol.reload();
+  // BT-021: Carol's own browser profile has never chosen a Workspace sub-tab before, so it starts on
+  // the default "General" one — a real click is needed to reach "Categories & types".
+  await b.carol.click({ role: "tab", name: "Categories & types" });
   await b.carol.waitForText("Account types", { scope: "main" });
   const carolCard = await accountTypesCardText(b.carol);
   const carolHasPickers = await b.carol.evaluate(`(() => {
@@ -120,8 +133,8 @@ export async function run(h, t) {
   await b.alice.goto("workspace");
   await b.alice.waitForText(CARD_NAME, { scope: "main" });
   await b.alice.evaluate(`(() => {
-    const rows = [...document.querySelectorAll('main .catrow')];
-    const row = rows.find((r) => r.textContent.includes(${JSON.stringify(CARD_NAME)}));
+    const rows = [...document.querySelectorAll('main .typerow')];
+    const row = rows.find((r) => r.querySelector('summary').textContent.includes(${JSON.stringify(CARD_NAME)}));
     const btn = row ? [...row.querySelectorAll('button')].find((b) => b.textContent === 'Retire') : null;
     if (btn) btn.click();
   })()`);

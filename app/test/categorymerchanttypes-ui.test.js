@@ -86,7 +86,7 @@ describe("BT-019-01 Workspace page: Category types management card", () => {
     const card = cardByHeading(view.element, "Category types");
     const nameField = card.querySelectorAll("label").find((l) => l.textContent === "New type name");
     card.querySelector(`#${nameField.getAttribute("for")}`).value = "Fictional Essentials";
-    buttonNamed(card, "Add category type").click();
+    buttonNamed(card, "Save category type").click();
     await settle();
     const created = calls.patched.find((c) => c.create === "category");
     assert.ok(created);

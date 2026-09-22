@@ -31,7 +31,11 @@ function writeOpen(key, value) {
 export function createSettingsGroup({ id, storageKey, name, defaultOpen = false, nodes = [], hidden = false }) {
   const bodyId = uid(`${id}-group`);
   const body = el("div", { class: "settings-group__body", id: bodyId }, nodes);
-  const toggle = el("button", { type: "button", class: "settings-group__toggle", "aria-controls": bodyId, text: name });
+  // An optional trailing hint (BT-021, Terry: "keep section headings and useful summaries visible
+  // when collapsed"), e.g. a count — text only, never the only way to tell a group apart, and empty
+  // by default so every existing caller is unaffected until it calls `setSummary`.
+  const hint = el("span", { class: "settings-group__hint" });
+  const toggle = el("button", { type: "button", class: "settings-group__toggle", "aria-controls": bodyId }, [name, hint]);
   const open = readOpen(storageKey);
   const initialOpen = Object.prototype.hasOwnProperty.call(open, name) ? open[name] === true : defaultOpen;
   body.hidden = !initialOpen;
@@ -48,5 +52,6 @@ export function createSettingsGroup({ id, storageKey, name, defaultOpen = false,
   return {
     element,
     setHidden(next) { element.hidden = !!next; },
+    setSummary(text) { hint.textContent = text ? ` — ${text}` : ""; },
   };
 }
