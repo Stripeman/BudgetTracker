@@ -8,7 +8,7 @@ import { stateView, badge, button, amountText, field, input, pickerSelect, categ
 import { openModal } from "../modal.js";
 import { openDeleteDialog } from "../permanentdelete.js";
 import { sliceFor } from "../../core/store.js";
-import { formatDate, todayIso, MERCHANT_TYPE_LABELS } from "../../core/format.js";
+import { formatDate, todayIso, todayIsoUTC, MERCHANT_TYPE_LABELS } from "../../core/format.js";
 import { normalize } from "../merchantselect.js";
 import { icon, withIcon, iconLabel, defaultIconFor } from "../icons.js";
 import { createIconPicker, iconChange } from "../iconpicker.js";
@@ -405,8 +405,13 @@ export function openMerchantEditor(ctx, merchant = null, { prefillName = "", onC
 // feature introduced. `onLinked()` fires only on a real success, so the caller can stop offering
 // this bill again for the rest of this page visit, and the confirmation says plainly when to
 // expect it to show, rather than implying it should appear immediately.
+//
+// Second fix (2026-09-23, Terry's second report of the same symptom — see todayIsoUTC's own
+// comment, core/format.js): "today" here must be the server's own UTC calendar day, since it is
+// compared against the server's UTC `termsAt` — the browser's local calendar day disagrees with it
+// for a real, if narrow, window near local midnight in any timezone ahead of UTC.
 async function linkBillToMerchant(ctx, bill, payee, { onLinked } = {}) {
-  const today = todayIso();
+  const today = todayIsoUTC();
   const startDate = bill.schedule && bill.schedule.startDate;
   const delayed = !!(startDate && startDate > today);
   const effectiveFrom = delayed ? startDate : today;

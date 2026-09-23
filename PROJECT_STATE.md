@@ -7442,3 +7442,85 @@ deploy attempt whenever he chooses; that step stays his own action.
 
 **BT-026 status note:** unrelated to this issue — already closed out, merged (`838c1b1`) and verified
 on Preview before this session began; nothing further needed for it here.
+
+## BT-028: the recurring-bill merchant-save bug, reported a SECOND time — a genuinely different root cause than BT-026, found, proven live and fixed (2026-09-24)
+
+**Terry's report, verbatim** (same wording/symptom as BT-026, explicitly linked, not a new feature):
+"The recurring-bill merchant save bug is still happening... From the Bills tab, I edit an existing
+recurring bill, select EnBW from the Merchant dropdown, and click Save changes. The merchant does not
+persist on the bill." His screenshot: "Electric Repayment", Utilities, monthly, EUR account — asked
+for a full trace (picker → form state → PATCH → server validation/persistence → response → refreshed
+UI), a real regression test, and real-browser verification including reopen AND reload — never
+declaring it fixed from the picker or the API alone.
+
+**Root cause, traced end to end, confirmed a DIFFERENT cause than BT-026** (BT-026's own fix —
+defaulting "take effect from" to today instead of `nextDue` — was necessary but not sufficient): the
+"today" BT-026 introduced used `todayIso()` (`core/format.js`) — the BROWSER's own LOCAL calendar
+day. The server always compares a term's `effectiveFrom` against ITS OWN UTC calendar day
+(`api/_shared/runtime.js` `nowIso`). For roughly 1–3 hours near LOCAL midnight, in any timezone AHEAD
+of UTC — this machine's own zone is `W. Europe Standard Time`, UTC+1/+2, confirmed with
+`Get-TimeZone` — the local calendar day has already rolled to tomorrow while the server's UTC day has
+not: the submitted `effectiveFrom` is a FUTURE date from the server's own point of view, so `termsAt`
+(`api/_shared/bills.js`) never selects the just-written version. Genuinely saved server-side,
+indistinguishable from "did not save" — the identical symptom class as BT-026/BT-014-13, a second,
+independent cause.
+
+**Reproduction discipline (nothing declared fixed on assumption):** extended
+`scripts/dev/e2e/bills.mjs` with the one path that had ZERO prior end-to-end browser coverage —
+selecting an EXISTING merchant from the bill editor's own dropdown (never typed as a draft, never via
+the Merchants page's "Add merchant" quick-link, both already covered) — on a EUR account, matching
+Terry's exact steps, including a full hard page RELOAD, a second existing-merchant switch, and a
+merchant-ONLY edit that must never touch amount/account/recurrence. Building it found and fixed TWO
+real gaps in the E2E HARNESS itself, not the application: (1) `goto()` sets `location.hash` to its
+own current value when already on that route, which fires no hashchange and so never refetches
+fixtures created directly via the API (fixed by hopping through another route, or a hard `reload()`,
+first); (2) `openRecordMenu` clicks raw, unscrolled viewport coordinates, so a row far down a long,
+by-then-populated table was clicked off-screen (fixed with an explicit `scrollIntoView` before every
+call for this bill). Confirmed the harness fixes were real gaps, not a hidden product bug, since the
+SAME flow later passed cleanly once they were fixed.
+
+**Proof the fix is real, in TWO independent ways:**
+1. A deterministic unit regression, independent of wall-clock timing (`app/test/pickerbills.test.js`,
+   `t.mock.timers.enable({ apis: ["Date"], now: Date.parse("2026-01-01T23:30:00Z") })` — a real instant
+   already "tomorrow" in any zone at UTC+1 or later, verified via a fixture-sanity assertion that
+   `localToday !== utcToday` for THIS run before trusting the rest). Confirmed **FAILING** against the
+   pre-fix code (`git stash` of just the fix files, keeping the new e2e test), then confirmed
+   **PASSING** once restored (`git stash pop`) — the exact same prove-it-fails-then-prove-it-passes
+   discipline BT-026 itself used.
+2. Timed live in a REAL browser against the REAL dev server's REAL system clock: a background check
+   polled until UTC crossed 22:00 on 2026-09-23, then ran `npm run e2e -- --only bills` — it started at
+   **22:00:03 UTC**, exactly inside the mismatch window (this machine's own local calendar had already
+   rolled to **2026-09-24** at that instant, confirmed independently by this session's own clock
+   rolling over mid-investigation). Result with the fix in place: **50 passed, 0 failed, exit 0** — a
+   genuine, timed, non-simulated, real-browser proof, not an assumption.
+
+**A bonus, unplanned confirmation:** the FULL suite (`npm test`), run live during that same real
+boundary, caught a real pre-existing STALE test expectation for real: `app/test/pickerviews.test.js`
+asserted `linkBillToMerchant`'s effective date against the OLD browser-local `todayIso()` — it failed
+for real (`effectiveFrom: '2026-09-23'` actual vs `'2026-09-24'` expected) the moment the suite ran
+across that exact local-vs-UTC midnight boundary. Confirmed as a stale expectation (encoding the OLD,
+buggy behavior), not a regression, and corrected to `todayIsoUTC()`.
+
+**Fix:** new `todayIsoUTC(now = new Date())` in `app/js/core/format.js` (`now.toISOString().slice(0,
+10)`), with a full explanatory comment. The bill editor's own "take effect from" default
+(`bills.js`, `openBillEditor`) and the Merchants page's "Add merchant" quick-link
+(`linkBillToMerchant`, `payees.js`) — the only two places anywhere that compare a chosen date against
+the server's own `termsAt` — now call it instead of `todayIso()`. Every OTHER `todayIso()` default in
+the app (a new bill's own start date, recording a payment's date, closing a merchant, an end date,
+...) is a plain user-facing entry default with no server-side "in effect right now" comparison behind
+it and correctly stays the viewer's own local calendar day — audited and deliberately left untouched,
+scope kept to exactly the reported defect, per Terry's own instruction to keep this linked to the
+existing merchant-save defect rather than open into a broader change.
+
+**Evidence, full gate:** `npm test` — `test:repo` 39/39, `npm --prefix api test` 802/802, `app` 743/743
+(742 + 1 new deterministic regression), combined **exit 0**. `npm run validate` — `validate: ok (29
+routes)`, exit 0. `npm run e2e -- --only bills` — **50/50, exit 0** (both the live-timed run above and
+a clean re-run afterward for the record).
+
+**Not yet done / open:** `linkBillToMerchant`'s own fix mirrors the bill editor's proven one exactly
+(the identical one-line change, the same new function) but was verified by code review and the
+existing, non-time-mocked "Add merchant" e2e coverage rather than a second dedicated time-mocked unit
+test, since it is an internal, unexported function in `payees.js` — flagged rather than silently
+assumed equivalent. Committed (`ba2a00b`) on `fix/bill-merchant-timezone-regression`, pushed, and
+opened as **PR #57** (https://github.com/Stripeman/BudgetTracker/pull/57). Not merged to `main`, no
+Preview/Production deploy performed as part of this checkpoint — both remain Terry's own action.

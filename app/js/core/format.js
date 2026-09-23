@@ -31,6 +31,28 @@ export function todayIso(now = new Date()) {
   return new Date(now.getTime() - offset).toISOString().slice(0, 10);
 }
 
+// The server's own calendar day (api/_shared/runtime.js `nowIso`, always UTC — `new
+// Date(...).toISOString()`). Bug fix (2026-09-23, Terry's second report of the same symptom as
+// BT-026 — "select EnBW from the Merchant dropdown and click Save changes. The merchant does not
+// persist" — after the BT-026 fix already covered the far-future-`nextDue` case): a bill's "changes
+// take effect from" default (and the identical default in the Merchants page's own "Add merchant"
+// quick-link, `linkBillToMerchant`) used `todayIso()` — the BROWSER's own local calendar day. For
+// roughly 1–3 hours near local midnight (whenever the browser's timezone is AHEAD of UTC — Terry's
+// own machine is `W. Europe Standard Time`, UTC+1/+2), the local calendar day has already rolled
+// to tomorrow while the server's UTC calendar day has not: the submitted `effectiveFrom` is then
+// LATER than the server's own idea of "today", so `termsAt` (api/_shared/bills.js — "the version
+// effective on `date`, not after it") never selects the just-written version. The write genuinely
+// succeeds server-side; the bill's CURRENT view (the All-bills list, and a freshly reopened Edit
+// dialog) stays exactly as it was until the server's own UTC date catches up — indistinguishable
+// from "nothing saved", the exact symptom reported. Every OTHER `todayIso()` default in this app
+// (a new bill's own start date, recording a payment's date, closing a merchant, an end date, ...)
+// is a plain user-facing entry default with no server-side "is this in effect right now" comparison
+// behind it, and correctly stays the viewer's own local calendar day — only the two term-effective-
+// date defaults that are compared against the server's UTC `termsAt` need this.
+export function todayIsoUTC(now = new Date()) {
+  return now.toISOString().slice(0, 10);
+}
+
 // The viewer's own local calendar, same technique as todayIso above (Dashboard weekly/monthly
 // widgets, BT-014-14). Weeks start Monday, a plain default — there is no "week starts on" setting.
 export function startOfWeekIso(now = new Date()) {

@@ -14,7 +14,7 @@ import { openMerchantEditor } from "./payees.js";
 import { choosableMerchants, canAddEntries, addEntriesBlocked } from "./transactions.js";
 import { sliceFor } from "../../core/store.js";
 import { newIdempotencyKey } from "../../core/api.js";
-import { formatDate, formatAmount, todayIso, BILL_TYPE_LABELS } from "../../core/format.js";
+import { formatDate, formatAmount, todayIso, todayIsoUTC, BILL_TYPE_LABELS } from "../../core/format.js";
 import { icon, withIcon, defaultIconFor, iconLabel } from "../icons.js";
 import { createIconPicker, iconChange } from "../iconpicker.js";
 import { pickerOf } from "../selectpicker.js";
@@ -613,8 +613,11 @@ export function openBillEditor(ctx, bill = null, opts = {}) {
   // change (amount, category, merchant, responsible person) goes through. Same fix, same reasoning:
   // today, unless the bill's own schedule has not started yet (in which case nothing can be "in
   // effect" before that — a real, disclosed structural limit, not something a date choice can work
-  // around).
-  const today = todayIso();
+  // around). Second fix (2026-09-23, same symptom reported again — see todayIsoUTC's own comment,
+  // core/format.js): "today" here MUST be the server's own UTC calendar day, not the browser's
+  // local one, since this value is compared against the server's UTC `termsAt` — using the local day
+  // left a real, if narrow, daily window where they disagreed.
+  const today = todayIsoUTC();
   const billStartDate = b.schedule && b.schedule.startDate;
   const effectiveFrom = input({ type: "date" });
   effectiveFrom.value = billStartDate && billStartDate > today ? billStartDate : today;

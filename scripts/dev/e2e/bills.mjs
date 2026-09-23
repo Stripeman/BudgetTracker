@@ -503,6 +503,124 @@ export async function run(h, t) {
   await b.alice.press("Escape");
   await b.alice.waitFor("!document.querySelector('.modal')", { what: "the edit dialog to close" });
 
+  // ---- Terry's SECOND report (2026-09-23, same wording, still after the effectiveFrom-default fix
+  // above): "select EnBW from the Merchant dropdown, click Save changes. The merchant does not
+  // persist." — an ALREADY-EXISTING merchant chosen from the dropdown's search results, on a EUR
+  // account, never typed (typeMerchantDraft above is a DIFFERENT code path: payeeDraftName, not a
+  // real payeeId) and never through the Merchants page's "Add merchant" quick-link
+  // (linkBillToMerchant, also tested above, is a THIRD different code path). No existing check
+  // anywhere in this suite exercised THIS exact path end to end — choose an existing merchant
+  // straight from the bill editor's own dropdown, save, reopen, and a full page reload — before
+  // this. -------------------------------------------------------------------------------------------
+  // openRecordMenu clicks raw viewport coordinates (no auto-scroll); this scenario has, by now,
+  // populated a long All-bills table, so the new row can sit well below the fold. Scrolls the real
+  // All-bills row (the one WITH an actions-menu toggle — a Dashboard-style "Due soon" summary row
+  // matched by the same text, deliberately, has none) into view first, every time.
+  async function scrollBillRowIntoView(s, recordName) {
+    await s.evaluate(`(() => {
+      const root = document.querySelector("main") || document.body;
+      const row = [...root.querySelectorAll("tr, li")].find((n) => n.textContent.includes(${JSON.stringify(recordName)}) && n.querySelector(".actionsmenu__toggle"));
+      if (row) row.scrollIntoView({ block: "center" });
+    })()`);
+  }
+  const eurAccount = firstRecord(await h.api("alice").ok("accounts", { method: "POST", query: q, body: { name: "E2E EUR Checking", type: "checking", currency: "EUR", openingBalance: "500.00" } }));
+  const enbw = firstRecord(await h.api("alice").ok("payees", { method: "POST", query: q, body: { name: "EnBW" } }));
+  // Created up front, alongside EnBW, so the one reload below picks up both real merchants.
+  const vattenfall = firstRecord(await h.api("alice").ok("payees", { method: "POST", query: q, body: { name: "E2E Vattenfall" } }));
+  const repayment = firstRecord(await h.api("alice").ok("recurring", { method: "POST", query: q, body: { name: "E2E Electric Repayment EUR", billType: "utilities", accountId: eurAccount.id, amount: "88.00", schedule: { freq: "monthly", startDate: today } } }));
+  t.note(`EnBW ${enbw.id}; E2E Vattenfall ${vattenfall.id}; E2E Electric Repayment EUR ${repayment.id} on EUR account ${eurAccount.id}`);
+
+  // These fixtures were created directly via the API, bypassing the SPA's own store — unlike every
+  // merchant used above, which the app itself created (via a real UI action) and so already had in
+  // its own in-memory state. A hard reload is the only reliable way to pick them up: the running
+  // app's payees list is not necessarily refetched just by revisiting a route.
+  await b.alice.reload();
+  await b.alice.goto("bills");
+  await b.alice.waitForText("E2E Electric Repayment EUR", { scope: "main" });
+  await scrollBillRowIntoView(b.alice, "E2E Electric Repayment EUR");
+  await b.alice.openRecordMenu("E2E Electric Repayment EUR", { scope: "main" });
+  await b.alice.click({ role: "button", name: "Edit E2E Electric Repayment EUR" });
+  await b.alice.waitFor("!!document.querySelector('.modal')", { what: "the EUR Electric Repayment edit dialog" });
+  await b.alice.choose("Merchant", "EnBW", { scope: ".modal" });
+  const chosenBeforeSave = await byLabelValue(b.alice, "Merchant");
+  t.check("the picker itself shows EnBW chosen, before saving", { expected: "EnBW", actual: chosenBeforeSave });
+  await b.alice.click({ role: "button", name: "Save changes", scope: ".modal" });
+  await b.alice.waitFor("!document.querySelector('.modal')", { what: "the dialog to close after saving" });
+  await b.alice.settle();
+
+  const afterSaveApi = (await h.api("alice").ok("recurring", { query: q })).recurring.find((r) => r.id === repayment.id);
+  t.check("the REAL merchant (payeeId), not a draft name, is linked and CURRENT on the bill immediately after saving — verified directly against the API, never assumed from what the picker displayed", {
+    expected: { payeeId: enbw.id, payeeName: "EnBW" },
+    actual: { payeeId: afterSaveApi && afterSaveApi.payeeId, payeeName: afterSaveApi && afterSaveApi.payeeName },
+  });
+
+  await scrollBillRowIntoView(b.alice, "E2E Electric Repayment EUR");
+  await b.alice.openRecordMenu("E2E Electric Repayment EUR", { scope: "main" });
+  await b.alice.click({ role: "button", name: "Edit E2E Electric Repayment EUR" });
+  await b.alice.waitFor("!!document.querySelector('.modal')", { what: "the EUR Electric Repayment edit dialog, reopened" });
+  const reopenedEnbw = await byLabelValue(b.alice, "Merchant");
+  t.check("reopening the editor shows EnBW, immediately, not blank", { expected: "EnBW", actual: reopenedEnbw });
+  await b.alice.press("Escape");
+  await b.alice.waitFor("!document.querySelector('.modal')", { what: "the edit dialog to close" });
+
+  // A full page reload, not just SPA navigation — Terry's own explicit repro step.
+  await b.alice.reload();
+  await b.alice.goto("bills");
+  await b.alice.waitForText("E2E Electric Repayment EUR", { scope: "main" });
+  const rowAfterReload = await b.alice.evaluate(`(() => {
+    const row = [...document.querySelectorAll("tbody tr")].find((tr) => tr.textContent.includes("E2E Electric Repayment EUR") && tr.querySelector('td[data-label="Schedule"]'));
+    return row ? row.textContent : null;
+  })()`);
+  t.check("the All-bills list still shows EnBW after a hard page reload", {
+    expected: true, actual: !!(rowAfterReload && rowAfterReload.includes("EnBW")),
+  });
+  await scrollBillRowIntoView(b.alice, "E2E Electric Repayment EUR");
+  await b.alice.openRecordMenu("E2E Electric Repayment EUR", { scope: "main" });
+  await b.alice.click({ role: "button", name: "Edit E2E Electric Repayment EUR" });
+  await b.alice.waitFor("!!document.querySelector('.modal')", { what: "the EUR Electric Repayment edit dialog after reload" });
+  const enbwAfterReload = await byLabelValue(b.alice, "Merchant");
+  const shotEnbw = await b.alice.shot("bills-edit-existing-merchant-selected-persists");
+  t.check("EnBW is still shown after a full page reload — Terry's exact second repro, disproven", {
+    expected: "EnBW", actual: enbwAfterReload,
+  });
+  t.note(`Merchant field after reload: "${enbwAfterReload}"; screenshot: ${shotEnbw}`);
+  await b.alice.press("Escape");
+  await b.alice.waitFor("!document.querySelector('.modal')", { what: "the edit dialog to close" });
+
+  // Changing an EXISTING linked merchant to a DIFFERENT existing merchant.
+  await scrollBillRowIntoView(b.alice, "E2E Electric Repayment EUR");
+  await b.alice.openRecordMenu("E2E Electric Repayment EUR", { scope: "main" });
+  await b.alice.click({ role: "button", name: "Edit E2E Electric Repayment EUR" });
+  await b.alice.waitFor("!!document.querySelector('.modal')", { what: "the EUR Electric Repayment edit dialog, changing merchant" });
+  await b.alice.choose("Merchant", "E2E Vattenfall", { scope: ".modal" });
+  await b.alice.click({ role: "button", name: "Save changes", scope: ".modal" });
+  await b.alice.waitFor("!document.querySelector('.modal')", { what: "the dialog to close after changing merchant" });
+  await b.alice.settle();
+  const afterChangeApi = (await h.api("alice").ok("recurring", { query: q })).recurring.find((r) => r.id === repayment.id);
+  t.check("switching to a DIFFERENT existing merchant also takes effect immediately", {
+    expected: vattenfall.id, actual: afterChangeApi && afterChangeApi.payeeId,
+  });
+
+  // A merchant-ONLY edit — nothing else touched — must still save, and must never rewrite amount,
+  // account or recurrence.
+  const beforeSoloEdit = afterChangeApi;
+  await scrollBillRowIntoView(b.alice, "E2E Electric Repayment EUR");
+  await b.alice.openRecordMenu("E2E Electric Repayment EUR", { scope: "main" });
+  await b.alice.click({ role: "button", name: "Edit E2E Electric Repayment EUR" });
+  await b.alice.waitFor("!!document.querySelector('.modal')", { what: "the EUR Electric Repayment edit dialog, merchant-only edit" });
+  await b.alice.choose("Merchant", "EnBW", { scope: ".modal" });
+  await b.alice.click({ role: "button", name: "Save changes", scope: ".modal" });
+  await b.alice.waitFor("!document.querySelector('.modal')", { what: "the dialog to close after the merchant-only edit" });
+  await b.alice.settle();
+  const afterSoloEdit = (await h.api("alice").ok("recurring", { query: q })).recurring.find((r) => r.id === repayment.id);
+  t.check("a merchant-only edit changes ONLY the merchant — amount, account and recurrence stay exactly as they were", {
+    expected: { payeeId: enbw.id, amount: beforeSoloEdit.amount, accountId: beforeSoloEdit.accountId, schedule: beforeSoloEdit.schedule },
+    actual: { payeeId: afterSoloEdit.payeeId, amount: afterSoloEdit.amount, accountId: afterSoloEdit.accountId, schedule: afterSoloEdit.schedule },
+  });
+  t.check("no previously recorded transaction was rewritten by this bill-definition change", {
+    expected: beforeSoloEdit.recordedCount, actual: afterSoloEdit.recordedCount,
+  });
+
   await b.alice.settle();
   t.check("alice: no exceptions, console errors or failed requests in the browser", { expected: [], actual: b.alice.problems() });
 }
