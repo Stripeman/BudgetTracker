@@ -7435,9 +7435,10 @@ routes)`, exit 0.
 own control; it is not proven to be the sole cause, since Terry's own machine state at the time of
 his attempt (other concurrent local processes) cannot be reconstructed retroactively. If the failure
 recurs, next step is capturing a heap snapshot / `--max-old-space-size` trace from the actual failing
-run. Built on `fix/test-concurrency-oom`, not yet committed/pushed/PR'd as of this checkpoint —
-next: commit, push, open a PR (Preview-track only; Terry deploys Production himself, never this
-session).
+run. Committed (`fca83d1`) on `fix/test-concurrency-oom`, pushed, and opened as **PR #56**
+(https://github.com/Stripeman/BudgetTracker/pull/56). Not merged — Terry reviews and merges; not
+deployed to Preview or Production as part of this checkpoint. Terry retries his own Production
+deploy attempt whenever he chooses; that step stays his own action.
 
 **BT-026 status note:** unrelated to this issue — already closed out, merged (`838c1b1`) and verified
 on Preview before this session began; nothing further needed for it here.
