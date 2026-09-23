@@ -7388,3 +7388,57 @@ real "Closed out" text for BT-025 (dropping this branch's own provisional placeh
 correctly predicted exactly this) and this section's own closing note above. No code files
 conflicted — `PROJECT_STATE.md` only, resolved by hand, re-verified with the full suite again before
 pushing the merge.
+
+## BT-027: session-crash recovery, and a bounded-concurrency fix for the local-test OOM Terry hit during his own Production deploy attempt (2026-09-23)
+
+**Recovery, verified before any new work:** read `CLAUDE.md`, `AGENTS.md`, `PROJECT_STATE.md` (this
+file); confirmed real Git state — branch `main`, `git status -sb` clean, `main` even with
+`origin/main` at `838c1b1` (PR #55/BT-026 merged), no stash, no uncommitted or untracked changes
+anywhere in the working tree. **Nothing was lost to the crash** — the prior session's work (BT-026)
+was already fully committed, merged and recorded before it crashed; there was no in-progress edit to
+recover. Checked for surviving processes before starting anything: BudgetTracker's own local dev
+server (`scripts/dev/server.mjs`, PID 84996) was already running and listening on `127.0.0.1:4380` —
+left it running rather than starting a duplicate. Confirmed the only other locally-listening dev
+processes belong to TaskTracker (SWA CLI 4280, Functions host 7071, Azurite 10000–10002) and an
+unrelated Codex/AzureCosting runtime — none touched, per the standing port rule.
+
+**Terry's reported issue (verbatim, relayed):** a `.\deploy.ps1 -Environment production` attempt he
+ran himself failed during the local test gate with "Node/V8 out-of-memory errors and `spawn
+UNKNOWN`"; the log reported 649 passed, 12 failed, and explicitly said nothing was deployed. No
+production deployment was attempted or performed by this session — that remains Terry's own action.
+
+**Investigation.** `deploy.ps1`/`scripts/deploy/engine.mjs` run their gates strictly sequentially
+(`execFileSync`, blocking; test → validate → build → deploy), so the deploy engine itself never runs
+two gates concurrently. Within the test gate, `npm test` chains its three sub-suites with `&&`
+(`test:repo && test:api && test:app`), also strictly sequential. `test:api` (68 files) and `test:app`
+(79 files) were already pinned to `node --test --test-concurrency=1`. The one gap:
+`test:repo` (`test/*.test.cjs` + `scripts/deploy/test/*.test.mjs`, 4 files) had no `--test-concurrency`
+bound, so Node's test runner defaulted to `availableParallelism() - 1` — **31** concurrent child
+processes on this machine (32 logical CPUs; confirmed with `nproc`/`Get-CimInstance
+Win32_ComputerSystem`, 64 GB total RAM). That is real unbounded headroom for memory/handle exhaustion,
+especially with other local dev stacks (TaskTracker's SWA CLI/Functions/Azurite, editor/agent
+runtimes) also active on the same machine at deploy time — consistent with, though not proven to be
+the sole cause of, the OOM and `spawn UNKNOWN` Terry saw. No crashed test file was assumed to be an
+application defect; no test was skipped, weakened or removed to reach green.
+
+**Fix:** pinned `test:repo` to `--test-concurrency=1` too (`package.json`), matching `test:api`/
+`test:app`'s existing, already-safe pattern, so no gate in `npm test` ever runs more than one test
+child process at a time anywhere in the repository. Every test kept, isolation unchanged (each file
+still its own process).
+
+**Verified clean after the fix, run once (not repeated, per instruction not to launch several full
+runs simultaneously):** `npm test` — `test:repo` 39/39, `npm --prefix api test` 802/802, `test:app`
+742/742, combined **exit 0**, no OOM, no spawn errors. `npm run validate` — `validate: ok (29
+routes)`, exit 0.
+
+**Not yet done / open:** the fix removes the one unbounded-concurrency gap under this repository's
+own control; it is not proven to be the sole cause, since Terry's own machine state at the time of
+his attempt (other concurrent local processes) cannot be reconstructed retroactively. If the failure
+recurs, next step is capturing a heap snapshot / `--max-old-space-size` trace from the actual failing
+run. Committed (`fca83d1`) on `fix/test-concurrency-oom`, pushed, and opened as **PR #56**
+(https://github.com/Stripeman/BudgetTracker/pull/56). Not merged — Terry reviews and merges; not
+deployed to Preview or Production as part of this checkpoint. Terry retries his own Production
+deploy attempt whenever he chooses; that step stays his own action.
+
+**BT-026 status note:** unrelated to this issue — already closed out, merged (`838c1b1`) and verified
+on Preview before this session began; nothing further needed for it here.
