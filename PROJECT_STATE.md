@@ -7332,3 +7332,59 @@ the exact discipline re-established during BT-025.
 **Exact next step:** none outstanding from BT-025. If a future session picks up new work, check
 out a fresh branch from an up-to-date `main` FIRST (`git fetch origin && git checkout main && git
 pull && git checkout -b feature/<next>`), per the discipline re-established during BT-025 itself.
+
+## BT-026: bill editor's "take effect from" defaulted to a future date, hiding real saves (2026-09-23)
+
+**Terry's bug report, verbatim** (with a screenshot of "Electric Repayment", next due 2026-10-15):
+"why am i not able to edit this bill and assign a merchant. i edit it and save but its not
+updated."
+
+**Root cause, confirmed by tracing, not guessed:** the bill editor's own "Changes to amount,
+merchant, category or responsible person take effect from" field (`app/js/ui/views/bills.js`,
+`openBillEditor`) defaulted to the bill's own `nextDue` date — for an already-started bill, almost
+always weeks or months in the future. The PATCH genuinely succeeded server-side (a real new term
+version was written), but `termsAt` (`api/_shared/bills.js`) never selected it, since it only ever
+picks the version effective on-or-before a given date — so the bill's CURRENT view (what the
+All-bills list and a freshly reopened Edit dialog both read) stayed exactly as it was until that
+future date arrived. Genuinely indistinguishable from "nothing saved" from Terry's own point of
+view. **This is the EXACT bug BT-014-13 already root-caused and fixed once**, for the Merchants
+page's own "Add as merchant" quick-link (`linkBillToMerchant`, `payees.js`) — that fix was never
+carried over to the general bill editor, which is the far more commonly used path every other term
+change (amount, category, merchant, responsible person) actually goes through.
+
+**Fixed with the exact same logic BT-014-13 already established**, not a new mechanism: defaults to
+today, or the bill's own `schedule.startDate` when that is later (the server already refuses
+anything earlier: "A change cannot take effect before the bill starts").
+
+**Proved the bug was real, not assumed:** wrote the new e2e check, then temporarily reverted the
+fix (`git stash`) and re-ran it — it failed exactly as reported, the reopened Edit dialog's own
+Merchant field literally reading "Choose a merchant…" after a save that had, in fact, succeeded
+server-side. Restored the fix and confirmed green again before treating this as done.
+
+**Evidence:** `app/test/pickerbills.test.js` — 3 new tests (an already-started bill with a
+genuinely future next-due date defaults "take effect from" to today and submits the change
+effective today; a bill that has not started yet defaults to its own start date; a brand-new bill
+has no such field at all) — `npm test` **742/742**, exit 0 (frontend-only; `npm --prefix api test`
+**802/802** unaffected, confirming no server-side change was needed). `scripts/dev/e2e/bills.mjs`
+extended with a bill matching Terry's own scenario shape (already started, next due date
+deliberately NOT today — unlike every pre-existing fixture in this file, which is exactly why the
+bug had never been caught by its own extensive coverage) — full scenario **42/42, exit 0**. Full
+combined `npm run e2e` launched immediately after this checkpoint as the last gate before
+committing.
+
+**App-wide audit for the same pattern:** grepped every other use of `nextDue` in `app/js` — the
+only two remaining are "Pause from" (semantically correct to default there) and read-only display.
+No other latent instance of this bug found.
+
+**Closed out:** committed (`911e7f9`), pushed, opened **PR #55**. Deployed to Preview
+(`.\deploy.ps1 -Environment preview`) — all gates `ok`, result `SUCCESS`; independently verified via
+`curl` of the live `/api/site-settings` that `commit` matched `911e7f9` exactly. Not merged, no
+Production deploy performed or requested — both remain Terry's own action.
+
+**Merge-conflict note (2026-09-23):** PR #55 conflicted with `main` — while it was open, PR #54
+(the BT-025 merge-verification checkpoint above) merged first, editing the same tail of this file.
+Resolved by merging `origin/main` into `fix/bill-edit-merchant-not-saving` locally, keeping PR #54's
+real "Closed out" text for BT-025 (dropping this branch's own provisional placeholder for it, which
+correctly predicted exactly this) and this section's own closing note above. No code files
+conflicted — `PROJECT_STATE.md` only, resolved by hand, re-verified with the full suite again before
+pushing the merge.
