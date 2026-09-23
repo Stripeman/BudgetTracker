@@ -7613,5 +7613,9 @@ calls release, the page finishes normally with the real figures and zero spinner
 
 **Not yet done:** the three flagship layouts were verified via their shared components (proven working
 in Classic's own screenshot) plus a dedicated loading unit test covering all three; no separate
-mid-load screenshot was captured per flagship. Built on `feature/dashboard-loading-indicators`, not
-yet committed as of this line — committing next, along with everything above.
+mid-load screenshot was captured per flagship. Committed (`d706df7`) on
+`feature/dashboard-loading-indicators`, pushed, opened as **PR #58**
+(https://github.com/Stripeman/BudgetTracker/pull/58). Not merged, no Preview/Production deploy
+performed as part of this checkpoint — both remain Terry's own action. The Preview deploy paused
+earlier (PR #57's own merge/Production deploy) is still outstanding and should be run once Terry
+confirms BT-028's hard-reload retry.
