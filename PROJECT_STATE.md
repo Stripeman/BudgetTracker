@@ -7521,5 +7521,6 @@ a clean re-run afterward for the record).
 (the identical one-line change, the same new function) but was verified by code review and the
 existing, non-time-mocked "Add merchant" e2e coverage rather than a second dedicated time-mocked unit
 test, since it is an internal, unexported function in `payees.js` — flagged rather than silently
-assumed equivalent. Built on `fix/bill-merchant-timezone-regression`; not yet merged to `main`, no
+assumed equivalent. Committed (`ba2a00b`) on `fix/bill-merchant-timezone-regression`, pushed, and
+opened as **PR #57** (https://github.com/Stripeman/BudgetTracker/pull/57). Not merged to `main`, no
 Preview/Production deploy performed as part of this checkpoint — both remain Terry's own action.
