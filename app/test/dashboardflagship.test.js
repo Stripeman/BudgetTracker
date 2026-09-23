@@ -115,4 +115,24 @@ describe("BT-013-16 the Dashboard renders the workspace's real, applied layout",
       assert.ok(head && head.querySelector("button"), `${layoutId}: Add expense is reachable`);
     }
   });
+
+  // Bug fix (2026-09-24, Terry: "data in each panel take a few seconds to load. initially indicating
+  // to the user that there is nothing there... each one thats loading has an indicator like when the
+  // main site is loading") — every flagship layout shares the classic renderer's panel components
+  // (spendingCard, merchantsCard, accountsListCard, recentEntriesCard) and its own KPI figures; both
+  // kinds must show a real loading indicator, never a fabricated "No X yet" while still fetching.
+  test("every flagship layout shows a real loading indicator (a spinner), never a fabricated empty/zero figure, while its own data is still loading", () => {
+    for (const layoutId of ["ledgerfly-forecast", "finexa-budget", "acru-overview"]) {
+      const state = baseState(layoutId, {
+        accounts: { workspaceId: "ws_1", status: "loading", error: null, data: null },
+        weekActivity: { workspaceId: "ws_1", status: "loading", error: null, data: null },
+        monthActivity: { workspaceId: "ws_1", status: "loading", error: null, data: null },
+        payees: { workspaceId: "ws_1", status: "loading", error: null, data: null },
+      });
+      dom.teardown(); dom = installDom();
+      const { view } = boot(state);
+      assert.ok(view.element.querySelector(".spinner"), `${layoutId}: at least one real spinner is drawn while loading`);
+      assert.doesNotMatch(view.element.textContent, /No accounts yet|No spending recorded yet this month|No merchant activity yet|No activity yet/, `${layoutId}: no fabricated empty text while still loading`);
+    }
+  });
 });

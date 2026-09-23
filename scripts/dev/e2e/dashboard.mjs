@@ -88,5 +88,55 @@ export async function run(h, t) {
   await narrow.shot("320px");
   t.check("320px: no console errors/exceptions", { expected: [], actual: narrow.problems() });
 
+  // ---- Bug fix (2026-09-24, Terry: "data in each panel take a few seconds to load. initially
+  // indicating to the user that there is nothing there... make it so each one thats loading has an
+  // indicator like when the main site is loading") — real network-level delay on exactly the data
+  // API calls (CDP Fetch domain interception, not a page-script fake, and not a blanket
+  // Network.emulateNetworkConditions, which would also slow the app shell itself down and make the
+  // shell's own load time hide the very panels this proves), so the panels genuinely have not
+  // resolved yet at the moment the DOM is inspected — the app shell loads at normal speed, exactly
+  // reproducing what Terry described (the page itself is up; specific panels lag behind it). -------
+  const { alice: slow } = await h.browsers(["alice"], { prefix: "dashboard-slow-" });
+  await slow.cdp.send("Fetch.enable", { patterns: [{ urlPattern: "*/api/*" }] });
+  // Bootstrap calls (the workspace picker's own list, identity, preferences, and reference data every
+  // page needs regardless of panel) pass through at normal speed — exactly what genuinely differs in
+  // Terry's report ("data in each panel take a few seconds to load", the shell and picker themselves
+  // were never in question). Only the panels' OWN data calls (accounts, transactions/week/month
+  // activity, bills, forecast, payees — all still hit the same `/api/transactions` endpoint with
+  // different query filters, so this matches by path, not by slice) are held.
+  const FAST_PATHS = ["/api/workspaces", "/api/me", "/api/preferences", "/api/site-settings", "/api/categories", "/api/members", "/api/icons", "/api/account-types", "/api/category-types", "/api/merchant-types"];
+  slow.cdp.on("Fetch.requestPaused", async (p) => {
+    const isBootstrap = FAST_PATHS.some((path) => p.request.url.includes(path));
+    if (!isBootstrap) await new Promise((resolve) => setTimeout(resolve, 1500));
+    await slow.cdp.send("Fetch.continueRequest", { requestId: p.requestId }).catch(() => {});
+  });
+  await slow.cdp.send("Page.navigate", { url: `${slow.base}/#/dashboard` });
+  // Deliberately NOT slow.open()/settle() here — those wait for every request to finish, which is
+  // exactly the state after the loading window this check exists to prove. A short real wait — long
+  // enough for the shell and the (fast) bootstrap calls to finish, well short of the 1.5s the panel
+  // data calls are held for — catches the page genuinely mid-flight instead.
+  await new Promise((resolve) => setTimeout(resolve, 900));
+  const midFlight = await slow.evaluate(`(() => ({
+    spinners: document.querySelectorAll(".spinner").length,
+    navRendered: !!document.querySelector(".app__nav"),
+    fabricatedEmpty: /No spending recorded yet this month\\.|No merchant activity yet\\.|No accounts yet\\./.test(document.querySelector("main") ? document.querySelector("main").textContent : ""),
+  }))()`);
+  const shotLoading = await slow.shot("loading-indicators-mid-flight");
+  t.check("the app shell itself is already up (its own load was never throttled)", { expected: true, actual: midFlight.navRendered });
+  t.check("while its own data is genuinely still loading, at least one real spinner is visible in the actual rendered page", { expected: true, actual: midFlight.spinners > 0 });
+  t.check("no panel fabricates an empty/'nothing here' message while it is still loading", { expected: false, actual: midFlight.fabricatedEmpty });
+  t.note(`spinners visible mid-flight: ${midFlight.spinners}; screenshot: ${shotLoading}`);
+  // Let the held requests through and confirm the page finishes loading normally: the real figures
+  // appear, no spinner is left behind, and the interception itself caused no error.
+  await slow.settle({ timeout: 20000 });
+  await slow.useWorkspace(W.name);
+  await slow.waitForText("Spending by category", { scope: "main" });
+  const settled = await slow.evaluate(`(() => ({
+    spinners: document.querySelectorAll(".spinner").length,
+    hasRealSpending: /USD 40\\.00/.test(document.querySelector("main").textContent),
+  }))()`);
+  t.check("once loading genuinely finishes, no spinner is left behind and the real figures are shown", { expected: { spinners: 0, hasRealSpending: true }, actual: settled });
+  t.check("slow: no exceptions, console errors or failed requests caused by the delayed load", { expected: [], actual: slow.problems() });
+
   t.check("alice: no exceptions, console errors or failed requests in the browser", { expected: [], actual: b.alice.problems() });
 }

@@ -17,6 +17,7 @@ afterEach(() => dom.teardown());
 const noop = async () => {};
 
 function ready(data) { return { workspaceId: "ws_1", status: "ready", error: null, data }; }
+function loading() { return { workspaceId: "ws_1", status: "loading", error: null, data: null }; }
 
 function baseState(overrides = {}) {
   return {
@@ -49,6 +50,58 @@ function boot(state) {
   view.update(state);
   return { view, calls };
 }
+
+// Bug fix (2026-09-24, Terry: "data in each panel take a few seconds to load. initially indicating
+// to the user that there is nothing there... make it so each one thats loading has an indicator
+// like when the main site is loading"). Each dashboard panel derives from its OWN slice, fetched
+// independently; before this fix a panel whose own slice had not resolved yet (`status: "loading"`,
+// `data: null`) rendered EXACTLY the same as a panel that genuinely had nothing in it — the two are
+// meant to be different things everywhere else in this app (`stateView`, components.js).
+describe("Bug fix (2026-09-24): a panel still loading never looks the same as a panel with genuinely nothing in it", () => {
+  test("spending by category: a spinner and 'Loading…', never 'No spending recorded yet this month.'", () => {
+    const { view } = boot(baseState({ monthActivity: loading() }));
+    assert.ok(view.element.querySelector(".spinner"), "a real spinner is drawn, the same visual language as the app's own boot spinner");
+    assert.doesNotMatch(view.element.textContent, /No spending recorded yet this month/);
+    assert.match(view.element.textContent, /Loading…/);
+  });
+
+  test("top merchants: a spinner and 'Loading…', never 'No merchant activity yet.'", () => {
+    const { view } = boot(baseState({ payees: loading() }));
+    assert.doesNotMatch(view.element.textContent, /No merchant activity yet/);
+    assert.match(view.element.textContent, /Loading…/);
+  });
+
+  test("this week's income/expenses: a loading indicator, never silently absent as if there were no activity", () => {
+    const { view } = boot(baseState({ weekActivity: loading() }));
+    assert.ok(view.element.querySelector(".state--loading"), "the week recap box itself shows the loading state, not an empty box");
+  });
+
+  test("Needs attention: a loading indicator while bills OR forecast has not resolved yet, never simply absent", () => {
+    const { view: viewBills } = boot(baseState({ bills: loading() }));
+    assert.match(viewBills.element.textContent, /Needs attention/);
+    assert.match(viewBills.element.textContent, /Loading…/);
+    const { view: viewForecast } = boot(baseState({ forecast: loading() }));
+    assert.match(viewForecast.element.textContent, /Needs attention/);
+    assert.match(viewForecast.element.textContent, /Loading…/);
+  });
+
+  test("once every slice genuinely resolves with nothing in it, the honest empty/absent states return exactly as before this fix", () => {
+    // This fixture's household workspace shares expenses by default (no explicit setting) — its own
+    // "Your balance in Shared expenses" panel is a fourth independently-loading slice, resolved here
+    // too so this test only proves the READY, genuinely-empty case this fix must leave unchanged.
+    const { view } = boot(baseState({ group: ready({ expenses: [], myLedgers: [], permissions: { selfRef: "me" }, balances: [], currency: "EUR" }) }));
+    assert.doesNotMatch(view.element.textContent, /Loading…/);
+    assert.equal(view.element.querySelector(".spinner"), null);
+    assert.match(view.element.textContent, /No spending recorded yet this month\./);
+    assert.match(view.element.textContent, /No merchant activity yet\./);
+  });
+
+  test("accounts and recent entries already showed a loading state before this fix (stateView) and still do", () => {
+    const { view } = boot(baseState({ accounts: loading(), transactions: loading() }));
+    const loadingStates = view.element.querySelectorAll(".state--loading");
+    assert.ok(loadingStates.length >= 2, "at least accounts and recent entries are in their own loading state");
+  });
+});
 
 describe("BT-014-14 the Dashboard fetches its own narrowly-scoped, non-overlapping data", () => {
   test("refreshWeekActivity and refreshMonthActivity are called once at mount, with their own date ranges, never touching the `transactions` slice", () => {
