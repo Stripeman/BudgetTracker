@@ -178,12 +178,18 @@ describe("Bug fix (2026-09-23): a bill's own term changes (category, merchant, a
   // to tomorrow while the server's UTC day has not, so a default of "today" (local) is actually a
   // FUTURE date from the server's own point of view — exactly reproducing "saved, but not showing"
   // again, for the merchant field specifically (and for amount/category/responsible person changes
-  // made at the same moment). Reproduced deterministically here with a real instant this fix must
-  // handle correctly regardless of which machine runs this suite: 2026-01-01T23:30 UTC is already
-  // 2026-01-02 local in any timezone at UTC+1 or later (this machine's own zone, `W. Europe Standard
-  // Time`, is UTC+1 in January — no DST then — included).
-  test("'take effect from' defaults to the SERVER's UTC calendar day, never the browser's own local one, even when the two currently disagree (near local midnight, timezone ahead of UTC)", (t) => {
+  // made at the same moment). Reproduced deterministically here, independent of the machine or CI
+  // runner's own real timezone (a first version of this test asserted the divergence using this
+  // process's REAL `getTimezoneOffset()` and correctly passed on this dev machine — `W. Europe
+  // Standard Time` — but trivially failed on GitHub Actions' own UTC runner, where local and UTC
+  // never differ; caught for real by CI, not merely inferred): `getTimezoneOffset` itself is
+  // monkey-patched for the duration of this test to simulate a browser at UTC+2 (any zone AHEAD of
+  // UTC reproduces the same divergence), independently of whatever zone actually runs this suite.
+  test("'take effect from' defaults to the SERVER's UTC calendar day, never the browser's own local one, even when the two currently disagree (near local midnight, timezone ahead of UTC) — reproduced regardless of which real timezone runs this suite", (t) => {
     t.mock.timers.enable({ apis: ["Date"], now: Date.parse("2026-01-01T23:30:00Z") });
+    const originalOffset = Date.prototype.getTimezoneOffset;
+    Date.prototype.getTimezoneOffset = function () { return -120; }; // simulate a browser at UTC+2
+    t.after(() => { Date.prototype.getTimezoneOffset = originalOffset; });
     const localToday = new Date(Date.now() - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 10);
     const utcToday = new Date().toISOString().slice(0, 10);
     assert.notEqual(localToday, utcToday, "fixture sanity: this instant must genuinely straddle local vs UTC midnight for this test to mean anything");
