@@ -232,8 +232,10 @@ export function openMerchantEditor(ctx, merchant = null, { prefillName = "", onC
   const editing = !!merchant;
   const role = ((state.workspaces || []).find((w) => w.id === state.selectedWorkspaceId) || {}).role;
   const allCategories = ((sliceFor(state, "categories").data || {}).categories || []);
-  const categories = allCategories.filter((c) => !c.archived || (editing && c.id === merchant.defaultCategoryId));
-  const accounts = ((sliceFor(state, "accounts").data || {}).accounts || []).filter((a) => !a.deletedAt);
+  const categories = allCategories.filter((c) => !c.archived || (editing && c.id === merchant.defaultCategoryId))
+    .sort((a, b) => a.name.localeCompare(b.name));
+  const accounts = ((sliceFor(state, "accounts").data || {}).accounts || []).filter((a) => !a.deletedAt)
+    .sort((a, b) => a.name.localeCompare(b.name));
   const lookups = new Map([...allCategories.map((c) => [c.id, c.name]), ...accounts.map((a) => [a.id, a.name]), ["shared", "Shared"], ["private", "Private"], ["active", "Active"], ["closed", "Closed"], ...Object.entries(MERCHANT_TYPE_LABELS)]);
   const m = merchant || {};
   const c = m.contact || {};

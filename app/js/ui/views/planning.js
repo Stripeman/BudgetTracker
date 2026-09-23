@@ -294,7 +294,8 @@ function openBudgetLifecycle(ctx, budget, archive, after = null) {
 function openBudgetEditor(ctx, budget = null) {
   const state = ctx.store.getState();
   const editing = !!budget;
-  const categories = ((sliceFor(state, "categories").data || {}).categories || []).filter((c) => !c.archived && c.type !== "income");
+  const categories = ((sliceFor(state, "categories").data || {}).categories || []).filter((c) => !c.archived && c.type !== "income")
+    .sort((a, b) => a.name.localeCompare(b.name));
   const currencies = [...new Set(((sliceFor(state, "accounts").data || {}).accounts || []).map((a) => a.currency))];
   const name = input({ maxlength: "80", autocomplete: "off" });
   name.value = editing ? budget.name : "";
@@ -532,8 +533,9 @@ function createWhatIf(ctx, params) {
     element,
     setBaseline(f) { baseline = f; },
     setChoices(nextAccounts, nextBills) {
-      accounts = nextAccounts;
-      bills = nextBills.filter((b) => !b.ended);
+      // BT-025: sorted, so both pickers list their choices alphabetically.
+      accounts = [...nextAccounts].sort((a, b) => a.name.localeCompare(b.name));
+      bills = nextBills.filter((b) => !b.ended).sort((a, b) => a.name.localeCompare(b.name));
       const keepA = account.value;
       account.replaceChildren(...accounts.map((a) => el("option", { value: a.id, text: `${a.name} (${a.currency})` })));
       if (accounts.some((a) => a.id === keepA)) account.value = keepA;

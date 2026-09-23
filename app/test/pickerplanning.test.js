@@ -103,14 +103,18 @@ describe("BT-004-05 planning: the budget editor", () => {
     assert.equal(spoken(pickerNamed(root, "Who it is for")), "Who it is for: Shared (shared accounts only). Choose.");
     assert.equal(spoken(pickerNamed(root, "Currency")), "Currency: EUR. Choose.");
     assert.equal(spoken(pickerNamed(root, "Period")), "Period: Monthly. Choose.");
-    assert.equal(spoken(pickerNamed(root, "Category")), "Category: Housing. Choose.");
-    assert.deepEqual(offeredOptions(pickerNamed(root, "Category")), ["Housing", "Groceries"], "income categories are not budgeted");
+    // BT-025: category dropdowns are alphabetized ("Groceries" < "Housing"), including this
+    // picker's own "first available" default for a new line.
+    assert.equal(spoken(pickerNamed(root, "Category")), "Category: Groceries. Choose.");
+    assert.deepEqual(offeredOptions(pickerNamed(root, "Category")), ["Groceries", "Housing"], "income categories are not budgeted");
     buttonNamed(root, "Add a category").click();
     const lines = root.querySelectorAll("fieldset.budget-line");
     assert.equal(lines.length, 2);
     const second = lines[1].querySelector("select");
     assert.ok(document.activeElement === triggerFor(second), "focus is on the new line's category picker");
-    chooseOption(second, "Groceries");
+    // The first line keeps its own default (now "Groceries", alphabetically first) — choose
+    // "Housing" for the second line so the two lines still name two distinct categories.
+    chooseOption(second, "Housing");
     chooseOption(pickerNamed(root, "Period"), "Every 2 weeks");
     root.querySelector('input[maxlength="80"]').value = "Fictional monthly plan";
     lines[0].querySelector('input[inputmode="decimal"]').value = "900.00";
@@ -121,7 +125,7 @@ describe("BT-004-05 planning: the budget editor", () => {
     const { name, scope, currency, period, lines: sent } = calls.budgets[0];
     assert.deepEqual({ name, scope, currency, period, lines: sent }, {
       name: "Fictional monthly plan", scope: "shared", currency: "EUR", period: "biweekly",
-      lines: [{ categoryId: "cat_home", amount: "900.00", rollover: false }, { categoryId: "cat_food", amount: "300.00", rollover: false }],
+      lines: [{ categoryId: "cat_food", amount: "900.00", rollover: false }, { categoryId: "cat_home", amount: "300.00", rollover: false }],
     });
   });
 });

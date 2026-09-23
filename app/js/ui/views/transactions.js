@@ -112,7 +112,8 @@ export function linkedDeleteNote(t) {
 // destinations: same currency as the entry, open, where the caller may add entries, and not the
 // entry's current account. The server enforces every one of these rules again.
 export function moveDestinations(allAccounts, t) {
-  return (allAccounts || []).filter((a) => !a.deletedAt && a.status !== "closed" && a.id !== t.accountId && a.currency === t.currency && (a.capabilities || []).includes("create"));
+  return (allAccounts || []).filter((a) => !a.deletedAt && a.status !== "closed" && a.id !== t.accountId && a.currency === t.currency && (a.capabilities || []).includes("create"))
+    .sort((a, b) => a.name.localeCompare(b.name));
 }
 
 // A clear note only when visibility (or a private account's owner) actually changes, in Terry's
@@ -261,11 +262,17 @@ export function createView(ctx) {
     // History filters keep closed merchants and archived categories, labelled, so their history
     // stays reachable (BT-001-05). The dropdowns are TaskTracker's command picker (BT-004-05), with
     // the icon or colour each record shows everywhere else.
+    // BT-025 (Terry, 2026-09-23): "category and type dropdowns should be alphabetized... in all
+    // forms" — sorted copies (the state arrays are frozen); a filter's own "Any" default is
+    // unaffected either way.
+    const sortedPayees = [...payees.payees].sort((a, b) => a.name.localeCompare(b.name));
+    const sortedAccounts = [...accounts.accounts].sort((a, b) => a.name.localeCompare(b.name));
+    const sortedCategories = [...categories.categories].sort((a, b) => a.name.localeCompare(b.name));
     mount(filterGrid,
       filterControl("Search", "q", input({ type: "search", placeholder: "Merchant, note or tag" })),
-      filterControl("Merchant", "payeeId", pickerSelect(any.concat(payees.payees.map((p) => ({ value: p.id, label: p.status === "closed" ? `${p.name} (closed)` : p.name }))), "", {}, { badgeOf: iconBadges(payees.payees, "store") })),
-      filterControl("Account", "accountId", pickerSelect(any.concat(accounts.accounts.map((a) => ({ value: a.id, label: a.name }))), "", {}, { badgeOf: iconBadges(accounts.accounts) })),
-      filterControl("Category", "categoryId", pickerSelect(any.concat(categories.categories.map((c) => ({ value: c.id, label: c.archived ? `${c.name} (archived)` : c.name }))), "", {}, { badgeOf: categoryBadges(state) })),
+      filterControl("Merchant", "payeeId", pickerSelect(any.concat(sortedPayees.map((p) => ({ value: p.id, label: p.status === "closed" ? `${p.name} (closed)` : p.name }))), "", {}, { badgeOf: iconBadges(payees.payees, "store") })),
+      filterControl("Account", "accountId", pickerSelect(any.concat(sortedAccounts.map((a) => ({ value: a.id, label: a.name }))), "", {}, { badgeOf: iconBadges(accounts.accounts) })),
+      filterControl("Category", "categoryId", pickerSelect(any.concat(sortedCategories.map((c) => ({ value: c.id, label: c.archived ? `${c.name} (archived)` : c.name }))), "", {}, { badgeOf: categoryBadges(state) })),
       filterControl("From", "from", input({ type: "date" })),
       filterControl("To", "to", input({ type: "date" })),
       filterControl("Min amount", "min", input({ inputmode: "decimal", placeholder: "0.00" })),
@@ -594,19 +601,25 @@ async function openHistory(ctx, t) {
 // merchants. The server enforces the same rule.
 export function choosableMerchants(merchants, account) {
   const active = merchants.filter((p) => p.status !== "closed" && !p.referenceOnly);
-  if (account && account.access === "own") return active.filter((p) => p.visibility === "shared" || p.ownedBySelf);
-  return active.filter((p) => p.visibility === "shared");
+  // BT-025 (Terry, 2026-09-23): "category and type dropdowns should be alphabetized... in all
+  // forms" — the Merchant field uses the same command picker as Category (BT-014-11's own
+  // wording), so it gets the same alphabetical order.
+  const eligible = account && account.access === "own" ? active.filter((p) => p.visibility === "shared" || p.ownedBySelf) : active.filter((p) => p.visibility === "shared");
+  return eligible.sort((a, b) => a.name.localeCompare(b.name));
 }
 
 export function openQuickEntry(ctx, { transaction } = {}) {
   const state = ctx.store.getState();
   const allAccounts = ((sliceFor(state, "accounts").data || {}).accounts || []);
   // Closed accounts take no new entries, so they are not offered (BT-001-05); an edit keeps its account.
-  const accounts = allAccounts.filter((a) => !a.deletedAt && a.status !== "closed" && a.capabilities.includes("create"));
+  // BT-025: sorted, so the picker's own order and its "first available" default agree.
+  const accounts = allAccounts.filter((a) => !a.deletedAt && a.status !== "closed" && a.capabilities.includes("create"))
+    .sort((a, b) => a.name.localeCompare(b.name));
   const editing = !!transaction;
   // An entry keeps its category even if that category has since been archived (audit B5).
   const categories = ((sliceFor(state, "categories").data || {}).categories || [])
-    .filter((c) => !c.archived || (editing && c.id === transaction.categoryId));
+    .filter((c) => !c.archived || (editing && c.id === transaction.categoryId))
+    .sort((a, b) => a.name.localeCompare(b.name));
   let merchants = ((sliceFor(state, "payees").data || {}).payees || []);
   const isTransfer = editing && transaction.kind === "transfer";
   if (!editing && !accounts.length) return;

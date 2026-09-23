@@ -291,7 +291,10 @@ async function openRecord(ctx, bill, occurrence) {
   const key = newIdempotencyKey();
   const eff = (state.preferences && state.preferences.effective) || {};
   const account = ((sliceFor(state, "accounts").data || {}).accounts || []).find((a) => a.id === bill.accountId) || null;
-  const categories = ((sliceFor(state, "categories").data || {}).categories || []).filter((c) => !c.archived || c.id === draft.categoryId);
+  // BT-025 (Terry, 2026-09-23): "category and type dropdowns should be alphabetized... in all
+  // forms" — sorted here, once, so the picker's own option order and any positional default agree.
+  const categories = ((sliceFor(state, "categories").data || {}).categories || []).filter((c) => !c.archived || c.id === draft.categoryId)
+    .sort((a, b) => a.name.localeCompare(b.name));
   const merchants = ((sliceFor(state, "payees").data || {}).payees || []);
   const isTransfer = bill.kind === "transfer";
   const amount = input({ inputmode: "decimal", autocomplete: "off", required: true });
@@ -528,10 +531,13 @@ export function openBillEditor(ctx, bill = null, opts = {}) {
   const editing = !!bill;
   const key = newIdempotencyKey();
   const allAccounts = ((sliceFor(state, "accounts").data || {}).accounts || []);
-  // Closed accounts take no new bills, so they are not offered (BT-001-05).
-  const accounts = allAccounts.filter((a) => !a.deletedAt && a.status !== "closed" && a.capabilities.includes("create"));
+  // Closed accounts take no new bills, so they are not offered (BT-001-05). BT-025: sorted, so the
+  // picker's own order and its "first available" default agree.
+  const accounts = allAccounts.filter((a) => !a.deletedAt && a.status !== "closed" && a.capabilities.includes("create"))
+    .sort((a, b) => a.name.localeCompare(b.name));
   if (!editing && !accounts.length) return;
-  const categories = ((sliceFor(state, "categories").data || {}).categories || []).filter((c) => !c.archived || (editing && c.id === bill.categoryId));
+  const categories = ((sliceFor(state, "categories").data || {}).categories || []).filter((c) => !c.archived || (editing && c.id === bill.categoryId))
+    .sort((a, b) => a.name.localeCompare(b.name));
   let merchants = ((sliceFor(state, "payees").data || {}).payees || []);
   const b = bill || opts.prefill || {};
   const df = ((state.preferences || {}).effective || {}).dateFormat;
