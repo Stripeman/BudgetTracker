@@ -7320,17 +7320,18 @@ failures, meaningfully more confidence than the unit suite alone for a change th
 **Not yet done:** participant pickers in Shared expenses and the deliberately-grouped fixed enums
 above were left exactly as they were — an open question for Terry, not an unrequested change.
 
-**Exact next step:** commit this work on `feature/dropdown-sorting-BT-025`; push; open a PR; deploy
-to Preview via `.\deploy.ps1 -Environment preview` and verify independently via
-`/api/site-settings`; report to Terry with the full list of what was sorted and what was
-deliberately left alone. No `main`
-merge, no Production deploy — both remain Terry's own action.
+**Closed out:** committed (`681f4f0`), pushed, opened **PR #53**. Deployed to Preview
+(`.\deploy.ps1 -Environment preview`) — all gates `ok`, result `SUCCESS`; independently verified via
+`curl` of the live `/api/site-settings` that `commit` matched `681f4f0` exactly. **Terry merged PR
+#53 himself** (confirmed via `git fetch origin`: `main` advanced `25960fd..fce1580`, merge commit
+`fce1580 "Merge pull request #53 from Stripeman/feature/dropdown-sorting-BT-025"`) — not merged by
+me; no Production deploy performed or requested. This checkpoint itself is written on a fresh
+`chore/project-state-pr53-merge-verified` branch, cut from `main` right after fetching/pulling it —
+the exact discipline re-established during BT-025.
 
-(Editorial note, written from `fix/bill-edit-merchant-not-saving`, branched fresh off `main` at
-`fce1580`: the above was in fact closed out exactly as planned — PR #53 merged by Terry, deployed to
-Preview and independently verified at commit `681f4f0` beforehand. The full closing note lives on
-`chore/project-state-pr53-merge-verified` / PR #54, not yet merged as of this checkpoint; left
-un-duplicated here to avoid a needless merge conflict between the two branches. See BT-026 below.)
+**Exact next step:** none outstanding from BT-025. If a future session picks up new work, check
+out a fresh branch from an up-to-date `main` FIRST (`git fetch origin && git checkout main && git
+pull && git checkout -b feature/<next>`), per the discipline re-established during BT-025 itself.
 
 ## BT-026: bill editor's "take effect from" defaulted to a future date, hiding real saves (2026-09-23)
 
@@ -7375,7 +7376,15 @@ committing.
 only two remaining are "Pause from" (semantically correct to default there) and read-only display.
 No other latent instance of this bug found.
 
-**Exact next step:** confirm the full `npm run e2e` background run finishes clean; commit on
-`fix/bill-edit-merchant-not-saving`; push; open a PR; deploy to Preview and verify independently via
-`/api/site-settings`; report to Terry with the reproduction/fix evidence above. No `main` merge, no
-Production deploy — both remain Terry's own action.
+**Closed out:** committed (`911e7f9`), pushed, opened **PR #55**. Deployed to Preview
+(`.\deploy.ps1 -Environment preview`) — all gates `ok`, result `SUCCESS`; independently verified via
+`curl` of the live `/api/site-settings` that `commit` matched `911e7f9` exactly. Not merged, no
+Production deploy performed or requested — both remain Terry's own action.
+
+**Merge-conflict note (2026-09-23):** PR #55 conflicted with `main` — while it was open, PR #54
+(the BT-025 merge-verification checkpoint above) merged first, editing the same tail of this file.
+Resolved by merging `origin/main` into `fix/bill-edit-merchant-not-saving` locally, keeping PR #54's
+real "Closed out" text for BT-025 (dropping this branch's own provisional placeholder for it, which
+correctly predicted exactly this) and this section's own closing note above. No code files
+conflicted — `PROJECT_STATE.md` only, resolved by hand, re-verified with the full suite again before
+pushing the merge.
