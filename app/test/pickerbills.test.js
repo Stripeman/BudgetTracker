@@ -169,6 +169,31 @@ describe("Bug fix (2026-09-23): a bill's own term changes (category, merchant, a
     assert.equal(calls.updated[0].effectiveFrom, today, "the change is submitted effective today, so it actually shows up immediately");
   });
 
+  // Second bug fix (2026-09-23, Terry's SECOND report, same wording, of the same symptom after the
+  // fix above already shipped): "select EnBW from the Merchant dropdown, click Save changes. The
+  // merchant does not persist." Root cause: the "today" used above was the BROWSER's own local
+  // calendar day (`todayIso()`, core/format.js), but the server always compares `effectiveFrom`
+  // against ITS OWN UTC calendar day (`api/_shared/runtime.js` `nowIso`). For roughly 1-3 hours near
+  // local midnight, in any timezone AHEAD of UTC, the two disagree: the local day has already rolled
+  // to tomorrow while the server's UTC day has not, so a default of "today" (local) is actually a
+  // FUTURE date from the server's own point of view — exactly reproducing "saved, but not showing"
+  // again, for the merchant field specifically (and for amount/category/responsible person changes
+  // made at the same moment). Reproduced deterministically here with a real instant this fix must
+  // handle correctly regardless of which machine runs this suite: 2026-01-01T23:30 UTC is already
+  // 2026-01-02 local in any timezone at UTC+1 or later (this machine's own zone, `W. Europe Standard
+  // Time`, is UTC+1 in January — no DST then — included).
+  test("'take effect from' defaults to the SERVER's UTC calendar day, never the browser's own local one, even when the two currently disagree (near local midnight, timezone ahead of UTC)", (t) => {
+    t.mock.timers.enable({ apis: ["Date"], now: Date.parse("2026-01-01T23:30:00Z") });
+    const localToday = new Date(Date.now() - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 10);
+    const utcToday = new Date().toISOString().slice(0, 10);
+    assert.notEqual(localToday, utcToday, "fixture sanity: this instant must genuinely straddle local vs UTC midnight for this test to mean anything");
+    const started = { ...RENT, id: "bill_enbw", name: "Fictional Electric Repayment", billType: "utilities", nextDue: "2026-03-01", schedule: { freq: "monthly", interval: 1, startDate: "2025-06-01" } };
+    const { ctx } = billsCtx();
+    openBillEditor(ctx, started);
+    const root = dom.body.querySelector(".modal");
+    assert.equal(effectiveFromInput(root).value, utcToday, "must be the server's UTC today, not the browser's local today, which is a day ahead right now");
+  });
+
   test("a bill that has not started yet defaults 'take effect from' to its own start date (the earliest the server allows), never today or its next due date", () => {
     const notStarted = { ...RENT, id: "bill_future_start", name: "Fictional future bill", nextDue: "2099-06-01", schedule: { freq: "monthly", interval: 1, startDate: "2099-01-15" } };
     const { ctx } = billsCtx();

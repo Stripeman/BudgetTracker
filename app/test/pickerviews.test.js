@@ -12,7 +12,7 @@ import { createView as createAccounts } from "../js/ui/views/accounts.js";
 import { createView as createMerchants, openMerchantEditor } from "../js/ui/views/payees.js";
 import { createView as createSettings } from "../js/ui/views/settings.js";
 import { createView as createWorkspace } from "../js/ui/views/workspace.js";
-import { todayIso } from "../js/core/format.js";
+import { todayIsoUTC } from "../js/core/format.js";
 
 let dom;
 beforeEach(() => { dom = installDom(); });
@@ -291,8 +291,12 @@ describe("BT-014-11/Bills → Merchant fix (2026-09-18) 'Pending merchants' (Ter
     assert.equal(calls[0].name, "Fictional Netflix");
     assert.equal(billUpdates.length, 1);
     // Takes effect TODAY, not on nextDue (2026-10-01) — the bug fix (2026-09-17): the bill already
-    // started (schedule.startDate is in the past), so there's no reason to delay the link.
-    assert.deepEqual(billUpdates[0], { recurringId: "bill_netflix", revision: 2, payeeId: "p_new", effectiveFrom: todayIso() });
+    // started (schedule.startDate is in the past), so there's no reason to delay the link. "Today"
+    // is the SERVER's own UTC calendar day (`todayIsoUTC`, core/format.js), not the browser's local
+    // one — a stale expectation here (this test previously asserted the browser-local `todayIso()`,
+    // which `linkBillToMerchant` itself used before its own 2026-09-23 timezone fix) genuinely caught
+    // this suite running for real, live, across that exact local-vs-UTC midnight boundary.
+    assert.deepEqual(billUpdates[0], { recurringId: "bill_netflix", revision: 2, payeeId: "p_new", effectiveFrom: todayIsoUTC() });
   });
 
   test("a bill that hasn't started yet (Terry's exact repro): linking a merchant uses the bill's own start date, not something later — never silently invisible on the bill's current view once it starts", async () => {
