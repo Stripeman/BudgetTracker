@@ -7164,8 +7164,87 @@ log / PR description for its final result if this note has not yet been updated 
 permanent deletion from BT-014 and needed no change here; no dedicated screen-reader audit of the
 (unchanged) dialog component itself.
 
+**Closed out:** full `npm run e2e` finished clean (1118 passed, 0 failed, 0 skipped, exit 0);
+committed on `feature/category-management-BT-022` (`2af63a5`); pushed, updating **PR #51**; a PR
+comment summarized the addition. Deployed to Preview (`.\deploy.ps1 -Environment preview`) —
+all gates `ok`, result `SUCCESS`; independently verified via `curl` of the live
+`/api/site-settings` that `environment: "preview"` and `commit` matched `2af63a5` exactly. Not
+merged, not deployed to Production — both remain Terry's own action. See BT-024 immediately below
+for the follow-up work (My Settings sorting + editable-style parity) done in the same session, on
+the same branch, before the next PR push/deploy.
+
+## BT-024: My Settings personal-appearance sorting and compact-row editing (2026-09-23)
+
+**Terry's instruction, verbatim:** "please sort Account Types, Merchant types and Manage workspace
+categories (alphabetically) on the my settings. also please make the editible the same way you made
+the editable on the worspace categories & types page."
+
+**Source inspection first:** My Settings (`app/js/ui/views/settings.js`) had exactly ONE personal-
+appearance section — "My category appearance" — and it rendered every category permanently expanded
+(`renderColours`'s old `.catrow` per category, no collapsing at all: a "wall of fields"). Account
+types and merchant types (BT-019-02/03) had NO personal-appearance capability anywhere at all —
+neither a `api/preferences` field nor a My Settings section — confirmed by grepping `settings.js`
+for "Account"/"Merchant" (zero matches) and `api/preferences/handler.js`'s `VALIDATORS`/`BUILT_IN`
+(only `categoryColors`/`categoryIcons` existed). So "sort Account Types, Merchant types and Manage
+workspace categories" necessarily meant building the two missing sections first, THEN sorting all
+three — not merely reordering existing UI.
+
+**Built:**
+1. **Backend, `api/preferences/handler.js`:** four new preference keys — `accountTypeColors`,
+   `accountTypeIcons`, `merchantTypeColors`, `merchantTypeIcons` — validated by one small shared
+   `typeColors(prefix, label)` / `typeIcons(prefix, label, storedKey)` factory (never four separate
+   near-duplicate validators), mirroring `categoryColors`/`categoryIcons` exactly: same id-prefix
+   check (`atype_…`/`mtype_…`), same 500-entry cap, same "an icon already chosen stays accepted even
+   if later switched off" grandfathering rule. `put()`'s icon-catalog-fetch guard extended to cover
+   all three icon keys, not just `categoryIcons`.
+2. **Frontend — "make the editable the same way":** the categories personal-appearance card is now
+   the SAME compact one-line-row-with-expandable-`<details>`-editor idiom `createCategoryManager`/
+   `createTypeManager` (`app/js/ui/views/workspace.js`, BT-021/BT-022) already use, via one new
+   shared `appearanceRow()` helper — colour + icon + "Use workspace colour/icon" reset ONLY
+   (deliberately narrower than the Workspace page's own managers: never name, class, retire or
+   delete, since this is never the place a record is created or changed for everyone).
+3. Two new sections on the exact same helper: **"My account type appearance"** and **"My merchant
+   type appearance"**, each with its own "Manage workspace account/merchant types" link
+   (`ctx.navigate("workspace", { tab: "types" })`, reusing BT-022's `tab` deep-link param) and the
+   same "personal, whatever your role" explanatory text as categories.
+4. **Sorting:** named consistently — "My account type appearance" < "My category appearance" < "My
+   merchant type appearance" — so simply listing them in that literal order in both of `settings.js`'s
+   two layout arrangements (Classic and the flagship-wrapped one) sorts them alphabetically; no
+   separate sort routine needed.
+
+**A real regression found and fixed BEFORE it could ship, caught by re-running the affected e2e
+scenarios rather than trusting the unit suite alone:** converting categories' personal-appearance
+rows from always-expanded to collapsed broke `scripts/dev/e2e/categories.mjs`'s existing Bob-
+personal-colour step (it searched for `.catrow` directly, which is now nested inside a COLLAPSED
+`<details>` and has no real layout/coordinates for a mouse click). Fixed the same way every other
+compact-row scenario already does it: find the `.typerow`, open it first if not `.open`, then act
+inside it.
+
+**Real interaction verified in real browsers, not assumed:** `mysettings.mjs` extended to assert
+the literal alphabetical group order and that all three "advanced" sections (not just categories)
+start collapsed; `categories.mjs` re-verified end to end after the fix above; `accounttypes.mjs` and
+`categorymerchanttypes.mjs` each gained a new step where Carol (a plain viewer — proving "anyone may
+set these personal overrides, whatever their role") sets her own personal colour on an account type
+and a merchant type respectively, confirmed saved only to her own preferences and the workspace's
+own type record confirmed unaffected.
+
+**Evidence:** new `api/test/typeappearance.test.js` (4 tests) — `npm --prefix api test` **802/802,
+exit 0**. New `app/test/settingsappearance.test.js` (7 tests: alphabetical order, hidden without a
+workspace, compact collapsed category row + colour save, built-in-and-custom account-type rows +
+colour save, colour reset, merchant-type row exists, all three "Manage workspace …" links present)
+— `npm test` **739/739, exit 0**. `npm run e2e -- --only categories,accounttypes,
+categorymerchanttypes,mysettings`: **53/53, exit 0**. Full combined `npm run e2e` launched
+immediately after this checkpoint as the last gate before committing (see the git log / PR
+description for its final result if this note has not yet been updated with it).
+
+**Not yet done:** personal account/merchant type colours are not propagated into the Accounts/
+Merchants list pages' own display the way `categoryIndex()` already does for categories elsewhere
+in the app — this was scoped to My Settings only, as asked, not a silent gap. No site-admin lock
+exists for the four new preference keys, but none existed for categories' own colour/icon either
+(`site-settings`'s `LOCKABLE` allowlist untouched) — not a regression.
+
 **Exact next step:** confirm the full `npm run e2e` background run (started immediately after this
-checkpoint) finishes clean; commit this work (still on `feature/category-management-BT-022`, the
-same branch PR #51 is open from — this is an addition to that same PR, not a new one, unless Terry
-asks otherwise); push; update PR #51's description; report to Terry with the browser evidence above.
-No `main` merge, no deploy — both remain Terry's own action.
+checkpoint) finishes clean; commit this work (still on `feature/category-management-BT-022`, PR
+#51); push; comment on PR #51; deploy to Preview via `.\deploy.ps1 -Environment preview` and verify
+independently via `/api/site-settings`; report to Terry with the browser evidence above. No `main`
+merge, no Production deploy — both remain Terry's own action.

@@ -17,6 +17,7 @@ import { stagingState, stagingAnchor, setAnchorHref, openStagingEditor, openPers
 import { stagingHref, stagingHost } from "../../core/links.js";
 import { createSettingsGroup } from "../settingsgroup.js";
 import { effectiveLayoutId, layoutAccentVars } from "../../core/layoutmeta.js";
+import { ACCOUNT_TYPE_LABELS, MERCHANT_TYPE_LABELS } from "../../core/format.js";
 
 const MAX_ICON_BYTES = 8 * 1024;
 
@@ -71,6 +72,28 @@ export function createView(ctx) {
     el("p", { class: "field__help", text: "Anyone may set these personal overrides, whatever their role. To create a new category, rename one, or change what everyone sees, use Manage workspace categories below (owners and managers)." }),
     el("div", { class: "row" }, [manageCategoriesBtn]),
     colourBox,
+  ]);
+  // BT-024 (Terry, 2026-09-23): the same personal-appearance idea as categories above, for the
+  // other two workspace-scoped type registries (BT-019-02/03) — never a place account/merchant
+  // types are created (that stays on the Workspace page), only how EXISTING ones look, for you
+  // alone.
+  const accountTypeColourBox = el("div", { class: "stack" });
+  const manageAccountTypesBtn = button("Manage workspace account types", () => { if (ctx.navigate) ctx.navigate("workspace", { tab: "types" }); }, { small: true, variant: "ghost" });
+  const accountTypeColourCard = el("section", { class: "card card--full", "aria-labelledby": "set-atype-colours", hidden: true }, [
+    el("h2", { class: "card__title", id: "set-atype-colours", text: "Your overrides for this workspace" }),
+    el("p", { class: "field__help", text: "Your own colours and icons for this workspace's existing account types. They change only what you see — never anyone else's view, and never the workspace's own colours and icons." }),
+    el("p", { class: "field__help", text: "Anyone may set these personal overrides, whatever their role. To create a new account type, rename one, or change what everyone sees, use Manage workspace account types below (owners and managers)." }),
+    el("div", { class: "row" }, [manageAccountTypesBtn]),
+    accountTypeColourBox,
+  ]);
+  const merchantTypeColourBox = el("div", { class: "stack" });
+  const manageMerchantTypesBtn = button("Manage workspace merchant types", () => { if (ctx.navigate) ctx.navigate("workspace", { tab: "types" }); }, { small: true, variant: "ghost" });
+  const merchantTypeColourCard = el("section", { class: "card card--full", "aria-labelledby": "set-mtype-colours", hidden: true }, [
+    el("h2", { class: "card__title", id: "set-mtype-colours", text: "Your overrides for this workspace" }),
+    el("p", { class: "field__help", text: "Your own colours and icons for this workspace's existing merchant types. They change only what you see — never anyone else's view, and never the workspace's own colours and icons." }),
+    el("p", { class: "field__help", text: "Anyone may set these personal overrides, whatever their role. To create a new merchant type, rename one, or change what everyone sees, use Manage workspace merchant types below (owners and managers)." }),
+    el("div", { class: "row" }, [manageMerchantTypesBtn]),
+    merchantTypeColourBox,
   ]);
   const catalogBox = el("div", { class: "stack" });
   const catalogCard = el("section", { class: "card card--full", "aria-labelledby": "set-icons", hidden: true }, [
@@ -223,6 +246,11 @@ export function createView(ctx) {
   // BT-022: renamed from "Category colours & icons" — unambiguously personal, never a place
   // categories are created (see colourCard's own clarified heading/text above).
   const groupColours = createSettingsGroup({ id: "set-g-colours", storageKey: GROUP_KEY, name: "My category appearance", defaultOpen: false, hidden: true, nodes: [colourCard, catalogCard] });
+  // BT-024 (Terry, 2026-09-23): parity with categories above, for account and merchant types. Named
+  // and, immediately below, ORDERED to sort alphabetically with "My category appearance": account
+  // (a) < category (c) < merchant (m).
+  const groupAccountTypeColours = createSettingsGroup({ id: "set-g-atype-colours", storageKey: GROUP_KEY, name: "My account type appearance", defaultOpen: false, hidden: true, nodes: [accountTypeColourCard] });
+  const groupMerchantTypeColours = createSettingsGroup({ id: "set-g-mtype-colours", storageKey: GROUP_KEY, name: "My merchant type appearance", defaultOpen: false, hidden: true, nodes: [merchantTypeColourCard] });
   const groupDeleted = createSettingsGroup({ id: "set-g-deleted", storageKey: GROUP_KEY, name: "Deleted workspaces", defaultOpen: true, hidden: true, nodes: [deletedCard] });
 
   // BT-013-16: everything on this page is personal (never a financial mutation, never gated by the
@@ -240,13 +268,13 @@ export function createView(ctx) {
   ]);
   const bodyHost = el("div");
   const element = el("section", {}, [pageHead("My settings"), bodyHost]);
-  const classicArrangement = el("div", {}, [introBlock, groupProfile.element, groupDisplay.element, groupLinks.element, groupColours.element, groupDeleted.element]);
+  const classicArrangement = el("div", {}, [introBlock, groupProfile.element, groupDisplay.element, groupLinks.element, groupAccountTypeColours.element, groupColours.element, groupMerchantTypeColours.element, groupDeleted.element]);
   const FLAGSHIP_IDS = new Set(["ledgerfly-forecast", "finexa-budget", "acru-overview"]);
   let mountedLayout = null;
   function arrangementFor(layoutId) {
     if (!FLAGSHIP_IDS.has(layoutId)) return classicArrangement;
     return el("div", { class: "dashflag", vars: layoutAccentVars(ctx.store.getState(), layoutId) }, [
-      introBlock, groupProfile.element, groupDisplay.element, groupLinks.element, groupColours.element, groupDeleted.element,
+      introBlock, groupProfile.element, groupDisplay.element, groupLinks.element, groupAccountTypeColours.element, groupColours.element, groupMerchantTypeColours.element, groupDeleted.element,
     ]);
   }
 
@@ -296,8 +324,63 @@ export function createView(ctx) {
   }
   void loadContacts();
 
-  // Personal category colours (BT-011-04), with the same swatch picker as the theme. Rebuilt only
-  // when the categories or colours change, and focus returns to the picker that was in use.
+  // BT-024 (Terry, 2026-09-23): "make the editable the same way you made the editable on the
+  // workspace categories & types page" — the same compact one-line-row-with-expandable-editor idiom
+  // `createCategoryManager`/`createTypeManager` (app/js/ui/views/workspace.js) already use, applied
+  // here to a PERSONAL override list rather than a workspace-managed one. Deliberately narrower than
+  // those: colour and icon only — no name, class, retire or delete controls, since this is never the
+  // place a category/type is created or changed for everyone (that stays on the Workspace page).
+  const appearanceOpenRows = new Set();
+  function appearanceRow({ id, name, workspaceColor, workspaceIcon, personalColor, personalIcon, palette, locked, iconsLocked, badges = [], onColor, onIcon }) {
+    const labelId = `set-appear-${id}`;
+    const rowKey = `${labelId}`;
+    const error = el("p", { class: "error-text small", role: "alert", hidden: true });
+    const shown = personalColor || workspaceColor;
+    // A failed save puts the previous colour back and says so beside the picker (A11Y2-006).
+    const picker = createThemePicker({
+      value: shown, entries: colourEntries(palette, workspaceColor, personalColor),
+      labelledBy: labelId, listLabel: `Colours for ${name}`, namePrefix: `${name} colour`,
+      onPick: async (hex) => {
+        const out = await onColor(hex);
+        if (!out.ok) { picker.select(shown); error.textContent = messageFor(out.error); error.hidden = false; }
+      },
+    });
+    picker.setDisabled(locked);
+    const reset = personalColor && !locked ? button("Use workspace colour", () => { void onColor(null); }, { small: true, variant: "ghost", attrs: { "aria-label": `Use workspace colour for ${name}` } }) : null;
+    // A personal icon (BT-011-05); "Default" is the workspace's own icon.
+    const iconPick = createIconPicker({
+      value: personalIcon || null, inherited: workspaceIcon, name, label: "Icon", tint: shown,
+      onPick: async (iconId) => {
+        const out = await onIcon(iconId || null);
+        if (!out.ok) { iconPick.select(personalIcon || null); error.textContent = messageFor(out.error); error.hidden = false; }
+      },
+    });
+    iconPick.picker.setDisabled(iconsLocked);
+    const summary = el("summary", {}, [
+      el("h3", { class: "typerow__name" }, [categoryLabel(name, shown, personalIcon || workspaceIcon)]),
+      ...badges,
+      el("span", { class: "typerow__spacer" }),
+      el("span", { class: "typerow__edit", "aria-hidden": "true", text: "Edit" }),
+    ]);
+    const details = el("details", { class: "typerow" }, [
+      summary,
+      el("div", { class: "catrow" }, [
+        el("div", { class: "field" }, [el("p", { class: "field__label", id: labelId, text: "Colour" }), picker.element]),
+        iconPick.element, error,
+        el("div", { class: "row catrow__meta" }, [
+          badge(personalColor ? "Your colour" : "Workspace colour", "source"), reset,
+          badge(personalIcon ? "Your icon" : "Workspace icon", "source"),
+        ]),
+      ]),
+    ]);
+    if (appearanceOpenRows.has(rowKey)) details.open = true;
+    details.addEventListener("toggle", () => { if (details.open) appearanceOpenRows.add(rowKey); else appearanceOpenRows.delete(rowKey); });
+    return details;
+  }
+
+  // Personal category colours/icons (BT-011-04/05). Rebuilt only when the categories or colours
+  // change; the compact rows themselves (not individual field focus) survive a rebuild via
+  // `appearanceOpenRows`, exactly like the Workspace page's own row managers.
   let colourSig = "";
   function renderColours(state) {
     const data = sliceFor(state, "categories").data;
@@ -309,57 +392,67 @@ export function createView(ctx) {
     const iconsLocked = prefs.sources.categoryIcons === "locked";
     const cats = data.categories.filter((c) => !c.archived);
     const iconsData = sliceFor(state, "icons").data;
-    const sig = JSON.stringify([cats.map((c) => [c.id, c.name, c.color, c.icon]), personal, personalIcons, locked, iconsLocked, iconsData ? iconsData.catalog : null]);
+    const sig = JSON.stringify([cats.map((c) => [c.id, c.name, c.color, c.icon, c.type]), personal, personalIcons, locked, iconsLocked, iconsData ? iconsData.catalog : null]);
     if (sig === colourSig) return;
     colourSig = sig;
-    const active = document.activeElement;
-    const focused = active && colourBox.contains(active) && active.closest ? active.closest("[data-category]") : null;
-    const focusId = focused ? focused.dataset.category : null;
-    const focusIndex = focused ? [...focused.querySelectorAll(".themepick__toggle")].indexOf(active) : -1;
-    const rows = cats.map((c) => {
-      const labelId = `set-colour-${c.id}`;
-      // A failed save puts the previous colour back and says so beside the picker (A11Y2-006).
-      const error = el("p", { class: "error-text small", role: "alert", hidden: true });
-      const picker = createThemePicker({
-        value: personal[c.id] || c.color, entries: colourEntries(data.palette, c.color, personal[c.id]),
-        labelledBy: labelId, listLabel: `Colours for ${c.name}`, namePrefix: `${c.name} colour`,
-        onPick: async (hex) => {
-          const out = await save({ categoryColors: { ...personal, [c.id]: hex } });
-          if (!out.ok) { picker.select(personal[c.id] || c.color); error.textContent = messageFor(out.error); error.hidden = false; }
-        },
-      });
-      picker.setDisabled(locked);
-      const reset = personal[c.id] && !locked ? button("Use workspace colour", () => {
-        const next = { ...personal };
-        delete next[c.id];
-        void save({ categoryColors: Object.keys(next).length ? next : null });
-      }, { small: true, variant: "ghost", attrs: { "aria-label": `Use workspace colour for ${c.name}` } }) : null;
-      // A personal icon (BT-011-05); "Default" is the workspace's icon for the category.
-      const iconPick = createIconPicker({
-        value: personalIcons[c.id] || null, inherited: c.icon, name: c.name, label: "Icon", tint: personal[c.id] || c.color,
-        onPick: async (id) => {
-          const next = { ...personalIcons };
-          if (id) next[c.id] = id; else delete next[c.id];
-          const out = await save({ categoryIcons: Object.keys(next).length ? next : null });
-          if (!out.ok) { iconPick.select(personalIcons[c.id] || null); error.textContent = messageFor(out.error); error.hidden = false; }
-        },
-      });
-      iconPick.picker.setDisabled(iconsLocked);
-      // One compact, named row per category (UXI-3).
-      return el("div", { class: "catrow", role: "group", "aria-labelledby": `${labelId}-name`, dataset: { category: c.id } }, [
-        el("h3", { class: "catrow__name", id: `${labelId}-name` }, [categoryLabel(c.name, personal[c.id] || c.color, personalIcons[c.id] || c.icon)]),
-        el("div", { class: "field" }, [el("p", { class: "field__label", id: labelId, text: "Colour" }), picker.element]),
-        iconPick.element, error,
-        el("div", { class: "row catrow__meta" }, [badge(personal[c.id] ? "Your colour" : "Workspace colour", "source"), reset, badge(personalIcons[c.id] ? "Your icon" : "Workspace icon", "source")]),
-      ]);
-    });
+    const rows = cats.map((c) => appearanceRow({
+      id: c.id, name: c.name, workspaceColor: c.color, workspaceIcon: c.icon,
+      personalColor: personal[c.id], personalIcon: personalIcons[c.id], palette: data.palette, locked, iconsLocked,
+      badges: [badge(c.type === "income" ? "Income" : "Expense", "source")],
+      onColor: (hex) => { const next = { ...personal }; if (hex) next[c.id] = hex; else delete next[c.id]; return save({ categoryColors: Object.keys(next).length ? next : null }); },
+      onIcon: (id) => { const next = { ...personalIcons }; if (id) next[c.id] = id; else delete next[c.id]; return save({ categoryIcons: Object.keys(next).length ? next : null }); },
+    }));
     mount(colourBox, ...rows);
-    if (focusId) {
-      const row = rows.find((r) => r.dataset.category === focusId);
-      const toggles = row ? [...row.querySelectorAll(".themepick__toggle")] : [];
-      const toggle = toggles[Math.max(0, focusIndex)];
-      if (toggle) toggle.focus();
-    }
+  }
+
+  // Personal account type colours/icons (BT-024): same mechanism as categories, for BT-019-02's
+  // workspace-scoped account types.
+  let accountTypeColourSig = "";
+  function renderAccountTypeColours(state) {
+    const data = sliceFor(state, "accountTypes").data;
+    const prefs = state.preferences;
+    if (!data || !prefs) return;
+    const personal = prefs.effective.accountTypeColors || {};
+    const personalIcons = prefs.effective.accountTypeIcons || {};
+    const locked = prefs.sources.accountTypeColors === "locked";
+    const iconsLocked = prefs.sources.accountTypeIcons === "locked";
+    const types = data.types.filter((t) => !t.retired);
+    const sig = JSON.stringify([types.map((t) => [t.id, t.name, t.color, t.icon, t.accountingClass, t.system]), personal, personalIcons, locked, iconsLocked]);
+    if (sig === accountTypeColourSig) return;
+    accountTypeColourSig = sig;
+    const rows = types.map((t) => appearanceRow({
+      id: t.id, name: t.name, workspaceColor: t.color, workspaceIcon: t.icon,
+      personalColor: personal[t.id], personalIcon: personalIcons[t.id], palette: data.palette, locked, iconsLocked,
+      badges: [badge(ACCOUNT_TYPE_LABELS[t.accountingClass] || t.accountingClass, "source"), t.system ? badge("Built-in", "source") : null],
+      onColor: (hex) => { const next = { ...personal }; if (hex) next[t.id] = hex; else delete next[t.id]; return save({ accountTypeColors: Object.keys(next).length ? next : null }); },
+      onIcon: (id) => { const next = { ...personalIcons }; if (id) next[t.id] = id; else delete next[t.id]; return save({ accountTypeIcons: Object.keys(next).length ? next : null }); },
+    }));
+    mount(accountTypeColourBox, ...rows);
+  }
+
+  // Personal merchant type colours/icons (BT-024): same mechanism, for BT-019-03's workspace-scoped
+  // merchant types.
+  let merchantTypeColourSig = "";
+  function renderMerchantTypeColours(state) {
+    const data = sliceFor(state, "merchantTypes").data;
+    const prefs = state.preferences;
+    if (!data || !prefs) return;
+    const personal = prefs.effective.merchantTypeColors || {};
+    const personalIcons = prefs.effective.merchantTypeIcons || {};
+    const locked = prefs.sources.merchantTypeColors === "locked";
+    const iconsLocked = prefs.sources.merchantTypeIcons === "locked";
+    const types = data.types.filter((t) => !t.retired);
+    const sig = JSON.stringify([types.map((t) => [t.id, t.name, t.color, t.icon, t.merchantClass, t.system]), personal, personalIcons, locked, iconsLocked]);
+    if (sig === merchantTypeColourSig) return;
+    merchantTypeColourSig = sig;
+    const rows = types.map((t) => appearanceRow({
+      id: t.id, name: t.name, workspaceColor: t.color, workspaceIcon: t.icon,
+      personalColor: personal[t.id], personalIcon: personalIcons[t.id], palette: data.palette, locked, iconsLocked,
+      badges: [badge(MERCHANT_TYPE_LABELS[t.merchantClass] || t.merchantClass, "source"), t.system ? badge("Built-in", "source") : null],
+      onColor: (hex) => { const next = { ...personal }; if (hex) next[t.id] = hex; else delete next[t.id]; return save({ merchantTypeColors: Object.keys(next).length ? next : null }); },
+      onIcon: (id) => { const next = { ...personalIcons }; if (id) next[t.id] = id; else delete next[t.id]; return save({ merchantTypeIcons: Object.keys(next).length ? next : null }); },
+    }));
+    mount(merchantTypeColourBox, ...rows);
   }
 
   // The site icon catalogue (BT-011-05). Custom icons are added only through the validated upload:
@@ -482,6 +575,12 @@ export function createView(ctx) {
     renderStaging(state);
     colourCard.hidden = !state.selectedWorkspaceId;
     renderColours(state);
+    accountTypeColourCard.hidden = !state.selectedWorkspaceId;
+    renderAccountTypeColours(state);
+    groupAccountTypeColours.setHidden(accountTypeColourCard.hidden);
+    merchantTypeColourCard.hidden = !state.selectedWorkspaceId;
+    renderMerchantTypeColours(state);
+    groupMerchantTypeColours.setHidden(merchantTypeColourCard.hidden);
     const siteAdmin = !!(state.auth && state.auth.user && state.auth.user.siteAdmin);
     catalogCard.hidden = !siteAdmin;
     groupColours.setHidden(colourCard.hidden && catalogCard.hidden);

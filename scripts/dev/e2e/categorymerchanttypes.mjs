@@ -135,6 +135,42 @@ export async function run(h, t) {
     },
   });
 
+  // ---- BT-024 (Terry, 2026-09-23): Carol (a plain viewer) may still set her OWN personal appearance
+  // for this merchant type — "anyone may set these personal overrides, whatever their role" — never
+  // the workspace's own record, and never anyone else's view.
+  await b.carol.goto("settings");
+  await b.carol.click({ role: "button", name: "My merchant type appearance", scope: "main" });
+  await b.carol.waitForText(MERCH_NAME, { scope: "main" });
+  const carolToggleSpot = await b.carol.evaluate(`(() => {
+    const row = [...document.querySelectorAll('main .typerow')].find((r) => r.textContent.includes(${JSON.stringify(MERCH_NAME)}));
+    if (!row) return null;
+    if (!row.open) row.querySelector('summary').click();
+    const toggle = row.querySelector('.themepick__toggle');
+    if (!toggle) return null;
+    toggle.scrollIntoView({ block: 'center' });
+    const at = toggle.getBoundingClientRect();
+    return { x: at.left + at.width / 2, y: at.top + at.height / 2 };
+  })()`);
+  if (!carolToggleSpot) throw new Error("Carol's personal colour picker for the merchant type was not found");
+  await b.carol.mouseClick(carolToggleSpot.x, carolToggleSpot.y);
+  await b.carol.waitFor("!!document.querySelector('[role=\"listbox\"]')", { what: "Carol's colour list to open" });
+  const violetSpot = await b.carol.evaluate(`(() => {
+    const o = [...document.querySelectorAll('[role="option"]')].find((x) => x.textContent.includes('Violet'));
+    if (!o) return null;
+    o.scrollIntoView({ block: 'center' });
+    const at = o.getBoundingClientRect();
+    return { x: at.left + at.width / 2, y: at.top + at.height / 2 };
+  })()`);
+  if (!violetSpot) throw new Error("Carol's palette does not offer Violet");
+  await b.carol.mouseClick(violetSpot.x, violetSpot.y);
+  await b.carol.settle();
+  const carolPrefs = await api("carol").ok("preferences");
+  t.check("Carol (viewer) sets her OWN personal colour for a merchant type — saved to her own preferences alone", {
+    expected: "#8b5cf6", actual: (carolPrefs.effective.merchantTypeColors || {})[merchType.id],
+  });
+  const merchAfterCarol = (await api("alice").ok("merchant-types", { query: q })).types.find((x) => x.id === merchType.id);
+  t.check("the workspace's own merchant type colour is completely unaffected by Carol's personal choice", { expected: "#16a34a", actual: merchAfterCarol.color });
+
   // ---- retiring both: gone from new-record choices, the merchant already using one keeps its name --
   await b.alice.goto("workspace");
   await b.alice.waitForText(MERCH_NAME, { scope: "main" });

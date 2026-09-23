@@ -52,6 +52,45 @@ function categoryIcons(v, { catalog, stored }) {
   return out;
 }
 
+// Personal account/merchant type colours and icons (BT-024, Terry 2026-09-23: parity with
+// categories above — the same personal-override mechanism, id prefix and validation, applied to
+// the other two workspace-scoped type registries (BT-019-02/03). Never touches the workspace's own
+// type record; never seen by anyone else.
+function typeColors(prefix, fieldLabel) {
+  return (v) => {
+    if (!v || typeof v !== 'object' || Array.isArray(v)) throw badRequest(`${fieldLabel} colours must be an object.`, 'invalid_field');
+    const entries = Object.entries(v);
+    if (entries.length > 500) throw badRequest(`Too many ${fieldLabel.toLowerCase()} colours.`, 'invalid_field');
+    const out = {};
+    const re = new RegExp(`^${prefix}_[A-Za-z0-9_-]{1,64}$`);
+    for (const [id, hex] of entries) {
+      if (!re.test(id)) throw badRequest(`${fieldLabel} id is not valid.`, 'invalid_id');
+      out[id] = colors.validateColor(hex, `${fieldLabel} colour`);
+    }
+    return out;
+  };
+}
+function typeIcons(prefix, fieldLabel, storedKey) {
+  return (v, { catalog, stored }) => {
+    if (!v || typeof v !== 'object' || Array.isArray(v)) throw badRequest(`${fieldLabel} icons must be an object.`, 'invalid_field');
+    const entries = Object.entries(v);
+    if (entries.length > 500) throw badRequest(`Too many ${fieldLabel.toLowerCase()} icons.`, 'invalid_field');
+    const before = (stored && stored[storedKey]) || {};
+    const out = {};
+    const re = new RegExp(`^${prefix}_[A-Za-z0-9_-]{1,64}$`);
+    for (const [id, icon] of entries) {
+      if (!re.test(id)) throw badRequest(`${fieldLabel} id is not valid.`, 'invalid_id');
+      if (icon === null) throw badRequest(`Leave a ${fieldLabel.toLowerCase()} out to use the workspace icon.`, 'invalid_icon');
+      out[id] = icons.validateChoice(catalog, icon, { current: Object.prototype.hasOwnProperty.call(before, id) ? before[id] : null, field: `${fieldLabel} icon` });
+    }
+    return out;
+  };
+}
+const accountTypeColors = typeColors('atype', 'Account type');
+const accountTypeIcons = typeIcons('atype', 'Account type', 'accountTypeIcons');
+const merchantTypeColors = typeColors('mtype', 'Merchant type');
+const merchantTypeIcons = typeIcons('mtype', 'Merchant type', 'merchantTypeIcons');
+
 // Per-design Gallery colour customization (BT-013-15, Terry 2026-09-20): a site administrator's OWN
 // personal preference only — never a workspace setting, never seen by or applied to anyone else, and
 // never touching a real workspace's own layout. `{ <conceptId>: { light, dark, preset } }`. `light`/
@@ -108,6 +147,10 @@ const VALIDATORS = {
   favoritePayees: (v) => { if (!Array.isArray(v) || v.length > 50 || !v.every(isSafeId)) throw badRequest('Favourite payees are not valid.', 'invalid_field'); return [...new Set(v)]; },
   categoryColors,
   categoryIcons,
+  accountTypeColors,
+  accountTypeIcons,
+  merchantTypeColors,
+  merchantTypeIcons,
   galleryDesignColors,
   // The staging (preview) site's address, opened from the account menu (BT-011-06). The app never
   // hard-codes it: each person sets it, or inherits the site default. Stored normalised; http to a
@@ -120,7 +163,7 @@ const VALIDATORS = {
   groupPaidBy: (v) => fields.oneOf(v, ['me', 'nobody'], 'Who paid by default'),
   groupBalanceView: (v) => fields.oneOf(v, ['suggested', 'direct'], 'Balance view'),
 };
-const BUILT_IN = { locale: 'en', timeZone: 'UTC', dateFormat: 'iso', numberFormat: '1,234.56', displayCurrency: null, balanceMasking: false, defaultWorkspaceId: null, dashboardWidgets: ['balances', 'upcoming', 'budgets', 'recent'], favoritePayees: [], categoryColors: {}, categoryIcons: {}, galleryDesignColors: {}, stagingUrl: null };
+const BUILT_IN = { locale: 'en', timeZone: 'UTC', dateFormat: 'iso', numberFormat: '1,234.56', displayCurrency: null, balanceMasking: false, defaultWorkspaceId: null, dashboardWidgets: ['balances', 'upcoming', 'budgets', 'recent'], favoritePayees: [], categoryColors: {}, categoryIcons: {}, accountTypeColors: {}, accountTypeIcons: {}, merchantTypeColors: {}, merchantTypeIcons: {}, galleryDesignColors: {}, stagingUrl: null };
 
 function resolve(stored, siteDoc) {
   const effective = {};
@@ -172,7 +215,8 @@ async function put(ctx, req) {
     if (value !== null && (siteDoc.locked || []).includes(key)) throw forbidden(`${key} is set by the site and cannot be changed personally.`);
   }
   const extra = { localHttp: localDevelopment(ctx.env || {}) };
-  if (body.categoryIcons !== undefined && body.categoryIcons !== null) {
+  const needsCatalog = ['categoryIcons', 'accountTypeIcons', 'merchantTypeIcons'].some((k) => body[k] !== undefined && body[k] !== null);
+  if (needsCatalog) {
     extra.catalog = (await icons.readCatalog(ctx.storage)).catalog;
     extra.stored = (await store.ensureUser(ctx)).preferences || {};
   }

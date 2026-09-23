@@ -40,13 +40,20 @@ export async function run(h, t) {
   // grouping/order, which is what this check verifies.
   const groups = await groupState(s);
   const byName = (n) => groups.find((g) => g.name === n);
-  const CORE = ["Profile & appearance", "Display, privacy & contacts", "Staging link", "My category appearance"];
-  t.check("My Settings is organized into named, collapsible sections in a sensible task order", {
+  // BT-024 (Terry, 2026-09-23): "sort Account Types, Merchant types and Manage workspace categories
+  // alphabetically" — the three personal-appearance sections (account/category/merchant) sort
+  // themselves correctly among the everyday ones simply by being named consistently: "My account
+  // type appearance" < "My category appearance" < "My merchant type appearance".
+  const CORE = ["Profile & appearance", "Display, privacy & contacts", "Staging link", "My account type appearance", "My category appearance", "My merchant type appearance"];
+  t.check("My Settings is organized into named, collapsible sections in a sensible task order, with the three personal-appearance sections sorted alphabetically", {
     expected: CORE, actual: groups.map((g) => g.name).filter((n) => CORE.includes(n)),
   });
-  t.check("only the genuinely advanced section (category colours and icons) starts collapsed; the everyday ones start open, exactly as visible as before", {
-    expected: { profile: "true", display: "true", staging: "true", colours: "false" },
-    actual: { profile: byName("Profile & appearance").expanded, display: byName("Display, privacy & contacts").expanded, staging: byName("Staging link").expanded, colours: byName("My category appearance").expanded },
+  t.check("only the genuinely advanced sections (account/category/merchant type appearance) start collapsed; the everyday ones start open, exactly as visible as before", {
+    expected: { profile: "true", display: "true", staging: "true", accountTypes: "false", colours: "false", merchantTypes: "false" },
+    actual: {
+      profile: byName("Profile & appearance").expanded, display: byName("Display, privacy & contacts").expanded, staging: byName("Staging link").expanded,
+      accountTypes: byName("My account type appearance").expanded, colours: byName("My category appearance").expanded, merchantTypes: byName("My merchant type appearance").expanded,
+    },
   });
   t.check("a collapsed section's content is not merely styled shut — it is actually hidden from the page", {
     expected: true, actual: byName("My category appearance").bodyHidden,
