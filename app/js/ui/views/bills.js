@@ -604,8 +604,20 @@ export function openBillEditor(ctx, bill = null, opts = {}) {
   const wsDefault = (((state.workspaces || []).find((w) => w.id === state.selectedWorkspaceId) || {}).settingValues || {}).billReminderDays;
   reminder.value = String(b.reminderDays === undefined ? (Number.isInteger(wsDefault) ? wsDefault : 3) : b.reminderDays);
   const notes = el("textarea", { class: "field__input", maxlength: "2000", text: b.notes || "" });
+  // Bug fix (2026-09-23, Terry: "i edit it and save but its not updated" — assigning a merchant to
+  // an already-started bill): this defaulted to `b.nextDue`, almost always in the future, so
+  // `termsAt` (api/_shared/bills.js) never selected the new version and the change looked like it
+  // never saved — genuinely written server-side, just not yet in effect. This is the EXACT bug
+  // BT-014-13 already fixed once for the Merchants page's own "Add as merchant" quick-link
+  // (`linkBillToMerchant`, payees.js) but missed here, in the general bill editor every other term
+  // change (amount, category, merchant, responsible person) goes through. Same fix, same reasoning:
+  // today, unless the bill's own schedule has not started yet (in which case nothing can be "in
+  // effect" before that — a real, disclosed structural limit, not something a date choice can work
+  // around).
+  const today = todayIso();
+  const billStartDate = b.schedule && b.schedule.startDate;
   const effectiveFrom = input({ type: "date" });
-  effectiveFrom.value = b.nextDue || todayIso();
+  effectiveFrom.value = billStartDate && billStartDate > today ? billStartDate : today;
 
   // The responsible person comes from the people selector (members and contacts).
   void ctx.api.people(state.selectedWorkspaceId, "responsible").then((res) => {

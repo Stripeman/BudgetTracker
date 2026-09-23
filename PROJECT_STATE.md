@@ -7325,3 +7325,57 @@ to Preview via `.\deploy.ps1 -Environment preview` and verify independently via
 `/api/site-settings`; report to Terry with the full list of what was sorted and what was
 deliberately left alone. No `main`
 merge, no Production deploy — both remain Terry's own action.
+
+(Editorial note, written from `fix/bill-edit-merchant-not-saving`, branched fresh off `main` at
+`fce1580`: the above was in fact closed out exactly as planned — PR #53 merged by Terry, deployed to
+Preview and independently verified at commit `681f4f0` beforehand. The full closing note lives on
+`chore/project-state-pr53-merge-verified` / PR #54, not yet merged as of this checkpoint; left
+un-duplicated here to avoid a needless merge conflict between the two branches. See BT-026 below.)
+
+## BT-026: bill editor's "take effect from" defaulted to a future date, hiding real saves (2026-09-23)
+
+**Terry's bug report, verbatim** (with a screenshot of "Electric Repayment", next due 2026-10-15):
+"why am i not able to edit this bill and assign a merchant. i edit it and save but its not
+updated."
+
+**Root cause, confirmed by tracing, not guessed:** the bill editor's own "Changes to amount,
+merchant, category or responsible person take effect from" field (`app/js/ui/views/bills.js`,
+`openBillEditor`) defaulted to the bill's own `nextDue` date — for an already-started bill, almost
+always weeks or months in the future. The PATCH genuinely succeeded server-side (a real new term
+version was written), but `termsAt` (`api/_shared/bills.js`) never selected it, since it only ever
+picks the version effective on-or-before a given date — so the bill's CURRENT view (what the
+All-bills list and a freshly reopened Edit dialog both read) stayed exactly as it was until that
+future date arrived. Genuinely indistinguishable from "nothing saved" from Terry's own point of
+view. **This is the EXACT bug BT-014-13 already root-caused and fixed once**, for the Merchants
+page's own "Add as merchant" quick-link (`linkBillToMerchant`, `payees.js`) — that fix was never
+carried over to the general bill editor, which is the far more commonly used path every other term
+change (amount, category, merchant, responsible person) actually goes through.
+
+**Fixed with the exact same logic BT-014-13 already established**, not a new mechanism: defaults to
+today, or the bill's own `schedule.startDate` when that is later (the server already refuses
+anything earlier: "A change cannot take effect before the bill starts").
+
+**Proved the bug was real, not assumed:** wrote the new e2e check, then temporarily reverted the
+fix (`git stash`) and re-ran it — it failed exactly as reported, the reopened Edit dialog's own
+Merchant field literally reading "Choose a merchant…" after a save that had, in fact, succeeded
+server-side. Restored the fix and confirmed green again before treating this as done.
+
+**Evidence:** `app/test/pickerbills.test.js` — 3 new tests (an already-started bill with a
+genuinely future next-due date defaults "take effect from" to today and submits the change
+effective today; a bill that has not started yet defaults to its own start date; a brand-new bill
+has no such field at all) — `npm test` **742/742**, exit 0 (frontend-only; `npm --prefix api test`
+**802/802** unaffected, confirming no server-side change was needed). `scripts/dev/e2e/bills.mjs`
+extended with a bill matching Terry's own scenario shape (already started, next due date
+deliberately NOT today — unlike every pre-existing fixture in this file, which is exactly why the
+bug had never been caught by its own extensive coverage) — full scenario **42/42, exit 0**. Full
+combined `npm run e2e` launched immediately after this checkpoint as the last gate before
+committing.
+
+**App-wide audit for the same pattern:** grepped every other use of `nextDue` in `app/js` — the
+only two remaining are "Pause from" (semantically correct to default there) and read-only display.
+No other latent instance of this bug found.
+
+**Exact next step:** confirm the full `npm run e2e` background run finishes clean; commit on
+`fix/bill-edit-merchant-not-saving`; push; open a PR; deploy to Preview and verify independently via
+`/api/site-settings`; report to Terry with the reproduction/fix evidence above. No `main` merge, no
+Production deploy — both remain Terry's own action.

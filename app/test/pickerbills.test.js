@@ -50,6 +50,7 @@ function billsCtx() {
       { ref: "contact:c_dana", label: "Dana Fictional", type: "contact", typeLabel: "Contact" },
     ] }),
     createBill: async (ws, body) => { calls.created.push(body); return {}; },
+    updateBill: async (ws, body) => { calls.updated = calls.updated || []; calls.updated.push(body); return {}; },
     billDraft: async () => ({ draft: { amountIsEstimate: false, amount: "950.00", date: "2026-09-01", categoryId: null, payeeId: null, payeeName: null, currency: "EUR", overdue: true } }),
     billAction: async (ws, action, body) => { calls.recorded.push({ action, body }); return {}; },
     createAccount: async (ws, body) => {
@@ -134,6 +135,58 @@ describe("BT-004-05 bills: the bill editor", () => {
     assert.equal(triggerFor(pickerNamed(root, "Account")).disabled, true);
     assert.equal(triggerFor(pickerNamed(root, "Type")).disabled, false);
     assert.equal(triggerFor(pickerNamed(root, "Category")).disabled, false);
+  });
+});
+
+// Bug fix (2026-09-23, Terry's exact repro: "why am i not able to edit this bill and assign a
+// merchant. i edit it and save but its not updated" — an already-started bill, due weeks in the
+// future). The "Changes to ... take effect from" field defaulted to the bill's own `nextDue`
+// (almost always in the future), so the server genuinely saved a new term version, but
+// `termsAt` (api/_shared/bills.js) never selected it — invisible until that future date, which
+// looks exactly like "nothing was saved". Same bug BT-014-13 already fixed once for the Merchants
+// page's own "Add as merchant" quick-link; this is the general bill editor every other term change
+// goes through, which that earlier fix missed.
+describe("Bug fix (2026-09-23): a bill's own term changes (category, merchant, amount, responsible person) take effect today, not on its next due date", () => {
+  const EFFECTIVE_LABEL = "Changes to amount, merchant, category or responsible person take effect from";
+  const effectiveFromInput = (root) => {
+    const label = root.querySelectorAll("label").find((l) => l.textContent === EFFECTIVE_LABEL);
+    return root.querySelector(`#${label.getAttribute("for")}`);
+  };
+
+  test("an already-started, overdue-but-future-due bill defaults 'take effect from' to TODAY, not its next due date, and a category change is sent effective today", async () => {
+    const future = { ...RENT, id: "bill_electric", name: "Fictional Electric Repayment", billType: "utilities", nextDue: "2099-01-15", schedule: { freq: "monthly", interval: 1, startDate: "2026-01-01" } };
+    const { ctx, state, calls } = billsCtx();
+    state.bills = { workspaceId: "ws_1", status: "ready", error: null, data: { recurring: [future], summary: { overdue: 0, dueSoon: 0, next30Days: [] } } };
+    openBillEditor(ctx, future);
+    const root = dom.body.querySelector(".modal");
+    const today = new Date().toISOString().slice(0, 10);
+    assert.equal(effectiveFromInput(root).value, today, "defaults to today, never the far-future next due date");
+    chooseOption(pickerNamed(root, "Category"), "Housing");
+    buttonNamed(root, "Save changes").click();
+    await tick();
+    assert.equal(calls.updated.length, 1);
+    assert.equal(calls.updated[0].categoryId, "cat_home");
+    assert.equal(calls.updated[0].effectiveFrom, today, "the change is submitted effective today, so it actually shows up immediately");
+  });
+
+  test("a bill that has not started yet defaults 'take effect from' to its own start date (the earliest the server allows), never today or its next due date", () => {
+    const notStarted = { ...RENT, id: "bill_future_start", name: "Fictional future bill", nextDue: "2099-06-01", schedule: { freq: "monthly", interval: 1, startDate: "2099-01-15" } };
+    const { ctx } = billsCtx();
+    openBillEditor(ctx, notStarted);
+    const root = dom.body.querySelector(".modal");
+    assert.equal(effectiveFromInput(root).value, "2099-01-15");
+  });
+
+  test("a brand NEW bill's own hidden effective-from concept (not shown as a field) never blocks creation", () => {
+    const { ctx, calls } = billsCtx();
+    openBillEditor(ctx);
+    const root = dom.body.querySelector(".modal");
+    // The field only appears when editing; a new bill has nothing to phase in.
+    assert.equal(root.querySelectorAll("label").find((l) => l.textContent === EFFECTIVE_LABEL), undefined);
+    root.querySelector('input[maxlength="80"]').value = "Fictional water bill";
+    root.querySelector('input[inputmode="decimal"]').value = "40.00";
+    buttonNamed(root, "Add bill").click();
+    assert.equal(calls.created.length, 1);
   });
 });
 

@@ -435,6 +435,74 @@ export async function run(h, t) {
     t.note("no .notice panel present on this seeded dashboard right now (nothing overdue/due soon) — the popover check above already covers the shared accent treatment");
   }
 
+  // ---- Bug fix (2026-09-23, Terry's exact repro): "why am i not able to edit this bill and assign
+  // a merchant. i edit it and save but its not updated." — an ALREADY-STARTED bill whose next due
+  // date is weeks away (unlike every fixture above, whose own next due date happens to equal
+  // "today", which is exactly why this real bug slipped past all of the coverage above). The bill
+  // editor's own "take effect from" field used to default to that far-future next-due date, so the
+  // change was genuinely saved server-side but invisible until then — indistinguishable from "did
+  // not save" from the person's own point of view. ----------------------------------------------
+  const pastDay = new Date().getUTCDate() === 5 ? 6 : 5;
+  const pastStart = new Date(Date.now() - 200 * 24 * 60 * 60 * 1000);
+  pastStart.setUTCDate(pastDay);
+  const pastStartIso = pastStart.toISOString().slice(0, 10);
+  const electric = firstRecord(await h.api("alice").ok("recurring", { method: "POST", query: q, body: { name: "E2E Electric Repayment", billType: "utilities", accountId: account.id, amount: "174.00", schedule: { freq: "monthly", startDate: pastStartIso } } }));
+  const electricBefore = (await h.api("alice").ok("recurring", { query: q })).recurring.find((r) => r.id === electric.id);
+  t.check("fixture sanity: already started (schedule start in the past), and its own next due date is genuinely NOT today — the exact condition that hid this bug from every other check above", {
+    expected: { startedInPast: true, nextDueIsNotToday: true },
+    actual: { startedInPast: electricBefore.schedule.startDate < today, nextDueIsNotToday: electricBefore.nextDue !== today },
+  });
+  t.note(`E2E Electric Repayment ${electric.id}: schedule start ${electricBefore.schedule.startDate}, next due ${electricBefore.nextDue}, today ${today}`);
+
+  await b.alice.goto("bills");
+  await b.alice.waitForText("E2E Electric Repayment", { scope: "main" });
+  await b.alice.openRecordMenu("E2E Electric Repayment", { scope: "main" });
+  await b.alice.click({ role: "button", name: "Edit E2E Electric Repayment" });
+  await b.alice.waitFor("!!document.querySelector('.modal')", { what: "the Electric Repayment edit dialog" });
+  const effectiveFromLabel = "Changes to amount, merchant, category or responsible person take effect from";
+  const effectiveFromValue = await b.alice.evaluate(`(() => {
+    const l = [...document.querySelectorAll(".modal label")].find((x) => x.textContent === ${JSON.stringify(effectiveFromLabel)});
+    const input = l && document.getElementById(l.getAttribute("for"));
+    return input ? input.value : null;
+  })()`);
+  t.check("the 'take effect from' field defaults to TODAY, never the bill's own far-future next due date (the bug, exactly as Terry reported it)", {
+    expected: today, actual: effectiveFromValue,
+  });
+  await typeMerchantDraft(b.alice, "E2E Electric Utility Co");
+  await b.alice.choose("Category", "Housing", { scope: ".modal" });
+  await b.alice.click({ role: "button", name: "Save changes", scope: ".modal" });
+  await b.alice.waitFor("!document.querySelector('.modal')", { what: "the dialog to close after saving" });
+  await b.alice.settle();
+
+  const electricAfter = (await h.api("alice").ok("recurring", { query: q })).recurring.find((r) => r.id === electric.id);
+  t.check("the merchant is genuinely, immediately visible on the bill's own CURRENT view — verified against the API directly, not just the UI's own re-read of what it just wrote", {
+    expected: "E2E Electric Utility Co", actual: electricAfter && electricAfter.payeeDraftName,
+  });
+
+  await b.alice.goto("bills");
+  await b.alice.waitForText("E2E Electric Repayment", { scope: "main" });
+  const electricRowText = await b.alice.evaluate(`(() => {
+    const row = [...document.querySelectorAll("tbody tr")].find((tr) => tr.textContent.includes("E2E Electric Repayment") && tr.querySelector('td[data-label="Schedule"]'));
+    return row ? row.textContent : null;
+  })()`);
+  t.check("the All-bills list row shows the newly assigned merchant immediately, no reload-and-wait needed", {
+    expected: true, actual: !!(electricRowText && electricRowText.includes("E2E Electric Utility Co")),
+  });
+
+  // Terry's own exact complaint, reproduced and disproven: reopening Edit must show what was just
+  // saved right away, not appear blank as if nothing had happened.
+  await b.alice.openRecordMenu("E2E Electric Repayment", { scope: "main" });
+  await b.alice.click({ role: "button", name: "Edit E2E Electric Repayment" });
+  await b.alice.waitFor("!!document.querySelector('.modal')", { what: "the Electric Repayment edit dialog, reopened" });
+  const reopenedMerchant = await byLabelValue(b.alice, "Merchant");
+  const shotFixed = await b.alice.shot("bills-edit-merchant-now-saves-immediately");
+  t.check("reopening the editor shows the merchant just assigned, immediately — not blank, the exact bug reported ('i edit it and save but its not updated')", {
+    expected: "E2E Electric Utility Co", actual: reopenedMerchant,
+  });
+  t.note(`Merchant field on reopen: "${reopenedMerchant}"; screenshot: ${shotFixed}`);
+  await b.alice.press("Escape");
+  await b.alice.waitFor("!document.querySelector('.modal')", { what: "the edit dialog to close" });
+
   await b.alice.settle();
   t.check("alice: no exceptions, console errors or failed requests in the browser", { expected: [], actual: b.alice.problems() });
 }
