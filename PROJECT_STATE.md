@@ -7320,8 +7320,15 @@ failures, meaningfully more confidence than the unit suite alone for a change th
 **Not yet done:** participant pickers in Shared expenses and the deliberately-grouped fixed enums
 above were left exactly as they were — an open question for Terry, not an unrequested change.
 
-**Exact next step:** commit this work on `feature/dropdown-sorting-BT-025`; push; open a PR; deploy
-to Preview via `.\deploy.ps1 -Environment preview` and verify independently via
-`/api/site-settings`; report to Terry with the full list of what was sorted and what was
-deliberately left alone. No `main`
-merge, no Production deploy — both remain Terry's own action.
+**Closed out:** committed (`681f4f0`), pushed, opened **PR #53**. Deployed to Preview
+(`.\deploy.ps1 -Environment preview`) — all gates `ok`, result `SUCCESS`; independently verified via
+`curl` of the live `/api/site-settings` that `commit` matched `681f4f0` exactly. **Terry merged PR
+#53 himself** (confirmed via `git fetch origin`: `main` advanced `25960fd..fce1580`, merge commit
+`fce1580 "Merge pull request #53 from Stripeman/feature/dropdown-sorting-BT-025"`) — not merged by
+me; no Production deploy performed or requested. This checkpoint itself is written on a fresh
+`chore/project-state-pr53-merge-verified` branch, cut from `main` right after fetching/pulling it —
+the exact discipline re-established during BT-025.
+
+**Exact next step:** none outstanding from BT-025. If a future session picks up new work, check
+out a fresh branch from an up-to-date `main` FIRST (`git fetch origin && git checkout main && git
+pull && git checkout -b feature/<next>`), per the discipline re-established during BT-025 itself.
