@@ -84,7 +84,8 @@ describe("BT-004-05 transactions: filters", () => {
     assert.equal(spoken(pickerNamed(grid, "Merchant")), "Merchant: Any. Choose.");
     assert.equal(spoken(pickerNamed(grid, "Status")), "Status: Any. Choose.");
     assert.deepEqual(offeredOptions(pickerNamed(grid, "Merchant")), ["Any", "Fictional Bakery", "Fictional Video Store (closed)"]);
-    assert.deepEqual(offeredOptions(pickerNamed(grid, "Category")), ["Any", "Groceries", "Fun", "Old hobby (archived)"]);
+    // BT-025: category dropdowns are alphabetized ("Fun" < "Groceries" < "Old hobby").
+    assert.deepEqual(offeredOptions(pickerNamed(grid, "Category")), ["Any", "Fun", "Groceries", "Old hobby (archived)"]);
     assert.deepEqual(offeredOptions(pickerNamed(grid, "Account")), ["Any", "Fictional joint", "Fictional wallet"]);
     triggerFor(pickerNamed(grid, "Account")).click();
     const accountRows = dom.body.querySelectorAll(".cmdpick__opt");
@@ -138,7 +139,8 @@ describe("BT-004-05 transactions: quick entry", () => {
     assert.equal(spoken(pickerSpokenAs(root, "Type: Expense")), "Type: Expense. Choose.");
     assert.equal(spoken(pickerNamed(root, "Status")), "Status: Pending. Choose.");
     assert.equal(spoken(pickerSpokenAs(root, "Type: Other")), "Type: Other. Search and choose.", "fourteen merchant types");
-    assert.deepEqual(offeredOptions(pickerNamed(root, "Category")), ["Uncategorized", "Groceries", "Fun"], "a new entry is not offered an archived category");
+    // BT-025: category dropdowns are alphabetized ("Fun" < "Groceries").
+    assert.deepEqual(offeredOptions(pickerNamed(root, "Category")), ["Uncategorized", "Fun", "Groceries"], "a new entry is not offered an archived category");
   });
 
   test("a transfer chosen entirely through the pickers is saved exactly", async () => {

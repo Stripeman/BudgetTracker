@@ -7243,8 +7243,85 @@ in the app — this was scoped to My Settings only, as asked, not a silent gap. 
 exists for the four new preference keys, but none existed for categories' own colour/icon either
 (`site-settings`'s `LOCKABLE` allowlist untouched) — not a regression.
 
-**Exact next step:** confirm the full `npm run e2e` background run (started immediately after this
-checkpoint) finishes clean; commit this work (still on `feature/category-management-BT-022`, PR
-#51); push; comment on PR #51; deploy to Preview via `.\deploy.ps1 -Environment preview` and verify
-independently via `/api/site-settings`; report to Terry with the browser evidence above. No `main`
+**Closed out (correction applied):** partway through, discovered the working directory was actually
+on `main` (already merged from PR #51, unbeknownst to me — I had not verified branch state before
+starting this task, a real process lapse, disclosed here). No commits had landed on `main`, only
+uncommitted BT-024 edits; branched to `feature/settings-appearance-BT-024` before committing anything,
+carrying the work forward safely. Committed (`23dac54`), pushed, opened **PR #52** (fresh, since #51
+was already merged). Full `npm run e2e` finished clean (1122 passed, 0 failed, 0 skipped, exit 0)
+before that push. Deployed to Preview (`.\deploy.ps1 -Environment preview`) — all gates `ok`, result
+`SUCCESS`; independently verified via `curl` of the live `/api/site-settings` that `commit` matched
+`23dac54` exactly. Not merged, not deployed to Production — both remain Terry's own action. See
+BT-025 immediately below for the follow-up work (alphabetizing every dropdown) done in the same
+session; PR #52 was later merged to `main` before that work began (verified fresh via
+`git checkout -b` off a clean, up-to-date `main`, this time checked FIRST).
+
+## BT-025: alphabetize category, type, merchant and account dropdowns everywhere (2026-09-23)
+
+**Terry's instruction, verbatim:** "Category and types drop downs should be alphabatize. please
+check to ensure all drop downs are sorted IE then new and edit transation forms .. in all forms
+really."
+
+**Checked branch state FIRST this time** (the exact discipline the BT-024 close-out above just
+found missing): `main` was clean, exactly `origin/main` at PR #52's merge commit — branched to
+`feature/dropdown-sorting-BT-025` immediately, before touching any file.
+
+**Audited every `pickerSelect(...)` call across every view** (`app/js/ui/views/*.js`) rather than
+guessing from the two forms Terry named. Found category/merchant/account dropdowns built directly
+from the server's own creation-order array in 20+ places, never sorted anywhere in the app — this
+was a genuine, wide gap, not confined to the transaction form.
+
+**Fixed (all via the same `.sort((a, b) => a.name.localeCompare(b.name))` convention already used
+by the Workspace page's own category/type managers — no new sort mechanism invented):**
+- **Categories** — `transactions.js` (list filter panel AND the new/edit quick-entry dialog),
+  `bills.js` (record-payment AND add/edit-bill), `group.js` (Shared-expenses correct AND
+  add-expense), `payees.js` (a merchant's default category), `planning.js` (a budget line's
+  category, including its own positional default).
+- **The optional category-type link** on each category row (`workspace.js`) — system types first,
+  alphabetical within each group, matching `accountTypeChoices`/`merchantTypeChoices`'s own existing
+  convention (confirmed those two were ALREADY correctly sorted — no change needed there).
+- **Merchants** — one fix in the shared `choosableMerchants()` covers the transaction quick-entry
+  Merchant field and both of Bills' Merchant fields at once, plus the transactions filter's own
+  Merchant dropdown separately.
+- **Accounts** — every account-choosing dropdown found: transaction quick-entry Account/To-account,
+  the transactions filter, "Move to another account", both of Bills' Account/To-account fields,
+  Shared-expenses' four ledger-account pickers via the one shared `ledgerAccounts()`, the
+  debt-payment/credit "Pay from" picker, Planning's what-if account/bill pickers, and a merchant's
+  own default-account picker.
+
+**One disclosed behaviour nuance, not a regression:** a few of these previously defaulted to
+`accounts[0]`/`categories[0]` (whichever record happened to be created first) for a brand-new
+record. Sorting the same underlying array means that default is now the alphabetically-first
+choice instead — more predictable, and confirmed correct (not merely unbroken) in both suites below.
+
+**Deliberately left unsorted, disclosed rather than silently changed:** genuinely fixed,
+deliberately-grouped enums that are not user-created named records —
+`ACCOUNT_TYPE_LABELS`/`BILL_TYPE_LABELS`/`MERCHANT_TYPE_LABELS` and the underlying accounting/
+merchant-class lists (grouped by real-world meaning — checking/savings/cash together, credit-card/
+loan/mortgage together — and only ever a rare fallback before a workspace's own custom type
+registry loads), transaction Kind/Status, split Method, rate source, and Shared-expenses' own
+participant pickers ("Paid by"/"Shared by"/contributor/holder), whose order may carry intentional
+"you first" / event-role logic never audited as part of this pass. Flagged for Terry's own decision
+rather than changed on a guess.
+
+**Real regressions in EXISTING tests found and fixed, not weakened:** three test files
+(`pickerviews.test.js`, `pickerplanning.test.js`, `pickertransactions.test.js`) had hard-coded the
+OLD creation-order sequence as their expected dropdown option order — exactly the kind of stale
+expectation this change was supposed to surface. Each fixed to the new, correct alphabetical order;
+one (`pickerplanning.test.js`) needed its second budget line to choose a different category, since
+both lines now default to the same alphabetically-first one otherwise.
+
+**Evidence:** `npm test` **739/739**, `npm --prefix api test` **802/802**, both exit 0 (this is a
+frontend-only change; the API suite's cleanliness confirms no accidental cross-contamination). Full
+`npm run e2e`: **1122 passed, 0 failed, 0 skipped, exit 0** — real-browser coverage of Transactions,
+Bills, Budgets, Merchants and Shared-expenses forms exercised this change end to end with zero
+failures, meaningfully more confidence than the unit suite alone for a change this wide.
+
+**Not yet done:** participant pickers in Shared expenses and the deliberately-grouped fixed enums
+above were left exactly as they were — an open question for Terry, not an unrequested change.
+
+**Exact next step:** commit this work on `feature/dropdown-sorting-BT-025`; push; open a PR; deploy
+to Preview via `.\deploy.ps1 -Environment preview` and verify independently via
+`/api/site-settings`; report to Terry with the full list of what was sorted and what was
+deliberately left alone. No `main`
 merge, no Production deploy — both remain Terry's own action.

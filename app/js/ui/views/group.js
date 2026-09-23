@@ -81,7 +81,9 @@ const arrow = (dir) => el("span", { class: `dir dir--${dir}` }, [icon(dir)]);
 // (security review S2 — nobody else sees which account), open, and in the same currency.
 export function ledgerAccounts(state, currency) {
   const data = sliceFor(state, "accounts").data;
-  return ((data && data.accounts) || []).filter((a) => a.ownedBySelf && !a.deletedAt && a.status !== "closed" && a.capabilities.includes("create") && a.currency === currency);
+  // BT-025: sorted, so the picker's own order and its "first available" default agree.
+  return ((data && data.accounts) || []).filter((a) => a.ownedBySelf && !a.deletedAt && a.status !== "closed" && a.capabilities.includes("create") && a.currency === currency)
+    .sort((a, b) => a.name.localeCompare(b.name));
 }
 
 // The balance of one person in words, with the arrow for money coming to them or going from them.
@@ -1223,7 +1225,8 @@ export function openGroupExpense(ctx, { expense = null, eventId = null } = {}) {
     editing ? rateOnlyNote : null,
   ]);
   const date = input({ type: "date", value: editing ? expense.date : todayIso() });
-  const categories = ((sliceFor(state, "categories").data || {}).categories || []).filter((c) => (!c.archived && c.type !== "income") || (editing && c.id === expense.categoryId));
+  const categories = ((sliceFor(state, "categories").data || {}).categories || []).filter((c) => (!c.archived && c.type !== "income") || (editing && c.id === expense.categoryId))
+    .sort((a, b) => a.name.localeCompare(b.name));
   const category = pickerSelect([{ value: "", label: "No category" }].concat(categories.map((c) => ({ value: c.id, label: c.archived ? `${c.name} (archived)` : c.name }))), editing ? expense.categoryId || "" : "", {}, { badgeOf: categoryBadges(state) });
   const notes = el("textarea", { class: "field__input", maxlength: "2000", text: editing ? expense.notes : "" });
   const reason = input({ maxlength: "200", autocomplete: "off", placeholder: "Why is this being corrected?" });
@@ -1589,7 +1592,8 @@ export function openItemizedExpenseModal(ctx, { expense = null, eventId = null }
 
   const description = input({ maxlength: "120", autocomplete: "off", required: true, placeholder: "For example: Grocery run", value: editing ? expense.description : "" });
   const date = input({ type: "date", value: editing ? expense.date : todayIso() });
-  const categories = ((sliceFor(state, "categories").data || {}).categories || []).filter((c) => !c.archived && c.type !== "income");
+  const categories = ((sliceFor(state, "categories").data || {}).categories || []).filter((c) => !c.archived && c.type !== "income")
+    .sort((a, b) => a.name.localeCompare(b.name));
   const category = pickerSelect([{ value: "", label: "No category" }].concat(categories.map((c) => ({ value: c.id, label: c.name }))), editing ? expense.categoryId || "" : "", {}, { badgeOf: categoryBadges(state) });
   const notes = el("textarea", { class: "field__input", maxlength: "2000", text: editing ? expense.notes : "" });
   const reason = input({ maxlength: "200", autocomplete: "off", placeholder: "Why is this being corrected?" });

@@ -455,7 +455,8 @@ function openDebtCharge(ctx, account, kind) {
 // merchant credit) — never conflated, and neither one requires a reason (unlike interest/fee/
 // correction), matching every other ordinary transfer or refund elsewhere in the app.
 function openDebtPaymentOrCredit(ctx, account, allAccounts) {
-  const others = allAccounts.filter((a) => a.id !== account.id && a.currency === account.currency && a.status !== "closed" && a.capabilities.includes("create"));
+  const others = allAccounts.filter((a) => a.id !== account.id && a.currency === account.currency && a.status !== "closed" && a.capabilities.includes("create"))
+    .sort((a, b) => a.name.localeCompare(b.name));
   const mode = pickerSelect([
     { value: "payment", label: "Payment — from another account" },
     { value: "credit", label: "Credit — money returned directly to this account" },

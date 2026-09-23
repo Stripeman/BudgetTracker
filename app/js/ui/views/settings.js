@@ -390,7 +390,7 @@ export function createView(ctx) {
     const personalIcons = prefs.effective.categoryIcons || {};
     const locked = prefs.sources.categoryColors === "locked";
     const iconsLocked = prefs.sources.categoryIcons === "locked";
-    const cats = data.categories.filter((c) => !c.archived);
+    const cats = data.categories.filter((c) => !c.archived).sort((a, b) => a.name.localeCompare(b.name));
     const iconsData = sliceFor(state, "icons").data;
     const sig = JSON.stringify([cats.map((c) => [c.id, c.name, c.color, c.icon, c.type]), personal, personalIcons, locked, iconsLocked, iconsData ? iconsData.catalog : null]);
     if (sig === colourSig) return;
@@ -416,7 +416,7 @@ export function createView(ctx) {
     const personalIcons = prefs.effective.accountTypeIcons || {};
     const locked = prefs.sources.accountTypeColors === "locked";
     const iconsLocked = prefs.sources.accountTypeIcons === "locked";
-    const types = data.types.filter((t) => !t.retired);
+    const types = data.types.filter((t) => !t.retired).sort((a, b) => (a.system === b.system ? a.name.localeCompare(b.name) : a.system ? -1 : 1));
     const sig = JSON.stringify([types.map((t) => [t.id, t.name, t.color, t.icon, t.accountingClass, t.system]), personal, personalIcons, locked, iconsLocked]);
     if (sig === accountTypeColourSig) return;
     accountTypeColourSig = sig;
@@ -441,7 +441,7 @@ export function createView(ctx) {
     const personalIcons = prefs.effective.merchantTypeIcons || {};
     const locked = prefs.sources.merchantTypeColors === "locked";
     const iconsLocked = prefs.sources.merchantTypeIcons === "locked";
-    const types = data.types.filter((t) => !t.retired);
+    const types = data.types.filter((t) => !t.retired).sort((a, b) => (a.system === b.system ? a.name.localeCompare(b.name) : a.system ? -1 : 1));
     const sig = JSON.stringify([types.map((t) => [t.id, t.name, t.color, t.icon, t.merchantClass, t.system]), personal, personalIcons, locked, iconsLocked]);
     if (sig === merchantTypeColourSig) return;
     merchantTypeColourSig = sig;

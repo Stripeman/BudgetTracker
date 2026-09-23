@@ -328,7 +328,13 @@ function createCategoryManager(ctx) {
     // The optional category-type link (BT-019-01): a category's own income/expense class is fixed
     // for good at creation, so only types of that SAME class are ever offered here — never a back
     // door to reinterpret it. "None" clears the link without affecting the category's own class.
-    const typeOptions = [{ value: "", label: "None" }, ...catTypes.filter((t) => !t.retired && t.categoryClass === c.type).map((t) => ({ value: t.id, label: t.name }))];
+    // BT-025 (Terry, 2026-09-23): "category and type dropdowns should be alphabetized" — system
+    // types first (matching the system-first convention already used for the account/category/
+    // merchant TYPE managers themselves, immediately below on this same tab), alphabetical within
+    // each group.
+    const typeOptions = [{ value: "", label: "None" }, ...catTypes.filter((t) => !t.retired && t.categoryClass === c.type)
+      .sort((a, b) => (a.system === b.system ? a.name.localeCompare(b.name) : a.system ? -1 : 1))
+      .map((t) => ({ value: t.id, label: t.name }))];
     const typeControl = pickerSelect(typeOptions, c.categoryTypeId || "", { "aria-label": `Category type for ${c.name}` }, { search: false });
     typeControl.addEventListener("change", async () => {
       const chosen = catTypes.find((t) => t.id === typeControl.value);

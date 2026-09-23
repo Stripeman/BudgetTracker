@@ -222,16 +222,19 @@ describe("BT-004-05 merchants: the Show filter and the merchant editor", () => {
     assert.equal(spoken(pickerNamed(root, "Sharing")), "Sharing: Shared with the workspace. Choose.");
     assert.equal(spoken(pickerNamed(root, "Type")), "Type: Other. Search and choose.", "fourteen types: long enough to search");
     // A new merchant is not offered an archived category; a category shows its tinted icon or dot.
+    // BT-025: category dropdowns are alphabetized ("Gifts" < "Groceries").
     triggerFor(pickerNamed(root, "Default category")).click();
     const catRows = dom.body.querySelectorAll(".cmdpick__opt");
-    assert.deepEqual(catRows.map((r) => r.querySelector(".cmdpick__optlabel").textContent), ["None", "Groceries", "Gifts"]);
-    const groceries = catRows[1].querySelector(".catlabel__icon");
+    assert.deepEqual(catRows.map((r) => r.querySelector(".cmdpick__optlabel").textContent), ["None", "Gifts", "Groceries"]);
+    assert.equal(catRows[1].querySelector(".swatch-dot").style.getPropertyValue("--swatch"), "#16a34a", "Gifts has no icon: the colour dot");
+    const groceries = catRows[2].querySelector(".catlabel__icon");
     assert.ok(groceries, "Groceries has an icon");
     assert.equal(groceries.style.getPropertyValue("--swatch"), "#2563eb", "tinted with its colour");
     assert.equal(groceries.getAttribute("aria-hidden"), "true");
-    assert.equal(catRows[2].querySelector(".swatch-dot").style.getPropertyValue("--swatch"), "#16a34a", "no icon: the colour dot");
     assert.ok(catRows[0].querySelector(".catlabel__icon, .swatch-dot") === null, "None has no mark");
-    catRows[1].dispatchEvent(new DomEvent("mousedown", { bubbles: true }));
+    // Chooses "Groceries" (now index 2, after "Gifts") — thematically fitting for "Fictional
+    // Greengrocer" below, and what the saved-value assertion expects.
+    catRows[2].dispatchEvent(new DomEvent("mousedown", { bubbles: true }));
     // Shared merchants may default only to shared accounts; making it private offers private ones too.
     const account = pickerNamed(root, "Default account");
     triggerFor(account).click();
