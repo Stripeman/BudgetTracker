@@ -40,7 +40,7 @@ This repository contains code and safe documentation. Credentials, real financia
 
 ## Documentation maintenance
 
-Update this README and PROJECT_STATE.md when behavior, setup, validation, or deployment changes. Keep planned features distinct from implemented ones. Maintain .gitignore when tooling or data paths change, and keep the GitHub About description aligned with the service’s actual scope.
+Update this README when behavior, setup, validation, or deployment changes, and record the change itself as a new checkpoint (`docs/project-state/checkpoints/`; see `PROJECT_STATE.md` for the workflow) rather than editing `PROJECT_STATE.md` directly. Keep planned features distinct from implemented ones. Maintain .gitignore when tooling or data paths change, and keep the GitHub About description aligned with the service’s actual scope.
 
 Suggested GitHub About description:
 

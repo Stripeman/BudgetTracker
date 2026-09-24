@@ -6,18 +6,24 @@ contract; nothing here contradicts it. Read both explicitly even when an app dis
 
 ## 1. Before changing anything
 
-1. Read `PROJECT_STATE.md` completely, then `docs/PROJECT_BRIEF.md`, `docs/REQUIREMENTS.md`,
-   `SECURITY.md` and `AGENTS.md`. `docs/BRIEF_RECONCILIATION.md` records the full Word
-   comparison (161/161 paragraphs, no additions or conflicts); the Markdown brief is canonical
-   and the ignored local Word file is preserved, never edited or committed.
+1. Read `PROJECT_STATE.md` (a short, stable entry point, not a log), then `docs/PROJECT_BRIEF.md`,
+   `docs/REQUIREMENTS.md`, `SECURITY.md` and `AGENTS.md`. `docs/BRIEF_RECONCILIATION.md` records the
+   full Word comparison (161/161 paragraphs, no additions or conflicts); the Markdown brief is
+   canonical and the ignored local Word file is preserved, never edited or committed.
 2. Establish real Git state: `git status -sb`, `git branch --show-current`,
    `git log --oneline -10`, then `git fetch origin` and compare before any pull or switch.
    Never overwrite uncommitted or upstream work; if both changed a file, stop and reconcile.
-3. Verify behavior in source and tests, not from filenames, documentation or memory.
+3. Discover and read recent checkpoints in `docs/project-state/checkpoints/` (chronological by
+   filename — never assume the newest alone holds every outstanding item) plus any earlier ones
+   relevant to the active work or an unresolved decision; consult `docs/project-state/archive/` for
+   anything from before the checkpoint split. Reconcile older completion claims against verified
+   repository, PR and deployment evidence — `docs/REQUIREMENTS.md` is the authoritative live status
+   for any individual `BT-` item.
+4. Verify behavior in source and tests, not from filenames, documentation or memory.
 
 Source of truth, in order: Terry's latest explicit instruction → repository contents → Git
-state → verified runtime/infrastructure state → `PROJECT_STATE.md` → conversation history →
-assumptions.
+state → verified runtime/infrastructure state → `PROJECT_STATE.md` and the checkpoints/archive it
+points to → conversation history → assumptions.
 
 ## 2. Scope and product boundaries
 
@@ -120,10 +126,19 @@ assumptions.
 
 ## 6. Branches, CI and release
 
-- Work on feature branches. Never push to `main`, merge pull requests, enable auto-merge,
-  deploy Production, or use another agent or tool to bypass these rules. Terry controls
-  promotion after review.
-- `main` protection is configured (see `PROJECT_STATE.md` for verified settings). Agents act
+- Work on feature branches. Never deploy Production, enable auto-merge, force-push or delete
+  `main`, or use another agent or tool to bypass these rules. **Merging is a documented exception
+  (Terry, 2026-09-24; supersedes the earlier blanket rule — see
+  `docs/project-state/checkpoints/20260924T054237Z-agent-managed-merge-policy.md`):** for
+  Terry-authorized work, once required checks pass (`secret-scan`, `foundation-tests`), fetch and
+  reconcile with `origin/main` yourself, resolve routine conflicts preserving both branches' intent
+  (ask Terry only for a genuine product/data decision, never blindly pick one side), merge the PR,
+  then deploy that exact `main` commit to Preview with `deploy.ps1 -Environment preview` and
+  independently verify Preview reports it before calling it current — do not stop to ask for a
+  manual merge or a Preview-deploy request. Production deployment remains exclusively Terry's own
+  action, unchanged by this exception.
+- `main` protection is configured (verified settings recorded in
+  `docs/project-state/checkpoints/20260924T054237Z-agent-managed-merge-policy.md`). Agents act
   with Terry's admin token, so the protection does not technically stop an agent from changing
   settings: never alter it except to strengthen it when authorized.
 - Staging is deployed only after its target (tenant, subscription, resources) is explicitly
@@ -189,6 +204,9 @@ Azurite. Choose another free port rather than freeing an occupied one.
 
 ## 9. Handoff
 
-After each meaningful checkpoint update `PROJECT_STATE.md`: completed work, unfinished work,
-tests and scan results, blockers, and exact next steps. If context runs short, stop starting new
-work and checkpoint; a context limit is a reason to checkpoint, not to hurry.
+After each meaningful stopping point, write a new checkpoint in `docs/project-state/checkpoints/`
+(copy `docs/project-state/CHECKPOINT_TEMPLATE.md`; a UTC-timestamped, uniquely named file — never a
+shared index, never an edit to a checkpoint already on `main`): completed work, unfinished work,
+tests and scan results, blockers, and exact next steps, with implementation/merge/deployment status
+stated separately and as fact, never prediction. If context runs short, stop starting new work and
+checkpoint; a context limit is a reason to checkpoint, not to hurry.
