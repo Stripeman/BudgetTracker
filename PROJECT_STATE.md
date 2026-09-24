@@ -7615,7 +7615,19 @@ calls release, the page finishes normally with the real figures and zero spinner
 in Classic's own screenshot) plus a dedicated loading unit test covering all three; no separate
 mid-load screenshot was captured per flagship. Committed (`d706df7`) on
 `feature/dashboard-loading-indicators`, pushed, opened as **PR #58**
-(https://github.com/Stripeman/BudgetTracker/pull/58). Not merged, no Preview/Production deploy
-performed as part of this checkpoint — both remain Terry's own action. The Preview deploy paused
-earlier (PR #57's own merge/Production deploy) is still outstanding and should be run once Terry
-confirms BT-028's hard-reload retry.
+(https://github.com/Stripeman/BudgetTracker/pull/58); CI green (`foundation-tests`, `secret-scan`
+both pass). Not merged as of PR open — see the Preview deploy immediately below (Terry: "push to
+preview").
+
+## Preview deployed from `feature/dashboard-loading-indicators` at Terry's request (2026-09-24)
+
+Checked for a concurrent deploy first (the earlier collision's own lesson) — none running. Deployed
+via the one supported path, `scripts/deploy\deploy.ps1 -Environment preview`, from this branch
+(contains everything on `main` through `7736c66`, PR #57, plus PR #58's own BT-029 loading-indicator
+work, not yet merged). All gates `ok` (target, gitState, confirmation, azureResource, settings, test,
+validate, build, secretScan, upload, commitSetting, healthCheck), result `SUCCESS`. **Verified
+independently, read-only:** `curl
+https://polite-plant-03bb7570f-preview.eastus2.3.azurestaticapps.net/api/site-settings` — `commit`
+`625d249d59d31bc446f0b0cc295c02f0bacb07b9` (PR #58's own tip), environment `preview`, matching exactly.
+PR #58 itself remains open/unmerged; `main` is unaffected by this deploy. No Production action taken
+or requested.
