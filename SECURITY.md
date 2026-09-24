@@ -16,7 +16,7 @@ Deny access by default and enforce permissions server-side on every route, searc
 
 ## Current assurance
 
-These are requirements, not completed application controls. No application, scheduled backup, restore engine, secret-scanning workflow, or deployment protection has been implemented yet. Record verified controls and outstanding gaps in PROJECT_STATE.md.
+These are requirements, not completed application controls. No application, scheduled backup, restore engine, secret-scanning workflow, or deployment protection has been implemented yet. Record verified controls and outstanding gaps in a new checkpoint (`docs/project-state/checkpoints/`; see `PROJECT_STATE.md` for the reading/writing workflow).
 
 ## Checkpoint assurance — 2026-09-13
 

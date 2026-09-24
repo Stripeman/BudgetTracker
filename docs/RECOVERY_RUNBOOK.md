@@ -57,7 +57,7 @@ Backup master keys live only in the app's settings, so losing the app or mis-edi
 
    It writes `.local/escrow/<environment>-backup-keys-<time>.env` (ignored by Git), prints only the key ids and a fingerprint, and refuses to overwrite an earlier file.
 2. Create a backup of a workspace in that environment, download the archive from the backup storage account into an ignored `.local/` folder, and load the escrowed keys into the shell for this step only (see the drill below). Run the drill. A `passed` report proves the escrow copy opens real archives.
-3. Clear the keys from the shell. Move the escrow file and a note of its fingerprint to offline storage under Terry's control (for example a password manager entry or an encrypted USB drive). Record the date, fingerprint and drill result in `PROJECT_STATE.md` — never the key.
+3. Clear the keys from the shell. Move the escrow file and a note of its fingerprint to offline storage under Terry's control (for example a password manager entry or an encrypted USB drive). Record the date, fingerprint and drill result in a new checkpoint (`docs/project-state/checkpoints/`) — never the key.
 4. Repeat after every key rotation: the escrow copy must list every key id that archives still use.
 
 ## Workspace recovery (workspace owner or member, in the application)
