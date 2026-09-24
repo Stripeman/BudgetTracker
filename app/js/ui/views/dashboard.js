@@ -17,8 +17,8 @@
 // update (a disclosed, later-polish limitation for the three new layouts only — see
 // PROJECT_STATE.md); Classic's own update path is completely unchanged.
 import { el, mount } from "../dom.js";
-import { pageHead, stateView, money, accessBadge, button, transferLabel, categoryLabel } from "../components.js";
-import { sliceFor } from "../../core/store.js";
+import { pageHead, stateView, kpiValue, spinner, money, accessBadge, button, transferLabel, categoryLabel } from "../components.js";
+import { sliceFor, Status } from "../../core/store.js";
 import { ACCOUNT_TYPE_LABELS, formatDate, formatAmount, todayIso, startOfWeekIso, startOfMonthIso } from "../../core/format.js";
 import { openQuickEntry, canAddEntries, addEntriesBlocked, entryAmount } from "./transactions.js";
 import { warningText } from "./planning.js";
@@ -39,6 +39,11 @@ const titled = (id, iconId, text, tag = "h2") => el(tag, { class: "card__title",
 const SHARED_KINDS = new Set(["group", "trip"]);
 const workspaceOf = (state) => (state.workspaces || []).find((w) => w.id === state.selectedWorkspaceId) || null;
 
+// A slice that has not resolved yet — the same three-way test `stateView`/components.js uses, so a
+// panel (or a single KPI figure) derived from it is never shown as if it were genuinely empty
+// (Terry, 2026-09-24: "data in each panel take a few seconds to load. initially indicating to the
+// user that there is nothing there").
+const isLoadingSlice = (slice) => !slice || slice.status === Status.LOADING || slice.status === Status.IDLE;
 
 // ---- one derivation, shared by every renderer (CLAUDE.md: one canonical calculation per concept) ---
 function deriveDashboardData(state) {
@@ -51,15 +56,22 @@ function deriveDashboardData(state) {
 
   // Needs attention (BT-008): overdue and due-soon bills, and 30-day cash-flow warnings, plus a
   // shared-expense review flag — as plain facts here; each renderer decides how to show them.
-  const billData = sliceFor(state, "bills").data;
-  const forecast = sliceFor(state, "forecast").data;
-  const groupDataForAlert = groupOn ? sliceFor(state, "group").data : null;
+  const billsSlice = sliceFor(state, "bills");
+  const forecastSlice = sliceFor(state, "forecast");
+  const groupSliceForAlert = groupOn ? sliceFor(state, "group") : null;
+  const billData = billsSlice.data;
+  const forecast = forecastSlice.data;
+  const groupDataForAlert = groupSliceForAlert ? groupSliceForAlert.data : null;
   const alertFacts = {
     overdueBills: (billData && billData.summary.overdue) || 0,
     dueSoonBills: (billData && billData.summary.dueSoon) || 0,
     forecastWarnings: forecast ? forecast.forecast.warnings.map((w) => warningText(w, fmt, dateFormat)) : [],
     groupNeedsReview: !!(groupDataForAlert && (groupDataForAlert.myLedgers || []).some((l) => l.reviewCount > 0)),
   };
+  // "Needs attention" combines three independently-fetched slices; it is only genuinely empty once
+  // every one of them has actually resolved (an on/off shared-expenses workspace never waits on the
+  // group slice, since it never fetches it).
+  const alertsLoading = isLoadingSlice(billsSlice) || isLoadingSlice(forecastSlice) || (groupOn && isLoadingSlice(groupSliceForAlert));
 
   const accounts = sliceFor(state, "accounts");
   const txns = sliceFor(state, "transactions");
@@ -99,7 +111,8 @@ function deriveDashboardData(state) {
   }));
 
   // Top merchants (BT-014-14): the same per-payee `stats` the Merchants page already computes.
-  const payeesList = (sliceFor(state, "payees").data || {}).payees || [];
+  const payeesSlice = sliceFor(state, "payees");
+  const payeesList = (payeesSlice.data || {}).payees || [];
   const topMerchants = payeesList
     .map((p) => ({ p, stat: (p.stats || []).slice().sort((a, b) => Number(b.gross) - Number(a.gross))[0] }))
     .filter((x) => x.stat && Number(x.stat.gross) > 0)
@@ -114,7 +127,8 @@ function deriveDashboardData(state) {
 
   return {
     ws, groupOn, sharedKind, prefs, dateFormat, fmt,
-    alertFacts, alertCount, accounts, txns, groupCard, weekSummary, spendingByCurrency, topMerchants,
+    alertFacts, alertCount, alertsLoading, accounts, txns, groupCard, weekSlice: week, weekSummary,
+    monthSlice: month, spendingByCurrency, payeesSlice, topMerchants,
     merchantIcons, accountsById, recentTx, catIndex,
   };
 }
@@ -176,7 +190,13 @@ function groupCardNode(data, titled_) {
 function renderClassicDashboard(ctx, state, data, boxes) {
   const { alerts, shared, totals, weekBox, accountsBox, recent, spendingBox, merchantsBox } = boxes;
   const items = buildAlertItems(data.alertFacts);
-  mount(alerts, items.length ? el("section", { class: "notice notice--warning", "aria-labelledby": "dash-alerts" }, [titled("dash-alerts", "bell", "Needs attention"), el("ul", { class: "stack" }, items)]) : null);
+  // "Needs attention" combines three independently-fetched slices (bills, forecast, and — only when
+  // shared expenses are on — group). A real item already known from whichever slice HAS resolved is
+  // shown right away, never held back waiting on another; loading is shown only while NOTHING is
+  // known yet, never simply absent as if there were genuinely nothing to flag (Terry, 2026-09-24).
+  mount(alerts, data.alertsLoading && !items.length
+    ? el("section", { class: "notice", "aria-labelledby": "dash-alerts" }, [titled("dash-alerts", "bell", "Needs attention"), el("div", { class: "state state--loading", role: "status" }, [spinner(), el("span", { text: "Loading…" })])])
+    : items.length ? el("section", { class: "notice notice--warning", "aria-labelledby": "dash-alerts" }, [titled("dash-alerts", "bell", "Needs attention"), el("ul", { class: "stack" }, items)]) : null);
 
   if (data.groupOn) mount(shared, groupCardNode(data, titled));
   else mount(shared);
@@ -206,19 +226,28 @@ function renderClassicDashboard(ctx, state, data, boxes) {
     ]))));
   }
 
-  mount(weekBox, ...data.weekSummary.flatMap((s) => [
-    el("div", { class: "card" }, [
-      el("p", { class: "card__title" }, [withIcon("chart-line", `Income this week (${s.currency})`)]),
-      el("div", { class: "card__value" }, [money(s.income, s.currency, data.prefs)]),
-    ]),
-    el("div", { class: "card" }, [
-      el("p", { class: "card__title" }, [withIcon("cart", `Expenses this week (${s.currency})`)]),
-      el("div", { class: "card__value" }, [money(s.gross, s.currency, data.prefs)]),
-    ]),
-  ]));
+  // A slice this genuinely finished loading but with nothing in it (no activity this week) is a
+  // silent, empty weekBox — legitimate and unchanged. Still loading is shown, never left blank as if
+  // it were that same "nothing this week" case (Terry, 2026-09-24).
+  const weekState = stateView(data.weekSlice, { isEmpty: () => false });
+  if (weekState) {
+    mount(weekBox, weekState);
+  } else {
+    mount(weekBox, ...data.weekSummary.flatMap((s) => [
+      el("div", { class: "card" }, [
+        el("p", { class: "card__title" }, [withIcon("chart-line", `Income this week (${s.currency})`)]),
+        el("div", { class: "card__value" }, [money(s.income, s.currency, data.prefs)]),
+      ]),
+      el("div", { class: "card" }, [
+        el("p", { class: "card__title" }, [withIcon("cart", `Expenses this week (${s.currency})`)]),
+        el("div", { class: "card__value" }, [money(s.gross, s.currency, data.prefs)]),
+      ]),
+    ]));
+  }
 
-  if (!data.spendingByCurrency.length) {
-    mount(spendingBox, el("p", { class: "muted", text: "No spending recorded yet this month." }));
+  const spendState = stateView(data.monthSlice, { empty: "No spending recorded yet this month.", isEmpty: () => !data.spendingByCurrency.length });
+  if (spendState) {
+    mount(spendingBox, spendState);
   } else {
     mount(spendingBox, ...data.spendingByCurrency.map((s) => el("div", {}, [
       data.weekSummary.length || data.spendingByCurrency.length > 1 ? el("p", { class: "card__meta", text: s.currency }) : null,
@@ -226,14 +255,13 @@ function renderClassicDashboard(ctx, state, data, boxes) {
     ])));
   }
 
-  mount(merchantsBox, data.topMerchants.length
-    ? el("ul", { class: "stack" }, data.topMerchants.map(({ p, stat }) => el("li", { class: "row" }, [
-      withIcon(p.icon || "store", p.name),
-      el("span", { class: "muted small", text: `${stat.count} ${stat.count === 1 ? "entry" : "entries"}` }),
-      el("span", { class: "app__spacer" }),
-      money(stat.gross, stat.currency, data.prefs),
-    ])))
-    : el("p", { class: "muted", text: "No merchant activity yet." }));
+  const merchState = stateView(data.payeesSlice, { empty: "No merchant activity yet.", isEmpty: () => !data.topMerchants.length });
+  mount(merchantsBox, merchState || el("ul", { class: "stack" }, data.topMerchants.map(({ p, stat }) => el("li", { class: "row" }, [
+    withIcon(p.icon || "store", p.name),
+    el("span", { class: "muted small", text: `${stat.count} ${stat.count === 1 ? "entry" : "entries"}` }),
+    el("span", { class: "app__spacer" }),
+    money(stat.gross, stat.currency, data.prefs),
+  ]))));
 
   const txState = stateView(data.txns, {
     empty: data.sharedKind ? "No account entries. Shared expenses are listed on Shared expenses." : "No entries yet. Use “Add expense” to record one.",
@@ -254,7 +282,12 @@ function alertsCard(data, empty) {
   const items = buildAlertItems(data.alertFacts);
   return el("section", { class: "card", "aria-labelledby": "dash-alerts" }, [
     titled("dash-alerts", "bell", "Needs attention"),
-    items.length ? el("ul", { class: "stack" }, items) : el("p", { class: "muted small", text: empty }),
+    // "Needs attention" draws on three independently-fetched slices (bills, forecast, and — only
+    // when shared expenses are on — group). A real item already known from whichever slice HAS
+    // resolved is shown right away, never held back waiting on another; "nothing needs attention" is
+    // shown only once every one of them has actually resolved (Terry, 2026-09-24).
+    data.alertsLoading && !items.length ? el("div", { class: "state state--loading", role: "status" }, [spinner(), el("span", { text: "Loading…" })])
+      : items.length ? el("ul", { class: "stack" }, items) : el("p", { class: "muted small", text: empty }),
   ]);
 }
 function accountsListCard(data) {
@@ -277,8 +310,8 @@ function recentEntriesCard(data) {
 function spendingCard(data, title = "Spending by category") {
   return el("section", { class: "card", "aria-labelledby": "dash-spending" }, [
     titled("dash-spending", "chart-pie", title),
-    !data.spendingByCurrency.length ? el("p", { class: "muted", text: "No spending recorded yet this month." })
-      : el("div", { class: "stack" }, data.spendingByCurrency.map((s) => el("div", {}, [
+    stateView(data.monthSlice, { empty: "No spending recorded yet this month.", isEmpty: () => !data.spendingByCurrency.length })
+      || el("div", { class: "stack" }, data.spendingByCurrency.map((s) => el("div", {}, [
         data.spendingByCurrency.length > 1 ? el("p", { class: "card__meta", text: s.currency }) : null,
         donutChart(s.rows), chartLegend(s.rows), moneyFigureTable(s.rows, `Spending by category this month, ${s.currency}`),
       ]))),
@@ -287,9 +320,10 @@ function spendingCard(data, title = "Spending by category") {
 function merchantsCard(data) {
   return el("section", { class: "card", "aria-labelledby": "dash-merchants" }, [
     titled("dash-merchants", "store", "Top merchants"),
-    data.topMerchants.length ? el("ul", { class: "stack" }, data.topMerchants.map(({ p, stat }) => el("li", { class: "row" }, [
-      withIcon(p.icon || "store", p.name), el("span", { class: "app__spacer" }), money(stat.gross, stat.currency, data.prefs),
-    ]))) : el("p", { class: "muted small", text: "No merchant activity yet." }),
+    stateView(data.payeesSlice, { empty: "No merchant activity yet.", isEmpty: () => !data.topMerchants.length })
+      || el("ul", { class: "stack" }, data.topMerchants.map(({ p, stat }) => el("li", { class: "row" }, [
+        withIcon(p.icon || "store", p.name), el("span", { class: "app__spacer" }), money(stat.gross, stat.currency, data.prefs),
+      ]))),
   ]);
 }
 const primaryTotal = (data) => (data.accounts.data && data.accounts.data.totals && data.accounts.data.totals[0]) || null;
@@ -301,10 +335,10 @@ function renderLedgerflyDashboard(ctx, state, data) {
   const total = primaryTotal(data);
   const week = data.weekSummary[0];
   const kpis = [
-    { label: "Total balance", value: total ? money(total.amount, total.currency, data.prefs) : el("span", { class: "muted", text: "No accounts yet" }), meta: "Across every account you can see", emphasize: true },
-    { label: "Income this week", value: week ? money(week.income, week.currency, data.prefs) : el("span", { text: "—" }), meta: "This period" },
-    { label: "Expenses this week", value: week ? money(week.gross, week.currency, data.prefs) : el("span", { text: "—" }), meta: "This period" },
-    { label: "Needs attention", value: el("span", { text: String(data.alertCount) }), meta: data.alertCount === 1 ? "item" : "items" },
+    { label: "Total balance", value: kpiValue(isLoadingSlice(data.accounts), total ? money(total.amount, total.currency, data.prefs) : el("span", { class: "muted", text: "No accounts yet" })), meta: "Across every account you can see", emphasize: true },
+    { label: "Income this week", value: kpiValue(isLoadingSlice(data.weekSlice), week ? money(week.income, week.currency, data.prefs) : el("span", { text: "—" })), meta: "This period" },
+    { label: "Expenses this week", value: kpiValue(isLoadingSlice(data.weekSlice), week ? money(week.gross, week.currency, data.prefs) : el("span", { text: "—" })), meta: "This period" },
+    { label: "Needs attention", value: kpiValue(data.alertsLoading, el("span", { text: String(data.alertCount) })), meta: data.alertCount === 1 ? "item" : "items" },
   ];
   const kpiStrip = el("div", { class: "dashflag-kpis" }, kpis.map((k) => el("div", { class: ["dashflag-kpi", k.emphasize ? "dashflag-kpi--emphasis" : ""] }, [
     el("p", { class: "dashflag-kpi__label", text: k.label }),
@@ -328,13 +362,13 @@ function renderFinexaDashboard(ctx, state, data) {
   const top5 = data.topMerchants[0];
   const total = primaryTotal(data);
   const cards = [
-    el("section", { class: "card" }, [el("p", { class: "card__title", text: "Net position" }), total ? el("div", { class: "card__value" }, [money(total.amount, total.currency, data.prefs)]) : el("p", { class: "muted small", text: "No accounts yet" })]),
-    el("section", { class: "card" }, [el("p", { class: "card__title", text: "Income this week" }), week ? el("div", { class: "card__value" }, [money(week.income, week.currency, data.prefs)]) : el("p", { class: "muted small", text: "No activity yet" })]),
-    el("section", { class: "card" }, [el("p", { class: "card__title", text: "Expenses this week" }), week ? el("div", { class: "card__value" }, [money(week.gross, week.currency, data.prefs)]) : el("p", { class: "muted small", text: "No activity yet" })]),
-    el("section", { class: "card" }, [el("p", { class: "card__title", text: "Top merchant" }), top5 ? el("div", { class: "card__value small" }, [withIcon(top5.p.icon || "store", top5.p.name)]) : el("p", { class: "muted small", text: "No merchant activity yet" })]),
+    el("section", { class: "card" }, [el("p", { class: "card__title", text: "Net position" }), el("div", { class: "card__value" }, [kpiValue(isLoadingSlice(data.accounts), total ? money(total.amount, total.currency, data.prefs) : el("span", { class: "muted small", text: "No accounts yet" }))])]),
+    el("section", { class: "card" }, [el("p", { class: "card__title", text: "Income this week" }), el("div", { class: "card__value" }, [kpiValue(isLoadingSlice(data.weekSlice), week ? money(week.income, week.currency, data.prefs) : el("span", { class: "muted small", text: "No activity yet" }))])]),
+    el("section", { class: "card" }, [el("p", { class: "card__title", text: "Expenses this week" }), el("div", { class: "card__value" }, [kpiValue(isLoadingSlice(data.weekSlice), week ? money(week.gross, week.currency, data.prefs) : el("span", { class: "muted small", text: "No activity yet" }))])]),
+    el("section", { class: "card" }, [el("p", { class: "card__title", text: "Top merchant" }), el("div", { class: "card__value small" }, [kpiValue(isLoadingSlice(data.payeesSlice), top5 ? withIcon(top5.p.icon || "store", top5.p.name) : el("span", { class: "muted small", text: "No merchant activity yet" }))])]),
     data.groupOn
-      ? el("section", { class: "card" }, [el("p", { class: "card__title", text: "Shared balance" }, ), data.groupCard.mine.length ? el("div", { class: "card__value small" }, data.groupCard.mine.map(([t, r]) => el("div", {}, [balanceLabel(r, t.currency, data.fmt, { self: true, subject: "You" })]))) : el("p", { class: "muted small", text: "You are settled up" })])
-      : el("section", { class: "card" }, [el("p", { class: "card__title", text: "Accounts" }), el("div", { class: "card__value" }, [String((data.accounts.data && data.accounts.data.accounts.filter((a) => !a.deletedAt).length) || 0)])]),
+      ? el("section", { class: "card" }, [el("p", { class: "card__title", text: "Shared balance" }), el("div", { class: "card__value small" }, [kpiValue(isLoadingSlice(data.groupCard.slice), data.groupCard.mine.length ? el("div", {}, data.groupCard.mine.map(([t, r]) => el("div", {}, [balanceLabel(r, t.currency, data.fmt, { self: true, subject: "You" })]))) : el("span", { class: "muted small", text: "You are settled up" }))])])
+      : el("section", { class: "card" }, [el("p", { class: "card__title", text: "Accounts" }), el("div", { class: "card__value" }, [kpiValue(isLoadingSlice(data.accounts), String((data.accounts.data && data.accounts.data.accounts.filter((a) => !a.deletedAt).length) || 0))])]),
   ];
   return el("div", { class: "dashflag", vars: layoutAccentVars(state, "finexa-budget") }, [
     el("div", { class: "dashflag-subhead" }, [el("h2", { text: "Overview" }), el("p", { class: "muted small", text: "Where you stand today, at a glance." })]),
@@ -350,12 +384,12 @@ function renderAcruDashboard(ctx, state, data) {
   const week = data.weekSummary[0];
   const hero = el("section", { class: "card card--full" }, [
     el("p", { class: "muted small", text: "Overview" }),
-    el("div", { class: "dashflag-hero__figure" }, [total ? money(total.amount, total.currency, data.prefs) : el("span", { class: "muted", text: "No accounts yet" })]),
+    el("div", { class: "dashflag-hero__figure" }, [kpiValue(isLoadingSlice(data.accounts), total ? money(total.amount, total.currency, data.prefs) : el("span", { class: "muted", text: "No accounts yet" }))]),
     el("p", { class: "muted small", text: "Net position across every account you can see" }),
     el("div", { class: "dashflag-statrail" }, [
-      el("div", {}, [el("p", { class: "muted small", text: "Income this week" }), week ? money(week.income, week.currency, data.prefs) : el("span", { text: "—" })]),
-      el("div", {}, [el("p", { class: "muted small", text: "Expenses this week" }), week ? money(week.gross, week.currency, data.prefs) : el("span", { text: "—" })]),
-      el("div", {}, [el("p", { class: "muted small", text: "Needs attention" }), el("span", { text: String(data.alertCount) })]),
+      el("div", {}, [el("p", { class: "muted small", text: "Income this week" }), kpiValue(isLoadingSlice(data.weekSlice), week ? money(week.income, week.currency, data.prefs) : el("span", { text: "—" }))]),
+      el("div", {}, [el("p", { class: "muted small", text: "Expenses this week" }), kpiValue(isLoadingSlice(data.weekSlice), week ? money(week.gross, week.currency, data.prefs) : el("span", { text: "—" }))]),
+      el("div", {}, [el("p", { class: "muted small", text: "Needs attention" }), kpiValue(data.alertsLoading, el("span", { text: String(data.alertCount) }))]),
     ]),
   ]);
   return el("div", { class: "dashflag", vars: layoutAccentVars(state, "acru-overview") }, [

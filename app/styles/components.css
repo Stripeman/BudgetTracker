@@ -194,6 +194,21 @@ fieldset.budget-line { margin: 0; padding: var(--space-3); border: 1px solid var
 /* ---------- states ---------- */
 .state { padding: var(--space-6) var(--space-4); text-align: center; color: var(--text-muted); border: 1px dashed var(--border-strong); border-radius: var(--radius-lg); }
 .state--error { border-style: solid; border-color: var(--color-danger); color: var(--color-danger-text); background: var(--surface); }
+/* A panel that has not loaded yet is never allowed to look the same as a panel that genuinely has
+   nothing in it (Terry, 2026-09-24: "data in each panel take a few seconds to load. initially
+   indicating to the user that there is nothing there"). Same visual language as the app's own boot
+   spinner (index.html `.boot__spinner`, base.css `@keyframes spin`), just sized for inline use inside
+   a card or a single KPI value rather than the full page. */
+.state--loading { display: flex; align-items: center; justify-content: center; gap: var(--space-2); border-style: dashed; }
+.spinner {
+  display: inline-block; flex: none; width: 1rem; height: 1rem; border-radius: 50%;
+  border: 2px solid var(--border-strong); border-top-color: var(--accent);
+  animation: spin 800ms linear infinite;
+}
+.spinner--small { width: 0.85em; height: 0.85em; border-width: 2px; vertical-align: -0.15em; }
+/* A single KPI/figure slot (a bill's "this week" number, a dashboard hero total, ...) still loading:
+   never the bare em dash or an "empty" message a genuinely-zero result would also show. */
+.kpi-loading { display: inline-flex; align-items: center; gap: var(--space-1); color: var(--text-muted); }
 /* Curved colored left-edge accent (BT-011-09; the reference screenshot's amber left-edge curve),
    for informational callouts, tooltips and popovers alike, so the treatment is defined once and
    reused everywhere it applies — never copied per screen. `overflow: hidden` on the rounded

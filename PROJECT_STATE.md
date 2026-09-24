@@ -7524,3 +7524,98 @@ test, since it is an internal, unexported function in `payees.js` — flagged ra
 assumed equivalent. Committed (`ba2a00b`) on `fix/bill-merchant-timezone-regression`, pushed, and
 opened as **PR #57** (https://github.com/Stripeman/BudgetTracker/pull/57). Not merged to `main`, no
 Preview/Production deploy performed as part of this checkpoint — both remain Terry's own action.
+
+## PR #57 merged (`7736c66`) and deployed to Production by Terry himself; a concurrent-deploy collision found, and Production verified clean afterward (2026-09-24)
+
+Terry merged PR #57 and PR #56 (both already on `main`) and ran his own Production deploy. While
+verifying, a genuine concurrency collision was found: this session's own `.\deploy.ps1 -Environment
+preview` attempt (running `npm test`/`validate`/build-artifact in this same checkout) overlapped with
+Terry's live `scripts/deploy/engine.mjs --environment production` run in the SAME working directory,
+both writing to the same `.local/artifact`; the Preview attempt failed with a Windows `EBUSY` file
+lock. **No further action was taken while his deploy might still be running** — his processes
+(`engine.mjs`, `swa deploy`) were confirmed exited before anything else happened. Production verified
+independently and read-only afterward: `curl https://budget.remsik.org/api/site-settings` — `commit`
+`7736c66af04e36c6c9367fa56fdcbb8dbead6f7c`, matching `origin/main` exactly, environment `production`.
+No damage from the collision. The Preview deploy itself was paused, at Terry's own instruction, to
+prioritize two new items he raised in the same message — see below; it should still be run once those
+are resolved.
+
+## BT-028 continuation: Terry's second-hand report of "still not saving" and duplicate 2026-10-15 history rows — investigated, no new code defect found (2026-09-24)
+
+Terry reported: a bill's "Terms over time" history showed ~10–12 rows, all dated `2026-10-15`, several
+with merchant "EnBw"; and "assigning a merchant to the bill still is not saving!" **Investigated, not
+assumed resolved:**
+- The history table renders `bill.versions` directly from the server, one row per real version — no
+  rendering/duplication bug. 10–12 identical-dated rows means the server genuinely holds 10–12 real
+  versions, all with that same `effectiveFrom`.
+- `2026-10-15` is this exact bill's own `nextDue` from Terry's ORIGINAL BT-026 screenshot — the
+  pre-BT-026 bug signature (defaulting "take effect from" to `nextDue`). With today's real date
+  2026-09-24, `termsAt` (`api/_shared/bills.js`) cannot select ANY version dated 2026-10-15 (a future
+  date) — confirmed by re-reading its exact comparison logic, not assumed.
+- Verified the FIX is genuinely live on Production by fetching the real served files directly (not
+  just the API version string): `curl https://budget.remsik.org/app/js/core/format.js` contains
+  `todayIsoUTC()`; `.../app/js/ui/views/bills.js` calls it, not the old `todayIso()`. `Cache-Control:
+  max-age=30`, no service worker registered (`grep -rl serviceWorker app/js index.html` — none) — no
+  server-side or asset-caching explanation survives.
+- **Most likely explanation, given to Terry directly, not yet independently confirmed:** BudgetTracker
+  is an SPA — an already-open browser tab keeps running whatever JS it loaded at open time; switching
+  routes inside the app never re-fetches script files, only a full reload does. His ~10 attempts
+  almost certainly predate tonight's fix being deployed, in a tab that was never hard-reloaded since.
+  Asked him to hard-reload and retry once more; **if it still fails after a genuinely fresh load, this
+  is a real unresolved regression**, not to be assumed fixed without that confirmation.
+- **Disclosed, unbuilt (not asked for yet):** the app has no "a new version is deployed, please
+  reload" mechanism, so this exact confusion can recur after any deploy. Offered to build it; not
+  started, no BT id assigned, pending Terry's decision.
+- **Waiting on Terry:** confirmation that a hard-reloaded retry succeeds (or a real, still-reproducing
+  failure report if it doesn't).
+
+## BT-029: a real loading indicator on every Dashboard panel, verified live with real CDP-level network interception (2026-09-24)
+
+**Terry's request, verbatim:** "so data in each panel take a few seconds to load. intitially
+indicateing to the user that there is nothing there. is that something you can make so each one thats
+loading has an indicator like when teh main site is loading?"
+
+**Root cause traced, not assumed:** every Dashboard panel derives from its own independently-fetched
+store slice (accounts, transactions, bills, forecast, weekActivity, monthActivity, payees, group);
+`accounts`/`transactions`/the shared-balance panel already correctly used `stateView` (loading vs
+error vs empty, `components.js`) and showed "Loading…" correctly. Every OTHER panel — spending by
+category, top merchants, this week's income/expenses, and every flagship layout's own KPI figures
+(net position, this week's figures, needs-attention count, top merchant, shared balance) — read the
+already-unwrapped, empty-by-default derived value directly, so a slice still `status: "loading"`
+looked EXACTLY like one that had genuinely resolved with nothing in it: "No spending recorded yet
+this month.", "No merchant activity yet.", a bare em dash, or (for weekBox/alerts) nothing rendered
+at all.
+
+**Fix:** new `spinner()` (`app/js/ui/components.js`) — same visual language as the app's own boot
+spinner (`index.html` `.boot__spinner`, `base.css` `@keyframes spin`), sized for inline use — wired
+into `stateView`'s own loading branch (every existing consumer app-wide gets it for free) plus a new
+`kpiValue(loading, node)` for single-figure KPI slots. `deriveDashboardData` (`dashboard.js`) now
+returns the raw `weekSlice`/`monthSlice`/`payeesSlice` and a combined `alertsLoading` — refined so a
+real alert item already known from a slice that HAS resolved is shown immediately, never withheld
+just because a different slice (bills vs forecast vs group) is still pending; a caught, fixed
+regression in a pre-existing test (`fin-recheck4.test.js` FA-3) proved this refinement was necessary,
+not just nice-to-have. `spendingCard`/`merchantsCard`/`alertsCard` (shared by Classic and all three
+flagship layouts) and every flagship's own inline KPI figures now use these; every genuinely-empty
+READY state is completely unchanged — scope stayed exactly to the LOADING branch, nothing else.
+
+**Evidence:** `app/test/dashboard.test.js` +6 tests, `app/test/dashboardflagship.test.js` +1 test —
+`npm test` **39/39 + 802/802 + 750/750**, exit 0; `npm run validate` ok (29 routes). **Verified live in
+a real browser, not just a DOM double:** `scripts/dev/e2e/dashboard.mjs` extended with a genuine CDP
+`Fetch`-domain interception (not a page-script fake) holding exactly the panels' own `/api/*` data
+calls for 1.5s while bootstrap calls (workspace list, identity, preferences, reference data) pass
+through at normal speed, so the app shell and workspace picker are already fully up — exactly Terry's
+own description — at the moment the DOM is inspected mid-flight: **7 real spinners, zero fabricated
+empty text**, screenshotted
+(`.local/e2e/<run>/dashboard/shots/dashboard-slow-alice-loading-indicators-mid-flight.png`, viewed
+directly — every one of the 7 panels shows a real spinning indicator + "Loading…"); once the held
+calls release, the page finishes normally with the real figures and zero spinners left. `npm run e2e
+-- --only dashboard`: **18/18, exit 0**.
+
+**Not yet done:** the three flagship layouts were verified via their shared components (proven working
+in Classic's own screenshot) plus a dedicated loading unit test covering all three; no separate
+mid-load screenshot was captured per flagship. Committed (`d706df7`) on
+`feature/dashboard-loading-indicators`, pushed, opened as **PR #58**
+(https://github.com/Stripeman/BudgetTracker/pull/58). Not merged, no Preview/Production deploy
+performed as part of this checkpoint — both remain Terry's own action. The Preview deploy paused
+earlier (PR #57's own merge/Production deploy) is still outstanding and should be run once Terry
+confirms BT-028's hard-reload retry.

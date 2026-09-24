@@ -307,9 +307,17 @@ export function commitOnConfirm(selectEl, onCommit) {
   return { reset(value) { last = value; selectEl.value = value; } };
 }
 
+// The same visual language as the app's own boot spinner (index.html `.boot__spinner`), sized for
+// inline use (Terry, 2026-09-24: "each one thats loading has an indicator like when the main site
+// is loading"). `aria-hidden` — the "Loading…" text beside it already says the same thing to a
+// screen reader; the spin itself is decoration.
+export function spinner({ small = false } = {}) {
+  return el("span", { class: ["spinner", small ? "spinner--small" : ""], "aria-hidden": "true" });
+}
+
 export function stateView(slice, { empty = "Nothing here yet.", isEmpty = () => false } = {}) {
   if (!slice || slice.status === Status.LOADING || slice.status === Status.IDLE) {
-    return el("div", { class: "state", role: "status", text: "Loading…" });
+    return el("div", { class: "state state--loading", role: "status" }, [spinner(), el("span", { text: "Loading…" })]);
   }
   if (slice.status === Status.ERROR) {
     return el("div", { class: "state state--error", role: "alert" }, [
@@ -319,6 +327,16 @@ export function stateView(slice, { empty = "Nothing here yet.", isEmpty = () => 
   }
   if (isEmpty(slice.data)) return el("div", { class: "state", text: empty });
   return null;
+}
+
+// A single KPI/figure value still loading (a bill's "this week" number, a dashboard hero total,
+// ...): never the bare em dash or an "empty" message a genuinely-zero result would also show, so a
+// panel that simply hasn't finished its own fetch yet never looks the same as one with nothing in
+// it. `loading` is the slice's own `status` — pass whichever slice this figure is actually derived
+// from, since a figure combining more than one slice may be READY-per-slice-so-far but is still
+// effectively loading until every slice it depends on has resolved.
+export function kpiValue(loading, node) {
+  return loading ? el("span", { class: "kpi-loading", role: "status" }, [spinner({ small: true }), el("span", { text: "Loading…" })]) : node;
 }
 
 export function pageHead(title, actions = []) {
